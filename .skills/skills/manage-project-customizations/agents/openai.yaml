@@ -1,0 +1,4 @@
+interface:
+  display_name: "项目自定义管理"
+  short_description: "创建、登记、验证并同步项目级规则、Skill、知识与能力路由"
+  default_prompt: "Use $manage-project-customizations to propose, validate, and reverse-sync a project customization."

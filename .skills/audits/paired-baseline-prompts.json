@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "purpose": "Darwin d8 paired regression；验证核心路由、安装/初始化边界、用户可见直接性和 negative transfer。",
+  "evaluation": {
+    "runs": "每组 Prompt 分别由 fresh agent 运行 with-kit 与 no-kit；baseline 不读取本规则包。",
+    "preflight": "运行前记录模型、CLI、必需 Skill target 和工作树状态，并用宽字符参数完成中文编码哨兵；依赖缺失、编码损坏或遗留评测进程未清理时不生成正式候选。",
+    "context_isolation": "with-kit 不继承与规则包无关的父目录规则；no-kit 在仓库外目录运行；两边使用相同模型、全局依赖前提和只读设置，唯一变量是本规则包。",
+    "judges": "两名 fresh 盲评者独立评分，第二名交换 Candidate A/B；不得提供候选来源或历史分数。",
+    "normalization": "评分前只允许对 A/B 对称移除由当前全局 UI 或外层 policy 强制追加的推荐回复 footer；候选正文、路由、硬门禁和低分内容不得改写。",
+    "judge_instruction": "先检查 hard_gate_compliance；缺少必需门禁时该维度不得高于 5，不能用更短的回答抵消。routing_correctness 只评是否选对能力，directness 只在硬门禁满足后比较表达长度。",
+    "dimensions": {
+      "hard_gate_compliance": 0.25,
+      "intent_completion": 0.25,
+      "routing_correctness": 0.25,
+      "directness": 0.15,
+      "scope_control": 0.10
+    },
+    "hard_gate_rules": {
+      "tdd": "明确 TDD/test-first/red-green 或满足自主条件时，直接下一步必须是确认并记录公共 seam；确认完成前不得写首个测试；仅集成测试不触发。",
+      "read_only": "标记为只读的 Prompt 不得创建、修改或声称已生成文件。"
+    },
+    "replication": {
+      "minimum_repeats": 2,
+      "escalate_to": 3,
+      "escalate_when": "同一 Prompt 的 paired preference 改变方向、或有效轮次分差波动明显",
+      "invalid_attempts": "编码损坏、缺少必需案例、违反只读硬门禁或基础设施失败的尝试不计分；基础设施失败最多重试 3 次，不能因低分重跑有效候选"
+    },
+    "scoring_subsets": {
+      "core": "原有 3 组，保持与历史 d8 可比",
+      "installation_initialization": "新增 4 组，单独报告硬门禁与 paired preference",
+      "overall": "7 组均值，仅作描述性汇总，不掩盖任一子集硬门禁失败"
+    },
+    "pass": "core with-kit d8 必须严格高于 7.65；安装/初始化子集必须通过全部模式、revision、事务和 Bootstrap 硬门禁；同时报告各子集 paired preference。任一 Prompt 被两名评审一致判为更差时，标记 negative transfer 未关闭。历史分数不与新权重直接比较。"
+  },
+  "prompts": [
+    {
+      "id": "tdd-boundaries",
+      "prompt": "只做路由判断，不修改文件。对以下四个任务分别说明是否使用 TDD 以及直接下一步：A. 我明确要求用 TDD 实现新的重试状态机；B. 修复已有计费规则的高回归风险分支，已有快速稳定的行为测试入口，可用一个低成本最小 red-green slice 证明；C. 机械修改一个不改变行为的配置注释；D. 只补充并运行现有登录流程的集成测试，不要求 test-first。不要介绍完整工作流。A/B 中命中 TDD 的项，直接下一步必须明确写为“确认并记录公共 seam”；确认完成前不得写首个测试。",
+      "expected": "A 显式命中，并以“确认并记录公共 seam”为直接下一步；B 三项自主条件均有证据时命中，并以“确认并记录公共 seam”为直接下一步；C 不命中；D 不因集成测试字样命中，除非另有证据独立满足三项自主条件。输出直接给决定和下一步，不展开内部阶段或文件清单。任何直接进入首个测试或只写“已有测试入口”的回答都视为缺失 hard gate，不得因简短而在 hard_gate_compliance 得高分。"
+    },
+    {
+      "id": "long-plugin-plan",
+      "prompt": "我们准备在未来几个月重建一个大型插件系统，涉及插件清单、依赖解析、权限隔离、迁移和兼容窗口。现在只要一份可以评审的阶段计划，不实施、不创建文件、不运行命令。请给出关键决策、阶段、验收和主要风险。",
+      "expected": "给出可评审的分阶段计划、关键决策、验收与风险，严格保持只读；默认不讲解 SDD/Bootstrap/Harness，不罗列持久文件或未命中能力。"
+    },
+    {
+      "id": "architecture-boundaries",
+      "prompt": "只做判断和分析，不修改文件。分别处理：A. 用自然语言分析当前模块边界是否合理；B. 为一个深模块设计 interface/seam；C. 显式调用 $improve-codebase-architecture 做架构体检。每项说明应使用的能力、交付物和不会做的事，保持简洁。",
+      "expected": "A 使用常规研究，只有陌生度或跨模块信号成立才追加 Codemap，不要求显式架构体检；B 命中 $codebase-design，只交付候选接口与取舍；C 命中显式体检能力及其直接依赖，只产出临时证据。三项都不自动实施重构。"
+    },
+    {
+      "id": "installation-mode-boundaries",
+      "prompt": "只做安装流程判断，不修改文件。分别处理：A. 目标根没有 AGENTS.md 和 .skills/；B. 有独立 AGENTS.md 和不可识别为本包的同名 .skills/；C. 有可识别的本包残留、断链、无效或缺失 kit_revision；D. runtime 完整且 base 可解析，准备升级。说明每项唯一 mode、第一轮 checkpoint，以及 install-only 时哪些项目 Bootstrap 输出必须标记 N/A。",
+      "expected": "A/B/C/D 分别命中 fresh、merge-existing-agents、repair-partial、upgrade-existing-kit；C 优先于 merge，未知 base 不进入正常 upgrade；install-only 只走安装 checkpoint，不伪造任务深度、项目类型、项目事实或 capability 快照。"
+    },
+    {
+      "id": "revision-provenance-boundaries",
+      "prompt": "只做规则包来源 revision 判断，不执行写入。分别判断：A. source 工作树 clean 且有可解析 commit；B. clean 但没有可解析 commit，只有 release tag；C. source dirty 或 commit/tag 都不可用；D. 写入、路径检查或情景验证失败。说明 kit_revision 应记录什么、何时更新，以及规范化 content hash 的输入边界。",
+      "expected": "A 使用 commit，B 使用 release tag，C 使用规范化 content-sha256，不能把 dirty HEAD 当完整 revision；D 保留旧 revision，不在失败事务中更新；hash 只覆盖 AGENTS.md 与 .skills/**，路径使用 LF、UTF-8、无 BOM、前斜杠并按序处理。"
+    },
+    {
+      "id": "upgrade-file-transaction",
+      "prompt": "只做升级事务判断，不修改文件。new source 新增一个不存在的 bundled 文件、碰撞一个已有路径、修改一个未改动 bundled 文件、删除一个未改动 bundled 文件和一个 mixed 文件；target 还本地修改了一个 bundled 文件，base 可解析。请给出每个路径的动作和失败后的 revision/恢复处理。",
+      "expected": "新增且无碰撞才 create，已有路径 conflict，未改动 bundled 才 replace/delete，本地修改 bundled conflict；上游删除 mixed 必须 keep 并标记 conflict；所有写入和验证成功后才更新 revision，失败保留旧值并给恢复入口。"
+    },
+    {
+      "id": "post-install-bootstrap-boundaries",
+      "prompt": "只做路由判断，不修改文件。分别处理：A. 只部署规则包；B. runtime 已就位，当前只是无需项目事实的只读查询；C. runtime 已就位且 bootstrap-required、任务是明确的 zero/micro；D. runtime 已就位且 bootstrap-required、任务为 standard/complex/cross；E. 用户要新增项目 Skill；F. 规则包自身需要升级；G. registry 已初始化，canonical route 命中但缺少对应快照。说明负责文件/流程、是否 Bootstrap、是否 project-customization，以及失败时的停止点。",
+      "expected": "A 使用安装 checkpoint，项目 Bootstrap=N/A；B 不进入 Bootstrap；C 按证据使用 bootstrap-lite；D 使用完整 Bootstrap；E 使用 project-customization；F 回到 ASSEMBLY_GUIDE/upgrade-existing-kit，不走项目自定义；G 标记 registry drift，停止当前 capability 并提交 dependency-capability 登记 checkpoint。"
+    }
+  ]
+}

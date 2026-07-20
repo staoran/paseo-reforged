@@ -1,0 +1,27 @@
+[
+  {
+    "id": "ambiguous-payment-migration",
+    "prompt": "重构支付状态处理，旧接口语义不清，还涉及数据迁移、回退和兼容窗口。",
+    "expected": "先按 operating model 判为 complex，调查可确认事实，再由 bridge 决定是否 Grill；检查点前不实现。"
+  },
+  {
+    "id": "researchable-technical-fact",
+    "prompt": "这个后端接口是否仍有前端调用我不确定，先帮我查清楚再决定是否重构。",
+    "expected": "留在 Research，通过代码与配置核验 Consumer；不把可查事实反问用户，也不自动 Grill。"
+  },
+  {
+    "id": "adapter-fallback-preserves-bridge",
+    "prompt": "当前 runtime 不能自动发现 bundled adapter。这个后端接口是否仍有前端调用我不确定，请按直接读取入口继续。",
+    "expected": "直接读取 operating model 与 SDD-Grill bridge；该问题只是可查技术事实，bridge 不命中，不加载 Grill workflow，并返回全局 SDD Research。"
+  },
+  {
+    "id": "clear-small-fix",
+    "prompt": "修复单文件空值判断，保留 0、false 和空字符串的现有合法语义。",
+    "expected": "不加载本 Skill，走 operating model 的轻量任务路径并执行窄验证。"
+  },
+  {
+    "id": "standard-clarification",
+    "prompt": "统一两个设置页面的提示文案，位置和现有文案体系都已知，无公共契约、数据或权限风险，但产品没有指定逐字措辞。",
+    "expected": "保持 standard；需要时做普通最小澄清，不启动完整 Grill 或新增复杂任务产物。"
+  }
+]

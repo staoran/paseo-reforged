@@ -1,0 +1,4 @@
+interface:
+  display_name: "SDD 需求提纯"
+  short_description: "仅为 complex/cross 任务加载既有 SDD-Grill 需求提纯规范"
+  default_prompt: "Use $refine-sdd-requirements to load the canonical SDD-Grill route for this complex task."

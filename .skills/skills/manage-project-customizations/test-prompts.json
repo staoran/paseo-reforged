@@ -1,0 +1,67 @@
+[
+  {
+    "id": "create-project-skill",
+    "prompt": "把我们反复执行的本项目协议代码生成步骤做成一个项目 Skill，并让 Agent 能自动发现。",
+    "expected": "选择 project-skill 和 model-invoked；省略 disable-model-invocation，用 description 表达真实触发分支，并在注册表登记 invocation。先检查复用价值、名称和 capability 冲突，收集触发与不触发样例，确认 $skill-creator、user-invoked $writing-great-skills 与 $darwin-skill 全部可用；Writing 未进入上下文时请求用户显式调用。任一缺失或验证未改进时保持未启用。"
+  },
+  {
+    "id": "create-user-invoked-project-skill",
+    "prompt": "做一个只能由我点名运行的项目发布核对 Skill，不要让 Agent 自动触发。",
+    "expected": "选择 project-skill 和 user-invoked；写 disable-model-invocation: true，description 只保留面向用户的一行摘要，注册表记录 invocation 与显式调用方式；不得从其他 Skill 自动路由。runtime 不识别该字段时使用等价配置并登记证据，无法验证自动发现已关闭时 stop-and-configure、保持未启用。其余创建、依赖和对照验证门禁不变。"
+  },
+  {
+    "id": "set-project-language",
+    "prompt": "以后本项目全程中文协作，代码标识符保持英文，任务目录只用编号加中文标题。",
+    "expected": "选择 project-rules；核对现有 AGENTS 与 PROJECT_RULES 后给出精确增量，不创建新 Skill。"
+  },
+  {
+    "id": "register-karpathy",
+    "prompt": "登记 karpathy-guidelines 作为编码、重构和 Review 的必需全局能力。",
+    "expected": "选择 dependency-capability；登记 $karpathy-guidelines、global、floating-installed、stop-and-install 和 evidence；development-discipline 只作项目基线，不是替代。"
+  },
+  {
+    "id": "override-external-skill",
+    "prompt": "全局 Context7 policy 在本项目还必须先读取内部 SDK 版本文件，再查询对应版本文档。",
+    "expected": "选择 skill-override；在 third-party-docs 增量中登记版本文件、内部封装、输出证据和 stop-and-configure，不复制或改写全局查询流程。"
+  },
+  {
+    "id": "sync-project-knowledge",
+    "prompt": "把已经由测试确认的镜像仓库同步顺序沉淀为后续任务可复用知识。",
+    "expected": "选择 project-knowledge；检查证据、适用边界、敏感性和批准后写入 PROJECT_KNOWLEDGE。"
+  },
+  {
+    "id": "record-critical-context",
+    "prompt": "记录这个支付状态机的兼容不变量、失败信号和回退入口。",
+    "expected": "选择 critical-context；要求源码、契约、测试或事故证据，不把一次性调查直接写入长期文件。"
+  },
+  {
+    "id": "refresh-codemap",
+    "prompt": "这次重构改变了入口和模块边界，请检查现有 Codemap 是否漂移并更新索引。",
+    "expected": "选择 codemap；确认 $codemap 可用后作为 SDD Review/Reverse Sync 子能力执行 drift-check 并更新 CODEMAP_INDEX；缺失则停止并提示安装。"
+  },
+  {
+    "id": "missing-required-global-skill",
+    "prompt": "这个任务需要 Codemap，但全局没有安装 codemap Skill，请先用本地文件凑一个。",
+    "expected": "拒绝创建或使用本地替代；停止当前任务，明确缺失 $codemap，并提示用户安装后恢复。"
+  },
+  {
+    "id": "one-off-task-does-not-trigger",
+    "prompt": "把本次失败的临时命令记下来，等会继续试。",
+    "expected": "不创建项目自定义；临时执行记录留在 progress，根因假设按需进入 findings。"
+  },
+  {
+    "id": "kit-upgrade-does-not-trigger-project-customization",
+    "prompt": "目标项目已经安装 Universal Agents Kit，现在把规则包升级到新版本。",
+    "expected": "不选择 project-customization；回到规则包源目录的 ASSEMBLY_GUIDE/upgrade-existing-kit，按安装 checkpoint 处理 bundled、mixed、project-owned 和 source-only 边界。"
+  },
+  {
+    "id": "installed-runtime-bootstrap-does-not-trigger-project-customization",
+    "prompt": "规则包已经安装，但当前项目仍是 bootstrap-required；请为这次 zero 任务补齐必要项目事实。",
+    "expected": "不把首次项目 Bootstrap 当作 project-customization；按目标 PROJECT_RULES.md 的 operating-model 结果选择 bootstrap-lite 或完整 Bootstrap，完成后才回到原任务。"
+  },
+  {
+    "id": "registry-drift-stops-and-registers",
+    "prompt": "项目 registry 已初始化，canonical route 已命中一个项目能力，但 DEPENDENCY_SKILLS.md 没有对应快照。请继续执行，不要停。",
+    "expected": "标记 registry drift，停止当前 capability，不把缺行当作可用；提交 dependency-capability 登记 checkpoint，补齐 required dependency、source scope、version policy、missing action、evidence 和 last verified 后再恢复。"
+  }
+]
