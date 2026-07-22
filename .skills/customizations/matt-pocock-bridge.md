@@ -6,7 +6,7 @@
 
 ## SDD 职责边界
 
-- SDD 保持 Restate、Research 主线、Spec、任务拆解与状态、批准、Execute、三轴 Review、Bootstrap、handoff 编排和 Reverse Sync 的主流程所有权。
+- SDD 保持 Restate、Research 主线、Spec、任务拆解与状态、批准、Execute、三轴 Review、Project Setup、handoff 编排和 Reverse Sync 的主流程所有权。
 - 本桥接命中的 Matt 能力只补当前 SDD 阶段的专用算法、约束和证据；持久化仍服从已登记落点，不能覆盖逻辑 Spec Record、execution gate、Review 或项目 Git 边界。
 
 ## 阶段输入与输出

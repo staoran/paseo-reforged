@@ -51,13 +51,13 @@
   },
   {
     "id": "kit-upgrade-does-not-trigger-project-customization",
-    "prompt": "目标项目已经安装 Universal Agents Kit，现在把规则包升级到新版本。",
+    "prompt": "假设目标项目已完整安装 Universal Agents Kit，runtime 完整、kit_revision 格式有效且 base 可解析；现在把规则包升级到新版本。",
     "expected": "不选择 project-customization；回到规则包源目录的 ASSEMBLY_GUIDE/upgrade-existing-kit，按安装 checkpoint 处理 bundled、mixed、project-owned 和 source-only 边界。"
   },
   {
-    "id": "installed-runtime-bootstrap-does-not-trigger-project-customization",
-    "prompt": "规则包已经安装，但当前项目仍是 bootstrap-required；请为这次 zero 任务补齐必要项目事实。",
-    "expected": "不把首次项目 Bootstrap 当作 project-customization；按目标 PROJECT_RULES.md 的 operating-model 结果选择 bootstrap-lite 或完整 Bootstrap，完成后才回到原任务。"
+    "id": "installed-runtime-project-setup-does-not-trigger-project-customization",
+    "prompt": "规则包已经安装，但当前项目仍是 project-setup-required；请为这次 zero 任务补齐必要项目事实。",
+    "expected": "不把 Initial Project Setup 当作 project-customization；按目标 PROJECT_RULES.md 的 operating-model 结果选择 project-setup-lite 或 Full Project Setup，完成后才回到原任务。"
   },
   {
     "id": "registry-drift-stops-and-registers",

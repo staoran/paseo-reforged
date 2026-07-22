@@ -22,7 +22,7 @@
 | `workflows/cross-project.md` | 多仓库、多子项目、Provider/Consumer 契约变更；内部选择 `observe-only`、`cross-lite` 或 `cross-full` |
 | `workflows/project-customization.md` | 新增或维护项目 Skill、规则/语言/文档布局、依赖能力、override、长期知识、关键上下文或 Codemap |
 
-登记的全局 SDD Skill 是所有工程任务不可关闭的核心 Harness；`cross-project.md` 是 `cross` 的不可关闭安全流程。`enabled_workflows` 只能关闭或替换可选增强模块，并且替换必须在项目规则中登记等价回退。
+SDD 核心闭环是所有工程任务不可关闭的主 Harness；查询/`zero` 是否跳过外部 SDD Skill 只由 `core/skill-coordination.md` 判断。`cross-project.md` 是 `cross` 的不可关闭安全流程。`enabled_workflows` 只能关闭或替换可选增强模块，并且替换必须在项目规则中登记等价回退。
 
 ## 包内 Skill 适配器
 
@@ -67,6 +67,6 @@
 
 ## 模板
 
-`templates/` 是可复制的任务和工作区文件，不是运行中的权威记录。实际路径由 `PROJECT_RULES.md` 的 `documentation_layout` 指定。`micro_spec_persistence` 决定明确小任务可否只做内联记录；`task-index.md` 用于采用任务总表的项目。
+`templates/` 是可复制的任务和工作区文件，不是运行中的权威记录。实际路径由 `PROJECT_RULES.md` 的 `documentation_layout` 指定。`micro_spec_persistence` 决定明确小任务可否只做内联记录；`task_index_mode=required` 时使用 `task-index.md` 建立唯一任务总表，`disabled` 时路径必须为 `N/A`。任务索引只保存编号、候选、导航和带来源的生命周期摘要，不替代 spec、task plan 或 progress。
 
 安装或维护规则包时使用 `audits/quality-checklist.md`；运行工程任务时不加载审计材料。

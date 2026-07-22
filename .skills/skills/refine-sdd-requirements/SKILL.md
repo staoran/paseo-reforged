@@ -10,8 +10,8 @@ description: 为已按通用 operating model 判定为 complex 或 cross，且�
 ## 加载顺序
 
 1. 读取 `../../core/operating-model.md`。任务不是 `complex` 或 `cross` 时退出本 Skill，继续该文件判定的原路由。
-2. 读取 `../../customizations/sdd-grill-bridge.md`。
-3. 只有 bridge 命中时读取 `../../workflows/grill-me.md`；未命中时返回已加载的全局 SDD Harness。
+2. 由已加载的全局 SDD Research 先调查可从源码、配置和测试确认的事实，并将其与决策歧义分开；该调查未完成时不得宣称 Grill 命中。
+3. 读取 `../../customizations/sdd-grill-bridge.md`。只有调查后仍存在 bridge 命中的决策歧义时才读取 `../../workflows/grill-me.md`；未命中时返回已加载的全局 SDD Harness。
 4. 项目存在对应增量时，最后读取 `../../project/CUSTOM_SKILL_OVERRIDES.md`。
 
 执行、回写和停止点以已加载的全局 SDD Skill 与这些文件为准。本 Skill 不生成独立产物。

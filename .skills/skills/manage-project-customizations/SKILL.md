@@ -1,6 +1,6 @@
 ---
 name: manage-project-customizations
-description: 管理项目级自定义内容的 skills-aware 加载入口。用户要求新增、迁移或调整项目私有 Skill、项目规则与语言/命名/文档布局、必需外部依赖与缺失动作、Skill override、稳定项目知识、关键逻辑上下文或 Codemap 索引时使用；首次项目 Bootstrap 仍使用 Bootstrap 流程，一次性任务事实或未验证猜测不使用。
+description: 管理项目级自定义内容的 skills-aware 加载入口。用户要求新增、迁移或调整项目私有 Skill、项目规则与语言/命名/文档布局、必需外部依赖与缺失动作、Skill override、稳定项目知识、关键逻辑上下文或 Codemap 索引时使用；Initial Project Setup 仍使用 Project Setup 流程，一次性任务事实或未验证猜测不使用。
 ---
 
 # 项目自定义规范加载器
@@ -26,7 +26,7 @@ description: 管理项目级自定义内容的 skills-aware 加载入口。用�
 
 ## 禁止事项
 
-- 不用本 Skill 替代首次 Bootstrap；项目仍为 `bootstrap-required` 时先完成所需 Bootstrap。
+- 不用本 Skill 替代 Initial Project Setup；项目仍为 `project-setup-required` 时先完成所需 Project Setup。
 - 不把一次性任务记录、未验证猜测或敏感原文提升为项目长期自定义。
 - 不递归加载全部项目 Skill，也不把 adapter 加载成功当作目标内容已获批准或验证通过。
 - 不在本 Skill 复制分流 workflow、项目模板或外部 Skill 全文。

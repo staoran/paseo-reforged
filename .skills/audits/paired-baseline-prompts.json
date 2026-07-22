@@ -1,13 +1,17 @@
 {
   "schema_version": 1,
-  "purpose": "Darwin d8 paired regression；验证核心路由、安装/初始化边界、用户可见直接性和 negative transfer。",
+  "purpose": "Package behavior paired regression（Darwin-inspired dim8-style evidence；不是 Darwin 九维 Skill 评分）；验证核心路由、安装/初始化、SDD 外部 Skill 绕过、上下文读取、任务索引、跨项目深度、用户可见直接性和 negative transfer。",
   "evaluation": {
+    "layer": "package-behavior",
+    "scope": "Universal Agents Kit 的运行规则与工作流整体，不是单个 SKILL.md 的质量评分。",
+    "darwin_relation": "借鉴 Darwin 的带规则/无规则 baseline 实测思路作为行为证据；不调用 Darwin 九维 Rubric、优化循环或 Git ratchet。",
+    "release_gate_mode": "ci-enforced；aggregate-evals.mjs --release-verdict 输出 GO/NO-GO 并用退出码执行发布门禁。",
     "runs": "每组 Prompt 分别由 fresh agent 运行 with-kit 与 no-kit；baseline 不读取本规则包。",
     "preflight": "运行前记录模型、CLI、必需 Skill target 和工作树状态，并用宽字符参数完成中文编码哨兵；依赖缺失、编码损坏或遗留评测进程未清理时不生成正式候选。",
     "context_isolation": "with-kit 不继承与规则包无关的父目录规则；no-kit 在仓库外目录运行；两边使用相同模型、全局依赖前提和只读设置，唯一变量是本规则包。",
     "judges": "两名 fresh 盲评者独立评分，第二名交换 Candidate A/B；不得提供候选来源或历史分数。",
     "normalization": "评分前只允许对 A/B 对称移除由当前全局 UI 或外层 policy 强制追加的推荐回复 footer；候选正文、路由、硬门禁和低分内容不得改写。",
-    "judge_instruction": "先检查 hard_gate_compliance；缺少必需门禁时该维度不得高于 5，不能用更短的回答抵消。routing_correctness 只评是否选对能力，directness 只在硬门禁满足后比较表达长度。",
+    "judge_instruction": "先检查 hard_gate_compliance；缺少必需门禁时该维度不得高于 5，不能用更短的回答抵消。复合 Prompt 必须逐分支核对 expected，遗漏任一 hard-gate 分支时该维度同样不得高于 5。routing_correctness 只评是否选对能力，directness 只在硬门禁满足后比较表达长度。",
     "dimensions": {
       "hard_gate_compliance": 0.25,
       "intent_completion": 0.25,
@@ -17,20 +21,70 @@
     },
     "hard_gate_rules": {
       "tdd": "明确 TDD/test-first/red-green 或满足自主条件时，直接下一步必须是确认并记录公共 seam；确认完成前不得写首个测试；仅集成测试不触发。",
-      "read_only": "标记为只读的 Prompt 不得创建、修改或声称已生成文件。"
+      "read_only": "标记为只读的 Prompt 不得创建、修改或声称已生成文件。",
+      "sdd_external_bypass": "只有实际分类为查询/zero、无重型信号且目标/边界/规则/事实源/验证均明确时才可跳过外部 SDD Skill；绕过不删除 SDD 核心动作，条件失效必须加载 canonical light/one。",
+      "codemap_explicit_intent": "显式 $codemap、项目总图、功能地形图、CodeMap/MAP 或 drift-check 意图直接触发 Codemap，不被小范围排除；只读 Prompt 不持久写入。",
+      "delegation_ownership": "委派不转移主任务对范围/方案裁决、冲突处理、结果整合和最终验证的责任。",
+      "runtime_source_isolation": "规则包源根 AGENTS.md/.skills 只服务 Kit 开发；安装、hash、base/new 比较和 with-kit 评测必须使用 manifest/loader 发出的逻辑 AGENTS.md 与 .skills/**。不得复制 runtime-src 物理目录名、把开发 PROJECT_RULES 当目标事实，或在 manifest 无效时静默回退旧布局。",
+      "task_index_truth": "任务索引只能保存带来源的派生生命周期摘要；持久化 spec/micro-spec 文档先行并登记，内联 query、zero 和内联 micro-spec 不登记；候选不占编号；索引冲突不得覆盖 spec/task plan/progress；跨项目各层分别服从 required/disabled，disabled 和内联记录的索引路径与锚点必须为 N/A。",
+      "cross_project_depth": "跨项目深度按参与项目数量和已确认风险选择：零参与项目为 observe-only；一至两个参与项目只有在契约稳定、无 breaking/迁移/并行发布且可单阶段完成时才可 cross-lite，否则为 cross-full；三个以上参与项目直接为 cross-full；Observer 不计入参与数，确认受影响后必须升级为参与项目并重新判定；缺少父级契约、项目授权、registry、Provider/Consumer 顺序或执行门禁时只能调查，不能实现。"
     },
     "replication": {
       "minimum_repeats": 2,
       "escalate_to": 3,
-      "escalate_when": "同一 Prompt 的 paired preference 改变方向、或有效轮次分差波动明显",
-      "invalid_attempts": "编码损坏、缺少必需案例、违反只读硬门禁或基础设施失败的尝试不计分；基础设施失败最多重试 3 次，不能因低分重跑有效候选"
+      "escalate_when": "同一 Prompt 的前两轮双 Judge 共识方向在 with-kit 与 no-kit 之间翻转",
+      "invalid_attempts": "编码损坏、进程或基础设施失败、输出为空或不可解析的尝试不计分；候选遗漏必需分支或违反 read-only/其他行为 hard gate 属于有效失败，必须进入评分与发布门禁，不能用重跑消除；基础设施失败最多重试 3 次，不能因低分重跑有效候选"
     },
     "scoring_subsets": {
-      "core": "原有 3 组，保持与历史 d8 可比",
+      "core": "原有 3 组，保持与历史 package behavior baseline 可比",
       "installation_initialization": "新增 4 组，单独报告硬门禁与 paired preference",
-      "overall": "7 组均值，仅作描述性汇总，不掩盖任一子集硬门禁失败"
+      "routing_context": "新增 6 组，覆盖 SDD 外部 Skill 绕过、显式 Codemap、项目知识读取、委派责任、任务索引和跨项目深度",
+      "overall": "13 组均值，仅作描述性汇总，不作为 Darwin 九维分数或单独发布通过条件"
     },
-    "pass": "core with-kit d8 必须严格高于 7.65；安装/初始化子集必须通过全部模式、revision、事务和 Bootstrap 硬门禁；同时报告各子集 paired preference。任一 Prompt 被两名评审一致判为更差时，标记 negative transfer 未关闭。历史分数不与新权重直接比较。"
+    "release_gate": {
+      "required_prompt_count": 13,
+      "thresholds": {
+        "core": {
+          "minimum_with_kit": 7.65,
+          "inclusive": false
+        },
+        "installation_initialization": {
+          "minimum_with_kit": 9.70,
+          "inclusive": true
+        },
+        "routing_context": {
+          "minimum_with_kit": 9.65,
+          "inclusive": true
+        }
+      },
+      "calibration_step": 0.05,
+      "accepted_snapshots": [
+        {
+          "id": "2026-07-20-full-package-go",
+          "scores": {
+            "installation_initialization": 9.805,
+            "routing_context": 9.759
+          },
+          "evidence_sha256": [
+            "caa0d99fe574553f272fa26c131139310cf2d7863377c3f87f5f9eb673719d27"
+          ]
+        },
+        {
+          "id": "2026-07-20-follow-up-go-after-sdd-repair",
+          "scores": {
+            "installation_initialization": 9.733,
+            "routing_context": 9.684
+          },
+          "evidence_sha256": [
+            "74df5cad361d49bb81b4e49f7b71e18bd594980f7c49dc3a8737fd1a788dcd6e",
+            "9f55a00e12dd87c19aed7efab58329b40d2c84a67146beecff50564da9eddea4"
+          ],
+          "routing_recalculation": "用修复后的 SDD 9.908 替换失败样本：(9.908 + 9.883 + 9.322 + 9.624) / 4 = 9.684。"
+        }
+      ],
+      "calibration_rule": "installation/routing 分别取两个已接受分数的低值并向下取整到 0.05；routing 历史快照覆盖共同的 4 个场景，当前 6 场景门禁先沿用该保守下限，积累两个完整 13 场景 GO 后重校准。"
+    },
+    "pass": "正式发布门禁：13 个 Prompt 必须按重复策略完整执行，所有有效 with-kit 候选必须由两名 Judge 完整覆盖；任一 Judge 报告的适用 with-kit hard-gate failure 必须为 0；core with-kit package score 必须严格高于 7.65，installation-initialization 必须不低于 9.70，routing-context 必须不低于 9.65；任一 Prompt 被两名评审一致判为 no-kit 更优时，标记 negative transfer 未关闭。候选的行为 hard-gate failure 不能作为无效样本排除；no-kit hard-gate failure 只作 baseline 诊断，不作为规则包发布阻塞。五维加权分和 overall 只用于比较与诊断，不替代上述二值门禁；Darwin 九维分数独立报告。"
   },
   "prompts": [
     {
@@ -41,7 +95,7 @@
     {
       "id": "long-plugin-plan",
       "prompt": "我们准备在未来几个月重建一个大型插件系统，涉及插件清单、依赖解析、权限隔离、迁移和兼容窗口。现在只要一份可以评审的阶段计划，不实施、不创建文件、不运行命令。请给出关键决策、阶段、验收和主要风险。",
-      "expected": "给出可评审的分阶段计划、关键决策、验收与风险，严格保持只读；默认不讲解 SDD/Bootstrap/Harness，不罗列持久文件或未命中能力。"
+      "expected": "给出可评审的分阶段计划、关键决策、验收与风险，严格保持只读；默认不讲解 SDD/Project Setup/Harness，不罗列持久文件或未命中能力。"
     },
     {
       "id": "architecture-boundaries",
@@ -50,13 +104,13 @@
     },
     {
       "id": "installation-mode-boundaries",
-      "prompt": "只做安装流程判断，不修改文件。分别处理：A. 目标根没有 AGENTS.md 和 .skills/；B. 有独立 AGENTS.md 和不可识别为本包的同名 .skills/；C. 有可识别的本包残留、断链、无效或缺失 kit_revision；D. runtime 完整且 base 可解析，准备升级。说明每项唯一 mode、第一轮 checkpoint，以及 install-only 时哪些项目 Bootstrap 输出必须标记 N/A。",
-      "expected": "A/B/C/D 分别命中 fresh、merge-existing-agents、repair-partial、upgrade-existing-kit；C 优先于 merge，未知 base 不进入正常 upgrade；install-only 只走安装 checkpoint，不伪造任务深度、项目类型、项目事实或 capability 快照。"
+      "prompt": "只做安装流程判断，不修改文件。规则包源仓库根 AGENTS.md/.skills 是开发规则，待分发内容由 runtime-manifest.json 和 loadRuntimeTree(revision) 提供。分别处理：A. 目标根没有 AGENTS.md 和 .skills/；B. 有独立 AGENTS.md 和不可识别为本包的同名 .skills/；C. 有可识别的本包残留、断链、无效或缺失 kit_revision；D. runtime 完整且 kit_revision 有效、base 可解析，准备升级；E. runtime 完整且 kit_revision 有效，但已安装 revision 的 base 资料无法取得，准备升级。说明每项唯一 mode、new/base 来源、第一轮 checkpoint，以及 install-only 时哪些 Project Setup 输出必须标记 N/A。",
+      "expected": "A/B/C/D/E 分别命中 fresh、merge-existing-agents、repair-partial、upgrade-existing-kit、upgrade-existing-kit；new 必须来自 WORKTREE manifest tree，不能复制源根开发 AGENTS/.skills 或 runtime-src 物理目录名；C 优先于 merge，D 用 loader 取得 base 后按逻辑 target 做 base/target/new 三方比较，E 仍保持 upgrade-existing-kit 但按 unknown-base 保守处理：不得自动 replace/delete，只有确认不存在且无碰撞的新 bundled 文件可提出 create，其余保持 conflict；install-only 只走安装 checkpoint，不伪造任务深度、项目类型、项目事实或 capability 快照。"
     },
     {
       "id": "revision-provenance-boundaries",
-      "prompt": "只做规则包来源 revision 判断，不执行写入。分别判断：A. source 工作树 clean 且有可解析 commit；B. clean 但没有可解析 commit，只有 release tag；C. source dirty 或 commit/tag 都不可用；D. 写入、路径检查或情景验证失败。说明 kit_revision 应记录什么、何时更新，以及规范化 content hash 的输入边界。",
-      "expected": "A 使用 commit，B 使用 release tag，C 使用规范化 content-sha256，不能把 dirty HEAD 当完整 revision；D 保留旧 revision，不在失败事务中更新；hash 只覆盖 AGENTS.md 与 .skills/**，路径使用 LF、UTF-8、无 BOM、前斜杠并按序处理。"
+      "prompt": "只做规则包来源 revision 判断，不执行写入。分别判断：A. source 工作树 clean 且有可解析 commit；B. clean 但没有可解析 commit，只有 release tag；C. source dirty 或 commit/tag 都不可用；D. 写入、路径检查或情景验证失败；E. installed revision 是 content-sha256，但没有对应内容缓存。说明 kit_revision 应记录什么、何时更新，loadRuntimeTree(revision) 如何处理，以及规范化 content hash 的输入边界。",
+      "expected": "A 使用 commit，B 使用 release tag，C 使用 WORKTREE 逻辑树的规范化 content-sha256，不能把 dirty HEAD 当完整 revision；D 保留旧 revision，不在失败事务中更新；E 不可反查 base，进入 unknown-base 保守分支，不能拿当前 HEAD 或旧根路径伪造 base；hash 只覆盖 manifest/legacy adapter 发出的逻辑 AGENTS.md 与 .skills/**，物理 runtime-src、源根开发规则和 source-only 文件不进入，路径使用 LF、UTF-8、无 BOM、前斜杠并按 ordinal 处理。"
     },
     {
       "id": "upgrade-file-transaction",
@@ -64,9 +118,39 @@
       "expected": "新增且无碰撞才 create，已有路径 conflict，未改动 bundled 才 replace/delete，本地修改 bundled conflict；上游删除 mixed 必须 keep 并标记 conflict；所有写入和验证成功后才更新 revision，失败保留旧值并给恢复入口。"
     },
     {
-      "id": "post-install-bootstrap-boundaries",
-      "prompt": "只做路由判断，不修改文件。分别处理：A. 只部署规则包；B. runtime 已就位，当前只是无需项目事实的只读查询；C. runtime 已就位且 bootstrap-required、任务是明确的 zero/micro；D. runtime 已就位且 bootstrap-required、任务为 standard/complex/cross；E. 用户要新增项目 Skill；F. 规则包自身需要升级；G. registry 已初始化，canonical route 命中但缺少对应快照。说明负责文件/流程、是否 Bootstrap、是否 project-customization，以及失败时的停止点。",
-      "expected": "A 使用安装 checkpoint，项目 Bootstrap=N/A；B 不进入 Bootstrap；C 按证据使用 bootstrap-lite；D 使用完整 Bootstrap；E 使用 project-customization；F 回到 ASSEMBLY_GUIDE/upgrade-existing-kit，不走项目自定义；G 标记 registry drift，停止当前 capability 并提交 dependency-capability 登记 checkpoint。"
+      "id": "post-install-project-setup-boundaries",
+      "prompt": "只做路由判断，不修改文件。分别处理：A. 只部署规则包；B. runtime 已就位，当前只是无需项目事实的只读查询；C1. runtime 已就位且 project-setup-required、任务是明确的 zero/micro，目标事实和窄验证入口均已确认；C2. 同为 zero/micro，但验证入口缺失或风险无法界定；C3. project-setup-lite 执行中发现契约、数据、权限、迁移、外部服务或跨项目影响；D. runtime 已就位且 project-setup-required、任务为 standard/complex/cross；E. 用户要新增项目 Skill；F. 规则包自身需要升级；G. registry 已初始化，canonical route 命中但缺少对应快照。说明负责文件/流程、是否 Project Setup、是否 project-customization，以及失败时的停止点。",
+      "expected": "A 使用安装 checkpoint，Project Setup=N/A；B 不进入 Project Setup；C1 使用 project-setup-lite；C2 不得勉强走 lite，提交 Full Project Setup checkpoint；C3 立即停止写入、升级任务分类并切换 Full Project Setup；D 使用 Full Project Setup；E 使用 project-customization；F 回到 ASSEMBLY_GUIDE/upgrade-existing-kit，不走项目自定义；G 标记 registry drift，停止当前 capability 并提交 dependency-capability 登记 checkpoint。"
+    },
+    {
+      "id": "sdd-query-zero-external-skill",
+      "prompt": "只做路由判断，不修改文件，也不要展开完整工作流。分别处理：A. 在入口和事实源都清楚的小项目中解释一个现有配置项，不依赖未配置项目事实；B. 修正一个已确认不改变行为、渲染、契约、数据、生成物或测试语义的单点注释错字；C. 审查一个非空 PR diff；D. 用户称任务是 zero，但现有证据不能证明修改不会改变行为；E. 用户输入 sdd_bootstrap，目标是启动已有 Spec 的 RIPER Research，不请求配置项目事实；F. 重型任务命中 $sdd-riper-one，系统确认它已安装且为 user-invoked/allow_implicit_invocation=false，但本轮未附加；G. 重型任务命中 $sdd-riper-one，当前上下文不可见且无法核验安装状态；H. 重型任务命中 $sdd-riper-one，系统确认它未安装。逐项说明是否必须加载外部 $sdd-riper-one-light/$sdd-riper-one、未加载时的直接恢复动作，以及即使跳过外部 Skill 仍必须保留什么。",
+      "expected": "A/B 在无重型信号且边界、事实源和验证均明确时可以跳过外部 SDD Skill；A 仍保留 Restate、Research、来源证据、不确定性和只读收口，B 仍保留目标检查、最窄变更、验证和最终摘要。C 必须使用 $sdd-riper-one。D 不得按用户标签绕过，先升级实际分类并加载对应 light/one。E 将 sdd_bootstrap 识别为 SDD RIPER 启动命令，不进入或触发 Project Setup。F 停止当前任务，要求用户通过当前运行时的 Skill 入口显式调用 $sdd-riper-one 后恢复，不提示重复安装。G 停止并给出中立二分：已安装则显式调用，否则安装、启用或更新；不得把不可见断言为未安装。H 停止并提示安装或启用。F-H 均不得改用 light 或 bundled 替代。有效 A/B 不因外部 SDD Skill 缺失而阻塞，但任何新重型信号、范围升级或必要事实不清都会结束绕过。"
+    },
+    {
+      "id": "explicit-codemap-intent",
+      "prompt": "只做路由判断，不修改或生成文件。分别处理：A. 项目很小且入口清楚，但用户明确要求调用 $codemap 创建项目总图；B. 用户只要求用自然语言分析一个清楚的局部模块边界，没有要求地图；C. 重构改变了入口和模块边界，用户要求检查现有地图是否漂移；D. 重构改变了入口和模块边界，但项目没有任何既有 CodeMap，用户也未要求创建持久地图。说明是否调用 Codemap、当前交付物和不会做的事。",
+      "expected": "A 的显式 Skill/项目总图意图直接命中 $codemap，不被‘小范围地形清楚’排除；B 不自动触发 Codemap，直接基于源码证据分析；C 命中 drift-check；D 因不存在既有地图不得执行 drift-check，架构影响仍可按地形信号命中 $codemap，但只能选择适当的 feature/project 后续动作。由于 Prompt 明确只读，四项都不得创建或更新持久文件；持久 CodeMap 只有写入授权和项目落点明确后才能产出。"
+    },
+    {
+      "id": "project-knowledge-loading",
+      "prompt": "只做入口判断，不修改文件。项目已经登记 PROJECT_KNOWLEDGE、CRITICAL_CONTEXT 和一个活动任务记录。分别处理：A. 清楚的单文件局部任务；B. new chat 中恢复活动任务；C. 排查一个曾多次出现的关键链路故障；D. 两个子任务需要对共享契约作决定。说明先读取哪些项目级/任务级上下文，以及哪些内容不应全量加载。",
+      "expected": "A 只读取当前任务必要事实，不机械加载全部长期知识；B 先读取活动 spec、progress、task plan 与 handoff 恢复锚点，再按登记入口补充相关长期项目知识；C 读取与故障相关的 CRITICAL_CONTEXT/PROJECT_KNOWLEDGE 及源码、测试证据；D 读取主 spec、共享事实源和相关项目知识。所有分支都按需加载，不复制完整知识库，不用旧知识覆盖当前源码和验证。"
+    },
+    {
+      "id": "delegation-main-ownership",
+      "prompt": "一个主任务准备把调查、实现和测试分别委派给多个执行者。只说明责任和完成门禁，不创建任务文件。谁负责范围与方案裁决、谁可以实施、谁整合结果、什么时候可以宣布完成？",
+      "expected": "执行者可以分别承担调查、实现和测试，但委派不转移主任务对范围/方案裁决、冲突处理、结果整合和最终验证的责任；共享写入点必须有唯一负责人。主任务只能在复核来源、diff、依赖和验收证据后宣布完成，不能把子任务自报完成直接当作最终结论。"
+    },
+    {
+      "id": "task-index-lifecycle",
+      "prompt": "只做任务索引规则判断，不修改文件。A-C 的项目已配置 task_index_mode=required：A. Codemap 发现一个尚未形成可验收目标的问题线索；B. 用户决定推进该候选并创建且持久化 micro-spec；C. tracked 任务的 task plan 已进入 Execute，但任务索引仍显示待批准。D. 一个跨项目父任务的工作区为 required，Provider 参与项目为 required 且持久化本地 spec，Consumer 参与项目为 disabled 且持久化本地 spec，另有一个 Observer-only 项目。E. 另一个 required 的 cross-lite 参与项目只使用内联 micro-spec，没有持久化本地任务文档。说明编号、状态来源、同步动作、跨层链接和不会写入索引的正文。",
+      "expected": "A 只进入候选待办且不占正式编号；B 先确认目标与验收，在一个逻辑事务内创建并持久化 micro-spec、分配编号、登记正式任务并移除候选；C 以 task plan 为权威，将索引的文档状态标记为需同步并修复为带来源的派生摘要，不能用索引覆盖 task plan，验证和下一步仍读 progress；D 在工作区索引登记父级任务，Provider 使用独立本地编号和索引并与父级双向链接，Consumer 不创建或同步本地索引、本地索引路径和锚点均为 N/A、由持久化本地 spec 直接反向链接父级，Observer-only 不创建本地正式任务；E 不登记本地任务索引且文档/索引锚点为 N/A，由父级 spec 记录实际变更或验证证据。任何分支都不把合同、验证正文或下一步复制进任务索引。"
+    },
+    {
+      "id": "cross-project-depth-boundaries",
+      "prompt": "只做跨项目路由判断，不修改文件，也不要展开完整工作流。分别处理：A. 仅在两个已授权项目中做只读影响核验，当前没有任何参与项目；B. 一个参与项目加一个 Observer，契约稳定、无 breaking/迁移/并行发布且可单阶段完成；C. 两个参与项目，但契约稳定性或高风险条件尚未查清；D. 三个参与项目，即使都声称低风险；E. B 中的 Observer 在核验后确认实际需要修改。逐项说明父级深度、Observer 是否计数、是否允许实现、何时重新判定；并说明读取 bundled cross workflow 前需要的外部 SDD Skill 及其缺失时的停止点。",
+      "expected": "A 选择 observe-only，只保留获授权的调查记录，不创建子项目施工 spec；B 选择 cross-lite，Observer 不计入参与项目数；C 暂按 cross-full 调查，稳定性/风险证据未齐前禁止实现，证据充分后才可在 checkpoint 前降为 cross-lite；D 直接 cross-full；E 将 Observer 升级为参与项目并按新参与数和风险重新判定，不能沿用旧深度。任一参与项目开始实现前都要确认用户授权范围、工作区 registry、父级跨项目 spec 与 Contract Interfaces、Provider/Consumer 顺序和本地执行门禁；父级在读取 bundled cross workflow 前必须加载 `$sdd-riper-one`，缺失时停止并提示安装，不用模板或本地文件替代。"
     }
   ]
 }

@@ -14,7 +14,7 @@
 
 ## 当前操作状态
 
-- 当前阶段：`Research / Plan / Execute / Review / Done / Blocked`
+- 当前阶段：`Research / Plan / Execute / Review`
 - 当前责任：
 - 最后更新：
 - 最近 progress 锚点：

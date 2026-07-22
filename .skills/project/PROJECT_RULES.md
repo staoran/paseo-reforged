@@ -7,7 +7,7 @@
 | 字段 | 值 |
 | --- | --- |
 | project_id | `paseo` |
-| kit_revision | `content-sha256:e3dc4a9c4da5d7a9a9dc0eb2c0d52251dfb2efde1104d97d4c9c0aa395782119` |
+| kit_revision | `content-sha256:b14275faea99b84bef3a771422992fda5a2085f5ea508fd29aa9a8b67ff9bc18` |
 | 项目类型 | `monorepo` |
 | 根目录 | `E:\Code\paseo` |
 | 默认协作语言 | 中文 |
@@ -19,11 +19,12 @@
 | 文档是否需审批 | 项目规则、索引、长期知识和持久 CodeMap 需要 checkpoint；用户已明确请求且范围固定的普通文档按当前任务授权执行 |
 | skill_registry | `.skills/project/DEPENDENCY_SKILLS.md` |
 | documentation_layout | 见“文档布局” |
+| task_index_mode | `disabled` |
 | micro_spec_persistence | `inline-allowed` |
 
 ## 运行与验证命令
 
-以下命令均由根 `package.json`、`CLAUDE.md` 或 `docs/development.md` 确认；本次纯文档任务未执行它们。
+以下命令均由根 `package.json`、`CLAUDE.md` 或 `docs/development.md` 确认；按修改范围选择最窄充分验证。
 
 | 场景 | 命令 | 适用条件 | 事实证据 |
 | --- | --- | --- | --- |
@@ -72,8 +73,6 @@
 | critical context | `.skills/project/CRITICAL_CONTEXT.md` | 仅长期高风险事实 | 稳定且跨任务复用的关键事实变化时 |
 | project knowledge | `.skills/project/PROJECT_KNOWLEDGE.md` | 仅已验证项目知识 | 事实稳定且不属于现有 `docs/` 时 |
 
-本次 CodeMap 任务按用户明确覆盖，不创建 `mydocs/tasks/0001_项目代码地图/`。
-
 ## 工作区与跨项目配置
 
 | 字段 | 值 |
@@ -108,6 +107,6 @@
 
 ## 已知缺口
 
-- Bootstrap 只验证了命令定义与文档入口，未执行构建、typecheck、lint 或测试。
+- Project Setup 尚未执行构建或完整测试；`2026-07-22` Kit 升级复核已通过 typecheck 与 lint，测试仍按具体任务定向运行。
 - Hub、browser automation、voice、schedule/loop/chat 等能力尚无专用 Feature CodeMap。
 - CodeMap 的事实随源码变化可能漂移；以 `.skills/project/CODEMAP_INDEX.md` 的信号触发复核。

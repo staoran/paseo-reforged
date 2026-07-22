@@ -4,18 +4,18 @@
   "scenarios": [
     {
       "id": "fresh-install",
-      "setup": "目标根没有 AGENTS.md 和 .skills/；规则包源目录可能是 clean Git、release tag 或 dirty/无 Git。",
+      "setup": "目标根没有 AGENTS.md 和 .skills/；规则包源根 AGENTS.md/.skills 是 Kit 开发规则，runtime-manifest.json 将 runtime-src/root-agents.md 和 root-skills 映射为逻辑目标；source 可能是 clean Git、release tag 或 dirty/无 Git。",
       "expected": [
-        "选择 fresh 和安装 checkpoint，不选择 bootstrap-lite。",
-        "只创建一个根 AGENTS.md 与完整 runtime .skills/。",
-        "仅部署规则包时，并行工程任务和项目 Bootstrap 标记 N/A；不伪造 operating-model 任务深度，也不收集项目类型或 capability 快照。",
+        "选择 fresh 和安装 checkpoint，不选择 project-setup-lite。",
+        "用 loadRuntimeTree(WORKTREE) 只创建一个逻辑根 AGENTS.md 与完整 runtime .skills/；不复制源根开发规则或 runtime-src 物理目录名。",
+        "仅部署规则包时，并行工程任务和 Project Setup 标记 N/A；不伪造 operating-model 任务深度，也不收集项目类型或 capability 快照。",
         "clean Git 使用 commit，clean 无 commit 使用 release tag，其他情况使用规范化 content hash；写入和质量检查通过后才更新 PROJECT_RULES.md 的 kit_revision 字段。",
-        "maintenance/、README.md、ASSEMBLY_GUIDE.md 和两个外部 Prompt 不复制。"
+        "runtime-manifest.json、源根开发 AGENTS.md/.skills、runtime-src 目录名、maintenance/、README.md、ASSEMBLY_GUIDE.md 和两个外部 Prompt 不复制。"
       ]
     },
     {
       "id": "merge-existing-agents",
-      "setup": "目标存在独立的根/子目录 AGENTS.md、同名但不可识别为本包的规则目录、项目事实和项目 Skill。",
+      "setup": "目标存在独立的根/子目录 AGENTS.md、同名但不可识别为本包的规则目录、项目事实和项目 Skill；source new 已由 manifest/loader 装载为逻辑 AGENTS.md/.skills。",
       "expected": [
         "选择 merge-existing-agents，先输出逐文件所有权和冲突矩阵。",
         "不可识别为本包的同名 .skills/ 不会仅因缺少 kit_revision 被误判为 repair-partial。",
@@ -29,9 +29,19 @@
       "setup": "目标存在可识别的本包残留、断裂引用和已有根 AGENTS.md，但 kit_revision 缺失、为 UNCONFIGURED 或格式无效，且部分既有 bundled/mixed 文件已被本地修改。",
       "expected": [
         "选择 repair-partial；该更具体状态优先于 merge-existing-agents，未知 base 不进入正常 upgrade-existing-kit。",
-        "不自动替换或删除任何既有路径；mixed、project-owned、本地修改和未知归属内容保持不变并标记 conflict。",
+        "不自动替换或删除任何既有路径；project-owned 保持 untouched，mixed、本地修改和未知归属内容保持不变并标记 conflict。",
         "只有目标路径确实不存在、没有所有权碰撞且恢复 runtime 所必需的新 bundled 文件才可 create。",
         "全部断链和冲突裁决并验证通过后才记录新 kit_revision；部分修复保留旧值或 UNCONFIGURED 并给出恢复入口。"
+      ]
+    },
+    {
+      "id": "repair-partial-valid-base",
+      "setup": "目标存在可识别的本包残留、缺失文件或断裂引用，runtime 不完整；kit_revision 格式有效且 loadRuntimeTree(installed_revision) 能取得 base，target 还包含本地修改。",
+      "expected": [
+        "选择 repair-partial；runtime 不完整或断链优先于 merge，且不因 base 可解析而改走 upgrade-existing-kit。",
+        "new 使用 loadRuntimeTree(WORKTREE)，base 使用 loadRuntimeTree(installed_revision)，按逻辑 target 比较 base/target/new。",
+        "只修复三方证据能够证明的缺失或断链；主动删除、本地修改、mixed 和 project-owned 内容不被误判为安装不完整。",
+        "第一轮保持只读并输出安装 checkpoint；全部动作、冲突和验证通过后才更新 kit_revision，部分修复保留旧值并给出恢复入口。"
       ]
     },
     {
@@ -47,19 +57,20 @@
     },
     {
       "id": "revision-source-matrix",
-      "setup": "分别提供 clean 且有 commit、clean 且只有 release tag、dirty 且无可用 commit/tag，以及写入或验证失败的规则包源目录。",
+      "setup": "分别提供 clean 且有 commit、clean 且只有 release tag、dirty 且无可用 commit/tag、写入或验证失败，以及仅有 content-sha256 但无内容缓存的规则包 source/base。",
       "expected": [
         "clean 且有可解析 commit 时记录 commit；clean 且无 commit 时记录 release tag；dirty 或两者都不可用时记录规范化 content-sha256。",
-        "content hash 只覆盖 AGENTS.md 与 .skills/**，使用 UTF-8、无 BOM、LF、前斜杠相对路径和 ordinal 排序；等价 CRLF/BOM 文本得到同一 hash。",
+        "content hash 只覆盖 loadRuntimeTree 发出的逻辑 AGENTS.md 与 .skills/**，不覆盖物理 runtime-src 或源根开发规则；使用 UTF-8、无 BOM、LF、前斜杠 target 和 ordinal 排序，等价 CRLF/BOM 文本得到同一 hash。",
+        "content-sha256 无内容缓存时 base 不可解析，不能用当前 HEAD 或旧根布局伪造 base，升级进入 unknown-base 保守分支。",
         "写入、路径检查和情景验证全部成功后才更新 kit_revision；任一失败保留旧 revision，并记录恢复入口。"
       ]
     },
     {
-      "id": "post-install-bootstrap-routing",
-      "setup": "规则包已完成 fresh、merge、repair 或 upgrade，目标 runtime 已就位；随后分别触发 install-only、只读查询、bootstrap-required 状态的 zero/micro、bootstrap-required 状态的 standard/complex/cross、项目自定义、规则包升级和已初始化 registry 缺少当前 canonical route 快照。",
+      "id": "post-install-project-setup-routing",
+      "setup": "规则包已完成 fresh、merge、repair 或 upgrade，目标 runtime 已就位；随后分别触发 install-only、只读查询、project-setup-required 状态的 zero/micro、project-setup-required 状态的 standard/complex/cross、项目自定义、规则包升级和已初始化 registry 缺少当前 canonical route 快照。",
       "expected": [
-        "install-only 只输出安装 checkpoint，项目 Bootstrap 和工程任务分类标记 N/A。",
-        "不依赖项目事实的只读查询不进入 Bootstrap；zero/micro 只有证据齐全时使用 bootstrap-lite，其他深度使用完整 Bootstrap。",
+        "install-only 只输出安装 checkpoint，Project Setup 和工程任务分类标记 N/A。",
+        "不依赖项目事实的只读查询不进入 Project Setup；zero/micro 只有证据齐全时使用 project-setup-lite，其他深度使用 Full Project Setup。",
         "项目自定义走 project-customization；规则包升级回到 ASSEMBLY_GUIDE 的 upgrade-existing-kit；canonical route 命中但 registry 缺行时停止 capability 并提交 dependency-capability 登记 checkpoint。"
       ]
     }

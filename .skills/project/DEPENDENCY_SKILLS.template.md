@@ -2,7 +2,7 @@
 
 ## 核心能力实例
 
-本表只登记批准后的项目快照。Bootstrap 从 canonical route 解析 capability、依赖和缺失动作；快照与 route 冲突时停止并更新快照，不把项目值当作 override。
+本表只登记批准后的项目快照。Project Setup 从 canonical route 解析 capability、依赖和缺失动作；快照与 route 冲突时停止并更新快照，不把项目值当作 override。
 
 `source_scope=bundled` 的记录必须引用 `.skills/project/PROJECT_RULES.md` 的 `kit_revision` 字段；规则包安装、修复或升级成功后，在同一工作单元更新 revision、相关 `last_verified` 和 evidence。
 

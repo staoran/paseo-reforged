@@ -1,10 +1,10 @@
 # 核心运行模型
 
-所有工程任务在本文件完成分类后，由技能注册表选中的全局 SDD Skill 推进。任务分类只决定调查深度、持久化密度、执行门禁和验证强度，不决定是否启用 SDD 核心闭环。
+所有工程任务在本文件完成分类后都保留 SDD 核心闭环。任务分类决定调查深度、持久化密度、执行门禁和验证强度；外部 SDD Skill 是否加载及 light/one 选择只由 `skill-coordination.md` 的 canonical route 决定。
 
 ## 任务分类
 
-先根据用户目标和已知影响做初始分类，再按 `PROJECT_RULES.md` 选择 Bootstrap 路径。Bootstrap 只补项目事实，不改变任务分类；调查得到新证据后再按本节的升级或降级规则调整。
+先根据用户目标和已知影响做初始分类，再按 `PROJECT_RULES.md` 选择 Project Setup 路径。Project Setup 只补项目事实，不改变任务分类；调查得到新证据后再按本节的升级或降级规则调整。
 
 ### 唯一路由决策
 
@@ -39,7 +39,7 @@
 | `complex` | 完整 Spec Record、明确 checkpoint、三轴 Review 与恢复锚点 | Innovate、Codemap、Grill 等仍按实际信号启用，不为仪式强制生成 |
 | `cross` | 父级契约、跨项目安全门禁、各参与项目本地闭环与一致性证据 | 按 `observe-only/cross-lite/cross-full` 裁剪任务包密度 |
 
-`$sdd-riper-one-light` / `$sdd-riper-one` 是按任务模式选择的必需 Harness Skill；所选 Skill 缺失时停止当前任务并提示安装。本文件定义项目分类、产物和门禁合同，不替代缺失的全局 Skill。Codemap、Karpathy、Grill、第三方文档能力和项目私有 Skill 都是 SDD 阶段能力，不能取代主循环。
+SDD 核心闭环不可通过项目配置关闭。查询或 `zero` 只有满足 `skill-coordination.md#sdd-riper` 的全部证据条件时才可跳过外部 SDD Skill；`micro`、`standard`、`complex`、`cross` 和任一重型信号仍必须加载 canonical route 选择的 light/one，缺失时停止并提示安装。Codemap、Karpathy、Grill、第三方文档能力和项目私有 Skill 都是 SDD 阶段能力，不能取代主循环。
 
 ## 执行门禁
 

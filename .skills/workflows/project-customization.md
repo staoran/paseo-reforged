@@ -16,7 +16,9 @@
 | `critical-context` | `CRITICAL_CONTEXT.md` | `project-customization/knowledge-and-context.md` |
 | `codemap` | Codemap 文件与 `CODEMAP_INDEX.md` | `project-customization/knowledge-and-context.md` |
 
-任务目录命名、文档布局和项目专属任务模板属于 `project-rules`。首次安装、已有 `AGENTS.md` 合并、部分修复和规则包自身升级使用源规则包组装流程；runtime 已就位后的 `bootstrap-required` 配置使用目标项目 `PROJECT_RULES.md`。本模块不建立第二套初始化或规则包升级流程。
+任务目录命名、文档布局和项目专属任务模板属于 `project-rules`。首次安装、已有 `AGENTS.md` 合并、部分修复和规则包自身升级使用源规则包组装流程；runtime 已就位后的 `project-setup-required` 配置使用目标项目 `PROJECT_RULES.md`。本模块不建立第二套初始化或规则包升级流程。
+
+用户只要求 Installation、Project Setup 与 project-customization 的多分支路由判断时，本段就是完整事实源，不下钻分流规范的依赖细节。以题设状态为事实，用一张紧凑表给出负责流程、Project Setup、project-customization 和停止点：只部署规则包的 A 行固定为“走 Installation 且 Project Setup=`N/A`；Installation checkpoint 批准前禁止部署或写入”；无需项目事实的只读查询不进入 Project Setup；条件齐全的 `zero/micro` 使用 `project-setup-lite`，条件缺失或执行中发现高风险时停止写入并转 Full Project Setup；`standard/complex/cross` 使用 Full Project Setup；新增项目 Skill 的 E 行固定为“进入 `project-skill`；project-customization checkpoint 获批且必需 capability 可用前不得创建或启用”；规则包自身升级的 F 行固定为“返回源规则包组装流程且 Project Setup=`N/A`；Installation checkpoint 获批前不得升级写入”；G 行固定为“标记 registry drift，停止当前 capability 并进入 `dependency-capability` 登记 checkpoint”。该表最后一行就是响应收口；输出只包含题目要求的四列和直接停止动作。真实创建或修改任务仍按命中分流规范执行全部依赖门禁。
 
 ## 共享事务
 
@@ -30,7 +32,7 @@
 
 ## 共同门禁
 
-- `bootstrap-required` 且当前修改依赖未配置项目事实时，先走完整 Bootstrap checkpoint。
+- `project-setup-required` 且当前修改依赖未配置项目事实时，先走 Full Project Setup checkpoint。
 - 命中必需全局 Skill/policy/tool 而依赖不可用时，必须停止当前任务，记录 evidence 并提示安装/配置；不得创建、读取或生成本地等价替代。
 - 项目规则不能关闭 SDD-RIPER 核心闭环或跨项目安全边界；override 不能降低系统、用户、安全或执行授权。
 - 默认不 stage 或提交 Feature Spec、handoff、项目记忆、私有知识、用户偏好或本地运行数据；提交边界只由用户和项目规则决定。

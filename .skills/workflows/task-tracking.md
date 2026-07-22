@@ -44,6 +44,18 @@
 | 暂停或交接 | progress 与 handoff，留下恢复锚点 |
 | 收尾 | spec、progress、任务索引和 Project Sync Scan |
 
+## 任务索引同步
+
+`PROJECT_RULES.md` 配置 `task_index_mode=required` 时，任务索引是持久任务的编号、候选待办和生命周期组合视图：
+
+- 正式任务先创建 spec/micro-spec，再分配编号并登记；内联 query、`zero` 和内联 micro-spec 不登记。
+- 创建、升级、checkpoint、批准、执行、验证、人工验收、提交、收口、暂停、取消、重开或取代任务时，在同一工作单元更新状态摘要和来源锚点。
+- tracked 任务的当前操作状态来自 task plan；索引生命周期摘要仍按 spec、task plan 与 progress 中对应事实生成，验证、下一步和提交关联只来自 progress。未跟踪任务按 spec/micro-spec 与 progress 生成摘要。
+- 索引与权威记录冲突时将文档状态标记为 `需同步`，先按权威记录修复索引；不得用索引反向裁决状态。
+- 候选晋升时先确认目标与验收，在一个逻辑事务内创建任务文档、分配编号并登记正式任务、移除候选；任一步失败都停止执行并进入编号/路径对账。
+
+`task_index_mode=disabled` 时，不创建或同步任务索引，也不在任务文件中伪造索引锚点。
+
 ## 进度质量要求
 
 每条 progress 记录回答：做了什么、为什么做、结果和证据在哪里、什么在阻塞、残余风险和下一步是什么；收尾时再记录实际文档同步与项目要求的提交关联。task plan 只保留当前状态与最近 progress 锚点，不能重写结果、下一步或验收正文。

@@ -18,7 +18,7 @@ tracked 模式中，正文只写在以下唯一归属文档；其他位置只能
 | subtask | 单元目标/非目标、输入输出、允许路径、依赖、验收要求、计划风险/回退和升级对象 | 状态、实际变更、验证结果、失败、残余风险、下一步 |
 | findings | 调查来源、未验证假设、根因调查、可信度和影响 | 普通执行或测试时间线、验证汇总、未调查的失败、已采纳决策正文 |
 | progress | 执行与验证时间线、实现说明、实际变更、结果/证据、失败/阻塞、残余风险、下一步、实际文档同步与提交关联；单阶段 `standard` 可独立使用，tracked 任务使用任务包内的同类记录 | 完整设计、合同、计划风险/回退、根因分析、当前状态快照 |
-| task index | 编号策略与基线、任务 ID、文档类型与可达状态、路径、优先级和 task plan/progress 导航锚点 | tracked 任务的操作状态、下一步、验证结果或可裁决正文 |
+| task index | 编号策略与基线、任务 ID、派生生命周期状态摘要、文档类型与可达状态、路径、优先级和 task plan/progress 导航锚点 | 权威操作状态、下一步、验证结果或可裁决正文 |
 | codemap | 代码入口、依赖、数据流、边界、漂移日期 | 业务愿望或未经验证的推测 |
 | critical context | 高风险流程、状态机、兼容性、事故教训和事实源 | 一次性任务过程 |
 | project knowledge | 已验证、稳定、跨任务复用的事实与决策 | 敏感数据、个人偏好原文、临时猜测 |
@@ -31,7 +31,8 @@ tracked 模式中，正文只写在以下唯一归属文档；其他位置只能
 - 调查来源、未验证假设和根因只写 `findings`。结论被采纳后，`spec` 只写结论及 `findings` 锚点。
 - 启用 tracking 时，`task plan` 是阶段和子任务**当前**操作状态的唯一快照；单阶段未跟踪任务不创建 task plan，也不声称持久当前状态。`progress` 记录按时间发生的动作和结果。plan 不复制 progress 的结果或下一步，progress 不裁决当前状态。
 - 执行或验证失败先写 `progress`；需要根因调查时，`findings` 链接对应 progress 锚点。
-- `task index` 只负责编号和导航；文档状态只说明任务文件是否可达，不表示操作状态。操作状态读 task plan，下一步、验证、实际同步和提交关联读 progress。
+- `task index` 负责编号、候选待办和任务组合视图；其中生命周期状态只是由 spec、task plan 或 progress 生成的可重建投影，不是权威操作状态。tracked 任务的当前操作状态读 task plan，下一步、验证、实际同步和提交关联读 progress；发生冲突时将索引的文档状态标记为 `需同步`，不得用索引覆盖权威记录。
+- findings 中的候选待办只保存当前调查产生、尚未经任务裁决的发现；项目采用任务索引且决定保留该候选时，将其登记到 task index 并在 findings 留来源锚点。候选晋升后从候选表移除，来源写入正式任务记录；不要在两处并行维护候选正文。
 - `cross-full` 父级 `SPEC.md` 持唯一项目注册表、范围、契约、顺序、门禁与 Observer 证明；父级 task plan 持当前操作状态；父级 progress 持实际变更、验证、发布/回退时间线、残余风险和下一步。未启用 tracking 的 `cross-lite`/`observe-only`，父级 `SPEC.md` 可直接记录结论。
 
 ## 实现说明
@@ -56,6 +57,13 @@ tracked 模式中，正文只写在以下唯一归属文档；其他位置只能
 候选属于项目 Skill、规则/语言/文档布局、依赖能力、Skill override、长期知识、关键上下文或 Codemap 时，使用 `workflows/project-customization.md` 选择唯一 mode。一次性任务流水继续留在当前 Spec Record，不因“可能有用”自动升级为项目自定义。
 
 候选要写明事实、来源、适用边界、验证证据、建议落点和敏感性。只有稳定、可验证且获项目政策允许的内容才进入长期文档。
+
+## 项目长期知识读取
+
+- 普通局部任务只读取当前目标所需事实，不把 `PROJECT_KNOWLEDGE.md`、`CRITICAL_CONTEXT.md`、Codemap 或历史任务包作为常驻 Prompt。
+- new chat 恢复先读取活动 spec、progress、task plan 与 handoff 锚点，再按 `PROJECT_RULES.md` 登记的落点读取与当前目标相关的项目长期知识。
+- debug、重复故障、关键链路或跨任务共享决策出现时，读取相关 `PROJECT_KNOWLEDGE.md` / `CRITICAL_CONTEXT.md` 和当前源码、测试；长期知识只提供索引与已验证背景，冲突时以当前事实源和新证据为准。
+- 长期知识入口缺失、未初始化或与任务无关时不全量搜索、不虚构事实；只有当前结论确实依赖该缺失事实时才形成 Project Setup 或 project-customization 阻塞。
 
 ## 注入与隐私边界
 

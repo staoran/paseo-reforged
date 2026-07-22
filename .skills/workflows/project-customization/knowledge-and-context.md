@@ -21,9 +21,9 @@ Codemap 是 SDD Research / Pre-Research 的条件能力，不是平行主流程�
 
 - 陌生代码库、跨模块链路、架构/边界影响、跨项目定位或既有地图漂移时，先核对 `$codemap` 依赖，再按 SDD scope 调用。
 - `$codemap` 未安装、不可加载或版本策略不满足时，立即停止当前任务并提示安装/更新；不得生成手工 CodeMap 替代。
-- 小范围且入口、依赖、事实源已经清楚时不触发 Codemap，直接读取源码与测试；这不是缺失依赖 fallback。
+- 没有显式 Codemap 意图且小范围任务的入口、依赖、事实源已经清楚时不触发 Codemap，直接读取源码与测试；这不是缺失依赖 fallback。
 - 全局 Skill 产出后，项目层只登记地图路径、覆盖范围、新鲜度、漂移信号、关联 Spec 和验证 evidence。
-- Execute 改变入口、模块边界、依赖、数据流、生成链路或验证入口后，Review 调用 `$codemap` drift-check；无漂移只记录结论。
+- Execute 改变入口、模块边界、依赖、数据流、生成链路或验证入口后，Review 只有在存在与变更范围相关的既有 CodeMap 时才调用 `$codemap` drift-check；无漂移只记录结论。没有既有地图时不得执行 drift-check；重新按 canonical route 判断是否需要 feature/project 模式，且未获写入授权不得创建持久地图。
 
 ## 隐私与失败边界
 

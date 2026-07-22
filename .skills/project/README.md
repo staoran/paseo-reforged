@@ -1,6 +1,6 @@
 # 项目层文档组
 
-本目录已经包含同名 Bootstrap 文件。首次任务先按 `PROJECT_RULES.md` 判断：满足全部低风险条件的 `zero/micro` 使用内联 `bootstrap-lite`；其他任务提交完整 Bootstrap checkpoint。完整 Bootstrap 获批后，用相应 `.template.md` 的结构初始化所需字段，不要直接重命名模板并与同名文件冲突。这里只是项目的权威导航层，不是通用规则的副本。
+本目录已经包含同名 Project Setup 文件。首次任务先按 `PROJECT_RULES.md` 判断：满足全部低风险条件的 `zero/micro` 使用内联 `project-setup-lite`；其他任务提交 Full Project Setup checkpoint。Full Project Setup 获批后，用相应 `.template.md` 的结构初始化所需字段，不要直接重命名模板并与同名文件冲突。这里只是项目的权威导航层，不是通用规则的副本。
 
 安装到已有项目时，目标根现存 `AGENTS.md` 必须先保留并做内容级合并，不能由规则包整文件覆盖；本目录也不能覆盖更高优先级的根或子目录规则。目标已有同名 `.skills` 文件时逐文件确定唯一事实源，并保留项目私有能力和用户改动。
 
@@ -17,6 +17,6 @@
 
 ## 初始化后的自定义
 
-Bootstrap 完成后，不需要手工猜测应该改哪个文件。向 Agent 明确要新增或调整的长期内容，并让它使用 `.skills/workflows/project-customization.md`；skills-aware runtime 可调用 `$manage-project-customizations`。规则包自身的升级不走项目自定义 mode，而由规则包源目录的 `ASSEMBLY_GUIDE.md` 中 `upgrade-existing-kit` 流程处理。项目自定义统一由 workflow 选择唯一落点：`project-skill`、`project-rules`、`dependency-capability`、`skill-override`、`project-knowledge`、`critical-context`、`codemap`。
+Project Setup 完成后，不需要手工猜测应该改哪个文件。向 Agent 明确要新增或调整的长期内容，并让它使用 `.skills/workflows/project-customization.md`；skills-aware runtime 可调用 `$manage-project-customizations`。规则包自身的升级不走项目自定义 mode，而由规则包源目录的 `ASSEMBLY_GUIDE.md` 中 `upgrade-existing-kit` 流程处理。项目自定义统一由 workflow 选择唯一落点：`project-skill`、`project-rules`、`dependency-capability`、`skill-override`、`project-knowledge`、`critical-context`、`codemap`。
 
 第一轮必须只读调查并给出精确文件动作与 checkpoint；批准后才写入、登记、验证和 Reverse Sync。一次性任务事实、临时失败和未验证假设仍留在当前 Spec Record，不进入本目录的长期文件。

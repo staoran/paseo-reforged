@@ -1,19 +1,19 @@
 # Paseo 核心依赖与技能登记
 
-最后核对：`2026-07-20`
+最后核对：`2026-07-22`
 
 ## 核心能力实例
 
 | capability              | canonical_route                                         | required_dependency                              | source_scope   | version_policy       | missing_action       | evidence                                                                                                           | last_verified |
 | ----------------------- | ------------------------------------------------------- | ------------------------------------------------ | -------------- | -------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------ | ------------- |
-| SDD Harness（轻量路径） | `../core/skill-coordination.md#sdd-riper`               | `$sdd-riper-one-light`                           | `global-agent` | `floating-installed` | `stop-and-install`   | 已加载全局 Skill；本次完成 Restate、Research、Bootstrap checkpoint 与批准边界                                      | `2026-07-20`  |
+| SDD Harness（轻量路径） | `../core/skill-coordination.md#sdd-riper`               | `$sdd-riper-one-light`                           | `global-agent` | `floating-installed` | `stop-and-install`   | 已加载全局 Skill；本次完成 Restate、Research、Installation checkpoint、批准边界与验证闭环                           | `2026-07-22`  |
 | CodeMap                 | `../core/skill-coordination.md#codemap`                 | `$codemap`                                       | `global-agent` | `floating-installed` | `stop-and-install`   | 已加载 `C:/Users/staor/.skills-manager/skills/codemap/SKILL.md`，并按 project/feature 模板产出五张 map             | `2026-07-20`  |
-| 项目自定义              | `../core/skill-coordination.md#项目-skill-与自定义内容` | `.skills/workflows/project-customization.md`     | `bundled`      | `kit-version`        | `stop-and-repair`    | 工作流存在并完成 project-rules、dependency-capability、codemap checkpoint；revision 见 `PROJECT_RULES.md`          | `2026-07-20`  |
+| 项目自定义              | `../core/skill-coordination.md#项目-skill-与自定义内容` | `.skills/workflows/project-customization.md`     | `bundled`      | `kit-version`        | `stop-and-repair`    | 工作流存在；本次完成 project-rules 与 dependency-capability 复核；revision 见 `PROJECT_RULES.md`                    | `2026-07-22`  |
 | 第三方官方文档          | 根 `AGENTS.md#context7`                                 | Context7 MCP：`resolve-library-id`、`query-docs` | `global-agent` | `managed-global`     | `stop-and-configure` | 当前 runtime 可发现 `mcp__context7__resolve_library_id` 与 `mcp__context7__query_docs`；本次内部源码地图未触发查询 | `2026-07-20`  |
-| 需求提纯                | `../core/skill-coordination.md#能力选择`                | `.skills/workflows/grill-me.md`                  | `bundled`      | `kit-version`        | `stop-and-repair`    | 文件存在；由 `enabled_workflows` 启用，revision 见 `PROJECT_RULES.md`                                              | `2026-07-20`  |
-| 任务跟踪                | `../core/skill-coordination.md#能力选择`                | `.skills/workflows/task-tracking.md`             | `bundled`      | `kit-version`        | `stop-and-repair`    | 文件存在；本次用户明确覆盖为不创建任务包                                                                           | `2026-07-20`  |
-| 任务拆解                | `../core/skill-coordination.md#能力选择`                | `.skills/workflows/task-decomposition.md`        | `bundled`      | `kit-version`        | `stop-and-repair`    | 文件存在；由 `enabled_workflows` 启用，revision 见 `PROJECT_RULES.md`                                              | `2026-07-20`  |
-| 跨任务协作              | `../core/skill-coordination.md#能力选择`                | `.skills/workflows/cross-task-collaboration.md`  | `bundled`      | `kit-version`        | `stop-and-repair`    | 文件存在；由 `enabled_workflows` 启用，revision 见 `PROJECT_RULES.md`                                              | `2026-07-20`  |
+| 需求提纯                | `../core/skill-coordination.md#能力选择`                | `.skills/workflows/grill-me.md`                  | `bundled`      | `kit-version`        | `stop-and-repair`    | 文件存在；本次无需求歧义，未触发执行；revision 见 `PROJECT_RULES.md`                                                | `2026-07-22`  |
+| 任务跟踪                | `../core/skill-coordination.md#能力选择`                | `.skills/workflows/task-tracking.md`             | `bundled`      | `kit-version`        | `stop-and-repair`    | 文件存在；本次创建 `0003` Spec/progress，`task_index_mode=disabled`，未创建任务索引                                 | `2026-07-22`  |
+| 任务拆解                | `../core/skill-coordination.md#能力选择`                | `.skills/workflows/task-decomposition.md`        | `bundled`      | `kit-version`        | `stop-and-repair`    | 文件存在；本次为单阶段升级，未触发拆解；revision 见 `PROJECT_RULES.md`                                              | `2026-07-22`  |
+| 跨任务协作              | `../core/skill-coordination.md#能力选择`                | `.skills/workflows/cross-task-collaboration.md`  | `bundled`      | `kit-version`        | `stop-and-repair`    | 文件存在；本次无跨任务共享写入，未触发执行；revision 见 `PROJECT_RULES.md`                                          | `2026-07-22`  |
 
 ## 项目依赖入口
 
