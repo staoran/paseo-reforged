@@ -14,8 +14,8 @@ export const Route = createFileRoute("/blog/")({
   },
   head: () =>
     pageMeta(
-      "Blog – Updates and announcements from the Paseo team",
-      "Product updates, technical posts, and announcements from the Paseo team. Notes on building a self-hosted, multi-agent dev environment for your phone.",
+      "Blog - Updates from Paseo Reforged and upstream Paseo",
+      "Product updates and technical posts relevant to Paseo Reforged, including archived posts from the upstream Paseo project.",
       "/blog",
     ),
   component: BlogIndex,

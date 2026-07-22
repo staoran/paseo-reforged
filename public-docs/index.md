@@ -12,7 +12,7 @@ Paseo runs your coding agents on your machine and gives you a mobile, desktop, w
 
 ## Desktop app (recommended)
 
-Download from [paseo.sh/download](https://paseo.sh/download) or the [GitHub releases page](https://github.com/getpaseo/paseo/releases). Open it and you're done.
+Download from the [GitHub releases page](https://github.com/staoran/paseo-reforged/releases). Open it and you're done.
 
 The desktop app bundles its own daemon and starts it automatically, no separate install required. On first launch you'll see a brief startup screen, then connect from your phone using **Settings → your host → Connections → Pair a device**.
 
@@ -20,12 +20,14 @@ The desktop app bundles its own daemon and starts it automatically, no separate 
 
 For headless machines, dev boxes, or any setup where you want the daemon running without the desktop UI:
 
+Paseo Reforged does not publish npm packages yet. This installs the upstream Paseo CLI as a compatibility option; it follows upstream releases and does not receive Reforged betas.
+
 ```bash
 npm install -g @getpaseo/cli
 paseo
 ```
 
-Paseo prints a QR code in the terminal. Scan it from the mobile app, or enter the daemon address manually from another client.
+Paseo prints a QR code in the terminal. Scan it from a compatible mobile app, or enter the daemon address manually from another client. Use the GitHub desktop release when you need the Reforged build itself.
 
 The daemon can also serve the browser web app itself, so you can use the full UI without the hosted app. See [Self-hosting the web UI](/docs/web-ui).
 
@@ -33,7 +35,8 @@ Configuration and local state live under `PASEO_HOME` (defaults to `~/.paseo`).
 
 ## Docker
 
-For servers, dev boxes, NAS devices, or homelab hosts, run the official image:
+Paseo Reforged does not publish an image yet. For compatibility testing on
+servers, dev boxes, NAS devices, or homelab hosts, use the upstream image:
 
 ```bash
 docker run -d --name paseo \
@@ -56,8 +59,8 @@ The image runs the daemon and serves the bundled web UI. It does not bundle agen
 - [Orchestration](/docs/orchestration), let one agent delegate work to other providers and models.
 - [CLI reference](/docs/cli), every command.
 - [Self-hosting the web UI](/docs/web-ui), serve the browser app from your own daemon.
-- [GitHub repo](https://github.com/getpaseo/paseo)
-- [Report an issue](https://github.com/getpaseo/paseo/issues)
+- [GitHub repo](https://github.com/staoran/paseo-reforged)
+- [Report an issue](https://github.com/staoran/paseo-reforged/issues)
 
 ## Prerequisites
 

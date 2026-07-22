@@ -918,7 +918,7 @@ export const es: TranslationResources = {
       discord: "Discord",
       github: "Crear incidencia en GitHub",
       whatsNew: "Novedades",
-      version: "Paseo {{version}}",
+      version: "Paseo Reforged {{version}}",
     },
     sections: {
       sessions: "Historial",
@@ -1032,7 +1032,7 @@ export const es: TranslationResources = {
   },
   desktop: {
     quitting: {
-      title: "Saliendo dePaseo...",
+      title: "Saliendo de Paseo Reforged...",
       detail: "Deteniendo el demonio local.",
     },
     daemon: {
@@ -1176,7 +1176,7 @@ export const es: TranslationResources = {
         microphone: "El estado del micrófono aún no se ha comprobado.",
       },
       testNotification: {
-        title: "Prueba de notificaciónPaseo",
+        title: "Prueba de notificación Paseo Reforged",
         body: "Si puede ver esto, las notificaciones de escritorio funcionan.",
         notDelivered:
           "La notificación no fue entregada. Verifique Configuración del sistema> Notificaciones.",
@@ -1198,7 +1198,7 @@ export const es: TranslationResources = {
   },
   rootError: {
     kicker: "Algo salió mal",
-    title: "Paseo tuvo un problema.",
+    title: "Paseo Reforged tuvo un problema.",
     body: "Vuelve a intentarlo para recargar la app. Si sigue ocurriendo, incluye los detalles de abajo al reportarlo.",
     details: "Detalles",
   },
@@ -1292,7 +1292,7 @@ export const es: TranslationResources = {
     },
   },
   onboarding: {
-    title: "Bienvenido aPaseo",
+    title: "Bienvenido a Paseo Reforged",
     subtitle: "Conecte su computadora para comenzar",
     actions: {
       settings: "Ajustes",
@@ -2034,7 +2034,7 @@ export const es: TranslationResources = {
         },
         update: {
           desktopManagedHint:
-            "Este daemon está administrado por Paseo Desktop. Actualiza Paseo Desktop en el host.",
+            "Este daemon está administrado por Paseo Reforged Desktop. Actualiza Paseo Reforged Desktop en el host.",
           title: "Update daemon",
           hint: "Update the daemon to the latest version and restart it",
           confirm: "Update",

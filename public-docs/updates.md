@@ -62,9 +62,9 @@ The app will check for beta updates from then on.
 
 ## App stores
 
-Desktop releases and the CLI are usually available first. App Store and Play Store releases can lag behind because they go through review.
+Paseo Reforged desktop releases and GitHub APKs are available first. The retained `@getpaseo/cli` npm distribution follows upstream Paseo and does not receive Reforged betas. App Store and Play Store releases remain unavailable until fork-owned listings are provisioned.
 
-There is no beta channel in the app stores right now — only stable builds are submitted. If you want early Android builds, download the APK from the [GitHub releases page](https://github.com/getpaseo/paseo/releases).
+There is no Paseo Reforged app-store channel yet. Download beta Android APKs from the [GitHub releases page](https://github.com/staoran/paseo-reforged/releases).
 
 ## What to do if something breaks
 

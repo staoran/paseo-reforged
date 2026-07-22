@@ -45,7 +45,7 @@ function makeHost(): HostProfile {
 }
 
 describe("app diagnostics report", () => {
-  test("reports whether the connected daemon is managed by Paseo Desktop", () => {
+  test("reports whether the connected daemon is managed by Paseo Reforged Desktop", () => {
     const report = formatServerInfoSection({
       status: "server_info",
       serverId: "srv-desktop-managed",

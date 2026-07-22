@@ -139,19 +139,19 @@ buildNpmPackage rec {
   desktopItems = [
     (makeDesktopItem {
       name = "paseo-desktop";
-      desktopName = "Paseo";
+      desktopName = "Paseo Reforged";
       genericName = "AI Coding Agents";
       comment = "Self-hosted daemon for AI coding agents";
       exec = "paseo-desktop";
       icon = "paseo-desktop";
       categories = [ "Development" ];
-      startupWMClass = "Paseo";
+      startupWMClass = "Paseo Reforged";
     })
   ];
 
   meta = {
-    description = "Paseo desktop app (Electron wrapper)";
-    homepage = "https://github.com/getpaseo/paseo";
+    description = "Paseo Reforged desktop app (Electron wrapper)";
+    homepage = "https://github.com/staoran/paseo-reforged";
     license = lib.licenses.agpl3Plus;
     mainProgram = "paseo-desktop";
     platforms = lib.platforms.linux;

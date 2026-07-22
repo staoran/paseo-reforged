@@ -3,7 +3,7 @@ const path = require("path");
 
 const { smokePackagedDesktopApp } = require("./smoke-packaged-desktop-app.js");
 
-const EXECUTABLE_NAME = "Paseo";
+const APP_BUNDLE_NAME = "Paseo Reforged";
 
 // electron-builder arch enum → Node.js arch string
 const ARCH_MAP = { 0: "ia32", 1: "x64", 2: "armv7l", 3: "arm64", 4: "universal" };
@@ -76,7 +76,7 @@ function pruneSharpLibvips(nodeModules, platform, arch) {
 function pruneNativeModules(appOutDir, platform, arch) {
   const resourcesDir =
     platform === "darwin"
-      ? path.join(appOutDir, `${EXECUTABLE_NAME}.app`, "Contents", "Resources")
+      ? path.join(appOutDir, `${APP_BUNDLE_NAME}.app`, "Contents", "Resources")
       : path.join(appOutDir, "resources");
 
   const nodeModules = path.join(resourcesDir, "app.asar.unpacked", "node_modules");

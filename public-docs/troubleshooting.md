@@ -87,5 +87,5 @@ Or in the app, open **Settings → your host → Overview** and use **Restart da
 
 - [Custom providers](/docs/custom-providers) — endpoints, profiles, binaries, ACP agents.
 - [Configuration](/docs/configuration) — `config.json`, environment variables, logging.
-- [How Paseo resolves your login shell](https://github.com/getpaseo/paseo/blob/main/packages/desktop/src/login-shell-env.ts) — the exact code that loads your shell environment.
-- [Report an issue](https://github.com/getpaseo/paseo/issues).
+- [How Paseo resolves your login shell](https://github.com/staoran/paseo-reforged/blob/main/packages/desktop/src/login-shell-env.ts) — the exact code that loads your shell environment.
+- [Report an issue](https://github.com/staoran/paseo-reforged/issues).

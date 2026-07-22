@@ -106,7 +106,7 @@ fs.writeFileSync(path, JSON.stringify(cfg, null, 2));
 
 Write-Host @"
 ======================================================
-  Paseo Desktop Dev (Windows)
+  Paseo Reforged Desktop Dev (Windows)
 ======================================================
   Metro:      http://localhost:$($env:EXPO_PORT)
   CDP:        http://127.0.0.1:$RemoteDebuggingPort

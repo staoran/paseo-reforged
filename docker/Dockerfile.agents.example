@@ -5,6 +5,7 @@
 #
 # Then set `image: paseo-with-agents` in docker/docker-compose.example.yml.
 
+# Upstream compatibility image; Paseo Reforged does not publish to GHCR.
 FROM ghcr.io/getpaseo/paseo:latest
 
 USER root

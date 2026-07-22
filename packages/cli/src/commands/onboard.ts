@@ -298,10 +298,10 @@ function printNextSteps(pairingUrl: string | null, paseoHome: string, richUi: bo
   const daemonLogPath = path.join(paseoHome, "daemon.log");
   const nextStepsLines = [
     pairingUrl
-      ? "1. Open Paseo and scan the QR code above, or paste the pairing link."
-      : "1. Open Paseo and connect to your daemon.",
+      ? "1. Open Paseo Reforged and scan the QR code above, or paste the pairing link."
+      : "1. Open Paseo Reforged and connect to your daemon.",
     "2. Web app: https://app.paseo.sh",
-    "3. Desktop app: https://github.com/getpaseo/paseo/releases/latest",
+    "3. Desktop app: https://github.com/staoran/paseo-reforged/releases/latest",
     "4. Docs: https://paseo.sh/docs",
     '5. Example: paseo run --output-schema schema.json "extract fields"',
   ];
@@ -453,7 +453,7 @@ async function waitForDaemonReadyWithUi(args: {
 export async function runOnboard(options: OnboardOptions): Promise<void> {
   const richUi = process.stdin.isTTY && process.stdout.isTTY;
   if (richUi) {
-    intro("Welcome to Paseo");
+    intro("Welcome to Paseo Reforged");
   }
 
   if (options.listen && options.port) {
@@ -527,6 +527,6 @@ export async function runOnboard(options: OnboardOptions): Promise<void> {
   renderNote(pairing.url, "Pairing link");
   printNextSteps(pairing.url, paseoHome, richUi);
   if (richUi) {
-    outro("Paseo is ready!");
+    outro("Paseo Reforged is ready!");
   }
 }

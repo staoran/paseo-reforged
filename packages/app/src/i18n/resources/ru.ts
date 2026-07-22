@@ -909,7 +909,7 @@ export const ru: TranslationResources = {
       discord: "Discord",
       github: "Создать issue в GitHub",
       whatsNew: "Что нового",
-      version: "Paseo {{version}}",
+      version: "Paseo Reforged {{version}}",
     },
     sections: {
       sessions: "История",
@@ -1023,7 +1023,7 @@ export const ru: TranslationResources = {
   },
   desktop: {
     quitting: {
-      title: "Выход из Paseo...",
+      title: "Выход из Paseo Reforged...",
       detail: "Остановка локального демона.",
     },
     daemon: {
@@ -1165,7 +1165,7 @@ export const ru: TranslationResources = {
         microphone: "Состояние микрофона еще не проверялось.",
       },
       testNotification: {
-        title: "Тест уведомлений Paseo",
+        title: "Тест уведомлений Paseo Reforged",
         body: "Если вы это видите, уведомления на рабочем столе работают.",
         notDelivered:
           "Уведомление не было доставлено. Проверьте Системные настройки > Уведомления.",
@@ -1187,7 +1187,7 @@ export const ru: TranslationResources = {
   },
   rootError: {
     kicker: "Что-то пошло не так",
-    title: "В Paseo возникла проблема.",
+    title: "В Paseo Reforged возникла проблема.",
     body: "Попробуйте снова перезагрузить приложение. Если это повторяется, приложите приведенные ниже подробности к отчету.",
     details: "Подробности",
   },
@@ -1283,7 +1283,7 @@ export const ru: TranslationResources = {
     },
   },
   onboarding: {
-    title: "Добро пожаловать в Paseo",
+    title: "Добро пожаловать в Paseo Reforged",
     subtitle: "Подключите компьютер, чтобы начать",
     actions: {
       settings: "Настройки",
@@ -2023,7 +2023,7 @@ export const ru: TranslationResources = {
         },
         update: {
           desktopManagedHint:
-            "Этот демон управляется Paseo Desktop. Обновите Paseo Desktop на хосте.",
+            "Этот демон управляется Paseo Reforged Desktop. Обновите Paseo Reforged Desktop на хосте.",
           title: "Update daemon",
           hint: "Update the daemon to the latest version and restart it",
           confirm: "Update",

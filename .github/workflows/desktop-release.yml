@@ -70,6 +70,13 @@ jobs:
         shell: bash
         run: node scripts/emit-release-env.mjs --source-tag "$SOURCE_TAG" >> "$GITHUB_ENV"
 
+      - name: Enforce macOS signing gate for stable releases
+        if: env.IS_SMOKE_TAG != 'true' && env.IS_PRERELEASE != 'true'
+        shell: bash
+        run: |
+          echo "::error::Stable Paseo Reforged releases are blocked until macOS signing and notarization credentials are configured."
+          exit 1
+
       - name: Create GitHub release
         if: env.IS_SMOKE_TAG != 'true'
         env:
@@ -84,7 +91,7 @@ jobs:
             fi
             gh release create "$RELEASE_TAG" \
               --repo "${{ github.repository }}" \
-              --title "Paseo $RELEASE_TAG" \
+              --title "Paseo Reforged $RELEASE_TAG" \
               --notes "" \
               $prerelease_flag || {
                 echo "Release creation raced with another workflow; continuing."
@@ -116,6 +123,13 @@ jobs:
       - name: Resolve release metadata
         shell: bash
         run: node scripts/emit-release-env.mjs --source-tag "$SOURCE_TAG" >> "$GITHUB_ENV"
+
+      - name: Refuse unsigned stable macOS publication
+        if: env.SHOULD_PUBLISH == 'true' && env.IS_SMOKE_TAG != 'true' && env.IS_PRERELEASE != 'true'
+        shell: bash
+        run: |
+          echo "::error::Stable macOS artifacts require signing and notarization credentials."
+          exit 1
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -152,11 +166,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EP_GH_IGNORE_TIME: true
-          CSC_LINK: ${{ secrets.APPLE_CERTIFICATE }}
-          CSC_KEY_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # This fork has no Apple signing credentials yet; beta artifacts are unsigned.
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
           PASEO_DESKTOP_SMOKE: "1"
           PASEO_DESKTOP_SMOKE_ARTIFACT_DIR: ${{ runner.temp }}/desktop-smoke
         run: |
@@ -164,6 +175,7 @@ jobs:
           build_args=(-- --publish never --mac --${{ matrix.electron_arch }})
           build_args+=("-c.publish.releaseType=$RELEASE_TYPE")
           build_args+=("-c.publish.channel=$RELEASE_CHANNEL")
+          build_args+=("-c.mac.notarize=false" "-c.mac.hardenedRuntime=false")
           npm run build:desktop "${build_args[@]}"
 
       - name: Upload packaged smoke diagnostics

@@ -6,8 +6,8 @@ export function SiteHeader() {
   return (
     <header className="flex flex-col items-center gap-4 md:flex-row md:justify-between">
       <a href="/" className="flex items-center gap-3">
-        <img src="/logo.svg" alt="Paseo" className="w-6 h-6" />
-        <span className="text-lg font-medium">Paseo</span>
+        <img src="/logo.svg" alt="Paseo Reforged" className="w-6 h-6" />
+        <span className="text-lg font-medium">Paseo Reforged</span>
       </a>
       <div className="flex flex-wrap items-center justify-center gap-4">
         <a
@@ -35,12 +35,6 @@ export function SiteHeader() {
           Download
         </a>
         <a
-          href="/sponsor"
-          className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-        >
-          Sponsor
-        </a>
-        <a
           href="https://discord.gg/jz8T2uahpH"
           target="_blank"
           rel="noopener noreferrer"
@@ -59,7 +53,7 @@ export function SiteHeader() {
           </svg>
         </a>
         <a
-          href="https://github.com/getpaseo/paseo"
+          href="https://github.com/staoran/paseo-reforged"
           target="_blank"
           rel="noopener noreferrer"
           aria-label={stars ? `GitHub, ${stars} stars` : "GitHub"}

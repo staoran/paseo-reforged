@@ -2,6 +2,10 @@
 
 This directory contains the official Paseo daemon image.
 
+Paseo Reforged does not publish a container image. References to
+`ghcr.io/getpaseo/paseo` below use the upstream compatibility image, not a
+Paseo Reforged artifact.
+
 The image runs the daemon headless and serves the bundled web UI from the same
 HTTP origin. Start it, then open the daemon URL in a browser.
 

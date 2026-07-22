@@ -24,7 +24,7 @@ OpenChamber runs on macOS, around OpenCode, with a phone PWA. Paseo runs OpenCod
 
 ## Mobile
 
-Paseo ships a native iOS and Android app with the same feature set as the desktop. Install from the App Store or Google Play.
+Paseo Reforged includes native iOS and Android apps with the same feature set as the desktop. New store listings are not published yet.
 
 OpenChamber does not have a native mobile app.
 

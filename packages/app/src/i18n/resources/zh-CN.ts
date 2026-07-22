@@ -879,7 +879,7 @@ export const zhCN: TranslationResources = {
       discord: "Discord",
       github: "创建 GitHub Issue",
       whatsNew: "新功能",
-      version: "Paseo {{version}}",
+      version: "Paseo Reforged {{version}}",
     },
     sections: {
       sessions: "历史",
@@ -990,7 +990,7 @@ export const zhCN: TranslationResources = {
   },
   desktop: {
     quitting: {
-      title: "正在退出 Paseo...",
+      title: "正在退出 Paseo Reforged...",
       detail: "正在停止本地 daemon。",
     },
     daemon: {
@@ -1121,7 +1121,7 @@ export const zhCN: TranslationResources = {
         microphone: "尚未检查麦克风状态。",
       },
       testNotification: {
-        title: "Paseo 通知测试",
+        title: "Paseo Reforged 通知测试",
         body: "如果你能看到这条通知，说明桌面通知可用。",
         notDelivered: "通知未送达。请检查 System Settings > Notifications。",
         failed: "发送通知失败。",
@@ -1142,7 +1142,7 @@ export const zhCN: TranslationResources = {
   },
   rootError: {
     kicker: "出现问题",
-    title: "Paseo 遇到了问题。",
+    title: "Paseo Reforged 遇到了问题。",
     body: "请重试以重新加载应用。如果问题持续发生，请在报告时附上下面的详细信息。",
     details: "详情",
   },
@@ -1234,7 +1234,7 @@ export const zhCN: TranslationResources = {
     },
   },
   onboarding: {
-    title: "欢迎使用 Paseo",
+    title: "欢迎使用 Paseo Reforged",
     subtitle: "连接你的电脑即可开始",
     actions: {
       settings: "设置",
@@ -1957,7 +1957,8 @@ export const zhCN: TranslationResources = {
           dialogFailedMessage: "无法打开重启确认对话框。",
         },
         update: {
-          desktopManagedHint: "此 Daemon 由 Paseo Desktop 管理。请在 Host 上更新 Paseo Desktop。",
+          desktopManagedHint:
+            "此 Daemon 由 Paseo Reforged Desktop 管理。请在 Host 上更新 Paseo Reforged Desktop。",
           title: "Update daemon",
           hint: "Update the daemon to the latest version and restart it",
           confirm: "Update",

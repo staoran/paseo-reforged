@@ -887,7 +887,7 @@ export const ar: TranslationResources = {
       discord: "Discord",
       github: "إنشاء مشكلة على GitHub",
       whatsNew: "ما الجديد",
-      version: "Paseo {{version}}",
+      version: "Paseo Reforged {{version}}",
     },
     sections: {
       sessions: "السجل",
@@ -1001,7 +1001,7 @@ export const ar: TranslationResources = {
   },
   desktop: {
     quitting: {
-      title: "جارٍ إنهاء Paseo...",
+      title: "جارٍ إنهاء Paseo Reforged...",
       detail: "إيقاف البرنامج الخفي المحلي.",
     },
     daemon: {
@@ -1137,7 +1137,7 @@ export const ar: TranslationResources = {
         microphone: "لم يتم التحقق من حالة الميكروفون بعد.",
       },
       testNotification: {
-        title: "اختبار الإخطار Paseo",
+        title: "اختبار الإخطار Paseo Reforged",
         body: "إذا كان بإمكانك رؤية ذلك، فهذا يعني أن إشعارات سطح المكتب تعمل.",
         notDelivered: "لم يتم تسليم الإخطار. تحقق من إعدادات النظام > الإشعارات.",
         failed: "فشل في إرسال الإخطار.",
@@ -1158,7 +1158,7 @@ export const ar: TranslationResources = {
   },
   rootError: {
     kicker: "حدث خطأ",
-    title: "واجه Paseo مشكلة.",
+    title: "واجه Paseo Reforged مشكلة.",
     body: "جرّب مرة أخرى لإعادة تحميل التطبيق. إذا استمر حدوث ذلك، فأرفق التفاصيل أدناه عند الإبلاغ عنه.",
     details: "التفاصيل",
   },
@@ -1251,7 +1251,7 @@ export const ar: TranslationResources = {
     },
   },
   onboarding: {
-    title: "مرحبا بكم في Paseo",
+    title: "مرحبا بكم في Paseo Reforged",
     subtitle: "قم بتوصيل جهاز الكمبيوتر الخاص بك للبدء",
     actions: {
       settings: "إعدادات",
@@ -1983,7 +1983,7 @@ export const ar: TranslationResources = {
         },
         update: {
           desktopManagedHint:
-            "يدير Paseo Desktop هذا البرنامج الخفي. حدّث Paseo Desktop على المضيف.",
+            "يدير Paseo Reforged Desktop هذا البرنامج الخفي. حدّث Paseo Reforged Desktop على المضيف.",
           title: "Update daemon",
           hint: "Update the daemon to the latest version and restart it",
           confirm: "Update",

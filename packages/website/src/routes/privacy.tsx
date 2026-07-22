@@ -5,8 +5,8 @@ import { pageMeta } from "~/meta";
 export const Route = createFileRoute("/privacy")({
   head: () =>
     pageMeta(
-      "Privacy Policy - Paseo",
-      "Privacy policy for Paseo, the self-hosted coding agent manager. No tracking, no analytics, no data collection. Your code stays on your machine.",
+      "Privacy Policy - Paseo Reforged",
+      "Privacy policy for Paseo Reforged, the self-hosted coding agent manager. No tracking, no analytics, no data collection. Your code stays on your machine.",
       "/privacy",
     ),
   component: Privacy,
@@ -19,13 +19,13 @@ function Privacy() {
 
       <div className="space-y-6 text-white/70 leading-relaxed">
         <p>
-          Paseo is a self-hosted tool for managing coding agents. Your code and data stay on your
-          machine.
+          Paseo Reforged is a self-hosted tool for managing coding agents. Your code and data stay
+          on your machine.
         </p>
 
         <section className="space-y-3">
           <h2 className="text-xl font-medium text-white">What we collect</h2>
-          <p>Nothing. Paseo runs on your machine and doesn&apos;t send us any data.</p>
+          <p>Nothing. Paseo Reforged runs on your machine and doesn&apos;t send us any data.</p>
         </section>
 
         <section className="space-y-3">
@@ -77,7 +77,7 @@ function Privacy() {
           <p>
             If you have questions about privacy, open an issue on{" "}
             <a
-              href="https://github.com/getpaseo/paseo"
+              href="https://github.com/staoran/paseo-reforged"
               target="_blank"
               rel="noopener noreferrer"
               className="underline hover:text-white/90"

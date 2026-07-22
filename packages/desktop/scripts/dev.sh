@@ -31,7 +31,7 @@ export PASEO_CORS_ORIGINS="${PASEO_CORS_ORIGINS:-*}"
 npm run build:main
 
 echo "══════════════════════════════════════════════════════"
-echo "  Paseo Desktop Dev"
+echo "  Paseo Reforged Desktop Dev"
 echo "══════════════════════════════════════════════════════"
 echo "  Metro:      ${EXPO_DEV_URL}"
 echo "  CDP:        http://127.0.0.1:${REMOTE_DEBUGGING_PORT}"

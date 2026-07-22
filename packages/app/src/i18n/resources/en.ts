@@ -897,7 +897,7 @@ export const en = {
       discord: "Discord",
       github: "Create GitHub issue",
       whatsNew: "What's new",
-      version: "Paseo {{version}}",
+      version: "Paseo Reforged {{version}}",
     },
     sections: {
       sessions: "History",
@@ -1011,7 +1011,7 @@ export const en = {
   },
   desktop: {
     quitting: {
-      title: "Quitting Paseo...",
+      title: "Quitting Paseo Reforged...",
       detail: "Stopping the local daemon.",
     },
     daemon: {
@@ -1147,7 +1147,7 @@ export const en = {
         microphone: "Microphone status has not been checked yet.",
       },
       testNotification: {
-        title: "Paseo notification test",
+        title: "Paseo Reforged notification test",
         body: "If you can see this, desktop notifications work.",
         notDelivered: "Notification was not delivered. Check System Settings > Notifications.",
         failed: "Failed to send notification.",
@@ -1168,7 +1168,7 @@ export const en = {
   },
   rootError: {
     kicker: "Something went wrong",
-    title: "Paseo ran into a problem.",
+    title: "Paseo Reforged ran into a problem.",
     body: "Try again to reload the app. If this keeps happening, include the details below when you report it.",
     details: "Details",
   },
@@ -1262,7 +1262,7 @@ export const en = {
     },
   },
   onboarding: {
-    title: "Welcome to Paseo",
+    title: "Welcome to Paseo Reforged",
     subtitle: "Connect your computer to get started",
     actions: {
       settings: "Settings",
@@ -1995,7 +1995,7 @@ export const en = {
         },
         update: {
           desktopManagedHint:
-            "This daemon is managed by Paseo Desktop. Update Paseo Desktop on the host.",
+            "This daemon is managed by Paseo Reforged Desktop. Update Paseo Reforged Desktop on the host.",
           title: "Update daemon",
           hint: "Update the daemon to the latest version and restart it",
           confirm: "Update",

@@ -5,8 +5,8 @@ import { pageMeta } from "~/meta";
 export const Route = createFileRoute("/sponsor")({
   head: () =>
     pageMeta(
-      "Sponsor Paseo",
-      "Support the independent open-source project behind Paseo. Built by Mo, funded by the community.",
+      "Support upstream Paseo",
+      "Sponsorship links for the upstream Paseo project. These links do not fund Paseo Reforged.",
       "/sponsor",
     ),
   component: Sponsor,
@@ -15,48 +15,30 @@ export const Route = createFileRoute("/sponsor")({
 function Sponsor() {
   return (
     <SiteShell width="default">
-      <h1 className="text-3xl font-medium tracking-tight mb-8">Sponsor</h1>
+      <h1 className="text-3xl font-medium tracking-tight mb-8">Support upstream Paseo</h1>
 
-      {/* Founder note */}
       <div className="space-y-6 text-white/70 leading-relaxed max-w-2xl">
-        <p className="font-medium">
-          Hey, I&apos;m{" "}
+        <p>
+          Paseo Reforged is an independently maintained fork of{" "}
           <a
-            href="https://github.com/boudra"
+            href="https://github.com/getpaseo/paseo"
             target="_blank"
             rel="noopener noreferrer"
             className="underline hover:text-white/80"
           >
-            Mo
+            Paseo
           </a>
           .
         </p>
-
         <p>
-          Paseo started as a personal project: I wanted to run coding agents from anywhere without
-          giving up control of my code, my keys, or my workflow. It grew into something bigger
-          because developers felt the same need: a single place to orchestrate agents across
-          devices, without vendor lock-in.
+          The links below support the upstream maintainers. They are retained for attribution and do
+          not fund Paseo Reforged.
         </p>
-
-        <p>
-          I work on Paseo full-time. It&apos;s an independent, self-funded open-source project. I
-          don&apos;t have investors, a board, or a big team. I&apos;m just shipping software the
-          best I know how and hope it&apos;s useful to other people.
-        </p>
-
-        <p>
-          Sponsorship is what makes that sustainable. It lets me stay focused on the product instead
-          of chasing monetization, and it sends a clear signal that independent, open-source tools
-          have a place in developer workflows.
-        </p>
-
-        <p>Thank you.</p>
       </div>
 
       {/* Sponsor links */}
       <section className="mt-12 space-y-4">
-        <h2 className="text-xl font-medium">Support Paseo</h2>
+        <h2 className="text-xl font-medium">Upstream sponsorship</h2>
 
         <div className="flex flex-col sm:flex-row gap-4">
           <a

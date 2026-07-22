@@ -7,10 +7,10 @@ describe("cli-install-path", () => {
       resolveCliInstallSourcePath({
         platform: "darwin",
         isPackaged: true,
-        executablePath: "/Applications/Paseo.app/Contents/MacOS/Paseo",
-        shimPath: "/Applications/Paseo.app/Contents/Resources/bin/paseo",
+        executablePath: "/Applications/Paseo Reforged.app/Contents/MacOS/Paseo Reforged",
+        shimPath: "/Applications/Paseo Reforged.app/Contents/Resources/bin/paseo",
       }),
-    ).toBe("/Applications/Paseo.app/Contents/Resources/bin/paseo");
+    ).toBe("/Applications/Paseo Reforged.app/Contents/Resources/bin/paseo");
   });
 
   it("prefers the original AppImage path on linux", () => {
@@ -30,10 +30,12 @@ describe("cli-install-path", () => {
       resolveCliInstallSourcePath({
         platform: "win32",
         isPackaged: true,
-        executablePath: "C:\\Users\\user\\AppData\\Local\\Programs\\Paseo\\Paseo.exe",
-        shimPath: "C:\\Users\\user\\AppData\\Local\\Programs\\Paseo\\resources\\bin\\paseo.cmd",
+        executablePath:
+          "C:\\Users\\user\\AppData\\Local\\Programs\\Paseo Reforged\\Paseo Reforged.exe",
+        shimPath:
+          "C:\\Users\\user\\AppData\\Local\\Programs\\Paseo Reforged\\resources\\bin\\paseo.cmd",
       }),
-    ).toBe("C:\\Users\\user\\AppData\\Local\\Programs\\Paseo\\resources\\bin\\paseo.cmd");
+    ).toBe("C:\\Users\\user\\AppData\\Local\\Programs\\Paseo Reforged\\resources\\bin\\paseo.cmd");
 
     expect(
       resolveCliInstallSourcePath({

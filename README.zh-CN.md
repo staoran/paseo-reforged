@@ -1,8 +1,10 @@
 <p align="center">
-  <img src="packages/website/public/logo.svg" width="64" height="64" alt="Paseo logo">
+  <img src="packages/website/public/logo.svg" width="64" height="64" alt="Paseo Reforged logo">
 </p>
 
-<h1 align="center">Paseo</h1>
+<h1 align="center">Paseo Reforged</h1>
+
+<p align="center"><a href="https://github.com/getpaseo/paseo">Paseo</a> 的独立维护增强 fork。</p>
 
 <p align="center">
   <a href="README.md">English</a> ·
@@ -11,14 +13,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/getpaseo/paseo/stargazers">
-    <img src="https://img.shields.io/github/stars/getpaseo/paseo?style=flat&logo=github" alt="GitHub stars">
+  <a href="https://github.com/staoran/paseo-reforged/stargazers">
+    <img src="https://img.shields.io/github/stars/staoran/paseo-reforged?style=flat&logo=github" alt="GitHub stars">
   </a>
-  <a href="https://github.com/getpaseo/paseo/releases">
-    <img src="https://img.shields.io/github/v/release/getpaseo/paseo?style=flat&logo=github" alt="GitHub release">
-  </a>
-  <a href="https://x.com/moboudra">
-    <img src="https://img.shields.io/badge/%40moboudra-555?logo=x" alt="X">
+  <a href="https://github.com/staoran/paseo-reforged/releases">
+    <img src="https://img.shields.io/github/v/release/staoran/paseo-reforged?style=flat&logo=github" alt="GitHub release">
   </a>
   <a href="https://discord.gg/jz8T2uahpH">
     <img src="https://img.shields.io/badge/Discord-555?logo=discord" alt="Discord">
@@ -31,16 +30,12 @@
 <p align="center">Claude Code、Codex、Copilot、OpenCode 和 Pi agents 的统一界面。</p>
 
 <p align="center">
-  <img src="https://paseo.sh/hero-mockup.png" alt="Paseo app screenshot" width="100%">
+  <img src="https://paseo.sh/hero-mockup.png" alt="Paseo Reforged app screenshot" width="100%">
 </p>
 
 <p align="center">
-  <img src="https://paseo.sh/mobile-mockup.png" alt="Paseo mobile app" width="100%">
+  <img src="https://paseo.sh/mobile-mockup.png" alt="Paseo Reforged mobile app" width="100%">
 </p>
-
-> [!NOTE]
-> 我是独立维护者，不一定每天都能及时处理 GitHub Issues。
-> 如果问题很紧急或阻塞了你，[Discord](https://discord.gg/jz8T2uahpH) 是最快联系到我的地方。
 
 ---
 
@@ -68,20 +63,20 @@ Paseo 会运行一个名为 daemon 的本地服务，用来管理你的 coding a
 
 ### 桌面 app（推荐）
 
-从 [paseo.sh/download](https://paseo.sh/download) 或 [GitHub releases 页面](https://github.com/getpaseo/paseo/releases)下载。打开 app 后 daemon 会自动启动，不需要再安装其他东西。
+从 [GitHub releases 页面](https://github.com/staoran/paseo-reforged/releases)下载。打开 app 后 daemon 会自动启动，不需要再安装其他东西。
 
 如果要从手机连接，在 Settings 中扫描显示的二维码。
 
 ### CLI / 无头模式
 
-安装 CLI 并启动 Paseo：
+Paseo Reforged 目前不发布 npm 包。下面的命令安装上游 Paseo CLI，仅作为兼容入口；它跟随上游版本，不会收到 Paseo Reforged beta。
 
 ```bash
 npm install -g @getpaseo/cli
 paseo
 ```
 
-终端中会显示一个二维码。你可以从任意客户端连接。这个方式适合服务器和远程机器。
+终端中会显示一个二维码。你可以从任意兼容客户端连接。需要 Reforged 构建本身时，请使用 GitHub 上的 Desktop release。
 
 完整安装和配置见：
 
@@ -111,7 +106,7 @@ paseo --host workstation.local:6767 run "run the full test suite"
 Skills 会教你的 agent 使用 Paseo 来编排其他 agents。
 
 ```bash
-npx skills add getpaseo/paseo
+npx skills add staoran/paseo-reforged
 ```
 
 然后在任意 agent 对话中使用：
@@ -205,11 +200,11 @@ server {
 ---
 
 <p align="center">
-  <a href="https://star-history.com/#getpaseo/paseo&Date">
+  <a href="https://star-history.com/#staoran/paseo-reforged&Date">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=getpaseo/paseo&type=Date&theme=dark">
-      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=getpaseo/paseo&type=Date">
-      <img src="https://api.star-history.com/svg?repos=getpaseo/paseo&type=Date" alt="Star history chart for getpaseo/paseo" width="600" style="max-width: 100%;">
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=staoran/paseo-reforged&type=Date&theme=dark">
+      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=staoran/paseo-reforged&type=Date">
+      <img src="https://api.star-history.com/svg?repos=staoran/paseo-reforged&type=Date" alt="Star history chart for staoran/paseo-reforged" width="600" style="max-width: 100%;">
     </picture>
   </a>
 </p>

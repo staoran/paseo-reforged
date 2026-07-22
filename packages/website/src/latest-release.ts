@@ -19,17 +19,18 @@ export interface ReleaseInfo {
 }
 
 const LINUX_APPIMAGE_ASSET_PATTERN =
-  /^Paseo-(?:\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)-)?x86_64\.AppImage$/;
+  /^Paseo-Reforged-(?:\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)-)?x86_64\.AppImage$/;
 
 const REQUIRED_ASSET_PATTERNS = [
-  /Paseo-.*-arm64\.dmg$/,
+  /Paseo-Reforged-.*-arm64\.dmg$/,
   LINUX_APPIMAGE_ASSET_PATTERN,
-  /Paseo-Setup-.*\.exe$/,
+  /Paseo-Reforged-Setup-.*\.exe$/,
 ];
 
-const GITHUB_RELEASES_URL = "https://api.github.com/repos/getpaseo/paseo/releases?per_page=10";
-const RELEASE_CACHE_KEY = "github-release:v1";
-const ANDROID_RELEASE_CACHE_KEY = "github-android-release:v1";
+const GITHUB_RELEASES_URL =
+  "https://api.github.com/repos/staoran/paseo-reforged/releases?per_page=10";
+const RELEASE_CACHE_KEY = "github-release:paseo-reforged:v1";
+const ANDROID_RELEASE_CACHE_KEY = "github-android-release:paseo-reforged:v1";
 
 function hasRequiredAssets(release: GitHubRelease): boolean {
   return REQUIRED_ASSET_PATTERNS.every((pattern) =>
@@ -38,11 +39,11 @@ function hasRequiredAssets(release: GitHubRelease): boolean {
 }
 
 function pickWindowsAssets(assets: GitHubAsset[]) {
-  const x64Suffixed = assets.find((asset) => /Paseo-Setup-.*-x64\.exe$/.test(asset.name));
-  const arm64 = assets.find((asset) => /Paseo-Setup-.*-arm64\.exe$/.test(asset.name));
+  const x64Suffixed = assets.find((asset) => /Paseo-Reforged-Setup-.*-x64\.exe$/.test(asset.name));
+  const arm64 = assets.find((asset) => /Paseo-Reforged-Setup-.*-arm64\.exe$/.test(asset.name));
   const legacy = assets.find(
     (asset) =>
-      /Paseo-Setup-.*\.exe$/.test(asset.name) &&
+      /Paseo-Reforged-Setup-.*\.exe$/.test(asset.name) &&
       !asset.name.endsWith("-x64.exe") &&
       !asset.name.endsWith("-arm64.exe"),
   );
@@ -69,7 +70,7 @@ async function fetchGitHubReleases(): Promise<GitHubRelease[]> {
     cf: {
       cacheEverything: true,
       cacheTtl: 60,
-      cacheKey: "github-releases-latest",
+      cacheKey: "paseo-reforged-github-releases-latest",
     },
   } as RequestInit);
   if (!response.ok) throw new Error(`github releases ${response.status}`);
@@ -77,8 +78,7 @@ async function fetchGitHubReleases(): Promise<GitHubRelease[]> {
   return (await response.json()) as GitHubRelease[];
 }
 
-async function fetchLatestReadyRelease(): Promise<ReleaseInfo> {
-  const releases = await fetchGitHubReleases();
+export function getLatestReadyReleaseFromReleases(releases: GitHubRelease[]): ReleaseInfo {
   const ready = releases.find(
     (release) => !release.prerelease && !release.draft && hasRequiredAssets(release),
   );
@@ -96,13 +96,17 @@ async function fetchLatestReadyRelease(): Promise<ReleaseInfo> {
   };
 }
 
+async function fetchLatestReadyRelease(): Promise<ReleaseInfo> {
+  return getLatestReadyReleaseFromReleases(await fetchGitHubReleases());
+}
+
 export function getLatestAndroidVersionFromReleases(releases: GitHubRelease[]): string {
   const release = releases.find((candidate) => {
     if (candidate.prerelease || candidate.draft) return false;
     const version = versionFromTag(candidate.tag_name);
     if (!/^\d+\.\d+\.\d+$/.test(version)) return false;
     return candidate.assets.some(
-      (asset) => asset.name === `paseo-${candidate.tag_name}-android.apk`,
+      (asset) => asset.name === `Paseo-Reforged-${candidate.tag_name}-android.apk`,
     );
   });
   if (!release) throw new Error("no stable GitHub release with an Android APK found");
@@ -124,20 +128,20 @@ function isReleaseInfo(value: unknown): value is ReleaseInfo {
     typeof record.version === "string" &&
     /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(record.version) &&
     typeof record.linuxAppImageAsset === "string" &&
-    (record.linuxAppImageAsset === "Paseo-x86_64.AppImage" ||
-      new RegExp(`^Paseo-${record.version.replaceAll(".", "\\.")}-x86_64\\.AppImage$`).test(
-        record.linuxAppImageAsset,
-      )) &&
+    (record.linuxAppImageAsset === "Paseo-Reforged-x86_64.AppImage" ||
+      new RegExp(
+        `^Paseo-Reforged-${record.version.replaceAll(".", "\\.")}-x86_64\\.AppImage$`,
+      ).test(record.linuxAppImageAsset)) &&
     (typeof record.windowsX64Asset === "string" || record.windowsX64Asset === null) &&
     (typeof record.windowsArm64Asset === "string" || record.windowsArm64Asset === null) &&
     (record.windowsX64Asset === null ||
-      new RegExp(`^Paseo-Setup-${record.version.replaceAll(".", "\\.")}(?:-x64)?\\.exe$`).test(
-        record.windowsX64Asset,
-      )) &&
+      new RegExp(
+        `^Paseo-Reforged-Setup-${record.version.replaceAll(".", "\\.")}(?:-x64)?\\.exe$`,
+      ).test(record.windowsX64Asset)) &&
     (record.windowsArm64Asset === null ||
-      new RegExp(`^Paseo-Setup-${record.version.replaceAll(".", "\\.")}-arm64\\.exe$`).test(
-        record.windowsArm64Asset,
-      ))
+      new RegExp(
+        `^Paseo-Reforged-Setup-${record.version.replaceAll(".", "\\.")}-arm64\\.exe$`,
+      ).test(record.windowsArm64Asset))
   );
 }
 

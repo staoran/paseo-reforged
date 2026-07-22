@@ -4,6 +4,7 @@ const pkg = require("./package.json");
 const withFdroidAutolinking = require("./plugins/with-fdroid-autolinking");
 const appVariant = process.env.APP_VARIANT ?? "production";
 const isFdroidBuild = process.env.PASEO_FDROID_BUILD === "1";
+const easProjectId = process.env.EAS_PROJECT_ID?.trim();
 
 const buildProfile = isFdroidBuild
   ? {
@@ -44,7 +45,7 @@ const buildProfile = isFdroidBuild
           },
         ],
       ],
-      updates: {},
+      updates: easProjectId ? { url: `https://u.expo.dev/${easProjectId}` } : { enabled: false },
     };
 
 function getNativeBuildVersionCode(version) {
@@ -87,8 +88,8 @@ function resolveSecretFile(params) {
 
 const variants = {
   production: {
-    name: "Paseo",
-    packageId: "sh.paseo",
+    name: "Paseo Reforged",
+    packageId: "sh.paseo.reforged",
     googleServicesFile: resolveSecretFile({
       envKey: "GOOGLE_SERVICES_FILE_PROD",
       fallbackRelativePath: "./.secrets/google-services.prod.json",
@@ -99,8 +100,8 @@ const variants = {
     }),
   },
   development: {
-    name: "Paseo Debug",
-    packageId: "sh.paseo.debug",
+    name: "Paseo Reforged Debug",
+    packageId: "sh.paseo.reforged.debug",
     googleServicesFile: resolveSecretFile({
       envKey: "GOOGLE_SERVICES_FILE_DEBUG",
       fallbackRelativePath: "./.secrets/google-services.debug.json",
@@ -118,7 +119,7 @@ const nativeBuildVersionCode = getNativeBuildVersionCode(pkg.version);
 export default {
   expo: {
     name: variant.name,
-    slug: "voice-mobile",
+    slug: "paseo-reforged",
     version: pkg.version,
     orientation: "portrait",
     icon: "./assets/images/icon.png",
@@ -128,10 +129,7 @@ export default {
     runtimeVersion: {
       policy: "appVersion",
     },
-    updates: {
-      url: "https://u.expo.dev/0e7f65ce-0367-46c8-a238-2b65963d235a",
-      ...buildProfile.updates,
-    },
+    updates: buildProfile.updates,
     ios: {
       supportsTablet: true,
       infoPlist: {
@@ -211,10 +209,8 @@ export default {
     extra: {
       fdroidBuild: isFdroidBuild,
       router: {},
-      eas: {
-        projectId: "0e7f65ce-0367-46c8-a238-2b65963d235a",
-      },
+      ...(easProjectId ? { eas: { projectId: easProjectId } } : {}),
     },
-    owner: "getpaseo",
+    owner: "tao-team",
   },
 };

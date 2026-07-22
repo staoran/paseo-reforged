@@ -35,6 +35,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Enforce beta-only release gate
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
+        shell: bash
+        run: |
+          echo "::error::Stable Paseo Reforged releases are blocked until signing and deployment gates are approved."
+          exit 1
+
       - name: Sync release body from changelog
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

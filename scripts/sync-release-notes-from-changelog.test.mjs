@@ -98,3 +98,70 @@ test("converts contributor profile links to mentions in synced release notes", (
     assert.doesNotMatch(syncedNotes, /\[@therainisme\]\(https:\/\/github\.com\/therainisme\)/);
   }, changelogText);
 });
+
+test("creates a missing prerelease with the Paseo Reforged title", () => {
+  withTempChangelog(() => {
+    const calls = [];
+
+    const execFileSync = (command, args) => {
+      calls.push({ args, command });
+
+      if (
+        args[0] === "api" &&
+        args[1] === "repos/staoran/paseo-reforged/releases/tags/v0.1.60-beta.1"
+      ) {
+        throw new Error("release not found");
+      }
+
+      if (args[0] === "release" && args[1] === "create") {
+        return "";
+      }
+
+      throw new Error(`Unexpected gh call: ${command} ${args.join(" ")}`);
+    };
+
+    syncReleaseNotes(
+      ["--repo", "staoran/paseo-reforged", "--tag", "v0.1.60-beta.1", "--create-if-missing"],
+      { execFileSync },
+    );
+
+    const createCall = calls.find(
+      (call) => call.args[0] === "release" && call.args[1] === "create",
+    );
+    assert.ok(createCall, "the missing prerelease should be created");
+    assert.deepEqual(createCall.args.slice(0, 5), [
+      "release",
+      "create",
+      "v0.1.60-beta.1",
+      "--repo",
+      "staoran/paseo-reforged",
+    ]);
+    assert.equal(
+      createCall.args[createCall.args.indexOf("--title") + 1],
+      "Paseo Reforged v0.1.60-beta.1",
+    );
+    assert.equal(createCall.args.includes("--prerelease"), true);
+  });
+});
+
+test("refuses to create a missing stable release", () => {
+  const changelogText = "## 0.1.60 - 2026-04-20\n\n- Stable notes.\n";
+
+  withTempChangelog(() => {
+    const execFileSync = (command, args) => {
+      if (args[0] === "api" && args[1].endsWith("/releases/tags/v0.1.60")) {
+        throw new Error("release not found");
+      }
+      throw new Error(`Unexpected gh call: ${command} ${args.join(" ")}`);
+    };
+
+    assert.throws(
+      () =>
+        syncReleaseNotes(
+          ["--repo", "staoran/paseo-reforged", "--tag", "v0.1.60", "--create-if-missing"],
+          { execFileSync },
+        ),
+      /Refusing to create missing stable release/,
+    );
+  }, changelogText);
+});

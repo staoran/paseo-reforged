@@ -898,7 +898,7 @@ export const ja: TranslationResources = {
       discord: "Discord",
       github: "GitHub Issueを作成",
       whatsNew: "新着情報",
-      version: "Paseo {{version}}",
+      version: "Paseo Reforged {{version}}",
     },
     sections: {
       sessions: "履歴",
@@ -1012,7 +1012,7 @@ export const ja: TranslationResources = {
   },
   desktop: {
     quitting: {
-      title: "Paseoを終了中...",
+      title: "Paseo Reforgedを終了中...",
       detail: "ローカルデーモンを停止中。",
     },
     daemon: {
@@ -1150,7 +1150,7 @@ export const ja: TranslationResources = {
         microphone: "マイクのステータスはまだ確認されていません。",
       },
       testNotification: {
-        title: "Paseo通知テスト",
+        title: "Paseo Reforged通知テスト",
         body: "これが見えれば、デスクトップ通知は機能しています。",
         notDelivered: "通知が届きませんでした。システム設定 > 通知を確認してください。",
         failed: "通知の送信に失敗しました。",
@@ -1171,7 +1171,7 @@ export const ja: TranslationResources = {
   },
   rootError: {
     kicker: "問題が発生しました",
-    title: "Paseo で問題が発生しました。",
+    title: "Paseo Reforged で問題が発生しました。",
     body: "アプリを再読み込みするにはもう一度お試しください。繰り返し発生する場合は、以下の詳細を添えて報告してください。",
     details: "詳細",
   },
@@ -1265,7 +1265,7 @@ export const ja: TranslationResources = {
     },
   },
   onboarding: {
-    title: "Paseoへようこそ",
+    title: "Paseo Reforgedへようこそ",
     subtitle: "始めるにはコンピューターに接続してください",
     actions: {
       settings: "設定",
@@ -2003,7 +2003,7 @@ export const ja: TranslationResources = {
         },
         update: {
           desktopManagedHint:
-            "このデーモンはPaseo Desktopによって管理されています。ホスト上のPaseo Desktopを更新してください。",
+            "このデーモンはPaseo Reforged Desktopによって管理されています。ホスト上のPaseo Reforged Desktopを更新してください。",
           title: "デーモンを更新",
           hint: "デーモンを最新バージョンに更新して再起動します",
           confirm: "更新",

@@ -160,6 +160,7 @@ export function syncReleaseNotes(argv = process.argv.slice(2), deps = {}) {
 
   const targetTag = args.tag ? normalizeReleaseTag(args.tag) : entries[0].tag;
   const releaseInfo = getReleaseInfoFromSourceTag(targetTag);
+  const releaseVersion = parseReleaseVersion(releaseInfo.version);
   const targetEntry = entries.find((entry) => entry.tag === targetTag);
 
   let notes = targetEntry?.notes ?? null;
@@ -182,11 +183,11 @@ export function syncReleaseNotes(argv = process.argv.slice(2), deps = {}) {
     "--repo",
     args.repo,
     "--title",
-    `Paseo ${targetTag}`,
+    `Paseo Reforged ${targetTag}`,
     "--notes-file",
     notesPath,
     "--verify-tag",
-    ...(parseReleaseVersion(releaseInfo.version).isPrerelease ? ["--prerelease"] : []),
+    ...(releaseVersion.isPrerelease ? ["--prerelease"] : []),
   ];
 
   try {
@@ -202,6 +203,12 @@ export function syncReleaseNotes(argv = process.argv.slice(2), deps = {}) {
         `Release ${targetTag} not found. Skipping because --create-if-missing was not provided.`,
       );
       return;
+    }
+
+    if (!releaseVersion.isBeta) {
+      throw new Error(
+        `Refusing to create missing stable release ${targetTag}; only Paseo Reforged beta creation is enabled.`,
+      );
     }
 
     try {

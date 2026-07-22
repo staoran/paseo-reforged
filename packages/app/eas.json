@@ -9,7 +9,8 @@
       "distribution": "internal",
       "channel": "development",
       "env": {
-        "APP_VARIANT": "development"
+        "APP_VARIANT": "development",
+        "EAS_PROJECT_ID": "5e4527ba-abbd-428f-8a56-300c21b9e1af"
       },
       "android": {
         "gradleCommand": ":app:assembleDebug"
@@ -18,7 +19,8 @@
     "production": {
       "channel": "production",
       "env": {
-        "APP_VARIANT": "production"
+        "APP_VARIANT": "production",
+        "EAS_PROJECT_ID": "5e4527ba-abbd-428f-8a56-300c21b9e1af"
       }
     },
     "production-apk": {
@@ -33,9 +35,6 @@
   },
   "submit": {
     "production": {
-      "ios": {
-        "ascAppId": "6758887924"
-      },
       "android": {
         "track": "production",
         "releaseStatus": "completed"

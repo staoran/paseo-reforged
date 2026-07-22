@@ -8,9 +8,9 @@ category: Getting started
 
 # Docker
 
-The official Paseo Docker image runs the daemon and serves the bundled browser UI from the same HTTP origin. It is meant for servers, dev boxes, NAS devices, homelab hosts, and other places where you want Paseo running without the desktop app.
+Paseo Reforged does not publish a Docker image. The source Dockerfile remains available for local builds; the `ghcr.io/getpaseo/paseo` examples below use the upstream compatibility image.
 
-Docker images follow the stable Paseo release cadence. `ghcr.io/getpaseo/paseo:latest` points at the latest stable release, not an arbitrary `main` build.
+The upstream `ghcr.io/getpaseo/paseo:latest` tag follows upstream's stable release cadence, not Paseo Reforged releases.
 
 ```bash
 docker run -d --name paseo \

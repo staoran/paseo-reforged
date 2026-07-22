@@ -4,6 +4,7 @@
 # For any network-reachable deployment, change PASEO_PASSWORD first.
 services:
   paseo:
+    # Upstream compatibility image; Paseo Reforged does not publish to GHCR.
     image: ghcr.io/getpaseo/paseo:latest
     container_name: paseo
     restart: unless-stopped

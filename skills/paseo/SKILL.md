@@ -115,9 +115,9 @@ Discover with `paseo --help` and `paseo <cmd> --help`.
 
 **If `paseo` isn't on PATH but the desktop app is installed**, the bundled CLI is at:
 
-- macOS: `/Applications/Paseo.app/Contents/Resources/bin/paseo`
+- macOS: `/Applications/Paseo Reforged.app/Contents/Resources/bin/paseo`
 - Linux: `<install-dir>/resources/bin/paseo`
-- Windows: `C:\Program Files\Paseo\resources\bin\paseo.cmd`
+- Windows: `%LOCALAPPDATA%\Programs\Paseo Reforged\resources\bin\paseo.cmd`
 
 The desktop app's first-run hook (`installCli`) symlinks this to `~/.local/bin/paseo` (macOS/Linux) or drops a `.cmd` trampoline (Windows) and adds `~/.local/bin` to PATH via shell rc files. If that didn't take, offer to symlink it — don't do it silently.
 

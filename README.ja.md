@@ -1,8 +1,10 @@
 <p align="center">
-  <img src="packages/website/public/logo.svg" width="64" height="64" alt="Paseo logo">
+  <img src="packages/website/public/logo.svg" width="64" height="64" alt="Paseo Reforged logo">
 </p>
 
-<h1 align="center">Paseo</h1>
+<h1 align="center">Paseo Reforged</h1>
+
+<p align="center"><a href="https://github.com/getpaseo/paseo">Paseo</a> を独立して保守・強化する fork です。</p>
 
 <p align="center">
   <a href="README.md">English</a> ·
@@ -11,14 +13,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/getpaseo/paseo/stargazers">
-    <img src="https://img.shields.io/github/stars/getpaseo/paseo?style=flat&logo=github" alt="GitHub stars">
+  <a href="https://github.com/staoran/paseo-reforged/stargazers">
+    <img src="https://img.shields.io/github/stars/staoran/paseo-reforged?style=flat&logo=github" alt="GitHub stars">
   </a>
-  <a href="https://github.com/getpaseo/paseo/releases">
-    <img src="https://img.shields.io/github/v/release/getpaseo/paseo?style=flat&logo=github" alt="GitHub release">
-  </a>
-  <a href="https://x.com/moboudra">
-    <img src="https://img.shields.io/badge/%40moboudra-555?logo=x" alt="X">
+  <a href="https://github.com/staoran/paseo-reforged/releases">
+    <img src="https://img.shields.io/github/v/release/staoran/paseo-reforged?style=flat&logo=github" alt="GitHub release">
   </a>
   <a href="https://discord.gg/jz8T2uahpH">
     <img src="https://img.shields.io/badge/Discord-555?logo=discord" alt="Discord">
@@ -31,16 +30,12 @@
 <p align="center">Claude Code、Codex、Copilot、OpenCode、Pi のエージェントを、ひとつのインターフェースで。</p>
 
 <p align="center">
-  <img src="https://paseo.sh/hero-mockup.png" alt="Paseo アプリのスクリーンショット" width="100%">
+  <img src="https://paseo.sh/hero-mockup.png" alt="Paseo Reforged アプリのスクリーンショット" width="100%">
 </p>
 
 <p align="center">
-  <img src="https://paseo.sh/mobile-mockup.png" alt="Paseo モバイルアプリ" width="100%">
+  <img src="https://paseo.sh/mobile-mockup.png" alt="Paseo Reforged モバイルアプリ" width="100%">
 </p>
-
-> [!NOTE]
-> 私はひとりでメンテナンスしているため、GitHub Issues を毎日確認できるとは限りません。
-> 急ぎの問題や作業がブロックされている場合は、[Discord](https://discord.gg/jz8T2uahpH) から連絡するのが一番早いです。
 
 ---
 
@@ -68,20 +63,20 @@ Paseo はコーディングエージェントを管理するローカルサー�
 
 ### デスクトップアプリ（推奨）
 
-[paseo.sh/download](https://paseo.sh/download) または [GitHub のリリースページ](https://github.com/getpaseo/paseo/releases)からダウンロードしてください。アプリを開くとデーモンが自動的に起動します。追加のインストールは不要です。
+[GitHub のリリースページ](https://github.com/staoran/paseo-reforged/releases)からダウンロードしてください。アプリを開くとデーモンが自動的に起動します。追加のインストールは不要です。
 
 スマートフォンから接続するには、Settings 画面に表示される QR コードをスキャンしてください。
 
 ### CLI / ヘッドレス
 
-CLI をインストールして Paseo を起動します。
+Paseo Reforged は現在 npm パッケージを公開していません。次のコマンドは互換用途として upstream Paseo CLI をインストールします。upstream のリリースに追従し、Paseo Reforged beta は受け取りません。
 
 ```bash
 npm install -g @getpaseo/cli
 paseo
 ```
 
-ターミナルに QR コードが表示されます。どのクライアントからでも接続できます。サーバーやリモートマシンでの利用に適しています。
+ターミナルに QR コードが表示され、互換クライアントから接続できます。Reforged ビルド自体が必要な場合は、GitHub の Desktop release を使用してください。
 
 詳しいセットアップと設定については以下を参照してください。
 
@@ -111,7 +106,7 @@ paseo --host workstation.local:6767 run "run the full test suite"
 スキルはエージェントに Paseo を使って他のエージェントをオーケストレーションする方法を教えます。
 
 ```bash
-npx skills add getpaseo/paseo
+npx skills add staoran/paseo-reforged
 ```
 
 どのエージェントとの会話でも使用できます。
@@ -159,11 +154,11 @@ npm run typecheck
 ---
 
 <p align="center">
-  <a href="https://star-history.com/#getpaseo/paseo&Date">
+  <a href="https://star-history.com/#staoran/paseo-reforged&Date">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=getpaseo/paseo&type=Date&theme=dark">
-      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=getpaseo/paseo&type=Date">
-      <img src="https://api.star-history.com/svg?repos=getpaseo/paseo&type=Date" alt="getpaseo/paseo のスター履歴チャート" width="600" style="max-width: 100%;">
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=staoran/paseo-reforged&type=Date&theme=dark">
+      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=staoran/paseo-reforged&type=Date">
+      <img src="https://api.star-history.com/svg?repos=staoran/paseo-reforged&type=Date" alt="staoran/paseo-reforged のスター履歴チャート" width="600" style="max-width: 100%;">
     </picture>
   </a>
 </p>

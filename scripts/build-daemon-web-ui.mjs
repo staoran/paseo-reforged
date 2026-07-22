@@ -6,7 +6,8 @@ import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 import { constants as zlibConstants, createBrotliCompress, createGzip } from "node:zlib";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const modulePath = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(modulePath);
 const REPO_ROOT = path.resolve(__dirname, "..");
 const APP_DIR = path.join(REPO_ROOT, "packages", "app");
 const SOURCE_DIST = path.join(APP_DIR, "dist");
@@ -35,9 +36,20 @@ function run(command, args, options) {
   });
 }
 
+export function resolveNpmInvocation(
+  args,
+  { execPath = process.execPath, npmExecPath = process.env.npm_execpath } = {},
+) {
+  if (npmExecPath) {
+    return { command: execPath, args: [npmExecPath, ...args] };
+  }
+  return { command: "npm", args };
+}
+
 async function exportBrowserWebApp() {
   console.log("Exporting browser web app...");
-  await run("npm", ["run", "build:web", "--workspace=@getpaseo/app"], {
+  const invocation = resolveNpmInvocation(["run", "build:web", "--workspace=@getpaseo/app"]);
+  await run(invocation.command, invocation.args, {
     cwd: REPO_ROOT,
   });
 }
@@ -135,7 +147,9 @@ async function main() {
   console.log(`  brotli: ${fmtMiB(sizes.brotli)}`);
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
-});
+if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(modulePath)) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
+}

@@ -21,10 +21,13 @@ env:
 
 jobs:
   publish-android-apk:
+    if: ${{ vars.EAS_PROJECT_ID != '' }}
     permissions:
       contents: write
       packages: read
     runs-on: ubuntu-latest
+    env:
+      EAS_PROJECT_ID: ${{ vars.EAS_PROJECT_ID }}
 
     steps:
       - uses: actions/checkout@v4
@@ -35,6 +38,13 @@ jobs:
       - name: Resolve release tag
         shell: bash
         run: node scripts/emit-release-env.mjs --source-tag "$SOURCE_TAG" >> "$GITHUB_ENV"
+
+      - name: Enforce beta-only release gate
+        if: env.IS_PRERELEASE != 'true'
+        shell: bash
+        run: |
+          echo "::error::Stable Paseo Reforged releases are blocked until signing and store gates are approved."
+          exit 1
 
       - name: Ensure GitHub release exists
         env:
@@ -50,7 +60,7 @@ jobs:
           release_args=(
             release create "$RELEASE_TAG"
             --repo "${{ github.repository }}"
-            --title "Paseo $RELEASE_TAG"
+            --title "Paseo Reforged $RELEASE_TAG"
             --notes ""
           )
 
@@ -117,7 +127,7 @@ jobs:
             exit 1
           fi
 
-          asset_name="paseo-${RELEASE_TAG}-android.apk"
+          asset_name="Paseo-Reforged-${RELEASE_TAG}-android.apk"
           asset_path="$RUNNER_TEMP/$asset_name"
 
           curl --fail --location --output "$asset_path" "$artifact_url"

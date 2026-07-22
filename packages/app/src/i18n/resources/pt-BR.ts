@@ -909,7 +909,7 @@ export const ptBR: TranslationResources = {
       discord: "Discord",
       github: "Criar issue no GitHub",
       whatsNew: "Novidades",
-      version: "Paseo {{version}}",
+      version: "Paseo Reforged {{version}}",
     },
     sections: {
       sessions: "Histórico",
@@ -1023,7 +1023,7 @@ export const ptBR: TranslationResources = {
   },
   desktop: {
     quitting: {
-      title: "Saindo do Paseo...",
+      title: "Saindo do Paseo Reforged...",
       detail: "Parando o daemon local.",
     },
     daemon: {
@@ -1162,7 +1162,7 @@ export const ptBR: TranslationResources = {
         microphone: "O status do microfone ainda não foi verificado.",
       },
       testNotification: {
-        title: "Teste de notificação do Paseo",
+        title: "Teste de notificação do Paseo Reforged",
         body: "Se você consegue ver isto, as notificações desktop funcionam.",
         notDelivered:
           "A notificação não foi entregue. Verifique Ajustes do Sistema > Notificações.",
@@ -1184,7 +1184,7 @@ export const ptBR: TranslationResources = {
   },
   rootError: {
     kicker: "Algo deu errado",
-    title: "O Paseo encontrou um problema.",
+    title: "O Paseo Reforged encontrou um problema.",
     body: "Tente novamente para recarregar o app. Se isso continuar acontecendo, inclua os detalhes abaixo ao relatar o problema.",
     details: "Detalhes",
   },
@@ -1278,7 +1278,7 @@ export const ptBR: TranslationResources = {
     },
   },
   onboarding: {
-    title: "Bem-vindo ao Paseo",
+    title: "Bem-vindo ao Paseo Reforged",
     subtitle: "Conecte seu computador para começar",
     actions: {
       settings: "Configurações",
@@ -2018,7 +2018,7 @@ export const ptBR: TranslationResources = {
         },
         update: {
           desktopManagedHint:
-            "Este daemon é gerenciado pelo Paseo Desktop. Atualize o Paseo Desktop no host.",
+            "Este daemon é gerenciado pelo Paseo Reforged Desktop. Atualize o Paseo Reforged Desktop no host.",
           title: "Atualizar daemon",
           hint: "Atualiza o daemon para a versão mais recente e o reinicia",
           confirm: "Atualizar",

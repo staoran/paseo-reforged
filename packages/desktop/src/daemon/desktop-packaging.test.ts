@@ -25,18 +25,18 @@ function createFakeMacBundle(options: { includeHelper: boolean }): {
   shimPath: string;
 } {
   const root = mkdtempSync(join(tmpdir(), "paseo-cli-shim-test-"));
-  const appPath = join(root, "Paseo.app");
+  const appPath = join(root, "Paseo Reforged.app");
   const contentsPath = join(appPath, "Contents");
   const resourcesPath = join(contentsPath, "Resources");
   const shimPath = join(resourcesPath, "bin", "paseo");
-  const mainPath = join(contentsPath, "MacOS", "Paseo");
+  const mainPath = join(contentsPath, "MacOS", "Paseo Reforged");
   const helperPath = join(
     contentsPath,
     "Frameworks",
-    "Paseo Helper.app",
+    "Paseo Reforged Helper.app",
     "Contents",
     "MacOS",
-    "Paseo Helper",
+    "Paseo Reforged Helper",
   );
 
   mkdirSync(dirname(shimPath), { recursive: true });
@@ -63,6 +63,17 @@ function createFakeMacBundle(options: { includeHelper: boolean }): {
 }
 
 describe("desktop packaging", () => {
+  it("uses the Paseo Reforged package identity", () => {
+    const config = readFileSync(join(packageRoot, "electron-builder.yml"), "utf8");
+
+    expect(config).toContain("appId: sh.paseo.reforged.desktop");
+    expect(config).toContain("productName: Paseo Reforged");
+    expect(config).toMatch(/^extraMetadata:\r?\n  name: paseo-reforged-desktop$/m);
+    expect(config).toContain('artifactName: "Paseo-Reforged-Setup-${version}-${arch}.${ext}"');
+    expect(config).toContain("shortcutName: Paseo Reforged");
+    expect(config).toContain('uninstallDisplayName: "Paseo Reforged ${version}"');
+  });
+
   it("unpacks server zsh shell integration files for external shells", () => {
     const config = readFileSync(join(packageRoot, "electron-builder.yml"), "utf8");
 
@@ -140,7 +151,7 @@ describe("desktop packaging", () => {
       const result = spawnSync(bundle.shimPath, ["--version"], { encoding: "utf8" });
 
       expect(result.status).toBe(1);
-      expect(result.stderr).toContain("Bundled Paseo Helper executable not found");
+      expect(result.stderr).toContain("Bundled Paseo Reforged Helper executable not found");
       expect(result.stdout).not.toContain("main-executable");
     } finally {
       rmSync(bundle.root, { recursive: true, force: true });

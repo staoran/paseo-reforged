@@ -4,12 +4,22 @@
 
 Controlled by `APP_VARIANT` in `packages/app/app.config.js` (vanilla Expo, no custom Gradle plugin):
 
-| Variant       | App name    | Package ID       |
-| ------------- | ----------- | ---------------- |
-| `production`  | Paseo       | `sh.paseo`       |
-| `development` | Paseo Debug | `sh.paseo.debug` |
+| Variant       | App name             | Package ID                |
+| ------------- | -------------------- | ------------------------- |
+| `production`  | Paseo Reforged       | `sh.paseo.reforged`       |
+| `development` | Paseo Reforged Debug | `sh.paseo.reforged.debug` |
 
 EAS profiles: `development`, `production`, and `production-apk` in `packages/app/eas.json`.
+
+The Reforged EAS project is `tao-team/paseo-reforged` with project ID
+`5e4527ba-abbd-428f-8a56-300c21b9e1af`. Set `EAS_PROJECT_ID` to that value when
+resolving a production or development config; it drives both
+`extra.eas.projectId` and the updates URL. When the variable is absent, OTA
+updates are disabled instead of falling back to the upstream project. The EAS
+development and production build profiles carry the public ID so remote
+builders resolve the same config; the Android APK workflow also reads the same
+repository variable for its local preflight and skips when that variable is
+missing. Keep the profile and repository-variable values identical.
 
 `development` uses Android `debug`.
 
