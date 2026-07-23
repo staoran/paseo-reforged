@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0-beta.4 - 2026-07-23
+## 0.2.0-beta.5 - 2026-07-23
 
 ### Added
 
@@ -17,6 +17,7 @@
 
 ### Fixed
 
+- Android beta APK releases now use the free EAS build tier
 - Notifications now open the correct workspace and agent ([#2331](https://github.com/getpaseo/paseo/pull/2331))
 - Archived agents can be restored directly from History ([#2316](https://github.com/getpaseo/paseo/pull/2316))
 - CLI agent runs stay in the current workspace unless a new workspace is requested ([#2315](https://github.com/getpaseo/paseo/pull/2315))
