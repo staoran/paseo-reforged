@@ -1,9 +1,10 @@
 # Changelog
 
-## 0.2.0-beta.3 - 2026-07-22
+## 0.2.0-beta.4 - 2026-07-23
 
 ### Added
 
+- Paseo Reforged now has its own desktop installation, mobile package, update channel, and support links ([a4172e9](https://github.com/staoran/paseo-reforged/commit/a4172e995dae47a83516da9568dcfc59cc5ad910) by [@staoran](https://github.com/staoran))
 - Open the complete Changes view as a workspace tab ([#2298](https://github.com/getpaseo/paseo/pull/2298) by [@nikuscs](https://github.com/nikuscs))
 - Add files to chat directly from Files and Changes ([#2275](https://github.com/getpaseo/paseo/pull/2275) by [@nikuscs](https://github.com/nikuscs))
 - Open existing agents from Paseo links or the CLI ([#2324](https://github.com/getpaseo/paseo/pull/2324))
