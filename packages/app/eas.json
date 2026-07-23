@@ -27,9 +27,8 @@
       "extends": "production",
       "distribution": "internal",
       "android": {
-        "resourceClass": "large",
         "buildType": "apk",
-        "gradleCommand": ":app:assembleRelease -x lint -x lintVitalAnalyzeRelease -x lintVitalRelease -x generateReleaseLintModel -x generateReleaseLintVitalModel"
+        "gradleCommand": ":app:assembleRelease --max-workers=1 -Dorg.gradle.parallel=false -x lint -x lintVitalAnalyzeRelease -x lintVitalRelease -x generateReleaseLintModel -x generateReleaseLintVitalModel"
       }
     }
   },
