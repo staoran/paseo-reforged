@@ -132,7 +132,7 @@ The flag must be present for both prebuild and Gradle because Gradle starts Metr
 
 Keep the excluded npm packages installed. Normal builds use them, while the F-Droid profile removes only their Android native modules and config plugins. Paseo always applies `expo-gradle-jvmargs` with `-Xmx4096m` and `-XX:MaxMetaspaceSize=1024m` so local Expo prebuilds have enough Gradle heap whether they use precompiled AARs or source-built Expo modules.
 
-The EAS `production-apk` profile uses the free-plan default Android resource class (`medium`) and serializes Gradle with `--max-workers=1 -Dorg.gradle.parallel=false`. Release builds compile the native ABIs and run Hermes bundling in the same Gradle invocation, so serial execution trades build time for memory headroom. If it still exhausts the Medium worker, preserve the failed beta tag and revise the release design rather than requesting Large by default.
+The GitHub APK workflow runs `eas build --local` on its Ubuntu runner with the EAS `production-apk` profile. The build still authenticates with `EXPO_TOKEN` and uses the EAS-managed Android keystore for the Reforged project, but Gradle and Hermes run on GitHub Actions instead of an EAS remote worker, so the build does not consume EAS build quota or a paid resource class. Before upload, the workflow verifies the APK signature, package ID, and version name.
 
 ### React version lockstep
 

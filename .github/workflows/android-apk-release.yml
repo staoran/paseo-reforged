@@ -39,6 +39,25 @@ jobs:
         shell: bash
         run: node scripts/emit-release-env.mjs --source-tag "$SOURCE_TAG" >> "$GITHUB_ENV"
 
+      - name: Verify immutable tag checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          expected_commit="$(git rev-list -n 1 "$SOURCE_TAG")"
+          actual_commit="$(git rev-parse HEAD)"
+          if [[ "$actual_commit" != "$expected_commit" ]]; then
+            echo "::error::Expected $SOURCE_TAG at $expected_commit, checked out $actual_commit."
+            exit 1
+          fi
+
+          if [[ "$RELEASE_TAG" == "v0.2.0-beta.5" && "$actual_commit" != "4231b974c59f17f5edbd084751979faf5c54b7e8" ]]; then
+            echo "::error::beta.5 APK recovery must build 4231b974c59f17f5edbd084751979faf5c54b7e8, checked out $actual_commit."
+            exit 1
+          fi
+
+          echo "Verified immutable source: $SOURCE_TAG -> $actual_commit"
+
       - name: Enforce beta-only release gate
         if: env.IS_PRERELEASE != 'true'
         shell: bash
@@ -80,6 +99,12 @@ jobs:
           registry-url: "https://npm.pkg.github.com"
           scope: "@boudra"
 
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "21"
+
       - name: Install JS dependencies
         run: node scripts/npm-retry.mjs ci
         env:
@@ -88,49 +113,69 @@ jobs:
       - name: Setup Expo and EAS
         uses: expo/expo-github-action@v8
         with:
-          eas-version: latest
           token: ${{ secrets.EXPO_TOKEN }}
 
-      - name: Build Android APK on EAS
-        id: eas_build
+      - name: Build Android APK on GitHub runner
+        id: build
         shell: bash
         run: |
           set -euo pipefail
-          cd packages/app
-
-          build_json="$(npx eas build --platform android --profile production-apk --non-interactive --wait --json)"
-          echo "$build_json" > "$RUNNER_TEMP/eas-build.json"
-
-          build_id="$(jq -r 'if type == "array" then .[0].id // empty else .id // empty end' "$RUNNER_TEMP/eas-build.json")"
-          if [ -z "$build_id" ]; then
-            echo "Failed to determine EAS build ID."
-            cat "$RUNNER_TEMP/eas-build.json"
-            exit 1
-          fi
-
-          echo "build_id=$build_id" >> "$GITHUB_OUTPUT"
-
-      - name: Resolve APK artifact URL
-        id: artifact
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd packages/app
-
-          build_view_json="$(npx eas build:view '${{ steps.eas_build.outputs.build_id }}' --json)"
-          echo "$build_view_json" > "$RUNNER_TEMP/eas-build-view.json"
-
-          artifact_url="$(jq -r '.artifacts.buildUrl // .artifacts.applicationArchiveUrl // empty' "$RUNNER_TEMP/eas-build-view.json")"
-          if [ -z "$artifact_url" ]; then
-            echo "Failed to determine APK artifact URL."
-            cat "$RUNNER_TEMP/eas-build-view.json"
-            exit 1
-          fi
 
           asset_name="Paseo-Reforged-${RELEASE_TAG}-android.apk"
           asset_path="$RUNNER_TEMP/$asset_name"
 
-          curl --fail --location --output "$asset_path" "$artifact_url"
+          cd packages/app
+
+          npx --no-install eas build \
+            --platform android \
+            --profile production-apk \
+            --local \
+            --non-interactive \
+            --output "$asset_path"
+
+          if [[ ! -s "$asset_path" ]]; then
+            echo "::error::Local EAS build did not create $asset_path."
+            exit 1
+          fi
+
+          echo "asset_name=$asset_name" >> "$GITHUB_OUTPUT"
+          echo "asset_path=$asset_path" >> "$GITHUB_OUTPUT"
+
+      - name: Validate Android APK
+        id: artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          asset_name="${{ steps.build.outputs.asset_name }}"
+          asset_path="${{ steps.build.outputs.asset_path }}"
+          if [[ ! -s "$asset_path" ]]; then
+            echo "::error::APK is missing or empty: $asset_path"
+            exit 1
+          fi
+
+          build_tools_dir="$(find "${ANDROID_HOME:?}/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          apksigner="$build_tools_dir/apksigner"
+          aapt="$build_tools_dir/aapt"
+          if [[ ! -x "$apksigner" || ! -x "$aapt" ]]; then
+            echo "::error::Android build tools are missing apksigner or aapt in $build_tools_dir."
+            exit 1
+          fi
+
+          "$apksigner" verify --verbose --print-certs "$asset_path"
+
+          package_line="$("$aapt" dump badging "$asset_path" | sed -n '1p')"
+          echo "$package_line"
+          if ! grep -Fq "name='sh.paseo.reforged'" <<< "$package_line"; then
+            echo "::error::Expected package sh.paseo.reforged."
+            exit 1
+          fi
+          if ! grep -Fq "versionName='$RELEASE_VERSION'" <<< "$package_line"; then
+            echo "::error::Expected versionName $RELEASE_VERSION."
+            exit 1
+          fi
+
+          echo "Verified package=sh.paseo.reforged versionName=$RELEASE_VERSION asset=$asset_name"
 
           echo "asset_name=$asset_name" >> "$GITHUB_OUTPUT"
           echo "asset_path=$asset_path" >> "$GITHUB_OUTPUT"
