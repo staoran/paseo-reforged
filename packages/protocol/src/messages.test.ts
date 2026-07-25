@@ -308,6 +308,21 @@ describe("agent detach RPC", () => {
     }
     expect(parsed.features?.importSessionWorkspaceTarget).toBe(true);
   });
+
+  test("parses the session import workspace title feature gate", () => {
+    const parsed = parseServerInfoStatusPayload({
+      status: "server_info",
+      serverId: "srv-test",
+      features: {
+        importSessionWorkspaceTitle: true,
+      },
+    });
+
+    if (!parsed) {
+      throw new Error("Expected server info payload to parse");
+    }
+    expect(parsed.features?.importSessionWorkspaceTitle).toBe(true);
+  });
 });
 
 describe("agent setting action responses", () => {

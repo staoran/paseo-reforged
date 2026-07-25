@@ -112,9 +112,11 @@ function makeManagedAgent(args: {
 
 function createImportWorkspace(
   workspaceId: string,
+  capturedInputs?: unknown[],
 ): Pick<WorkspaceProvisioningService, "runInImportWorkspace"> {
   return {
     async runInImportWorkspace(input, operation) {
+      capturedInputs?.push(input);
       const workspace = createPersistedWorkspaceRecord({
         workspaceId,
         projectId: `project-${workspaceId}`,
@@ -516,12 +518,48 @@ test("normalizeImportAgentRequest accepts new and legacy import handle shapes", 
   });
 });
 
+test("normalizeImportAgentRequest trims import titles without collapsing omitted and null", () => {
+  const titled = normalizeImportAgentRequest({
+    type: "import_agent_request",
+    requestId: "titled",
+    providerId: "custom-codex",
+    providerHandleId: "thread-1",
+    workspaceTitle: "  Imported session  ",
+  });
+  const blank = normalizeImportAgentRequest({
+    type: "import_agent_request",
+    requestId: "blank",
+    providerId: "custom-codex",
+    providerHandleId: "thread-2",
+    workspaceTitle: "   ",
+  });
+  const untitled = normalizeImportAgentRequest({
+    type: "import_agent_request",
+    requestId: "untitled",
+    providerId: "custom-codex",
+    providerHandleId: "thread-3",
+    workspaceTitle: null,
+  });
+  const legacy = normalizeImportAgentRequest({
+    type: "import_agent_request",
+    requestId: "legacy",
+    providerId: "custom-codex",
+    providerHandleId: "thread-4",
+  });
+
+  expect(titled).toHaveProperty("workspaceTitle", "Imported session");
+  expect(blank).toHaveProperty("workspaceTitle", null);
+  expect(untitled).toHaveProperty("workspaceTitle", null);
+  expect(legacy).not.toHaveProperty("workspaceTitle");
+});
+
 function makeStoredProviderSession(input: {
   id: string;
   cwd: string;
   sessionId: string;
   nativeHandle?: string;
   workspaceId?: string;
+  title?: string | null;
   labels?: Record<string, string>;
   archivedAt?: string | null;
 }): StoredAgentRecord {
@@ -534,6 +572,7 @@ function makeStoredProviderSession(input: {
     updatedAt: "2026-04-30T11:00:00.000Z",
     lastActivityAt: "2026-04-30T10:30:00.000Z",
     lastUserMessageAt: null,
+    title: input.title ?? null,
     labels: input.labels ?? {},
     config: { provider: "codex", cwd: input.cwd },
     persistence: {
@@ -551,6 +590,7 @@ class ProviderImportHarness {
   readonly manager: ImportSessionAgentManager;
   readonly snapshot: ManagedAgent;
   readonly freshImports: unknown[] = [];
+  readonly workspaceInputs: unknown[] = [];
   readonly closedAgentIds: string[] = [];
   timeline: AgentTimelineItem[] = [];
   activeAgent: ManagedAgent | null = null;
@@ -672,16 +712,22 @@ class ProviderImportHarness {
     };
   }
 
-  import(input: { providerHandleId: string; cwd?: string; labels?: Record<string, string> }) {
+  import(input: {
+    providerHandleId: string;
+    cwd?: string;
+    workspaceTitle?: string | null;
+    labels?: Record<string, string>;
+  }) {
     return importProviderSession({
       request: {
         requestId: "import-thread",
         provider: "codex",
         providerHandleId: input.providerHandleId,
         cwd: input.cwd,
+        ...(input.workspaceTitle !== undefined ? { workspaceTitle: input.workspaceTitle } : {}),
         labels: input.labels,
       },
-      workspaceProvisioning: createImportWorkspace("ws-restored"),
+      workspaceProvisioning: createImportWorkspace("ws-restored", this.workspaceInputs),
       agentManager: this.manager,
       agentStorage: this.storage,
       logger: createTestLogger(),
@@ -711,12 +757,32 @@ test("importProviderSession uses the provider import path with the requested lab
       labels: { source: "import" },
     },
   ]);
+  expect(harness.workspaceInputs[0]).not.toHaveProperty("initialTitle");
   expect(result).toEqual({
     snapshot: harness.snapshot,
     timelineSize: 2,
     createdWorkspace: null,
   });
 });
+
+test.each([
+  ["Provider session title", "Provider session title"],
+  [null, null],
+] as const)(
+  "importProviderSession passes workspace title %s to fresh workspace and agent inputs",
+  async (workspaceTitle, expectedTitle) => {
+    const harness = await ProviderImportHarness.create();
+
+    await harness.import({
+      providerHandleId: "thread-imported",
+      cwd: "/tmp/imported-agent",
+      workspaceTitle,
+    });
+
+    expect(harness.workspaceInputs[0]).toHaveProperty("initialTitle", expectedTitle);
+    expect(harness.freshImports[0]).toHaveProperty("title", expectedTitle);
+  },
+);
 
 test("importProviderSession rejects a provider session with an active stored owner", async () => {
   const harness = await ProviderImportHarness.create({ sessionId: "thread-active" });
@@ -742,6 +808,7 @@ test("importProviderSession restores an archived session as the same standalone 
     id: harness.snapshot.id,
     cwd: harness.snapshot.cwd,
     sessionId: "thread-archived",
+    title: "Archived title",
     labels: { existing: "label", [PARENT_AGENT_ID_LABEL]: "archived-parent" },
   });
   await harness.seed(archived);
@@ -749,6 +816,7 @@ test("importProviderSession restores an archived session as the same standalone 
   const result = await harness.import({
     providerHandleId: "thread-archived",
     cwd: harness.snapshot.cwd,
+    workspaceTitle: "New provider title",
     labels: { source: "reimport" },
   });
 
@@ -761,6 +829,7 @@ test("importProviderSession restores an archived session as the same standalone 
     id: harness.snapshot.id,
     workspaceId: "ws-restored",
     labels: { existing: "label", source: "reimport" },
+    title: "Archived title",
     archivedAt: null,
   });
   expect((await harness.storage.get(harness.snapshot.id))?.labels).not.toHaveProperty(

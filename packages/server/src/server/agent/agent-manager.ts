@@ -1134,6 +1134,7 @@ export class AgentManager {
     providerHandleId: string;
     cwd: string;
     workspaceId: string;
+    title?: string | null;
     labels?: Record<string, string>;
   }): Promise<ManagedAgent> {
     return this.trackAgentRegistrationOperation(this.importProviderSessionInternal(input));
@@ -1144,6 +1145,7 @@ export class AgentManager {
     providerHandleId: string;
     cwd: string;
     workspaceId: string;
+    title?: string | null;
     labels?: Record<string, string>;
   }): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
@@ -1177,7 +1179,10 @@ export class AgentManager {
         stripInternalPaseoMcpServer(imported.config),
       );
       const timelineRows = buildImportedTimelineRows(imported.timeline);
-      const initialTitle = resolveImportedAgentTitle(importedConfig, timelineRows);
+      const initialTitle =
+        input.title !== undefined
+          ? input.title
+          : resolveImportedAgentTitle(importedConfig, timelineRows);
 
       handedToRegistration = true;
       const agent = await this.registerSession(imported.session, importedConfig, resolvedAgentId, {
@@ -1188,6 +1193,7 @@ export class AgentManager {
         persistence: imported.persistence,
         historyPrimed: true,
         initialTitle,
+        initialTitleOverridesConfig: input.title !== undefined,
         publishWhenReady: true,
       });
       for (const event of imported.providerSubagentEvents ?? []) {
@@ -2711,6 +2717,7 @@ export class AgentManager {
       lastError?: string;
       attention?: AttentionState;
       initialTitle?: string | null;
+      initialTitleOverridesConfig?: boolean;
       publishWhenReady?: boolean;
       workspaceId?: string;
       owner?: AgentOwner;
@@ -2727,6 +2734,7 @@ export class AgentManager {
         resolvedAgentId,
         config,
         options?.initialTitle ?? null,
+        options?.initialTitleOverridesConfig === true,
       );
 
       const now = new Date();
@@ -3081,10 +3089,14 @@ export class AgentManager {
     agentId: string,
     config: AgentSessionConfig,
     fallbackTitle: string | null,
+    initialTitleOverridesConfig: boolean,
   ): Promise<string | null> {
     const existing = await this.registry?.get(agentId);
     if (existing) {
       return existing.title ?? null;
+    }
+    if (initialTitleOverridesConfig) {
+      return fallbackTitle;
     }
     const explicitTitle =
       typeof config.title === "string" && config.title.trim().length > 0

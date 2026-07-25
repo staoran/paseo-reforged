@@ -4084,6 +4084,7 @@ test("imports an agent by provider handle id", async () => {
     providerId: "custom-codex",
     providerHandleId: "thread-1",
     cwd: "/tmp/repo",
+    workspaceTitle: "Imported session",
   });
 
   expect(mock.sent).toHaveLength(1);
@@ -4096,6 +4097,7 @@ test("imports an agent by provider handle id", async () => {
       providerHandleId?: string;
       sessionId?: string;
       cwd?: string;
+      workspaceTitle?: string | null;
     };
   };
   expect(request.message).toMatchObject({
@@ -4103,6 +4105,7 @@ test("imports an agent by provider handle id", async () => {
     providerId: "custom-codex",
     providerHandleId: "thread-1",
     cwd: "/tmp/repo",
+    workspaceTitle: "Imported session",
   });
   expect(request.message).not.toHaveProperty("sessionId");
 
@@ -4155,6 +4158,61 @@ test("imports an agent by provider handle id", async () => {
     id: "agent-1",
     provider: "custom-codex",
   });
+});
+
+test("preserves null and omitted import workspace title states", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const untitledPromise = client.importAgent({
+    providerId: "custom-codex",
+    providerHandleId: "thread-untitled",
+    workspaceTitle: null,
+  });
+  const untitledRequest = parseSentFrame(mock.sent[0]);
+  expect(untitledRequest).toHaveProperty("workspaceTitle", null);
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "status",
+      payload: {
+        status: "agent_create_failed",
+        requestId: String(untitledRequest.requestId),
+        error: "wire test sentinel",
+      },
+    }),
+  );
+  await expect(untitledPromise).rejects.toThrow("wire test sentinel");
+
+  const legacyPromise = client.importAgent({
+    providerId: "custom-codex",
+    providerHandleId: "thread-legacy",
+  });
+  const legacyRequest = parseSentFrame(mock.sent[1]);
+  expect(legacyRequest).not.toHaveProperty("workspaceTitle");
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "status",
+      payload: {
+        status: "agent_create_failed",
+        requestId: String(legacyRequest.requestId),
+        error: "wire test sentinel",
+      },
+    }),
+  );
+  await expect(legacyPromise).rejects.toThrow("wire test sentinel");
 });
 
 test("uses server-provided dictation finish timeout budget", async () => {

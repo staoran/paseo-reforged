@@ -3988,12 +3988,14 @@ test("import_agent_request registers a workspace for a never-seen cwd", async ()
     providerId: "codex",
     providerHandleId: "session-xyz",
     cwd: importedCwd,
+    workspaceTitle: "  Imported session title  ",
   });
 
   const importedWorkspace = Array.from(workspaces.values()).find(
     (workspace) => workspace.cwd === importedCwd,
   );
   expect(importedWorkspace).toBeTruthy();
+  expect(importedWorkspace?.title).toBe("Imported session title");
   const workspaceUpdates = filterByType(emitted, "workspace_update");
   expect(workspaceUpdates.length).toBeGreaterThan(0);
   expect(
@@ -4009,6 +4011,7 @@ test("import_agent_request imports into the workspace that opened the import she
   const session = createSessionForWorkspaceTests();
   const workspaceId = "ws-repo-running";
   let importedWorkspaceId: string | undefined;
+  let importedTitle: string | null | undefined;
   let workspaceCreated = false;
 
   session.projectRegistry.get = async () =>
@@ -4025,7 +4028,9 @@ test("import_agent_request imports into the workspace that opened the import she
   };
 
   session.agentManager.importProviderSession = async (input: unknown) => {
-    importedWorkspaceId = (input as { workspaceId: string }).workspaceId;
+    const importInput = input as { workspaceId: string; title?: string | null };
+    importedWorkspaceId = importInput.workspaceId;
+    importedTitle = importInput.title;
     return makeManagedAgent({
       id: "imported-agent",
       cwd: REPO_CWD,
@@ -4046,9 +4051,11 @@ test("import_agent_request imports into the workspace that opened the import she
     providerHandleId: "session-xyz",
     cwd: REPO_CWD,
     workspaceId,
+    workspaceTitle: "Imported session title",
   });
 
   expect(importedWorkspaceId).toBe(workspaceId);
+  expect(importedTitle).toBe("Imported session title");
   expect(workspaceCreated).toBe(false);
 });
 

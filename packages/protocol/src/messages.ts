@@ -1325,6 +1325,7 @@ export const ImportAgentRequestMessageSchema = z.object({
   providerHandleId: z.string().optional(),
   cwd: z.string().optional(),
   workspaceId: z.string().optional(),
+  workspaceTitle: z.string().nullable().optional(),
   labels: z.record(z.string(), z.string()).optional(),
   requestId: z.string(),
 });
@@ -2781,6 +2782,7 @@ export const ServerInfoStatusPayloadSchema = z
         providerRemoval: z.boolean().optional(),
         // COMPAT(importSessionWorkspaceTarget): added in v0.1.110, remove gate after 2027-01-16.
         importSessionWorkspaceTarget: z.boolean().optional(),
+        importSessionWorkspaceTitle: z.boolean().optional(),
         // COMPAT(forgeProviders): added in v0.1.106, drop the gate when daemon floor >= v0.1.106.
         // Daemon advertises pluggable non-GitHub forge support (the forge registry);
         // the client gates non-GitHub setup UI on it.

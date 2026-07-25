@@ -9,8 +9,14 @@ export function requiresImportSessionsHostUpgrade(input: {
   supportsSnapshot: boolean;
   workspaceId?: string | null;
   supportsWorkspaceTarget: boolean;
+  supportsWorkspaceTitle: boolean;
 }): boolean {
-  return !input.supportsSnapshot || (Boolean(input.workspaceId) && !input.supportsWorkspaceTarget);
+  // COMPAT(importSessionWorkspaceTitle): added in v0.2.0, drop the gate when daemon floor >= v0.2.0 after 2027-01-22.
+  return (
+    !input.supportsSnapshot ||
+    !input.supportsWorkspaceTitle ||
+    (Boolean(input.workspaceId) && !input.supportsWorkspaceTarget)
+  );
 }
 
 export interface SessionsQueryResult {

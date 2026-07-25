@@ -2639,6 +2639,61 @@ test("importProviderSession imports the selected session without listing and pub
   expect((await storage.get(imported.id))?.title).toBe("Trace provider imports");
 });
 
+test.each([
+  ["Provider session title", "Provider session title"],
+  [null, null],
+] as const)(
+  "importProviderSession persists requested title %s ahead of provider fallbacks",
+  async (title, expectedTitle) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-import-title-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const session = new TestAgentSession({ provider: "codex", cwd: workdir });
+
+    class ImportClient extends TestAgentClient {
+      async importSession(input: ImportProviderSessionInput) {
+        return {
+          session,
+          config: { provider: "codex" as const, cwd: workdir, title: "Provider config title" },
+          persistence: {
+            provider: "codex" as const,
+            sessionId: input.providerHandleId,
+            nativeHandle: input.providerHandleId,
+            metadata: { provider: "codex", cwd: workdir },
+          },
+          timeline: [
+            {
+              item: { type: "user_message" as const, text: "Prompt-derived title" },
+              timestamp: "2026-01-02T00:00:00.000Z",
+            },
+          ],
+        };
+      }
+    }
+
+    const manager = new AgentManager({
+      clients: { codex: new ImportClient() },
+      registry: storage,
+      logger,
+    });
+
+    try {
+      const imported = await manager.importProviderSession({
+        provider: "codex",
+        providerHandleId: "thread-titled",
+        cwd: workdir,
+        workspaceId: "ws-imported",
+        title,
+      });
+
+      expect((await storage.get(imported.id))?.title).toBe(expectedTitle);
+    } finally {
+      await manager.flush();
+      await storage.flush();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
 test("reloadAgentSession passes daemon launch env through the provider launch context", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-context-"));
   const storagePath = join(workdir, "agents");

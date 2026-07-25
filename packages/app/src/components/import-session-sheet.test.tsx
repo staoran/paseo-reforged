@@ -163,6 +163,10 @@ vi.mock("@/hooks/use-providers-snapshot", () => ({
   }),
 }));
 
+vi.mock("@/runtime/host-features", () => ({
+  useHostFeature: () => true,
+}));
+
 interface RenderOptions {
   visible?: boolean;
   onClose?: () => void;
@@ -183,7 +187,6 @@ function renderSheet(
     entries: options?.snapshot?.entries,
     supportsSnapshot: options?.snapshot?.supportsSnapshot ?? false,
   };
-
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -485,6 +488,7 @@ describe("ImportSessionSheet", () => {
           providerId: "claude",
           providerLabel: "Claude Code",
           cwd: "/repo/paseo-realpath",
+          title: "  Import me  ",
         }),
       ],
     }));
@@ -511,6 +515,7 @@ describe("ImportSessionSheet", () => {
         providerId: "claude",
         providerHandleId: "provider-thread-1",
         cwd: "/repo/paseo-realpath",
+        workspaceTitle: "  Import me  ",
       });
     });
     expect(onImportedAgent).toHaveBeenCalledWith("agent-imported");
@@ -520,7 +525,13 @@ describe("ImportSessionSheet", () => {
   it("shows an import error state without closing when selected session import fails", async () => {
     const fetchRecentProviderSessions = vi.fn(async () => ({
       requestId: "recent-provider-sessions",
-      entries: [createProviderSessionEntry({ providerId: "claude", providerLabel: "Claude Code" })],
+      entries: [
+        createProviderSessionEntry({
+          providerId: "claude",
+          providerLabel: "Claude Code",
+          title: null,
+        }),
+      ],
     }));
     const importAgent = vi.fn(async () => {
       throw new Error("import unavailable");
@@ -547,6 +558,7 @@ describe("ImportSessionSheet", () => {
       providerId: "claude",
       providerHandleId: "provider-thread-1",
       cwd: "/repo/paseo",
+      workspaceTitle: null,
     });
     expect(onImportedAgent).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
@@ -832,6 +844,7 @@ describe("ImportSessionSheet", () => {
         providerId: "claude",
         providerHandleId: "provider-thread-1",
         cwd: "/home/me/work/other-project",
+        workspaceTitle: "Import me",
       });
     });
     expect(onImported).toHaveBeenCalledTimes(1);

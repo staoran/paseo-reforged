@@ -276,6 +276,33 @@ describe("workspace message schemas", () => {
     });
   });
 
+  test("preserves import workspace title string, null, and omitted states", () => {
+    const titledRequest = SessionInboundMessageSchema.parse({
+      type: "import_agent_request",
+      requestId: "req-import-titled",
+      providerId: "custom-codex",
+      providerHandleId: "thread-1",
+      workspaceTitle: "  Imported session  ",
+    });
+    const untitledRequest = SessionInboundMessageSchema.parse({
+      type: "import_agent_request",
+      requestId: "req-import-untitled",
+      providerId: "custom-codex",
+      providerHandleId: "thread-2",
+      workspaceTitle: null,
+    });
+    const legacyRequest = SessionInboundMessageSchema.parse({
+      type: "import_agent_request",
+      requestId: "req-import-no-title",
+      providerId: "custom-codex",
+      providerHandleId: "thread-3",
+    });
+
+    expect(titledRequest).toHaveProperty("workspaceTitle", "  Imported session  ");
+    expect(untitledRequest).toHaveProperty("workspaceTitle", null);
+    expect(legacyRequest).not.toHaveProperty("workspaceTitle");
+  });
+
   test("parses open_project_request", () => {
     const parsed = SessionInboundMessageSchema.parse({
       type: "open_project_request",

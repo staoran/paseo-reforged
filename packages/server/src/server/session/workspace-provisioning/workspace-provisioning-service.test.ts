@@ -492,10 +492,14 @@ test("findOrCreateProjectForDirectory keeps nested selected roots independent", 
 test("runInImportWorkspace uses an active requested workspace without creating another", async () => {
   const cwd = path.join(tmpDir, "requested");
   mkdirSync(cwd);
-  const workspace = await provisioning.createWorkspaceForDirectory(cwd);
+  const workspace = await provisioning.createWorkspaceForDirectory(cwd, "Existing title");
 
   const result = await provisioning.runInImportWorkspace(
-    { cwd, requestedWorkspaceId: workspace.workspaceId },
+    {
+      cwd,
+      requestedWorkspaceId: workspace.workspaceId,
+      initialTitle: "Imported session",
+    },
     async (target) => target.workspaceId,
   );
 
@@ -592,11 +596,12 @@ test("runInImportWorkspace creates one fresh workspace for an untargeted import"
   mkdirSync(cwd);
 
   const result = await provisioning.runInImportWorkspace(
-    { cwd },
+    { cwd, initialTitle: "  Imported session  " },
     async (workspace) => workspace.workspaceId,
   );
 
   expect(result.value).toBe(result.createdWorkspace?.workspaceId);
+  expect(result.createdWorkspace?.title).toBe("Imported session");
   expect(await workspaceRegistry.list()).toEqual([result.createdWorkspace]);
 });
 

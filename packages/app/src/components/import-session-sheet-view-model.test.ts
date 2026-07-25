@@ -78,8 +78,20 @@ describe("requiresImportSessionsHostUpgrade", () => {
         supportsSnapshot: true,
         workspaceId: null,
         supportsWorkspaceTarget: false,
+        supportsWorkspaceTitle: true,
       }),
     ).toBe(false);
+  });
+
+  it("requires host support for imported workspace titles", () => {
+    expect(
+      requiresImportSessionsHostUpgrade({
+        supportsSnapshot: true,
+        workspaceId: null,
+        supportsWorkspaceTarget: true,
+        supportsWorkspaceTitle: false,
+      }),
+    ).toBe(true);
   });
 
   it("requires host support for imports opened from a workspace", () => {
@@ -88,6 +100,7 @@ describe("requiresImportSessionsHostUpgrade", () => {
         supportsSnapshot: true,
         workspaceId: "ws-current",
         supportsWorkspaceTarget: false,
+        supportsWorkspaceTitle: true,
       }),
     ).toBe(true);
     expect(
@@ -95,6 +108,7 @@ describe("requiresImportSessionsHostUpgrade", () => {
         supportsSnapshot: true,
         workspaceId: "ws-current",
         supportsWorkspaceTarget: true,
+        supportsWorkspaceTitle: true,
       }),
     ).toBe(false);
   });

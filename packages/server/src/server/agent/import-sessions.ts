@@ -46,6 +46,7 @@ export interface NormalizedImportAgentRequest {
   providerHandleId: string;
   cwd?: string;
   workspaceId?: string;
+  workspaceTitle?: string | null;
   labels?: Record<string, string>;
   requestId: string;
 }
@@ -109,6 +110,9 @@ export function normalizeImportAgentRequest(
     providerHandleId,
     cwd: msg.cwd,
     workspaceId: msg.workspaceId,
+    ...(msg.workspaceTitle !== undefined
+      ? { workspaceTitle: msg.workspaceTitle?.trim() || null }
+      : {}),
     labels: msg.labels,
     requestId: msg.requestId,
   };
@@ -177,7 +181,13 @@ export async function importProviderSession(
   const key = await resolveProviderSessionImportMutationKey(input);
   return serializeProviderSessionImport(input.agentManager, key, async () => {
     const placement = await input.workspaceProvisioning.runInImportWorkspace(
-      { cwd, requestedWorkspaceId: input.request.workspaceId },
+      {
+        cwd,
+        requestedWorkspaceId: input.request.workspaceId,
+        ...(input.request.workspaceTitle !== undefined
+          ? { initialTitle: input.request.workspaceTitle }
+          : {}),
+      },
       (workspace) => importProviderSessionNow(input, cwd, workspace.workspaceId),
     );
     return { ...placement.value, createdWorkspace: placement.createdWorkspace };
@@ -236,6 +246,7 @@ async function importProviderSessionNow(
     providerHandleId,
     cwd,
     workspaceId,
+    ...(input.request.workspaceTitle !== undefined ? { title: input.request.workspaceTitle } : {}),
     labels,
   });
   await unarchiveAgentState(input.agentStorage, input.agentManager, snapshot.id);

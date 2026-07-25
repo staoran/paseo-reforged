@@ -277,10 +277,12 @@ export function ImportSessionSheet({
     enabled: visible,
   });
   const supportsWorkspaceTarget = useHostFeature(serverId, "importSessionWorkspaceTarget");
+  const supportsWorkspaceTitle = useHostFeature(serverId, "importSessionWorkspaceTitle");
   const requiresHostUpgrade = requiresImportSessionsHostUpgrade({
     supportsSnapshot,
     workspaceId,
     supportsWorkspaceTarget,
+    supportsWorkspaceTitle,
   });
 
   const providersToFetch = useMemo(
@@ -418,6 +420,7 @@ export function ImportSessionSheet({
         providerId: entry.providerId,
         providerHandleId: entry.providerHandleId,
         cwd: entry.cwd,
+        workspaceTitle: entry.title,
         ...(workspaceId ? { workspaceId } : {}),
       });
       return agent;
