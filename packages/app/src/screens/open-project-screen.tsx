@@ -22,6 +22,7 @@ import { PairDeviceModal } from "@/desktop/components/pair-device-modal";
 import { buildHostAgentDetailRoute, buildSettingsHostSectionRoute } from "@/utils/host-routes";
 import { ImportSessionSheet } from "@/components/import-session-sheet";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
+import { completeImportedProjectSession } from "@/hooks/open-project";
 import { useOpenProject } from "@/hooks/use-open-project";
 import type { Href } from "expo-router";
 
@@ -65,14 +66,15 @@ export function OpenProjectScreen() {
   const handleCloseImportSession = useCallback(() => setIsImportSheetOpen(false), []);
 
   const handleImported = useCallback(
-    (agent: { id: string; cwd: string }) => {
+    async (agent: { id: string; cwd: string }) => {
       if (!importServerId) return;
-      void (async () => {
-        const result = await openImportedProject(agent.cwd);
-        if (result.ok) {
-          router.push(buildHostAgentDetailRoute(importServerId, agent.id) as Href);
-        }
-      })();
+      await completeImportedProjectSession({
+        agent,
+        openProject: openImportedProject,
+        navigateToAgent: (agentId) => {
+          router.push(buildHostAgentDetailRoute(importServerId, agentId) as Href);
+        },
+      });
     },
     [importServerId, openImportedProject, router],
   );

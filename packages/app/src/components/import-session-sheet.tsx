@@ -21,7 +21,9 @@ import {
   aggregateSessionEntries,
   ALL_FILTER_VALUE,
   buildProviderLabelMap,
+  buildRecentProviderSessionsQueryRoot,
   collectErroredProviderLabels,
+  completeImportedSession,
   computeEmptyState,
   getPromptPreview,
   getSessionTitle,
@@ -49,7 +51,7 @@ interface ImportSessionSheetProps {
   workspaceId?: string | null;
   onClose: () => void;
   onImportedAgent?: (agentId: string) => void;
-  onImported?: (agent: ImportedAgent) => void;
+  onImported?: (agent: ImportedAgent) => void | Promise<void>;
 }
 
 type RecentSessionsResponse = Awaited<
@@ -296,8 +298,8 @@ export function ImportSessionSheet({
   );
 
   const sessionsQueryRoot = useMemo(
-    () => ["recent-provider-sessions", cwd ?? null] as const,
-    [cwd],
+    () => buildRecentProviderSessionsQueryRoot(serverId, cwd),
+    [serverId, cwd],
   );
 
   const queriesConfig = useMemo(
@@ -427,9 +429,7 @@ export function ImportSessionSheet({
     },
     onSuccess: async (agent) => {
       await queryClient.invalidateQueries({ queryKey: sessionsQueryRoot });
-      onClose();
-      onImportedAgent?.(agent.id);
-      onImported?.(agent);
+      await completeImportedSession({ agent, onImported, onClose, onImportedAgent });
     },
   });
 

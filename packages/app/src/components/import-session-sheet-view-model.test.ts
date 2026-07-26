@@ -4,7 +4,9 @@ import {
   aggregateSessionEntries,
   ALL_FILTER_VALUE,
   buildProviderLabelMap,
+  buildRecentProviderSessionsQueryRoot,
   collectErroredProviderLabels,
+  completeImportedSession,
   computeEmptyState,
   getPromptPreview,
   getSessionTitle,
@@ -111,6 +113,67 @@ describe("requiresImportSessionsHostUpgrade", () => {
         supportsWorkspaceTitle: true,
       }),
     ).toBe(false);
+  });
+});
+
+describe("buildRecentProviderSessionsQueryRoot", () => {
+  it("keeps same-path session caches isolated by host", () => {
+    expect(buildRecentProviderSessionsQueryRoot("host-a", "/repo/paseo")).toEqual([
+      "recent-provider-sessions",
+      "host-a",
+      "/repo/paseo",
+    ]);
+    expect(buildRecentProviderSessionsQueryRoot("host-b", "/repo/paseo")).toEqual([
+      "recent-provider-sessions",
+      "host-b",
+      "/repo/paseo",
+    ]);
+  });
+});
+
+describe("completeImportedSession", () => {
+  it("waits for asynchronous completion before closing and opening a targeted tab", async () => {
+    const events: string[] = [];
+    let resolveCompletion!: () => void;
+    const completion = new Promise<void>((resolve) => {
+      resolveCompletion = resolve;
+    });
+
+    const result = completeImportedSession({
+      agent: { id: "agent-imported" },
+      onImported: async () => {
+        events.push("imported");
+        await completion;
+      },
+      onClose: () => events.push("closed"),
+      onImportedAgent: (agentId) => events.push(`tab:${agentId}`),
+    });
+
+    expect(events).toEqual(["imported"]);
+    resolveCompletion();
+    await result;
+    expect(events).toEqual(["imported", "closed", "tab:agent-imported"]);
+  });
+
+  it("propagates completion failures without closing or opening a targeted tab", async () => {
+    let closeCount = 0;
+    const openedAgentIds: string[] = [];
+
+    await expect(
+      completeImportedSession({
+        agent: { id: "agent-imported" },
+        onImported: async () => {
+          throw new Error("project registration failed");
+        },
+        onClose: () => {
+          closeCount += 1;
+        },
+        onImportedAgent: (agentId) => openedAgentIds.push(agentId),
+      }),
+    ).rejects.toThrow("project registration failed");
+
+    expect(closeCount).toBe(0);
+    expect(openedAgentIds).toEqual([]);
   });
 });
 

@@ -27,6 +27,22 @@ export type OpenProjectResult = OpenProjectSuccess | OpenProjectFailure;
 export type OpenProjectFailureReason = "directory_not_found" | "open_failed";
 export type { ProjectGithubCloneProtocol };
 
+export interface CompleteImportedProjectSessionInput {
+  agent: { id: string; cwd: string };
+  openProject: (path: string) => Promise<OpenProjectResult>;
+  navigateToAgent: (agentId: string) => void;
+}
+
+export async function completeImportedProjectSession(
+  input: CompleteImportedProjectSessionInput,
+): Promise<void> {
+  const result = await input.openProject(input.agent.cwd);
+  if (!result.ok) {
+    throw new Error(result.error ?? "Unable to register imported project");
+  }
+  input.navigateToAgent(input.agent.id);
+}
+
 export function getOpenProjectFailureReason(
   result: OpenProjectResult,
 ): OpenProjectFailureReason | null {

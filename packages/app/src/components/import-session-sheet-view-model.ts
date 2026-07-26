@@ -5,6 +5,24 @@ import { i18n } from "@/i18n/i18next";
 export const PER_PROVIDER_LIMIT = 15;
 export const ALL_FILTER_VALUE = "__all__";
 
+export function buildRecentProviderSessionsQueryRoot(
+  serverId: string | null,
+  cwd: string | null | undefined,
+) {
+  return ["recent-provider-sessions", serverId, cwd ?? null] as const;
+}
+
+export async function completeImportedSession<T extends { id: string }>(input: {
+  agent: T;
+  onImported?: (agent: T) => void | Promise<void>;
+  onClose: () => void;
+  onImportedAgent?: (agentId: string) => void;
+}): Promise<void> {
+  await input.onImported?.(input.agent);
+  input.onClose();
+  input.onImportedAgent?.(input.agent.id);
+}
+
 export function requiresImportSessionsHostUpgrade(input: {
   supportsSnapshot: boolean;
   workspaceId?: string | null;

@@ -99,6 +99,7 @@ import {
   resolveNewWorkspaceAutomaticServerId,
   resolveNewWorkspaceInitialServerId,
 } from "./new-workspace-initial-context";
+import { NewWorkspaceImportSessionEntry } from "./new-workspace/import-session-entry";
 import { useNewWorkspaceProjectPicker } from "./new-workspace/project-picker";
 
 const ThemedFolderPlus = withUnistyles(FolderPlus);
@@ -2128,6 +2129,14 @@ export function NewWorkspaceScreen({
             <Text style={styles.composerTitle}>{t("newWorkspace.title")}</Text>
           </View>
           {formStack}
+          <View style={styles.secondaryActions}>
+            <NewWorkspaceImportSessionEntry
+              serverId={selectedServerId}
+              client={client}
+              cwd={selectedSourceDirectory}
+              blocked={isPending || !isConnected}
+            />
+          </View>
           <Composer
             externalKeyboardShift
             agentId={draftKey}
@@ -2197,6 +2206,11 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xl,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foreground,
+  },
+  secondaryActions: {
+    flexDirection: "row",
+    paddingHorizontal: theme.spacing[4],
+    marginBottom: theme.spacing[2],
   },
   errorText: {
     fontSize: theme.fontSize.sm,

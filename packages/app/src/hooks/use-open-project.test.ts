@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   cloneGithubProjectDirectly,
+  completeImportedProjectSession,
   getOpenProjectFailureReason,
   openProjectDirectly,
 } from "@/hooks/open-project";
@@ -237,5 +238,45 @@ describe("getOpenProjectFailureReason", () => {
     expect(getOpenProjectFailureReason({ ok: false, errorCode: null, error: "boom" })).toBe(
       "open_failed",
     );
+  });
+});
+
+describe("completeImportedProjectSession", () => {
+  it("opens the imported project before navigating its agent", async () => {
+    const events: string[] = [];
+
+    await completeImportedProjectSession({
+      agent: { id: "agent-imported", cwd: "/repo/imported" },
+      openProject: async (cwd) => {
+        events.push(`open:${cwd}`);
+        return { ok: true, project: buildProjectPayload() };
+      },
+      navigateToAgent: (agentId) => events.push(`navigate:${agentId}`),
+    });
+
+    expect(events).toEqual(["open:/repo/imported", "navigate:agent-imported"]);
+  });
+
+  it("rejects a Home project-registration failure without navigating the imported agent", async () => {
+    const openedPaths: string[] = [];
+    const navigatedAgentIds: string[] = [];
+
+    await expect(
+      completeImportedProjectSession({
+        agent: { id: "agent-imported", cwd: "/repo/imported" },
+        openProject: async (cwd) => {
+          openedPaths.push(cwd);
+          return {
+            ok: false,
+            errorCode: null,
+            error: "Unable to register imported project",
+          };
+        },
+        navigateToAgent: (agentId) => navigatedAgentIds.push(agentId),
+      }),
+    ).rejects.toThrow("Unable to register imported project");
+
+    expect(openedPaths).toEqual(["/repo/imported"]);
+    expect(navigatedAgentIds).toEqual([]);
   });
 });

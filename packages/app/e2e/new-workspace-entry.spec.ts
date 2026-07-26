@@ -1,4 +1,4 @@
-import { expect, test } from "./fixtures";
+import { expect, test, type Page } from "./fixtures";
 import { gotoAppShell } from "./helpers/app";
 import {
   connectNewWorkspaceDaemonClient,
@@ -22,6 +22,36 @@ import { waitForSidebarHydration } from "./helpers/workspace-ui";
 
 function projectRow(page: import("@playwright/test").Page, projectKey: string) {
   return page.getByTestId(`sidebar-project-row-${projectKey}`);
+}
+
+function observeRecentSessionRequestCwds(page: Page) {
+  const cwds: string[] = [];
+
+  page.on("websocket", (socket) => {
+    socket.on("framesent", ({ payload }) => {
+      if (typeof payload !== "string") return;
+      try {
+        const envelope = JSON.parse(payload) as {
+          type?: unknown;
+          message?: { type?: unknown; cwd?: unknown };
+          cwd?: unknown;
+        };
+        const message = envelope.type === "session" ? envelope.message : envelope;
+        if (message?.type !== "fetch_recent_provider_sessions_request") return;
+        if (typeof message.cwd === "string") {
+          cwds.push(message.cwd);
+        }
+      } catch {
+        // Ignore non-JSON frames from unrelated transports.
+      }
+    });
+  });
+
+  return {
+    async waitFor(cwd: string): Promise<void> {
+      await expect.poll(() => cwds, { timeout: 15_000 }).toContain(cwd);
+    },
+  };
 }
 
 test.describe("New workspace entry points", () => {
@@ -70,6 +100,31 @@ test.describe("New workspace entry points", () => {
         timeout: 30_000,
       });
       await expect(page.getByTestId("host-picker-trigger")).toBeVisible({ timeout: 30_000 });
+    } finally {
+      await seeded.cleanup();
+    }
+  });
+
+  test("opens import sessions for the selected New Workspace project", async ({ page }) => {
+    const seeded = await seedWorkspace({ repoPrefix: "entry-import-session-" });
+    const recentSessionRequests = observeRecentSessionRequestCwds(page);
+
+    try {
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+      await openNewWorkspaceComposer(page, {
+        projectKey: seeded.projectId,
+        projectDisplayName: seeded.projectDisplayName,
+      });
+      await expectNewWorkspaceProjectSelected(page, seeded.projectDisplayName);
+
+      const importSession = page.getByTestId("new-workspace-import-session");
+      await expect(importSession).toBeVisible({ timeout: 30_000 });
+      await expect(importSession).toBeEnabled();
+      await importSession.click();
+
+      await expect(page.getByTestId("import-session-sheet")).toBeVisible({ timeout: 15_000 });
+      await recentSessionRequests.waitFor(seeded.repoPath);
     } finally {
       await seeded.cleanup();
     }

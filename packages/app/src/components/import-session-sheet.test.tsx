@@ -11,6 +11,7 @@ import type {
 import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ImportSessionSheet } from "@/components/import-session-sheet";
+import { completeImportedProjectSession } from "@/hooks/open-project";
 
 const { theme } = vi.hoisted(() => ({
   theme: {
@@ -171,7 +172,7 @@ interface RenderOptions {
   visible?: boolean;
   onClose?: () => void;
   onImportedAgent?: (agentId: string) => void;
-  onImported?: (agent: Awaited<ReturnType<DaemonClient["importAgent"]>>) => void;
+  onImported?: (agent: Awaited<ReturnType<DaemonClient["importAgent"]>>) => void | Promise<void>;
   cwd?: string | null;
   snapshot?: {
     entries?: ProviderSnapshotEntry[];
@@ -561,6 +562,42 @@ describe("ImportSessionSheet", () => {
       workspaceTitle: null,
     });
     expect(onImportedAgent).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("keeps the Home import sheet open when project registration fails", async () => {
+    const fetchRecentProviderSessions = vi.fn(async () => ({
+      requestId: "recent-provider-sessions",
+      entries: [
+        createProviderSessionEntry({
+          providerId: "claude",
+          providerLabel: "Claude Code",
+          title: null,
+        }),
+      ],
+    }));
+    const importAgent = vi.fn(async () => createImportedAgentSnapshot("agent-imported"));
+    const openProject = vi.fn(async () => ({
+      ok: false as const,
+      errorCode: null,
+      error: "Unable to register imported project",
+    }));
+    const navigateToAgent = vi.fn();
+    const onClose = vi.fn();
+
+    renderSheet(createRecentSessionsClient(fetchRecentProviderSessions, importAgent), {
+      cwd: null,
+      onClose,
+      onImported: (agent) =>
+        completeImportedProjectSession({ agent, openProject, navigateToAgent }),
+      snapshot: { supportsSnapshot: true, entries: [createSnapshotEntry("claude")] },
+    });
+
+    fireEvent.click(await screen.findByTestId("import-session-session-claude-provider-thread-1"));
+
+    await screen.findByText("Could not import selected session.");
+    expect(openProject).toHaveBeenCalledWith("/repo/paseo");
+    expect(navigateToAgent).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
   });
 
