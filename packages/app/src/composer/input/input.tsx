@@ -24,6 +24,7 @@ import {
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
+import { WORKSPACE_SURFACE_DATASET } from "@/styles/workspace-surface";
 import { ArrowUp, Mic, MicOff, CornerDownLeft, Plus, Square } from "lucide-react-native";
 import { useDictation } from "@/hooks/use-dictation";
 import { DictationOverlay } from "@/components/dictation-controls";
@@ -75,7 +76,7 @@ import {
 } from "./state";
 
 const DEFAULT_SEND_KEYS: ShortcutKey[][] = [["Enter"]];
-const COMPOSER_INPUT_DATASET = { composerInput: "" } as const;
+const COMPOSER_INPUT_DATASET = { ...WORKSPACE_SURFACE_DATASET, composerInput: "" } as const;
 
 export interface AttachmentMenuItem {
   id: string;
@@ -1878,9 +1879,10 @@ const styles = StyleSheet.create((theme: Theme) => ({
   textInput: {
     width: "100%",
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
+    fontFamily: theme.fontFamily.workspace,
+    fontSize: theme.workspaceFontSize.base,
     fontWeight: theme.fontWeight.normal,
-    lineHeight: theme.fontSize.base * 1.4,
+    lineHeight: theme.workspaceFontSize.base * 1.4,
     ...(isWeb
       ? ({
           outlineStyle: "none",

@@ -1749,10 +1749,17 @@ export const ar: TranslationResources = {
         title: "الخطوط",
         systemDefault: "الافتراضي للنظام",
         interfaceFont: "خط الواجهة",
-        interfaceFontHint: "تستخدم عبر التطبيق. اتركه فارغًا للإعداد الافتراضي للنظام",
+        interfaceFontHint:
+          "يُستخدم للتنقل وعناصر التحكم والتسميات. اتركه فارغًا للإعداد الافتراضي للنظام",
         interfaceFontAccessibility: "عائلة خطوط الواجهة",
         interfaceSize: "حجم الواجهة",
         interfaceSizeAccessibility: "حجم الخط في الواجهة",
+        workspaceFont: "خط مساحة العمل",
+        workspaceFontHint:
+          "يُستخدم في الرسائل وMarkdown ومنطقة الإدخال. اتركه فارغًا للإعداد الافتراضي للنظام",
+        workspaceFontAccessibility: "عائلة خطوط مساحة العمل",
+        workspaceSize: "حجم مساحة العمل",
+        workspaceSizeAccessibility: "حجم خط مساحة العمل",
         codeFont: "خط الكود",
         codeFontHint:
           "تستخدم في الكود والاختلافات والمخرجات الطرفية. اتركه فارغًا للإعداد الافتراضي للنظام",

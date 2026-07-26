@@ -1780,10 +1780,17 @@ export const ptBR: TranslationResources = {
         title: "Fontes",
         systemDefault: "Sistema padrão",
         interfaceFont: "Fonte da interface",
-        interfaceFontHint: "Usada em todo o app. Deixe vazio para usar o padrão do sistema",
+        interfaceFontHint:
+          "Usada na navegação, nos controles e nos rótulos. Deixe vazio para usar o padrão do sistema",
         interfaceFontAccessibility: "Família da fonte da interface",
         interfaceSize: "Tamanho da interface",
         interfaceSizeAccessibility: "Tamanho da fonte da interface",
+        workspaceFont: "Fonte do espaço de trabalho",
+        workspaceFontHint:
+          "Usada em mensagens, Markdown e na área de entrada. Deixe vazio para usar o padrão do sistema",
+        workspaceFontAccessibility: "Família da fonte do espaço de trabalho",
+        workspaceSize: "Tamanho do espaço de trabalho",
+        workspaceSizeAccessibility: "Tamanho da fonte do espaço de trabalho",
         codeFont: "Fonte de código",
         codeFontHint:
           "Usada em código, diffs e saída do terminal. Deixe vazio para usar o padrão do sistema",

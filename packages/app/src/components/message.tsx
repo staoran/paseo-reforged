@@ -60,6 +60,7 @@ import Animated, {
 } from "react-native-reanimated";
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from "react-native-svg";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
+import { WORKSPACE_SURFACE_DATASET } from "@/styles/workspace-surface";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { MarkdownRenderer, type MarkdownStyles } from "@/components/markdown/renderer";
 import type { TodoEntry, UserMessageImageAttachment } from "@/types/stream";
@@ -358,8 +359,10 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
   },
   text: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-    ...(isWeb ? { lineHeight: 22, overflowWrap: "anywhere" as const } : {}),
+    fontFamily: theme.fontFamily.workspace,
+    fontSize: theme.workspaceFontSize.base,
+    lineHeight: Math.round(theme.workspaceFontSize.base * 1.4),
+    ...(isWeb ? { overflowWrap: "anywhere" as const } : {}),
   },
   imagePreviewContainer: {
     flexDirection: "row",
@@ -531,7 +534,7 @@ export const UserMessage = memo(function UserMessage({
             </View>
           ) : null}
           {hasText ? (
-            <Text selectable style={userMessageStylesheet.text}>
+            <Text selectable style={userMessageStylesheet.text} dataSet={WORKSPACE_SURFACE_DATASET}>
               {message}
             </Text>
           ) : null}
@@ -1980,9 +1983,9 @@ const speakMessageStylesheet = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
   },
   text: {
-    fontFamily: theme.fontFamily.ui,
-    fontSize: theme.fontSize.base,
-    lineHeight: 22,
+    fontFamily: theme.fontFamily.workspace,
+    fontSize: theme.workspaceFontSize.base,
+    lineHeight: Math.round(theme.workspaceFontSize.base * 1.4),
     color: theme.colors.foreground,
   },
 }));
@@ -2008,7 +2011,9 @@ export const SpeakMessage = memo(function SpeakMessage({
         <ThemedMicVocal size={12} uniProps={foregroundMutedColorMapping} />
         <Text style={speakMessageStylesheet.headerLabel}>{t("message.speak.header")}</Text>
       </View>
-      <Text style={speakMessageStylesheet.text}>{message}</Text>
+      <Text style={speakMessageStylesheet.text} dataSet={WORKSPACE_SURFACE_DATASET}>
+        {message}
+      </Text>
     </View>
   );
 });
@@ -2067,8 +2072,9 @@ const activityLogStylesheet = StyleSheet.create((theme) => ({
     flex: 1,
   },
   messageText: {
-    fontSize: theme.fontSize.sm,
-    lineHeight: 20,
+    fontFamily: theme.fontFamily.workspace,
+    fontSize: theme.workspaceFontSize.sm,
+    lineHeight: Math.round(theme.workspaceFontSize.sm * 1.4),
   },
   detailsRow: {
     flexDirection: "row",
@@ -2092,7 +2098,7 @@ const activityLogStylesheet = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.code,
     fontFamily: theme.fontFamily.mono,
-    lineHeight: 16,
+    lineHeight: theme.lineHeight.diff,
   },
 }));
 
@@ -2172,7 +2178,7 @@ export const ActivityLog = memo(function ActivityLog({
             <IconComponent size={16} color={config.color} />
           </View>
           <View style={activityLogStylesheet.textContainer}>
-            <Text style={messageTextStyle} selectable>
+            <Text style={messageTextStyle} selectable dataSet={WORKSPACE_SURFACE_DATASET}>
               {displayMessage}
             </Text>
             {metadata && (
@@ -2226,8 +2232,9 @@ const compactionStylesheet = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
   },
   text: {
-    fontFamily: theme.fontFamily.ui,
-    fontSize: 13,
+    fontFamily: theme.fontFamily.workspace,
+    fontSize: Math.round((theme.workspaceFontSize.xs + theme.workspaceFontSize.sm) / 2),
+    lineHeight: Math.round(theme.workspaceFontSize.sm * 1.4),
     color: theme.colors.foregroundMuted,
   },
 }));
@@ -2248,7 +2255,9 @@ export const CompactionMarker = memo(function CompactionMarker({
         ) : (
           <Scissors size={12} color="#a1a1aa" />
         )}
-        <Text style={compactionStylesheet.text}>{label}</Text>
+        <Text style={compactionStylesheet.text} dataSet={WORKSPACE_SURFACE_DATASET}>
+          {label}
+        </Text>
       </View>
       <View style={compactionStylesheet.line} />
     </View>
@@ -2286,7 +2295,9 @@ function TodoListItemRow({ text, completed }: TodoListItemRowProps) {
           <ThemedTodoCheckIcon size={12} uniProps={primaryForegroundColorMapping} />
         ) : null}
       </View>
-      <Text style={textStyle}>{text}</Text>
+      <Text style={textStyle} dataSet={WORKSPACE_SURFACE_DATASET}>
+        {text}
+      </Text>
     </View>
   );
 }
@@ -2320,7 +2331,9 @@ const todoListCardStylesheet = StyleSheet.create((theme) => ({
   itemText: {
     flex: 1,
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
+    fontFamily: theme.fontFamily.workspace,
+    fontSize: theme.workspaceFontSize.base,
+    lineHeight: Math.round(theme.workspaceFontSize.base * 1.4),
   },
   itemTextCompleted: {
     color: theme.colors.foregroundMuted,

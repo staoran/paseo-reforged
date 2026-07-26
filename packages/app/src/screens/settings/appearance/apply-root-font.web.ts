@@ -1,27 +1,34 @@
-// Apply the interface (UI) font app-wide on web.
+// Apply interface and workspace fonts app-wide on web.
 //
 // react-native-web stamps a hardcoded default font onto every text element, so a
 // plain `body { font-family }` never cascades in — the element already has its own
-// font. Instead we inject ONE rule that points all text at a CSS variable and set
-// that variable live. The selector is high-specificity (1,2,0) so it deterministically
-// beats both RN-web's base font and Unistyles' generated classes (0,1,0) — no reliance
-// on stylesheet order. Code/diff/terminal surfaces carry `data-pmono` (and have their
-// subtree excluded via `:not([data-pmono] *)`) so they keep their monospace font.
+// font. Instead we inject static rules that point text at CSS variables and set those
+// variables live. The selectors beat both RN-web's base font and Unistyles' generated
+// classes without relying on stylesheet order. Workspace prose carries `data-pworkspace`;
+// code/diff/terminal surfaces carry `data-pmono`, which takes priority when nested.
 const STYLE_ID = "paseo-ui-font";
-const RULE =
-  ":is(#root, #overlay-root) *:not([data-pmono]):not([data-pmono] *){font-family:var(--paseo-ui-font);}";
+const RULE = [
+  ":is(#root, #overlay-root) *:not([data-pworkspace]):not([data-pworkspace] *):not([data-pmono]):not([data-pmono] *){font-family:var(--paseo-ui-font);}",
+  ":is(#root, #overlay-root) [data-pworkspace]:not([data-pmono]),:is(#root, #overlay-root) [data-pworkspace] *:not([data-pmono]):not([data-pmono] *){font-family:var(--paseo-workspace-font);}",
+].join("");
 
-export function applyRootUiFont(uiFontStack: string): void {
-  if (typeof document === "undefined") return;
-  // Strip anything that could break out of the CSS value; commas/quotes/spaces in a
-  // font stack are fine.
-  const value = uiFontStack
+function sanitizeFontStack(fontStack: string): string {
+  return fontStack
     .replace(/[<>{}();]/g, "")
     .replace(/[\r\n]/g, " ")
     .trim();
-  if (value.length === 0) return;
+}
 
-  document.documentElement.style.setProperty("--paseo-ui-font", value);
+export function applyRootUiFont(uiFontStack: string, workspaceFontStack: string): void {
+  if (typeof document === "undefined") return;
+  // Strip anything that could break out of the CSS value; commas/quotes/spaces in a
+  // font stack are fine.
+  const ui = sanitizeFontStack(uiFontStack);
+  const workspace = sanitizeFontStack(workspaceFontStack);
+  if (ui.length === 0 || workspace.length === 0) return;
+
+  document.documentElement.style.setProperty("--paseo-ui-font", ui);
+  document.documentElement.style.setProperty("--paseo-workspace-font", workspace);
 
   // The rule itself is static (references the variable); inject it once.
   let style = document.getElementById(STYLE_ID);

@@ -38,6 +38,14 @@ Weight has three tiers, applied by role:
 
 The rule, condensed: text that _names_ a surface or a group is `medium`. Text that lives _inside_ a surface or a group is `normal`. Top-of-screen titles are `<ScreenTitle>`, which is lighter still.
 
+Typography has three independently configurable roles:
+
+- **Interface** uses `theme.fontFamily.ui` and `theme.fontSize.*` for navigation, controls, labels, metadata, and workspace chrome.
+- **Workspace** uses `theme.fontFamily.workspace` and `theme.workspaceFontSize.*` for messages, Markdown prose, prompts, questions, plans, and other user or agent-authored natural language.
+- **Code** uses `theme.fontFamily.mono`, `theme.fontSize.code`, and `theme.lineHeight.diff` for code, diffs, terminal output, shell output, and structured payloads.
+
+Classify text by semantic role, not by which pane contains it. Workspace tabs and action labels remain interface text; inline code inside Markdown remains code. On web, the inheritance priority is code over workspace over interface, represented by `data-pmono` and `data-pworkspace` markers. Mark the smallest stable content subtree, and repeat the marker on content rendered through a portal.
+
 Foreground is for the thing being acted on: row titles, section headings, the selected sidebar item. `foregroundMuted` is for context: hints, descriptions, secondary metadata, idle sidebar items, placeholders, status text.
 
 `foregroundExtraMuted` is reserved for passive chrome that must sit behind muted text, such as an always-visible window control. Use the solid token instead of lowering SVG opacity; per-path opacity makes overlapping icon strokes render unevenly. Interactive hover and pressed states return to `foreground`.

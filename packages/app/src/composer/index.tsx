@@ -48,6 +48,7 @@ import type { DroppedItem } from "@/components/file-drop/types";
 import { MessageInput, type MessageInputRef, type AttachmentMenuItem } from "./input/input";
 import type { ImageAttachment, MessagePayload } from "./types";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
+import { WORKSPACE_SURFACE_DATASET } from "@/styles/workspace-surface";
 import type { DraftCommandConfig } from "@/hooks/use-agent-commands-query";
 import { encodeImages } from "@/utils/encode-images";
 import { focusWithRetries } from "@/utils/web-focus";
@@ -579,7 +580,12 @@ function QueuedMessageRow({
   }, [onSendNow, item.id]);
   return (
     <View style={styles.queueItem}>
-      <Text style={styles.queueText} numberOfLines={2} ellipsizeMode="tail">
+      <Text
+        style={styles.queueText}
+        numberOfLines={2}
+        ellipsizeMode="tail"
+        dataSet={WORKSPACE_SURFACE_DATASET}
+      >
         {item.text}
       </Text>
       <View style={styles.queueActions}>
@@ -2313,7 +2319,9 @@ const styles = StyleSheet.create((theme: Theme) => ({
   queueText: {
     flex: 1,
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
+    fontFamily: theme.fontFamily.workspace,
+    fontSize: theme.workspaceFontSize.base,
+    lineHeight: Math.round(theme.workspaceFontSize.base * 1.4),
   },
   queueActions: {
     flexDirection: "row",

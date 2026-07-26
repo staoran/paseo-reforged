@@ -24,6 +24,9 @@ export const MAX_TERMINAL_SCROLLBACK_LINES = 1_000_000;
 export const DEFAULT_UI_FONT_SIZE = 16; // == FONT_SIZE.base
 export const MIN_UI_FONT_SIZE = 11;
 export const MAX_UI_FONT_SIZE = 24;
+export const DEFAULT_WORKSPACE_FONT_SIZE = 16; // == FONT_SIZE.base
+export const MIN_WORKSPACE_FONT_SIZE = 11;
+export const MAX_WORKSPACE_FONT_SIZE = 24;
 export const DEFAULT_CODE_FONT_SIZE = 12; // == FONT_SIZE.code
 export const MIN_CODE_FONT_SIZE = 9;
 export const MAX_CODE_FONT_SIZE = 22; // line-height 1.5×22=33 stays safe
@@ -36,8 +39,10 @@ export interface AppSettings {
   serviceUrlBehavior: ServiceUrlBehavior;
   terminalScrollbackLines: number;
   uiFontFamily: string; // "" = platform default UI stack
+  workspaceFontFamily: string; // "" = platform default UI stack
   monoFontFamily: string; // "" = platform default mono stack
   uiFontSize: number; // clamped px, default 16
+  workspaceFontSize: number; // clamped px, default 16
   codeFontSize: number; // clamped px, default 12
   syntaxTheme: SyntaxThemeId; // default "one"
   workspaceTitleSource: WorkspaceTitleSource;
@@ -60,8 +65,10 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   serviceUrlBehavior: "ask",
   terminalScrollbackLines: DEFAULT_TERMINAL_SCROLLBACK_LINES,
   uiFontFamily: "",
+  workspaceFontFamily: "",
   monoFontFamily: "",
   uiFontSize: DEFAULT_UI_FONT_SIZE,
+  workspaceFontSize: DEFAULT_WORKSPACE_FONT_SIZE,
   codeFontSize: DEFAULT_CODE_FONT_SIZE,
   syntaxTheme: "one",
   workspaceTitleSource: "title",
@@ -188,6 +195,56 @@ function parseToolCallDetailLevel(stored: StoredAppSettings): ToolCallDetailLeve
   return null;
 }
 
+function pickTypographySettings(
+  stored: StoredAppSettings,
+): Pick<
+  AppSettings,
+  | "uiFontFamily"
+  | "workspaceFontFamily"
+  | "monoFontFamily"
+  | "uiFontSize"
+  | "workspaceFontSize"
+  | "codeFontSize"
+> {
+  const uiFontFamily =
+    sanitizeFontFamily(stored.uiFontFamily) ?? DEFAULT_CLIENT_SETTINGS.uiFontFamily;
+  const monoFontFamily =
+    sanitizeFontFamily(stored.monoFontFamily) ?? DEFAULT_CLIENT_SETTINGS.monoFontFamily;
+  const uiFontSize =
+    parseClampedFontSize(stored.uiFontSize, {
+      min: MIN_UI_FONT_SIZE,
+      max: MAX_UI_FONT_SIZE,
+    }) ?? DEFAULT_CLIENT_SETTINGS.uiFontSize;
+  const codeFontSize =
+    parseClampedFontSize(stored.codeFontSize, {
+      min: MIN_CODE_FONT_SIZE,
+      max: MAX_CODE_FONT_SIZE,
+    }) ?? DEFAULT_CLIENT_SETTINGS.codeFontSize;
+
+  // COMPAT(workspaceTypographySettings): added in v0.2.0-beta.5, remove after 2027-01-26.
+  const workspaceFontFamily =
+    stored.workspaceFontFamily === undefined
+      ? uiFontFamily
+      : (sanitizeFontFamily(stored.workspaceFontFamily) ??
+        DEFAULT_CLIENT_SETTINGS.workspaceFontFamily);
+  const workspaceFontSize =
+    stored.workspaceFontSize === undefined
+      ? uiFontSize
+      : (parseClampedFontSize(stored.workspaceFontSize, {
+          min: MIN_WORKSPACE_FONT_SIZE,
+          max: MAX_WORKSPACE_FONT_SIZE,
+        }) ?? DEFAULT_CLIENT_SETTINGS.workspaceFontSize);
+
+  return {
+    uiFontFamily,
+    workspaceFontFamily,
+    monoFontFamily,
+    uiFontSize,
+    workspaceFontSize,
+    codeFontSize,
+  };
+}
+
 function pickAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
   const result: Partial<AppSettings> = {};
   if (typeof stored.theme === "string" && VALID_THEMES.has(stored.theme)) {
@@ -210,28 +267,7 @@ function pickAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
   if (terminalScrollbackLines !== null) {
     result.terminalScrollbackLines = terminalScrollbackLines;
   }
-  const uiFontFamily = sanitizeFontFamily(stored.uiFontFamily);
-  if (uiFontFamily !== null) {
-    result.uiFontFamily = uiFontFamily;
-  }
-  const monoFontFamily = sanitizeFontFamily(stored.monoFontFamily);
-  if (monoFontFamily !== null) {
-    result.monoFontFamily = monoFontFamily;
-  }
-  const uiFontSize = parseClampedFontSize(stored.uiFontSize, {
-    min: MIN_UI_FONT_SIZE,
-    max: MAX_UI_FONT_SIZE,
-  });
-  if (uiFontSize !== null) {
-    result.uiFontSize = uiFontSize;
-  }
-  const codeFontSize = parseClampedFontSize(stored.codeFontSize, {
-    min: MIN_CODE_FONT_SIZE,
-    max: MAX_CODE_FONT_SIZE,
-  });
-  if (codeFontSize !== null) {
-    result.codeFontSize = codeFontSize;
-  }
+  Object.assign(result, pickTypographySettings(stored));
   if (typeof stored.syntaxTheme === "string" && isSyntaxThemeId(stored.syntaxTheme)) {
     result.syntaxTheme = stored.syntaxTheme;
   }

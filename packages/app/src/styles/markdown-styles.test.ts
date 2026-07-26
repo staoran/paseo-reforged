@@ -3,6 +3,43 @@ import { createCompactMarkdownStyles, createMarkdownStyles } from "./markdown-st
 import { darkTheme } from "./theme";
 
 describe("createMarkdownStyles", () => {
+  it("uses workspace typography for prose while keeping code on the mono axis", () => {
+    const workspaceTheme = {
+      ...darkTheme,
+      fontFamily: {
+        ...darkTheme.fontFamily,
+        workspace: "Workspace Sans",
+        mono: "Code Mono",
+      },
+      workspaceFontSize: {
+        ...darkTheme.workspaceFontSize,
+        sm: 17,
+        base: 19,
+        "3xl": 31,
+      },
+    };
+
+    const styles = createMarkdownStyles(workspaceTheme);
+
+    expect(styles.body).toMatchObject({
+      fontFamily: "Workspace Sans",
+      fontSize: 19,
+      lineHeight: Math.round(19 * 1.4),
+    });
+    expect(styles.heading1).toMatchObject({
+      fontFamily: "Workspace Sans",
+      fontSize: 31,
+    });
+    expect(styles.td).toMatchObject({
+      fontFamily: "Workspace Sans",
+      fontSize: 17,
+    });
+    expect(styles.code_inline).toMatchObject({
+      fontFamily: "Code Mono",
+      fontSize: darkTheme.fontSize.code,
+    });
+  });
+
   it("applies shrink-and-wrap constraints to long markdown text and links", () => {
     const styles = createMarkdownStyles(darkTheme);
 
@@ -82,10 +119,12 @@ describe("createMarkdownStyles", () => {
     expect(styles.code_block).toMatchObject({
       fontFamily: darkTheme.fontFamily.mono,
       fontSize: darkTheme.fontSize.code,
+      lineHeight: darkTheme.lineHeight.diff,
     });
     expect(styles.fence).toMatchObject({
       fontFamily: darkTheme.fontFamily.mono,
       fontSize: darkTheme.fontSize.code,
+      lineHeight: darkTheme.lineHeight.diff,
     });
     expect(compactStyles.code_inline).toMatchObject({
       fontFamily: darkTheme.fontFamily.mono,

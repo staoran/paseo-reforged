@@ -30,6 +30,7 @@ import { getMarkdownListMarker, getMarkdownListSpacing } from "@/utils/markdown-
 import { markdownNodeContainsType } from "@/utils/markdown-ast";
 import { createCompactMarkdownStyles, createMarkdownStyles } from "@/styles/markdown-styles";
 import type { Theme } from "@/styles/theme";
+import { WORKSPACE_SURFACE_DATASET } from "@/styles/workspace-surface";
 import { openExternalUrl } from "@/utils/open-external-url";
 import {
   splitHtmlishMarkdown,
@@ -111,9 +112,11 @@ export function MarkdownRenderer({
   );
 
   return (
-    <AppearanceStyleBoundary>
-      <MarkdownPartList parts={parts} rendererProps={rendererProps} />
-    </AppearanceStyleBoundary>
+    <View dataSet={WORKSPACE_SURFACE_DATASET}>
+      <AppearanceStyleBoundary>
+        <MarkdownPartList parts={parts} rendererProps={rendererProps} />
+      </AppearanceStyleBoundary>
+    </View>
   );
 }
 
@@ -747,9 +750,10 @@ const detailsStyles = StyleSheet.create((theme) => ({
     flex: 1,
     minWidth: 0,
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontFamily: theme.fontFamily.workspace,
+    fontSize: theme.workspaceFontSize.sm,
     fontWeight: theme.fontWeight.normal,
-    lineHeight: 18,
+    lineHeight: Math.round(theme.workspaceFontSize.sm * 1.4),
   },
   body: {
     paddingHorizontal: theme.spacing[2],
@@ -780,8 +784,9 @@ const detailsStyles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface2,
   },
   flowImageFallbackText: {
-    fontSize: 10,
-    lineHeight: 14,
+    fontFamily: theme.fontFamily.workspace,
+    fontSize: theme.workspaceFontSize.xs,
+    lineHeight: Math.round(theme.workspaceFontSize.xs * 1.4),
     color: theme.colors.foregroundMuted,
   },
 }));

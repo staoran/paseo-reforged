@@ -1765,10 +1765,16 @@ export const ja: TranslationResources = {
         systemDefault: "システムデフォルト",
         interfaceFont: "インターフェースフォント",
         interfaceFontHint:
-          "アプリ全体で使用されます。システムデフォルトにするには空のままにしてください",
+          "ナビゲーション、コントロール、ラベルで使用されます。システムデフォルトにするには空のままにしてください",
         interfaceFontAccessibility: "インターフェースフォントファミリー",
         interfaceSize: "インターフェースサイズ",
         interfaceSizeAccessibility: "インターフェースフォントサイズ",
+        workspaceFont: "ワークスペースフォント",
+        workspaceFontHint:
+          "メッセージ、Markdown、入力欄で使用されます。システムデフォルトにするには空のままにしてください",
+        workspaceFontAccessibility: "ワークスペースフォントファミリー",
+        workspaceSize: "ワークスペースサイズ",
+        workspaceSizeAccessibility: "ワークスペースフォントサイズ",
         codeFont: "コードフォント",
         codeFontHint:
           "コード、差分、ターミナル出力で使用されます。システムデフォルトにするには空のままにしてください",

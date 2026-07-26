@@ -1,6 +1,6 @@
 # Paseo 核心依赖与技能登记
 
-最后核对：`2026-07-22`
+最后核对：`2026-07-26`
 
 ## 核心能力实例
 
@@ -8,6 +8,8 @@
 | ----------------------- | ------------------------------------------------------- | ------------------------------------------------ | -------------- | -------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------ | ------------- |
 | SDD Harness（轻量路径） | `../core/skill-coordination.md#sdd-riper`               | `$sdd-riper-one-light`                           | `global-agent` | `floating-installed` | `stop-and-install`   | 已加载全局 Skill；本次完成 Restate、Research、Installation checkpoint、批准边界与验证闭环                           | `2026-07-22`  |
 | CodeMap                 | `../core/skill-coordination.md#codemap`                 | `$codemap`                                       | `global-agent` | `floating-installed` | `stop-and-install`   | 已加载 `C:/Users/staor/.skills-manager/skills/codemap/SKILL.md`，并按 project/feature 模板产出五张 map             | `2026-07-20`  |
+| 编码纪律                | `../core/skill-coordination.md#karpathy-guidelines`     | `$karpathy-guidelines`                           | `global-agent` | `floating-installed` | `stop-and-install`   | 已加载 `C:/Users/staor/.skills-manager/skills/karpathy-guidelines/SKILL.md`；本任务用于约束最小实现与验证           | `2026-07-26`  |
+| Test-driven development | `../core/skill-coordination.md#matt-pocock-阶段能力`    | `$tdd`                                           | `global-agent` | `floating-installed` | `stop-and-install`   | 已加载 `C:/Users/staor/.skills-manager/skills/tdd/SKILL.md`；本任务按已批准 Spec 的相邻稳定 seam 执行 red/green   | `2026-07-26`  |
 | 项目自定义              | `../core/skill-coordination.md#项目-skill-与自定义内容` | `.skills/workflows/project-customization.md`     | `bundled`      | `kit-version`        | `stop-and-repair`    | 工作流存在；本次完成 project-rules 与 dependency-capability 复核；revision 见 `PROJECT_RULES.md`                    | `2026-07-22`  |
 | 第三方官方文档          | 根 `AGENTS.md#context7`                                 | Context7 MCP：`resolve-library-id`、`query-docs` | `global-agent` | `managed-global`     | `stop-and-configure` | 当前 runtime 可发现 `mcp__context7__resolve_library_id` 与 `mcp__context7__query_docs`；本次内部源码地图未触发查询 | `2026-07-20`  |
 | 需求提纯                | `../core/skill-coordination.md#能力选择`                | `.skills/workflows/grill-me.md`                  | `bundled`      | `kit-version`        | `stop-and-repair`    | 文件存在；本次无需求歧义，未触发执行；revision 见 `PROJECT_RULES.md`                                                | `2026-07-22`  |

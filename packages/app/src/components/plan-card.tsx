@@ -1,9 +1,13 @@
-import { useMemo, type ReactNode } from "react";
+import { useMemo, type ComponentType, type ReactNode } from "react";
 import { Text, View, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
 import Markdown, { type ASTNode } from "react-native-markdown-display";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
+import { AppearanceStyleBoundary } from "@/components/appearance-style-boundary";
+import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { createMarkdownStyles } from "@/styles/markdown-styles";
+import type { Theme } from "@/styles/theme";
+import { WORKSPACE_SURFACE_DATASET } from "@/styles/workspace-surface";
 import { getMarkdownListMarker } from "@/utils/markdown-list";
 
 type MarkdownRuleStyles = Record<string, TextStyle & ViewStyle & { [key: string]: unknown }>;
@@ -11,14 +15,20 @@ type MarkdownRuleStyles = Record<string, TextStyle & ViewStyle & { [key: string]
 function MarkdownInlineText({
   inheritedStyle,
   ruleStyle,
+  monoSurface = false,
   children,
 }: {
   inheritedStyle: StyleProp<TextStyle>;
   ruleStyle: StyleProp<TextStyle>;
+  monoSurface?: boolean;
   children: ReactNode;
 }) {
   const style = useMemo(() => [inheritedStyle, ruleStyle], [inheritedStyle, ruleStyle]);
-  return <Text style={style}>{children}</Text>;
+  return (
+    <Text style={style} dataSet={monoSurface ? CODE_SURFACE_DATASET : undefined}>
+      {children}
+    </Text>
+  );
 }
 
 function MarkdownListItemContent({
@@ -87,6 +97,7 @@ function createPlanMarkdownRules() {
         key={node.key}
         inheritedStyle={inheritedStyles}
         ruleStyle={styles.code_block}
+        monoSurface
       >
         {node.content}
       </MarkdownInlineText>
@@ -98,7 +109,12 @@ function createPlanMarkdownRules() {
       styles: MarkdownRuleStyles,
       inheritedStyles: TextStyle = {},
     ) => (
-      <MarkdownInlineText key={node.key} inheritedStyle={inheritedStyles} ruleStyle={styles.fence}>
+      <MarkdownInlineText
+        key={node.key}
+        inheritedStyle={inheritedStyles}
+        ruleStyle={styles.fence}
+        monoSurface
+      >
         {node.content}
       </MarkdownInlineText>
     ),
@@ -113,6 +129,7 @@ function createPlanMarkdownRules() {
         key={node.key}
         inheritedStyle={inheritedStyles}
         ruleStyle={styles.code_inline}
+        monoSurface
       >
         {node.content}
       </MarkdownInlineText>
@@ -174,6 +191,18 @@ function createPlanMarkdownRules() {
   };
 }
 
+interface PlanMarkdownProps {
+  children: ReactNode;
+  style: ReturnType<typeof createMarkdownStyles>;
+  rules: ReturnType<typeof createPlanMarkdownRules>;
+}
+
+const ThemedPlanMarkdown = withUnistyles(Markdown as ComponentType<PlanMarkdownProps>);
+const PLAN_MARKDOWN_RULES = createPlanMarkdownRules();
+const planMarkdownStyleMapping = (theme: Theme): Partial<PlanMarkdownProps> => ({
+  style: createMarkdownStyles(theme),
+});
+
 export function PlanCard({
   title,
   description,
@@ -189,39 +218,29 @@ export function PlanCard({
   disableOuterSpacing?: boolean;
   testID?: string;
 }) {
-  const { theme } = useUnistyles();
   const { t } = useTranslation();
-  const markdownStyles = createMarkdownStyles(theme);
-  const markdownRules = createPlanMarkdownRules();
   const resolvedTitle = title ?? t("agentStream.permission.plan");
 
   const containerStyle = useMemo(
-    () => [
-      styles.container,
-      disableOuterSpacing && styles.containerCompact,
-      {
-        backgroundColor: theme.colors.surface1,
-        borderColor: theme.colors.border,
-      },
-    ],
-    [disableOuterSpacing, theme.colors.surface1, theme.colors.border],
-  );
-  const titleStyle = useMemo(
-    () => [styles.title, { color: theme.colors.foreground }],
-    [theme.colors.foreground],
-  );
-  const descriptionStyle = useMemo(
-    () => [styles.description, { color: theme.colors.foregroundMuted }],
-    [theme.colors.foregroundMuted],
+    () => [styles.container, disableOuterSpacing && styles.containerCompact],
+    [disableOuterSpacing],
   );
 
   return (
     <View testID={testID} style={containerStyle}>
-      <Text style={titleStyle}>{resolvedTitle}</Text>
-      {description ? <Text style={descriptionStyle}>{description}</Text> : null}
-      <Markdown style={markdownStyles} rules={markdownRules}>
-        {text}
-      </Markdown>
+      <Text style={styles.title}>{resolvedTitle}</Text>
+      {description ? (
+        <Text style={styles.description} dataSet={WORKSPACE_SURFACE_DATASET}>
+          {description}
+        </Text>
+      ) : null}
+      <View dataSet={WORKSPACE_SURFACE_DATASET}>
+        <AppearanceStyleBoundary>
+          <ThemedPlanMarkdown rules={PLAN_MARKDOWN_RULES} uniProps={planMarkdownStyleMapping}>
+            {text}
+          </ThemedPlanMarkdown>
+        </AppearanceStyleBoundary>
+      </View>
       {footer ? <View style={styles.footer}>{footer}</View> : null}
     </View>
   );
@@ -234,6 +253,8 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.spacing[2],
     borderWidth: 1,
     gap: theme.spacing[2],
+    backgroundColor: theme.colors.surface1,
+    borderColor: theme.colors.border,
   },
   containerCompact: {
     marginVertical: 0,
@@ -241,10 +262,13 @@ const styles = StyleSheet.create((theme) => ({
   title: {
     fontSize: theme.fontSize.base,
     lineHeight: 22,
+    color: theme.colors.foreground,
   },
   description: {
-    fontSize: theme.fontSize.sm,
-    lineHeight: 20,
+    fontFamily: theme.fontFamily.workspace,
+    fontSize: theme.workspaceFontSize.sm,
+    lineHeight: Math.round(theme.workspaceFontSize.sm * 1.4),
+    color: theme.colors.foregroundMuted,
   },
   footer: {
     gap: theme.spacing[2],

@@ -17,6 +17,7 @@ import { highlightDiffLines } from "@/utils/diff-highlight";
 import { hasMeaningfulToolCallDetail } from "@/utils/tool-call-detail-state";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
+import { WORKSPACE_SURFACE_DATASET } from "@/styles/workspace-surface";
 import { extensionFromPath, highlightToKeyedLines } from "@/utils/highlight-cache";
 import { HighlightedLines } from "./highlighted-content";
 import { DiffViewer } from "./diff-viewer";
@@ -299,7 +300,7 @@ function SubAgentActionRow({ action }: { action: SubAgentActivityRow }) {
         {formatSubAgentToolName(action.toolName)}
       </Text>
       {action.summary ? (
-        <Text selectable style={styles.subAgentActionSummary}>
+        <Text selectable style={styles.subAgentActionSummary} dataSet={WORKSPACE_SURFACE_DATASET}>
           {action.summary}
         </Text>
       ) : null}
@@ -499,7 +500,7 @@ function ScrollablePlainTextSection({ text, ds }: { text: string; ds: DetailStyl
         nestedScrollEnabled
         showsVerticalScrollIndicator
       >
-        <Text selectable style={styles.plainText}>
+        <Text selectable style={styles.plainText} dataSet={WORKSPACE_SURFACE_DATASET}>
           {text}
         </Text>
       </ScrollView>
@@ -813,10 +814,10 @@ const styles = StyleSheet.create((theme) => {
       minHeight: 0,
     },
     plainText: {
-      fontFamily: theme.fontFamily.ui,
-      fontSize: theme.fontSize.base,
+      fontFamily: theme.fontFamily.workspace,
+      fontSize: theme.workspaceFontSize.base,
       color: theme.colors.foreground,
-      lineHeight: 22,
+      lineHeight: Math.round(theme.workspaceFontSize.base * 1.4),
       overflowWrap: "anywhere",
     },
     sectionTitle: {
@@ -824,7 +825,7 @@ const styles = StyleSheet.create((theme) => {
       fontSize: theme.fontSize.xs,
       fontWeight: theme.fontWeight.semibold,
       textTransform: "uppercase",
-      letterSpacing: 0.5,
+      letterSpacing: 0,
     },
     rangeText: {
       color: theme.colors.foregroundMuted,
@@ -869,7 +870,7 @@ const styles = StyleSheet.create((theme) => {
       fontFamily: theme.fontFamily.mono,
       fontSize: theme.fontSize.code,
       color: theme.colors.foreground,
-      lineHeight: 18,
+      lineHeight: theme.lineHeight.diff,
       ...(isWeb
         ? {
             whiteSpace: "pre",
@@ -884,7 +885,7 @@ const styles = StyleSheet.create((theme) => {
       fontFamily: theme.fontFamily.mono,
       fontSize: theme.fontSize.code,
       color: theme.colors.foregroundMuted,
-      lineHeight: 18,
+      lineHeight: theme.lineHeight.diff,
       marginBottom: theme.spacing[2],
     },
     subAgentActions: {
@@ -900,13 +901,13 @@ const styles = StyleSheet.create((theme) => {
       fontFamily: theme.fontFamily.mono,
       fontSize: theme.fontSize.code,
       color: theme.colors.foregroundMuted,
-      lineHeight: 18,
+      lineHeight: theme.lineHeight.diff,
     },
     subAgentActionSummary: {
-      fontFamily: theme.fontFamily.mono,
-      fontSize: theme.fontSize.code,
+      fontFamily: theme.fontFamily.workspace,
+      fontSize: theme.workspaceFontSize.sm,
       color: theme.colors.foreground,
-      lineHeight: 18,
+      lineHeight: Math.round(theme.workspaceFontSize.sm * 1.4),
     },
     jsonScroll: {
       borderWidth: theme.borderWidth[1],

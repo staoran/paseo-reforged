@@ -18,12 +18,15 @@ import {
   DEFAULT_CODE_FONT_SIZE,
   DEFAULT_TERMINAL_SCROLLBACK_LINES,
   DEFAULT_UI_FONT_SIZE,
+  DEFAULT_WORKSPACE_FONT_SIZE,
   MAX_CODE_FONT_SIZE,
   MAX_TERMINAL_SCROLLBACK_LINES,
   MAX_UI_FONT_SIZE,
+  MAX_WORKSPACE_FONT_SIZE,
   MIN_CODE_FONT_SIZE,
   MIN_TERMINAL_SCROLLBACK_LINES,
   MIN_UI_FONT_SIZE,
+  MIN_WORKSPACE_FONT_SIZE,
   loadAppSettingsFromStorage as loadAppSettingsFromStoragePure,
   loadSettingsFromStorage as loadSettingsFromStoragePure,
   normalizeAppSettings,
@@ -49,12 +52,15 @@ export {
   DEFAULT_CODE_FONT_SIZE,
   DEFAULT_TERMINAL_SCROLLBACK_LINES,
   DEFAULT_UI_FONT_SIZE,
+  DEFAULT_WORKSPACE_FONT_SIZE,
   MAX_CODE_FONT_SIZE,
   MAX_TERMINAL_SCROLLBACK_LINES,
   MAX_UI_FONT_SIZE,
+  MAX_WORKSPACE_FONT_SIZE,
   MIN_CODE_FONT_SIZE,
   MIN_TERMINAL_SCROLLBACK_LINES,
   MIN_UI_FONT_SIZE,
+  MIN_WORKSPACE_FONT_SIZE,
   parseClampedFontSize,
   parseTerminalScrollbackLines,
   sanitizeFontFamily,
@@ -98,6 +104,17 @@ export interface UseSettingsReturn {
 }
 
 type SettingsSelector<TSelected> = (settings: Settings) => TSelected;
+
+function pickWorkspaceTypographyUpdates(updates: Partial<Settings>): Partial<AppSettings> {
+  const workspaceUpdates: Partial<AppSettings> = {};
+  if (updates.workspaceFontFamily !== undefined) {
+    workspaceUpdates.workspaceFontFamily = updates.workspaceFontFamily;
+  }
+  if (updates.workspaceFontSize !== undefined) {
+    workspaceUpdates.workspaceFontSize = updates.workspaceFontSize;
+  }
+  return workspaceUpdates;
+}
 
 export function useAppSettings(): UseAppSettingsReturn {
   const queryClient = useQueryClient();
@@ -151,7 +168,7 @@ export function useSettings<TSelected>(
 
   const updateSettings = useCallback(
     async (updates: Partial<Settings>) => {
-      const appUpdates: Partial<AppSettings> = {};
+      const appUpdates = pickWorkspaceTypographyUpdates(updates);
       if (updates.theme !== undefined) {
         appUpdates.theme = updates.theme;
       }

@@ -1759,10 +1759,17 @@ export const en = {
         title: "Fonts",
         systemDefault: "System default",
         interfaceFont: "Interface font",
-        interfaceFontHint: "Used across the app. Leave empty for the system default",
+        interfaceFontHint:
+          "Used for navigation, controls, and labels. Leave empty for the system default",
         interfaceFontAccessibility: "Interface font family",
         interfaceSize: "Interface size",
         interfaceSizeAccessibility: "Interface font size",
+        workspaceFont: "Workspace font",
+        workspaceFontHint:
+          "Used for messages, Markdown, and the composer. Leave empty for the system default",
+        workspaceFontAccessibility: "Workspace font family",
+        workspaceSize: "Workspace size",
+        workspaceSizeAccessibility: "Workspace font size",
         codeFont: "Code font",
         codeFontHint:
           "Used in code, diffs, and the terminal output. Leave empty for the system default",

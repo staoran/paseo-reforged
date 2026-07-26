@@ -304,6 +304,31 @@ describe("saveAppSettings", () => {
       toolCallDetailLevel: "overview",
     });
   });
+
+  it("keeps normalized workspace typography when UI typography changes", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          uiFontFamily: "Inter",
+          uiFontSize: 18,
+        }),
+      }),
+    });
+    const queryClient = new QueryClient();
+
+    await saveAppSettings({
+      queryClient,
+      updates: { uiFontFamily: "Arial", uiFontSize: 20 },
+      deps,
+    });
+
+    expect(JSON.parse(deps.storage.entries.get(APP_SETTINGS_KEY) ?? "null")).toMatchObject({
+      uiFontFamily: "Arial",
+      uiFontSize: 20,
+      workspaceFontFamily: "Inter",
+      workspaceFontSize: 18,
+    });
+  });
 });
 
 describe("parseTerminalScrollbackLines", () => {
@@ -314,6 +339,22 @@ describe("parseTerminalScrollbackLines", () => {
 });
 
 describe("appearance settings", () => {
+  it("initializes missing workspace typography from normalized UI settings", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          uiFontFamily: "  Inter  ",
+          uiFontSize: 18,
+        }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.workspaceFontFamily).toBe("Inter");
+    expect(result.workspaceFontSize).toBe(18);
+  });
+
   it("defaults the appearance fields when an old blob omits them", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({
@@ -324,8 +365,10 @@ describe("appearance settings", () => {
     const result = await loadAppSettingsFromStorage(deps);
 
     expect(result.uiFontFamily).toBe("");
+    expect(result.workspaceFontFamily).toBe("");
     expect(result.monoFontFamily).toBe("");
     expect(result.uiFontSize).toBe(DEFAULT_UI_FONT_SIZE);
+    expect(result.workspaceFontSize).toBe(DEFAULT_UI_FONT_SIZE);
     expect(result.codeFontSize).toBe(DEFAULT_CODE_FONT_SIZE);
     expect(result.syntaxTheme).toBe("one");
     expect(result.toolCallDetailLevel).toBe("detailed");
@@ -395,6 +438,22 @@ describe("appearance settings", () => {
       }),
     });
     expect((await loadAppSettingsFromStorage(bogus)).codeFontSize).toBe(DEFAULT_CODE_FONT_SIZE);
+  });
+
+  it("clamps the workspace font size independently", async () => {
+    const high = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ uiFontSize: 13, workspaceFontSize: 999 }),
+      }),
+    });
+    expect((await loadAppSettingsFromStorage(high)).workspaceFontSize).toBe(24);
+
+    const bogus = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ uiFontSize: 13, workspaceFontSize: "abc" }),
+      }),
+    });
+    expect((await loadAppSettingsFromStorage(bogus)).workspaceFontSize).toBe(DEFAULT_UI_FONT_SIZE);
   });
 
   it("trims an accepted font family", async () => {

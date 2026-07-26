@@ -26,10 +26,20 @@ type ThemeUpdater = (theme: FakeTheme) => FakeTheme;
 // fake of this shape through `unknown` to ThemeUpdater's param is test-only.
 interface FakeTheme {
   colorScheme: "light" | "dark";
-  fontFamily: { ui: string; mono: string };
+  fontFamily: { ui: string; workspace: string; mono: string };
   fontSize: {
     xs: number;
     code: number;
+    sm: number;
+    base: number;
+    lg: number;
+    xl: number;
+    "2xl": number;
+    "3xl": number;
+    "4xl": number;
+  };
+  workspaceFontSize: {
+    xs: number;
     sm: number;
     base: number;
     lg: number;
@@ -45,10 +55,24 @@ interface FakeTheme {
 function makeFakeTheme(): FakeTheme {
   return {
     colorScheme: "dark",
-    fontFamily: { ui: "seed-ui-stack", mono: "seed-mono-stack" },
+    fontFamily: {
+      ui: "seed-ui-stack",
+      workspace: "seed-workspace-stack",
+      mono: "seed-mono-stack",
+    },
     fontSize: {
       xs: 12,
       code: 12,
+      sm: 14,
+      base: 16,
+      lg: 18,
+      xl: 20,
+      "2xl": 22,
+      "3xl": 26,
+      "4xl": 34,
+    },
+    workspaceFontSize: {
+      xs: 12,
       sm: 14,
       base: 16,
       lg: 18,
@@ -65,8 +89,10 @@ function makeFakeTheme(): FakeTheme {
 function makeInput(overrides: Partial<AppearanceInput> = {}): AppearanceInput {
   return {
     uiFontFamily: "",
+    workspaceFontFamily: "",
     monoFontFamily: "",
     uiFontSize: 16,
+    workspaceFontSize: 16,
     codeFontSize: 12,
     syntaxTheme: "one",
     ...overrides,
@@ -103,6 +129,29 @@ describe("applyAppearance", () => {
     expect(runCapturedUpdater().fontFamily.ui).toBe("Menlo");
   });
 
+  it("patches UI, workspace, and code typography independently", () => {
+    applyAppearance(
+      makeInput({
+        uiFontFamily: "Interface",
+        workspaceFontFamily: "Workspace",
+        monoFontFamily: "Code",
+        uiFontSize: 14,
+        workspaceFontSize: 18,
+        codeFontSize: 10,
+      }),
+    );
+
+    const patched = runCapturedUpdater();
+    expect(patched.fontFamily).toEqual({
+      ui: "Interface",
+      workspace: "Workspace",
+      mono: "Code",
+    });
+    expect(patched.fontSize.base).toBe(14);
+    expect(patched.workspaceFontSize.base).toBe(18);
+    expect(patched.fontSize.code).toBe(10);
+  });
+
   it("scales the whole UI ramp proportionally while preserving ratios", () => {
     applyAppearance(makeInput({ uiFontSize: 14 }));
 
@@ -136,6 +185,27 @@ describe("applyAppearance", () => {
     const { fontSize } = updater(alreadyScaled);
     expect(fontSize.base).toBe(14); // not 4 * 0.875 — rebuilt from FONT_SIZE
     expect(fontSize.lg).toBe(16);
+  });
+
+  it("derives the workspace ramp from canonical sizes without compounding", () => {
+    applyAppearance(makeInput({ workspaceFontSize: 18 }));
+
+    const updater = updateTheme.mock.calls[0]?.[1] as unknown as ThemeUpdater;
+    const alreadyScaled = makeFakeTheme();
+    alreadyScaled.workspaceFontSize = {
+      xs: 4,
+      sm: 4,
+      base: 4,
+      lg: 4,
+      xl: 4,
+      "2xl": 4,
+      "3xl": 4,
+      "4xl": 4,
+    };
+
+    const { workspaceFontSize } = updater(alreadyScaled);
+    expect(workspaceFontSize.base).toBe(18);
+    expect(workspaceFontSize.lg).toBe(20);
   });
 
   it("leaves the UI ramp at authored sizes when only the code size changes", () => {

@@ -103,6 +103,7 @@ import { flushDraftPersistStorage } from "@/stores/draft-store";
 import { THEME_TO_UNISTYLES, type ThemeName } from "@/styles/theme";
 import { installWebScrollbarStyles } from "@/styles/install-web-scrollbar-styles";
 import type { HostProfile } from "@/types/host-connection";
+import { clearAssistantMessageHeightEstimateCache } from "@/utils/assistant-message-height-estimate";
 import { toggleDesktopSidebarsWithCheckoutIntent } from "@/utils/desktop-sidebar-toggle";
 import {
   useHasWindowChromeObstruction,
@@ -631,18 +632,23 @@ function ProvidersWrapper({ children }: { children: ReactNode }) {
   // six registered theme keys, so the active key is always current.
   useEffect(() => {
     if (settingsLoading) return;
+    clearAssistantMessageHeightEstimateCache();
     applyAppearance({
       uiFontFamily: settings.uiFontFamily,
+      workspaceFontFamily: settings.workspaceFontFamily,
       monoFontFamily: settings.monoFontFamily,
       uiFontSize: settings.uiFontSize,
+      workspaceFontSize: settings.workspaceFontSize,
       codeFontSize: settings.codeFontSize,
       syntaxTheme: settings.syntaxTheme,
     });
   }, [
     settingsLoading,
     settings.uiFontFamily,
+    settings.workspaceFontFamily,
     settings.monoFontFamily,
     settings.uiFontSize,
+    settings.workspaceFontSize,
     settings.codeFontSize,
     settings.syntaxTheme,
   ]);

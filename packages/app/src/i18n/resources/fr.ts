@@ -1799,10 +1799,16 @@ export const fr: TranslationResources = {
         systemDefault: "Valeur par défaut du système",
         interfaceFont: "Police d'interface",
         interfaceFontHint:
-          "Utilisé dans toute l'application. Laisser vide pour la valeur par défaut du système",
+          "Utilisée pour la navigation, les contrôles et les libellés. Laisser vide pour la valeur par défaut du système",
         interfaceFontAccessibility: "Famille de polices d'interface",
         interfaceSize: "Taille de l'interface",
         interfaceSizeAccessibility: "Taille de la police de l'interface",
+        workspaceFont: "Police de l'espace de travail",
+        workspaceFontHint:
+          "Utilisée pour les messages, Markdown et la zone de saisie. Laisser vide pour la valeur par défaut du système",
+        workspaceFontAccessibility: "Famille de polices de l'espace de travail",
+        workspaceSize: "Taille de l'espace de travail",
+        workspaceSizeAccessibility: "Taille de la police de l'espace de travail",
         codeFont: "Police de code",
         codeFontHint:
           "Utilisé dans le code, les différences et la sortie du terminal. Laisser vide pour la valeur par défaut du système",

@@ -91,6 +91,7 @@ import { buildNewWorkspaceRoute } from "@/utils/host-routes";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { isWeb } from "@/constants/platform";
 import type { Theme } from "@/styles/theme";
+import { WORKSPACE_SURFACE_DATASET } from "@/styles/workspace-surface";
 import { recordRenderProfileReasons } from "@/utils/render-profiler";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { generateDraftId } from "@/stores/draft-keys";
@@ -1399,7 +1400,11 @@ function PermissionRequestCard({
 
   const footer = (
     <>
-      <Text testID="permission-request-question" style={permissionStyles.question}>
+      <Text
+        testID="permission-request-question"
+        style={permissionStyles.question}
+        dataSet={WORKSPACE_SURFACE_DATASET}
+      >
         {t("agentStream.permission.question")}
       </Text>
 
@@ -1446,9 +1451,15 @@ function PermissionRequestCard({
 
   return (
     <View style={permissionStyles.container}>
-      <Text style={permissionStyles.title}>{title}</Text>
+      <Text style={permissionStyles.title} dataSet={WORKSPACE_SURFACE_DATASET}>
+        {title}
+      </Text>
 
-      {description ? <Text style={permissionStyles.description}>{description}</Text> : null}
+      {description ? (
+        <Text style={permissionStyles.description} dataSet={WORKSPACE_SURFACE_DATASET}>
+          {description}
+        </Text>
+      ) : null}
 
       {planMarkdown ? (
         <PlanCard
@@ -1564,13 +1575,15 @@ const permissionStyles = StyleSheet.create((theme) => ({
     borderColor: theme.colors.border,
   },
   title: {
-    fontSize: theme.fontSize.base,
-    lineHeight: 22,
+    fontFamily: theme.fontFamily.workspace,
+    fontSize: theme.workspaceFontSize.base,
+    lineHeight: Math.round(theme.workspaceFontSize.base * 1.4),
     color: theme.colors.foreground,
   },
   description: {
-    fontSize: theme.fontSize.sm,
-    lineHeight: 20,
+    fontFamily: theme.fontFamily.workspace,
+    fontSize: theme.workspaceFontSize.sm,
+    lineHeight: Math.round(theme.workspaceFontSize.sm * 1.4),
     color: theme.colors.foregroundMuted,
   },
   section: {
@@ -1580,7 +1593,9 @@ const permissionStyles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
   },
   question: {
-    fontSize: theme.fontSize.sm,
+    fontFamily: theme.fontFamily.workspace,
+    fontSize: theme.workspaceFontSize.sm,
+    lineHeight: Math.round(theme.workspaceFontSize.sm * 1.4),
     marginTop: theme.spacing[1],
     marginBottom: theme.spacing[1],
     color: theme.colors.foregroundMuted,

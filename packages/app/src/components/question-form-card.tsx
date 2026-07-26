@@ -14,6 +14,7 @@ import { useTranslation } from "react-i18next";
 import type { PendingPermission } from "@/types/shared";
 import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
 import { isWeb } from "@/constants/platform";
+import { WORKSPACE_SURFACE_DATASET } from "@/styles/workspace-surface";
 import {
   areQuestionsAnswered,
   buildQuestionFormAnswers,
@@ -130,9 +131,13 @@ function QuestionOptionRow({
           {isSelected && !multiSelect ? <View style={radioDotStyle} /> : null}
         </View>
         <View style={styles.optionTextBlock}>
-          <Text style={optionLabelStyle}>{option.label}</Text>
+          <Text style={optionLabelStyle} dataSet={WORKSPACE_SURFACE_DATASET}>
+            {option.label}
+          </Text>
           {option.description ? (
-            <Text style={optionDescriptionStyle}>{option.description}</Text>
+            <Text style={optionDescriptionStyle} dataSet={WORKSPACE_SURFACE_DATASET}>
+              {option.description}
+            </Text>
           ) : null}
         </View>
       </View>
@@ -307,6 +312,7 @@ function QuestionOtherInput({
     <TextInput
       // @ts-expect-error - outlineStyle is web-only
       style={otherInputStyle}
+      dataSet={WORKSPACE_SURFACE_DATASET}
       accessibilityLabel={accessibilityLabel}
       placeholder={placeholder}
       placeholderTextColor={theme.colors.foregroundMuted}
@@ -530,7 +536,11 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
         onSelect={handleSelectQuestion}
       />
       <View style={styles.questionHeader}>
-        <Text testID="question-form-current-question" style={questionTextStyle}>
+        <Text
+          testID="question-form-current-question"
+          style={questionTextStyle}
+          dataSet={WORKSPACE_SURFACE_DATASET}
+        >
           {activeQuestion?.question}
         </Text>
       </View>
@@ -632,9 +642,10 @@ const styles = StyleSheet.create((theme) => ({
   },
   questionText: {
     flex: 1,
-    fontSize: theme.fontSize.base,
+    fontFamily: theme.fontFamily.workspace,
+    fontSize: theme.workspaceFontSize.base,
     fontWeight: theme.fontWeight.medium,
-    lineHeight: 22,
+    lineHeight: Math.round(theme.workspaceFontSize.base * 1.4),
   },
   optionsWrap: {
     gap: theme.spacing[1],
@@ -681,13 +692,15 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[1],
   },
   optionLabel: {
-    fontSize: theme.fontSize.base,
+    fontFamily: theme.fontFamily.workspace,
+    fontSize: theme.workspaceFontSize.base,
     fontWeight: theme.fontWeight.semibold,
-    lineHeight: 22,
+    lineHeight: Math.round(theme.workspaceFontSize.base * 1.4),
   },
   optionDescription: {
-    fontSize: theme.fontSize.sm,
-    lineHeight: 20,
+    fontFamily: theme.fontFamily.workspace,
+    fontSize: theme.workspaceFontSize.sm,
+    lineHeight: Math.round(theme.workspaceFontSize.sm * 1.4),
   },
   selectionControl: {
     width: 18,
@@ -695,7 +708,7 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: theme.borderWidth[1],
-    marginTop: 2, // optical-align 18px control to the 22px label first line
+    marginTop: Math.max(0, Math.round((theme.workspaceFontSize.base * 1.4 - 18) / 2)),
   },
   selectionControlCheckbox: {
     borderRadius: theme.borderRadius.base,
@@ -713,7 +726,9 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.lg,
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[3],
-    fontSize: theme.fontSize.sm,
+    fontFamily: theme.fontFamily.workspace,
+    fontSize: theme.workspaceFontSize.sm,
+    lineHeight: Math.round(theme.workspaceFontSize.sm * 1.4),
   },
   actionsContainer: {
     gap: theme.spacing[2],

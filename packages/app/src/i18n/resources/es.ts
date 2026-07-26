@@ -1797,10 +1797,16 @@ export const es: TranslationResources = {
         systemDefault: "Valor predeterminado del sistema",
         interfaceFont: "Fuente de interfaz",
         interfaceFontHint:
-          "Utilizado en toda la aplicación. Déjelo vacío para el valor predeterminado del sistema.",
+          "Se utiliza en la navegación, los controles y las etiquetas. Déjelo vacío para usar el valor predeterminado del sistema",
         interfaceFontAccessibility: "Familia de fuentes de interfaz",
         interfaceSize: "Tamaño de la interfaz",
         interfaceSizeAccessibility: "Tamaño de fuente de la interfaz",
+        workspaceFont: "Fuente del espacio de trabajo",
+        workspaceFontHint:
+          "Se utiliza en mensajes, Markdown y el área de entrada. Déjelo vacío para usar el valor predeterminado del sistema",
+        workspaceFontAccessibility: "Familia de fuentes del espacio de trabajo",
+        workspaceSize: "Tamaño del espacio de trabajo",
+        workspaceSizeAccessibility: "Tamaño de fuente del espacio de trabajo",
         codeFont: "Fuente de código",
         codeFontHint:
           "Se utiliza en código, diferencias y salida del terminal. Déjelo vacío para el valor predeterminado del sistema.",

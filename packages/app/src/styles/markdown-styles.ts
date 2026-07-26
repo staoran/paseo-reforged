@@ -19,10 +19,11 @@ export function createMarkdownStyles(theme: Theme) {
     body: {
       ...webSelectableTextStyle,
       color: theme.colors.foreground,
-      fontSize: theme.fontSize.base,
-      // Prose line-height scales with the UI ramp (≈22 at base 16), NOT the
+      fontFamily: theme.fontFamily.workspace,
+      fontSize: theme.workspaceFontSize.base,
+      // Prose line-height scales with the workspace ramp, NOT the
       // code-size-coupled lineHeight.diff token used by code/diff surfaces.
-      lineHeight: Math.round(theme.fontSize.base * 1.4),
+      lineHeight: Math.round(theme.workspaceFontSize.base * 1.4),
       flexShrink: 1,
       minWidth: 0,
       width: "100%" as const,
@@ -31,6 +32,8 @@ export function createMarkdownStyles(theme: Theme) {
     text: {
       ...webSelectableTextStyle,
       color: theme.colors.foreground,
+      fontFamily: theme.fontFamily.workspace,
+      fontSize: theme.workspaceFontSize.base,
       flexShrink: 1,
       minWidth: 0,
       overflowWrap: "anywhere" as const,
@@ -54,12 +57,13 @@ export function createMarkdownStyles(theme: Theme) {
 
     heading1: {
       ...webSelectableTextStyle,
-      fontSize: theme.fontSize["3xl"],
+      fontFamily: theme.fontFamily.workspace,
+      fontSize: theme.workspaceFontSize["3xl"],
       fontWeight: theme.fontWeight.bold,
       color: theme.colors.foreground,
       marginTop: theme.spacing[6],
       marginBottom: theme.spacing[3],
-      lineHeight: 32,
+      lineHeight: Math.round(theme.workspaceFontSize["3xl"] * 1.3),
       borderBottomWidth: 1,
       borderBottomColor: theme.colors.border,
       paddingBottom: theme.spacing[2],
@@ -67,12 +71,13 @@ export function createMarkdownStyles(theme: Theme) {
 
     heading2: {
       ...webSelectableTextStyle,
-      fontSize: theme.fontSize["2xl"],
+      fontFamily: theme.fontFamily.workspace,
+      fontSize: theme.workspaceFontSize["2xl"],
       fontWeight: theme.fontWeight.bold,
       color: theme.colors.foreground,
       marginTop: theme.spacing[6],
       marginBottom: theme.spacing[3],
-      lineHeight: 28,
+      lineHeight: Math.round(theme.workspaceFontSize["2xl"] * 1.3),
       borderBottomWidth: 1,
       borderBottomColor: theme.colors.border,
       paddingBottom: theme.spacing[2],
@@ -80,44 +85,48 @@ export function createMarkdownStyles(theme: Theme) {
 
     heading3: {
       ...webSelectableTextStyle,
-      fontSize: theme.fontSize.xl,
+      fontFamily: theme.fontFamily.workspace,
+      fontSize: theme.workspaceFontSize.xl,
       fontWeight: theme.fontWeight.semibold,
       color: theme.colors.foreground,
       marginTop: theme.spacing[4],
       marginBottom: theme.spacing[2],
-      lineHeight: 26,
+      lineHeight: Math.round(theme.workspaceFontSize.xl * 1.3),
     },
 
     heading4: {
       ...webSelectableTextStyle,
-      fontSize: theme.fontSize.lg,
+      fontFamily: theme.fontFamily.workspace,
+      fontSize: theme.workspaceFontSize.lg,
       fontWeight: theme.fontWeight.semibold,
       color: theme.colors.foreground,
       marginTop: theme.spacing[4],
       marginBottom: theme.spacing[2],
-      lineHeight: 24,
+      lineHeight: Math.round(theme.workspaceFontSize.lg * 1.3),
     },
 
     heading5: {
       ...webSelectableTextStyle,
-      fontSize: theme.fontSize.base,
+      fontFamily: theme.fontFamily.workspace,
+      fontSize: theme.workspaceFontSize.base,
       fontWeight: theme.fontWeight.semibold,
       color: theme.colors.foreground,
       marginTop: theme.spacing[3],
       marginBottom: theme.spacing[1],
-      lineHeight: 22,
+      lineHeight: Math.round(theme.workspaceFontSize.base * 1.3),
     },
 
     heading6: {
       ...webSelectableTextStyle,
-      fontSize: theme.fontSize.base,
+      fontFamily: theme.fontFamily.workspace,
+      fontSize: theme.workspaceFontSize.base,
       fontWeight: theme.fontWeight.semibold,
       color: theme.colors.foregroundMuted,
       marginTop: theme.spacing[3],
       marginBottom: theme.spacing[1],
-      lineHeight: 20,
+      lineHeight: Math.round(theme.workspaceFontSize.base * 1.3),
       textTransform: "uppercase" as const,
-      letterSpacing: 0.5,
+      letterSpacing: 0,
     },
 
     // =========================================================================
@@ -143,6 +152,7 @@ export function createMarkdownStyles(theme: Theme) {
     link: {
       ...webSelectableTextStyle,
       color: theme.colors.accentBright,
+      fontFamily: theme.fontFamily.workspace,
       textDecorationLine: "none" as const,
       flexShrink: 1,
       minWidth: 0,
@@ -152,6 +162,7 @@ export function createMarkdownStyles(theme: Theme) {
     blocklink: {
       ...webSelectableTextStyle,
       color: theme.colors.accentBright,
+      fontFamily: theme.fontFamily.workspace,
       textDecorationLine: "none" as const,
       flexShrink: 1,
       minWidth: 0,
@@ -183,6 +194,7 @@ export function createMarkdownStyles(theme: Theme) {
       borderRadius: theme.borderRadius.md,
       fontFamily: theme.fontFamily.mono,
       fontSize: theme.fontSize.code,
+      lineHeight: theme.lineHeight.diff,
       marginVertical: theme.spacing[2],
     },
 
@@ -196,6 +208,7 @@ export function createMarkdownStyles(theme: Theme) {
       borderColor: theme.colors.border,
       fontFamily: theme.fontFamily.mono,
       fontSize: theme.fontSize.code,
+      lineHeight: theme.lineHeight.diff,
       marginVertical: theme.spacing[3],
     },
 
@@ -229,7 +242,8 @@ export function createMarkdownStyles(theme: Theme) {
       backgroundColor: theme.colors.surface2,
       fontWeight: theme.fontWeight.semibold,
       color: theme.colors.foreground,
-      fontSize: theme.fontSize.sm,
+      fontFamily: theme.fontFamily.workspace,
+      fontSize: theme.workspaceFontSize.sm,
       textAlign: "left" as const,
     },
 
@@ -245,7 +259,8 @@ export function createMarkdownStyles(theme: Theme) {
       borderRightWidth: 1,
       borderColor: theme.colors.border,
       color: theme.colors.foreground,
-      fontSize: theme.fontSize.sm,
+      fontFamily: theme.fontFamily.workspace,
+      fontSize: theme.workspaceFontSize.sm,
       flex: 1,
     },
 
@@ -284,17 +299,19 @@ export function createMarkdownStyles(theme: Theme) {
       ...webSelectableTextStyle,
       color: theme.colors.foregroundMuted,
       marginRight: 4,
-      fontSize: theme.fontSize.base,
-      lineHeight: 22,
+      fontFamily: theme.fontFamily.workspace,
+      fontSize: theme.workspaceFontSize.base,
+      lineHeight: Math.round(theme.workspaceFontSize.base * 1.4),
     },
 
     ordered_list_icon: {
       ...webSelectableTextStyle,
       color: theme.colors.foregroundMuted,
       marginRight: 4,
-      fontSize: theme.fontSize.base,
+      fontFamily: theme.fontFamily.workspace,
+      fontSize: theme.workspaceFontSize.base,
       fontWeight: theme.fontWeight.normal,
-      lineHeight: 22,
+      lineHeight: Math.round(theme.workspaceFontSize.base * 1.4),
       minWidth: 12,
     },
 
@@ -355,32 +372,32 @@ export function createCompactMarkdownStyles(theme: Theme) {
 
     body: {
       ...baseStyles.body,
-      fontSize: theme.fontSize.sm,
-      lineHeight: 20,
+      fontSize: theme.workspaceFontSize.sm,
+      lineHeight: Math.round(theme.workspaceFontSize.sm * 1.4),
     },
 
     heading1: {
       ...baseStyles.heading1,
-      fontSize: theme.fontSize.xl,
+      fontSize: theme.workspaceFontSize.xl,
       marginTop: theme.spacing[4],
       marginBottom: theme.spacing[2],
-      lineHeight: 26,
+      lineHeight: Math.round(theme.workspaceFontSize.xl * 1.3),
     },
 
     heading2: {
       ...baseStyles.heading2,
-      fontSize: theme.fontSize.lg,
+      fontSize: theme.workspaceFontSize.lg,
       marginTop: theme.spacing[3],
       marginBottom: theme.spacing[2],
-      lineHeight: 24,
+      lineHeight: Math.round(theme.workspaceFontSize.lg * 1.3),
     },
 
     heading3: {
       ...baseStyles.heading3,
-      fontSize: theme.fontSize.base,
+      fontSize: theme.workspaceFontSize.base,
       marginTop: theme.spacing[3],
       marginBottom: theme.spacing[1],
-      lineHeight: 22,
+      lineHeight: Math.round(theme.workspaceFontSize.base * 1.3),
     },
 
     paragraph: {

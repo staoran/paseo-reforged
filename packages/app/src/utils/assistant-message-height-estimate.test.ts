@@ -44,4 +44,17 @@ describe("assistant message height estimate", () => {
       ),
     ).toBeGreaterThan(220);
   });
+
+  it("drops measured markdown heights when the appearance changes", () => {
+    setAssistantMarkdownBlockHeight({
+      block: "Measured paragraph",
+      width: 804,
+      height: 24,
+    });
+    expect(estimateAssistantMessageHeightFromCache("Measured paragraph")).toBe(48);
+
+    clearAssistantMessageHeightEstimateCache();
+
+    expect(estimateAssistantMessageHeightFromCache("Measured paragraph")).toBeNull();
+  });
 });

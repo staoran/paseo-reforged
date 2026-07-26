@@ -516,7 +516,8 @@ export const DEFAULT_MONO_FONT_STACK: string = Platform.select({
 interface CommonTheme {
   spacing: typeof SPACING;
   fontSize: Record<keyof typeof FONT_SIZE, number>;
-  fontFamily: { ui: string; mono: string };
+  workspaceFontSize: Omit<Record<keyof typeof FONT_SIZE, number>, "code">;
+  fontFamily: { ui: string; workspace: string; mono: string };
   lineHeight: Record<keyof typeof LINE_HEIGHT, number>;
   iconSize: typeof ICON_SIZE;
   fontWeight: typeof FONT_WEIGHT;
@@ -528,7 +529,21 @@ interface CommonTheme {
 const commonTheme: CommonTheme = {
   spacing: SPACING,
   fontSize: FONT_SIZE,
-  fontFamily: { ui: DEFAULT_UI_FONT_STACK, mono: DEFAULT_MONO_FONT_STACK },
+  workspaceFontSize: {
+    xs: FONT_SIZE.xs,
+    sm: FONT_SIZE.sm,
+    base: FONT_SIZE.base,
+    lg: FONT_SIZE.lg,
+    xl: FONT_SIZE.xl,
+    "2xl": FONT_SIZE["2xl"],
+    "3xl": FONT_SIZE["3xl"],
+    "4xl": FONT_SIZE["4xl"],
+  },
+  fontFamily: {
+    ui: DEFAULT_UI_FONT_STACK,
+    workspace: DEFAULT_UI_FONT_STACK,
+    mono: DEFAULT_MONO_FONT_STACK,
+  },
   lineHeight: LINE_HEIGHT,
   iconSize: ICON_SIZE,
   fontWeight: FONT_WEIGHT,

@@ -25,8 +25,10 @@ const BASE_UI_REFERENCE = FONT_SIZE.base; // 16
 
 export interface AppearanceInput {
   uiFontFamily: string; // "" -> default stack
+  workspaceFontFamily: string; // "" -> default stack
   monoFontFamily: string; // "" -> default stack
   uiFontSize: number; // already clamped
+  workspaceFontSize: number; // already clamped
   codeFontSize: number; // already clamped
   syntaxTheme: SyntaxThemeId;
 }
@@ -40,8 +42,8 @@ export interface AppearanceInput {
  * `code` is set absolutely to `codeSize`, never scaled by the UI factor — a separate
  * control on a separate semantic axis (mono/diff text).
  */
-function scaleFontSize(uiSize: number, codeSize: number): Theme["fontSize"] {
-  const r = uiSize / BASE_UI_REFERENCE;
+function scaleFontSize(size: number): Theme["workspaceFontSize"] {
+  const r = size / BASE_UI_REFERENCE;
   return {
     xs: Math.round(FONT_SIZE.xs * r),
     sm: Math.round(FONT_SIZE.sm * r),
@@ -51,7 +53,6 @@ function scaleFontSize(uiSize: number, codeSize: number): Theme["fontSize"] {
     "2xl": Math.round(FONT_SIZE["2xl"] * r),
     "3xl": Math.round(FONT_SIZE["3xl"] * r),
     "4xl": Math.round(FONT_SIZE["4xl"] * r),
-    code: codeSize, // absolute, NOT scaled
   };
 }
 
@@ -63,6 +64,7 @@ function scaleFontSize(uiSize: number, codeSize: number): Theme["fontSize"] {
  */
 export function applyAppearance(input: AppearanceInput): void {
   const ui = input.uiFontFamily.trim() || DEFAULT_UI_FONT_STACK;
+  const workspace = input.workspaceFontFamily.trim() || DEFAULT_UI_FONT_STACK;
   const mono = input.monoFontFamily.trim() || DEFAULT_MONO_FONT_STACK;
   const diffLineHeight = Math.round(input.codeFontSize * 1.5); // couple to code size
 
@@ -77,14 +79,16 @@ export function applyAppearance(input: AppearanceInput): void {
     // `"light" | "dark"`, assignable to neither concrete member. Each branch spreads
     // a single narrowed theme type.
     UnistylesRuntime.updateTheme(key, (t) => {
-      const fontFamily = { ui, mono };
-      const fontSize = scaleFontSize(input.uiFontSize, input.codeFontSize);
+      const fontFamily = { ui, workspace, mono };
+      const fontSize = { ...scaleFontSize(input.uiFontSize), code: input.codeFontSize };
+      const workspaceFontSize = scaleFontSize(input.workspaceFontSize);
       const lineHeight = { ...t.lineHeight, diff: diffLineHeight };
       if (t.colorScheme === "light") {
         return {
           ...t,
           fontFamily,
           fontSize,
+          workspaceFontSize,
           lineHeight,
           colors: { ...t.colors, syntax: resolveSyntaxColors(input.syntaxTheme, t.colorScheme) },
         };
@@ -93,6 +97,7 @@ export function applyAppearance(input: AppearanceInput): void {
         ...t,
         fontFamily,
         fontSize,
+        workspaceFontSize,
         lineHeight,
         colors: { ...t.colors, syntax: resolveSyntaxColors(input.syntaxTheme, t.colorScheme) },
       };
@@ -101,5 +106,5 @@ export function applyAppearance(input: AppearanceInput): void {
 
   // Web: apply the UI font app-wide (RN-web stamps a default font on every text
   // element, so it can't be done through the theme alone). No-op on native.
-  applyRootUiFont(ui);
+  applyRootUiFont(ui, workspace);
 }

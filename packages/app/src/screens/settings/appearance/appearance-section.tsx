@@ -21,8 +21,10 @@ import { SettingsSection } from "@/screens/settings/settings-section";
 import {
   MAX_CODE_FONT_SIZE,
   MAX_UI_FONT_SIZE,
+  MAX_WORKSPACE_FONT_SIZE,
   MIN_CODE_FONT_SIZE,
   MIN_UI_FONT_SIZE,
+  MIN_WORKSPACE_FONT_SIZE,
   parseClampedFontSize,
   sanitizeFontFamily,
   useAppSettings,
@@ -87,6 +89,61 @@ function sizeDraftToOverride(value: string): number | undefined {
   if (value.length === 0) return undefined;
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+type FontFamilyField = "uiFontFamily" | "workspaceFontFamily" | "monoFontFamily";
+type FontSizeField = "uiFontSize" | "workspaceFontSize" | "codeFontSize";
+type UpdateAppSettings = (updates: Partial<AppSettings>) => Promise<void>;
+
+interface FontFamilyDraftInput {
+  field: FontFamilyField;
+  value: string;
+  updateSettings: UpdateAppSettings;
+}
+
+function useFontFamilyDraft({ field, value, updateSettings }: FontFamilyDraftInput) {
+  const [draft, setDraft] = useState(value);
+  const commit = useCallback(
+    (candidate: string) => {
+      const sanitized = sanitizeFontFamily(candidate);
+      if (sanitized === null) {
+        setDraft(value);
+        return;
+      }
+      setDraft(sanitized);
+      if (sanitized !== value) {
+        void updateSettings({ [field]: sanitized });
+      }
+    },
+    [field, updateSettings, value],
+  );
+  return { commit, draft, setDraft };
+}
+
+interface FontSizeDraftInput {
+  field: FontSizeField;
+  value: number;
+  min: number;
+  max: number;
+  updateSettings: UpdateAppSettings;
+}
+
+function useFontSizeDraft({ field, value, min, max, updateSettings }: FontSizeDraftInput) {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => {
+    setDraft(String(value));
+  }, [value]);
+  const changeDraft = useCallback((candidate: string) => {
+    setDraft(candidate.replace(/[^\d]/g, ""));
+  }, []);
+  const commit = useCallback(() => {
+    const next = parseClampedFontSize(draft, { min, max }) ?? value;
+    setDraft(String(next));
+    if (next !== value) {
+      void updateSettings({ [field]: next });
+    }
+  }, [draft, field, max, min, updateSettings, value]);
+  return { changeDraft, commit, draft };
 }
 
 function dropdownTriggerStyle({ pressed }: PressableStateCallbackType) {
@@ -462,18 +519,42 @@ export function AppearanceSection() {
   const uiFontPlaceholder = resolveDefaultStackPlaceholder(t, DEFAULT_UI_FONT_STACK);
   const monoFontPlaceholder = resolveDefaultStackPlaceholder(t, DEFAULT_MONO_FONT_STACK);
 
-  const [uiFontDraft, setUiFontDraft] = useState(settings.uiFontFamily);
-  const [monoFontDraft, setMonoFontDraft] = useState(settings.monoFontFamily);
-  const [uiSizeDraft, setUiSizeDraft] = useState(String(settings.uiFontSize));
-  const [codeSizeDraft, setCodeSizeDraft] = useState(String(settings.codeFontSize));
-
-  // Resync numeric drafts when the committed value changes elsewhere.
-  useEffect(() => {
-    setUiSizeDraft(String(settings.uiFontSize));
-  }, [settings.uiFontSize]);
-  useEffect(() => {
-    setCodeSizeDraft(String(settings.codeFontSize));
-  }, [settings.codeFontSize]);
+  const uiFont = useFontFamilyDraft({
+    field: "uiFontFamily",
+    value: settings.uiFontFamily,
+    updateSettings,
+  });
+  const workspaceFont = useFontFamilyDraft({
+    field: "workspaceFontFamily",
+    value: settings.workspaceFontFamily,
+    updateSettings,
+  });
+  const monoFont = useFontFamilyDraft({
+    field: "monoFontFamily",
+    value: settings.monoFontFamily,
+    updateSettings,
+  });
+  const uiSize = useFontSizeDraft({
+    field: "uiFontSize",
+    value: settings.uiFontSize,
+    min: MIN_UI_FONT_SIZE,
+    max: MAX_UI_FONT_SIZE,
+    updateSettings,
+  });
+  const workspaceSize = useFontSizeDraft({
+    field: "workspaceFontSize",
+    value: settings.workspaceFontSize,
+    min: MIN_WORKSPACE_FONT_SIZE,
+    max: MAX_WORKSPACE_FONT_SIZE,
+    updateSettings,
+  });
+  const codeSize = useFontSizeDraft({
+    field: "codeFontSize",
+    value: settings.codeFontSize,
+    min: MIN_CODE_FONT_SIZE,
+    max: MAX_CODE_FONT_SIZE,
+    updateSettings,
+  });
 
   const handleThemeChange = useCallback(
     (theme: AppSettings["theme"]) => {
@@ -503,77 +584,15 @@ export function AppearanceSection() {
     [updateSettings],
   );
 
-  const commitUiFontFamily = useCallback(
-    (value: string) => {
-      const sanitized = sanitizeFontFamily(value);
-      if (sanitized === null) {
-        setUiFontDraft(settings.uiFontFamily);
-        return;
-      }
-      setUiFontDraft(sanitized);
-      if (sanitized !== settings.uiFontFamily) {
-        void updateSettings({ uiFontFamily: sanitized });
-      }
-    },
-    [settings.uiFontFamily, updateSettings],
-  );
-
-  const commitMonoFontFamily = useCallback(
-    (value: string) => {
-      const sanitized = sanitizeFontFamily(value);
-      if (sanitized === null) {
-        setMonoFontDraft(settings.monoFontFamily);
-        return;
-      }
-      setMonoFontDraft(sanitized);
-      if (sanitized !== settings.monoFontFamily) {
-        void updateSettings({ monoFontFamily: sanitized });
-      }
-    },
-    [settings.monoFontFamily, updateSettings],
-  );
-
-  const handleUiSizeChange = useCallback((value: string) => {
-    setUiSizeDraft(value.replace(/[^\d]/g, ""));
-  }, []);
-
-  const handleCodeSizeChange = useCallback((value: string) => {
-    setCodeSizeDraft(value.replace(/[^\d]/g, ""));
-  }, []);
-
-  const commitUiSize = useCallback(() => {
-    const parsed = parseClampedFontSize(uiSizeDraft, {
-      min: MIN_UI_FONT_SIZE,
-      max: MAX_UI_FONT_SIZE,
-    });
-    const next = parsed ?? settings.uiFontSize;
-    setUiSizeDraft(String(next));
-    if (next !== settings.uiFontSize) {
-      void updateSettings({ uiFontSize: next });
-    }
-  }, [settings.uiFontSize, uiSizeDraft, updateSettings]);
-
-  const commitCodeSize = useCallback(() => {
-    const parsed = parseClampedFontSize(codeSizeDraft, {
-      min: MIN_CODE_FONT_SIZE,
-      max: MAX_CODE_FONT_SIZE,
-    });
-    const next = parsed ?? settings.codeFontSize;
-    setCodeSizeDraft(String(next));
-    if (next !== settings.codeFontSize) {
-      void updateSettings({ codeFontSize: next });
-    }
-  }, [codeSizeDraft, settings.codeFontSize, updateSettings]);
-
   // Live-while-typing: the in-progress drafts drive the preview without
   // committing to the global theme. Empty/invalid fields fall back to the
   // theme value inside the preview.
   const previewOverrides = useMemo(
     () => ({
-      monoFontFamily: monoFontDraft,
-      codeFontSize: sizeDraftToOverride(codeSizeDraft),
+      monoFontFamily: monoFont.draft,
+      codeFontSize: sizeDraftToOverride(codeSize.draft),
     }),
-    [codeSizeDraft, monoFontDraft],
+    [codeSize.draft, monoFont.draft],
   );
 
   return (
@@ -604,19 +623,39 @@ export function AppearanceSection() {
               accessibilityLabel={t("settings.appearance.fonts.interfaceFontAccessibility")}
               placeholder={uiFontPlaceholder}
               value={settings.uiFontFamily}
-              draft={uiFontDraft}
+              draft={uiFont.draft}
               withBorder={false}
-              onChangeDraft={setUiFontDraft}
-              onCommit={commitUiFontFamily}
+              onChangeDraft={uiFont.setDraft}
+              onCommit={uiFont.commit}
             />
           ) : null}
           <FontSizeRow
             title={t("settings.appearance.fonts.interfaceSize")}
             accessibilityLabel={t("settings.appearance.fonts.interfaceSizeAccessibility")}
-            draft={uiSizeDraft}
+            draft={uiSize.draft}
             withBorder={showFontFamilyRows}
-            onChangeDraft={handleUiSizeChange}
-            onCommit={commitUiSize}
+            onChangeDraft={uiSize.changeDraft}
+            onCommit={uiSize.commit}
+          />
+          {showFontFamilyRows ? (
+            <FontFamilyRow
+              title={t("settings.appearance.fonts.workspaceFont")}
+              hint={t("settings.appearance.fonts.workspaceFontHint")}
+              accessibilityLabel={t("settings.appearance.fonts.workspaceFontAccessibility")}
+              placeholder={uiFontPlaceholder}
+              value={settings.workspaceFontFamily}
+              draft={workspaceFont.draft}
+              withBorder
+              onChangeDraft={workspaceFont.setDraft}
+              onCommit={workspaceFont.commit}
+            />
+          ) : null}
+          <FontSizeRow
+            title={t("settings.appearance.fonts.workspaceSize")}
+            accessibilityLabel={t("settings.appearance.fonts.workspaceSizeAccessibility")}
+            draft={workspaceSize.draft}
+            onChangeDraft={workspaceSize.changeDraft}
+            onCommit={workspaceSize.commit}
           />
           {showFontFamilyRows ? (
             <FontFamilyRow
@@ -625,18 +664,18 @@ export function AppearanceSection() {
               accessibilityLabel={t("settings.appearance.fonts.codeFontAccessibility")}
               placeholder={monoFontPlaceholder}
               value={settings.monoFontFamily}
-              draft={monoFontDraft}
+              draft={monoFont.draft}
               withBorder
-              onChangeDraft={setMonoFontDraft}
-              onCommit={commitMonoFontFamily}
+              onChangeDraft={monoFont.setDraft}
+              onCommit={monoFont.commit}
             />
           ) : null}
           <FontSizeRow
             title={t("settings.appearance.fonts.codeSize")}
             accessibilityLabel={t("settings.appearance.fonts.codeSizeAccessibility")}
-            draft={codeSizeDraft}
-            onChangeDraft={handleCodeSizeChange}
-            onCommit={commitCodeSize}
+            draft={codeSize.draft}
+            onChangeDraft={codeSize.changeDraft}
+            onCommit={codeSize.commit}
           />
         </View>
       </SettingsSection>
