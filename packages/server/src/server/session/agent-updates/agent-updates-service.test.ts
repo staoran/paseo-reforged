@@ -27,6 +27,7 @@ function makeAgentPayload(input: {
   requiresAttention?: boolean;
   effectiveThinkingOptionId?: string | null;
   thinkingOptionId?: string | null;
+  providerRetryMessage?: string;
 }): AgentSnapshotPayload {
   const updatedAt = input.updatedAt ?? "2026-03-01T12:00:00.000Z";
   const provider = input.provider ?? "codex";
@@ -61,6 +62,9 @@ function makeAgentPayload(input: {
     attentionReason: null,
     attentionTimestamp: null,
     archivedAt: input.archivedAt ?? null,
+    ...(input.providerRetryMessage !== undefined
+      ? { providerRetryMessage: input.providerRetryMessage }
+      : {}),
   };
 }
 
@@ -90,12 +94,17 @@ function buildHarness() {
   const projectByWorkspaceId = new Map<string, ProjectPlacementPayload | null>();
   let providerVisible: (provider: string) => boolean = () => true;
   let buildAgentPayloadError: Error | null = null;
+  let buildAgentPayloadOverride: ((agent: ManagedAgent) => Promise<AgentSnapshotPayload>) | null =
+    null;
 
   const service = createAgentUpdatesService({
     emit: (message) => emitted.push(message),
     buildAgentPayload: async (agent) => {
       if (buildAgentPayloadError) {
         throw buildAgentPayloadError;
+      }
+      if (buildAgentPayloadOverride) {
+        return buildAgentPayloadOverride(agent);
       }
       const payload = payloadById.get(agent.id);
       if (!payload) {
@@ -141,6 +150,9 @@ function buildHarness() {
     },
     failBuildAgentPayload(error: Error) {
       buildAgentPayloadError = error;
+    },
+    setBuildAgentPayload(fn: (agent: ManagedAgent) => Promise<AgentSnapshotPayload>) {
+      buildAgentPayloadOverride = fn;
     },
     agentUpdates(): AgentUpdatePayload[] {
       return emitted
@@ -250,6 +262,32 @@ describe("forwardLiveAgent", () => {
       { kind: "upsert", agent: expect.objectContaining({ id: "a" }), project: makeProject() },
     ]);
     expect(h.workspaceUpdates).toEqual(["ws-1"]);
+  });
+
+  test("preserves a live provider retry message in the agent update", async () => {
+    const h = buildHarness();
+    h.service.beginSubscription({ subscriptionId: "sub", filter: {} });
+    h.service.flushBootstrapped("sub");
+    h.register(
+      makeAgentPayload({
+        id: "a",
+        workspaceId: "ws-1",
+        providerRetryMessage: "Reconnecting... 2/5",
+      }),
+    );
+
+    await h.service.forwardLiveAgent(h.managed("a"));
+
+    expect(h.agentUpdates()).toEqual([
+      {
+        kind: "upsert",
+        agent: expect.objectContaining({
+          id: "a",
+          providerRetryMessage: "Reconnecting... 2/5",
+        }),
+        project: makeProject(),
+      },
+    ]);
   });
 
   test("emits a remove when the agent's workspace resolves to no project", async () => {
@@ -392,6 +430,68 @@ describe("bootstrap buffering", () => {
       kind: "upsert",
       agent: { id: "a", status: "closed" },
     });
+  });
+
+  test("keeps the newest buffered retry state when payload builds finish out of order", async () => {
+    const h = buildHarness();
+    h.service.beginSubscription({ subscriptionId: "sub", filter: {} });
+    h.register(makeAgentPayload({ id: "a", workspaceId: "ws-1" }));
+
+    const resolvers: Array<(payload: AgentSnapshotPayload) => void> = [];
+    h.setBuildAgentPayload(
+      () =>
+        new Promise((resolve) => {
+          resolvers.push(resolve);
+        }),
+    );
+
+    const retryTwo = h.service.forwardLiveAgent(h.managed("a"));
+    const retryThree = h.service.forwardLiveAgent(h.managed("a"));
+    const cleared = h.service.forwardLiveAgent(h.managed("a"));
+
+    resolvers[2](
+      makeAgentPayload({
+        id: "a",
+        workspaceId: "ws-1",
+        updatedAt: "2026-03-01T12:00:00.003Z",
+      }),
+    );
+    await cleared;
+    resolvers[1](
+      makeAgentPayload({
+        id: "a",
+        workspaceId: "ws-1",
+        updatedAt: "2026-03-01T12:00:00.002Z",
+        providerRetryMessage: "Reconnecting... 3/5",
+      }),
+    );
+    await retryThree;
+    resolvers[0](
+      makeAgentPayload({
+        id: "a",
+        workspaceId: "ws-1",
+        updatedAt: "2026-03-01T12:00:00.001Z",
+        providerRetryMessage: "Reconnecting... 2/5",
+      }),
+    );
+    await retryTwo;
+
+    h.service.flushBootstrapped("sub");
+
+    const updates = h.agentUpdates();
+    expect(updates).toHaveLength(1);
+    expect(updates[0]).toMatchObject({
+      kind: "upsert",
+      agent: {
+        id: "a",
+        updatedAt: "2026-03-01T12:00:00.003Z",
+      },
+      project: makeProject(),
+    });
+    if (updates[0]?.kind !== "upsert") {
+      throw new Error("expected one buffered upsert");
+    }
+    expect(updates[0].agent).not.toHaveProperty("providerRetryMessage");
   });
 
   test("skips a buffered upsert that is not newer than the snapshot", async () => {

@@ -28,7 +28,7 @@ const MAX_CACHE_BYTES = 1024 * 1024;
 const DATE_TAG = "__paseoDate";
 
 const StoredAgentSchema = z.object({
-  snapshot: AgentSnapshotPayloadSchema,
+  snapshot: AgentSnapshotPayloadSchema.omit({ providerRetryMessage: true }),
   projectPlacement: ProjectPlacementPayloadSchema.nullable(),
   lastActivityAt: z.string(),
 });

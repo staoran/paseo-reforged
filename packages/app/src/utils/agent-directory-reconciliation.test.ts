@@ -61,6 +61,7 @@ function replica(id: string, status: Agent["status"]): Agent {
     attentionTimestamp: null,
     archivedAt: null,
     parentAgentId: null,
+    providerRetryMessage: null,
   };
 }
 
@@ -149,6 +150,43 @@ describe("agent directory reconciliation", () => {
       projectName: result.entries[0]?.project.projectName,
       stopped: result.stoppedRunningAgentIds,
     }).toEqual({ title: "newer page", status: "running", projectName: "repo", stopped: [] });
+  });
+
+  it("accepts newer retry set and clear snapshots while rejecting stale ones", () => {
+    const current = {
+      ...snapshot("agent", "running"),
+      updatedAt: "2026-07-12T12:00:00.000Z",
+      providerRetryMessage: "Reconnecting... 2/5",
+    };
+    const project = entry("agent", "running").project;
+    function reconcileRetry(updatedAt: string, providerRetryMessage?: string) {
+      return reconcileAgentDirectory({
+        previous: new Map(),
+        snapshot: [{ agent: current, project }],
+        deltas: [
+          {
+            kind: "upsert",
+            agent: {
+              ...snapshot("agent", "running"),
+              updatedAt,
+              ...(providerRetryMessage !== undefined ? { providerRetryMessage } : {}),
+            },
+            project,
+          },
+        ],
+      }).entries[0]?.agent;
+    }
+
+    expect(reconcileRetry("2026-07-12T11:00:00.000Z", "Reconnecting... 1/5")).toMatchObject({
+      providerRetryMessage: "Reconnecting... 2/5",
+    });
+    expect(reconcileRetry("2026-07-12T13:00:00.000Z", "Reconnecting... 3/5")).toMatchObject({
+      providerRetryMessage: "Reconnecting... 3/5",
+    });
+    expect(reconcileRetry("2026-07-12T11:00:00.000Z")).toMatchObject({
+      providerRetryMessage: "Reconnecting... 2/5",
+    });
+    expect(reconcileRetry("2026-07-12T13:00:00.000Z")).not.toHaveProperty("providerRetryMessage");
   });
 
   it("clears a snapshot stop when a newer buffered upsert is running", () => {

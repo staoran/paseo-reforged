@@ -9,7 +9,7 @@
 - Approval Status: `LOCKED`
 - Baseline Date: `2026-07-22`
 - Last Sync Date: `2026-07-26`
-- Execution Gate: 父总控默认保持 `LOCKED`；`M-22/0008` 已单独取得 Plan、完成 P1 修复与精确暂存审查。用户明确延后 Linux/CI Playwright，当前 17 条路径在 Windows 主场景证据下可提交；commit 与 push 未授权。
+- Execution Gate: 父总控默认保持 `LOCKED`；`M-22/0008` 已单独取得 Plan、完成 P1 修复与精确暂存审查。用户明确延后 Linux/CI Playwright，当前 17 条路径在 Windows 主场景证据下可提交；`P-02/0007` 已单独取得 Plan，完成 Codex-only 本地实现、三个提交前 P1 修复与最终 Review，Windows E2E 留给 Linux/CI；commit 与 push 未授权。
 - Child Spec Rule: 从总表选择功能后，必须建立独立 Feature Spec，重新核验届时主线，并单独取得精确 `Plan Approved`。
 - Spec Record:
   - Contract: `SPEC.md`
@@ -143,18 +143,18 @@
 
 ## 7. `PARTIAL`：已有基座但语义未闭合
 
-| ID   | fork 改进/目标                          | 来源/代表提交                      | 当前主线实现                                                     | 状态细分                      | 最近更新                              | 精确剩余差距                                                                             | 移植建议 | 优先级 | 收益           | 成本 | 实施/验收边界                                                                                   | 证据 |
-| ---- | --------------------------------------- | ---------------------------------- | ---------------------------------------------------------------- | ----------------------------- | ------------------------------------- | ---------------------------------------------------------------------------------------- | -------- | ------ | -------------- | ---- | ----------------------------------------------------------------------------------------------- | ---- |
-| P-01 | 文件预览首次读取门禁                    | staoran `86e9da05`                 | 文件可见性门禁、实时订阅和 query                                 | `PARTIAL_TRANSIENT_STATE`     | `4bda2dfea` 增强基座                  | subscription 建立时可能 `enabled=true/data=null/isFetching=false`，仍显示空态            | 是       | P0     | 中高           | XS   | 只补首次读取判定和单个回归测试                                                                  | E04  |
-| P-02 | Provider 重连/重试实时 footer 状态      | staoran `5b5d6831`、子 Spec `0007` | retry timeline、host reconnect UI；Codex app-server error 未消费 | `PARTIAL_RUNTIME_STATUS`      | 0007 已完成 Codex-only 设计           | 无 live snapshot/footer；Codex 只有 `willRetry` 与原始 `error.message`，无结构化 attempt | 是       | P1     | 中高           | M    | 仅 Codex：optional live message snapshot；原文显示 `N/M`；不解析、不持久化、不加 capability/RPC | E07  |
-| P-03 | 最终答案优先 turn projection 与过程折叠 | staoran `6961814c` 等              | server projection 合并 assistant/reasoning/tool lifecycle        | `PARTIAL_SEMANTIC_PROJECTION` | timeline 完整性增强                   | 没有 turn 级最终答案选择、过程组和尾随过程规则                                           | 是       | P1     | 很高           | L    | 在当前 projection/renderer 重做，禁止覆盖旧 `view.tsx`                                          | E06  |
-| P-04 | SenseVoice 与听写模型选择               | yun_er 听写大类                    | Sherpa/Parakeet 本地 STT 与现有语音设置                          | `PARTIAL_MODEL_CATALOG`       | `2ead7e771` 仅修快捷键                | 缺 SenseVoice 中文模型、模型目录和切换体验                                               | 是       | P1     | 高             | L    | 接入现有 speech provider，不建第二套语音系统                                                    | E09  |
-| P-05 | Prompt presets 与全局模型偏好 LWW 同步  | yun_er 同步大类                    | 本机设置/模型偏好持久化                                          | `PARTIAL_LOCAL_ONLY`          | host replica 修复不等价               | 无 daemon store、revision、RPC 和跨客户端收敛                                            | 是       | P1     | 中高           | M    | presets 先于模型偏好；不预建通用同步框架                                                        | E08  |
-| P-06 | Composer 草稿跨端同步与冲突处理         | yun_er 同步大类                    | 完整本地 draft store                                             | `PARTIAL_LOCAL_ONLY`          | 文件冲突 UI 不等价                    | 无跨端 revision、冲突检测和草稿冲突抽屉                                                  | 是       | P1     | 高             | L    | 叠加在现有 draft store；冲突 UI 最后做                                                          | E08  |
-| P-07 | Workspace layout 跨客户端同步           | yun_er Terminal/layout 大类        | Zustand + AsyncStorage 本地布局                                  | `PARTIAL_LOCAL_ONLY`          | host replica 修复不等价               | 无 daemon LWW store/capability；pane 几何同步风险高                                      | 条件性   | P2     | 中             | L    | 只考虑 tab 身份，不同步 pane 几何                                                               | E08  |
-| P-08 | 路由/pane 级 ErrorBoundary              | yun_er 稳定性大类                  | 根级 `RootErrorBoundary`                                         | `PARTIAL_FAILURE_ISOLATION`   | 无变化                                | 单 route/pane 崩溃仍可能拖垮整个 App shell                                               | 条件性   | P2     | 低到中         | S    | 仅在可复现白屏后增加最窄边界                                                                    | E12  |
-| P-09 | 通知 deeplink 清理旧响应与连接等待      | yun_er 定向上游功能                | 统一路由 + `getLastNotificationResponseAsync()`                  | `PARTIAL_STARTUP_ORDERING`    | 无变化                                | 缺消费后清理和 host connection readiness 协调                                            | 条件性   | 未排期 | 中             | S-M  | 先复现重复跳转/冷启动丢转问题                                                                   | E15  |
-| P-10 | 任意 TCP tunnel/客户端 localhost 绑定   | fork `ef9499c4d`                   | 声明式 HTTP/WebSocket Service Proxy 与端口分配                   | `PARTIAL_SUBSTITUTE`          | `9292f5889`、`8aa55db1e` 增强替代方案 | 不代理任意 TCP，也不在 Electron 客户端绑定本地端口                                       | 不建议   | 排除   | 取决于产品路线 | L    | 仅产品明确扩展为通用远程开发隧道时重开                                                          | E13  |
+| ID   | fork 改进/目标                          | 来源/代表提交                      | 当前主线实现                                              | 状态细分                                  | 最近更新                                                    | 精确剩余差距                                                                  | 移植建议 | 优先级 | 收益           | 成本 | 实施/验收边界                                                                            | 证据 |
+| ---- | --------------------------------------- | ---------------------------------- | --------------------------------------------------------- | ----------------------------------------- | ----------------------------------------------------------- | ----------------------------------------------------------------------------- | -------- | ------ | -------------- | ---- | ---------------------------------------------------------------------------------------- | ---- |
+| P-01 | 文件预览首次读取门禁                    | staoran `86e9da05`                 | 文件可见性门禁、实时订阅和 query                          | `PARTIAL_TRANSIENT_STATE`                 | `4bda2dfea` 增强基座                                        | subscription 建立时可能 `enabled=true/data=null/isFetching=false`，仍显示空态 | 是       | P0     | 中高           | XS   | 只补首次读取判定和单个回归测试                                                           | E04  |
+| P-02 | Provider 重连/重试实时 footer 状态      | staoran `5b5d6831`、子 Spec `0007` | 上游仍缺；当前工作树已完成 Codex live snapshot/footer     | `PARTIAL_RUNTIME_STATUS_CODEX_LOCAL_PASS` | 0007 三个 P1 已修复，最终 Review PASS；Windows E2E deferred | Codex 子范围已实现；其他 Provider 尚未接入，浏览器用例待 Linux/CI 执行        | 是       | P1     | 中高           | M    | Codex 保持 optional raw message；其他 Provider 必须按原生合同另立范围，不扩展当前 object | E07  |
+| P-03 | 最终答案优先 turn projection 与过程折叠 | staoran `6961814c` 等              | server projection 合并 assistant/reasoning/tool lifecycle | `PARTIAL_SEMANTIC_PROJECTION`             | timeline 完整性增强                                         | 没有 turn 级最终答案选择、过程组和尾随过程规则                                | 是       | P1     | 很高           | L    | 在当前 projection/renderer 重做，禁止覆盖旧 `view.tsx`                                   | E06  |
+| P-04 | SenseVoice 与听写模型选择               | yun_er 听写大类                    | Sherpa/Parakeet 本地 STT 与现有语音设置                   | `PARTIAL_MODEL_CATALOG`                   | `2ead7e771` 仅修快捷键                                      | 缺 SenseVoice 中文模型、模型目录和切换体验                                    | 是       | P1     | 高             | L    | 接入现有 speech provider，不建第二套语音系统                                             | E09  |
+| P-05 | Prompt presets 与全局模型偏好 LWW 同步  | yun_er 同步大类                    | 本机设置/模型偏好持久化                                   | `PARTIAL_LOCAL_ONLY`                      | host replica 修复不等价                                     | 无 daemon store、revision、RPC 和跨客户端收敛                                 | 是       | P1     | 中高           | M    | presets 先于模型偏好；不预建通用同步框架                                                 | E08  |
+| P-06 | Composer 草稿跨端同步与冲突处理         | yun_er 同步大类                    | 完整本地 draft store                                      | `PARTIAL_LOCAL_ONLY`                      | 文件冲突 UI 不等价                                          | 无跨端 revision、冲突检测和草稿冲突抽屉                                       | 是       | P1     | 高             | L    | 叠加在现有 draft store；冲突 UI 最后做                                                   | E08  |
+| P-07 | Workspace layout 跨客户端同步           | yun_er Terminal/layout 大类        | Zustand + AsyncStorage 本地布局                           | `PARTIAL_LOCAL_ONLY`                      | host replica 修复不等价                                     | 无 daemon LWW store/capability；pane 几何同步风险高                           | 条件性   | P2     | 中             | L    | 只考虑 tab 身份，不同步 pane 几何                                                        | E08  |
+| P-08 | 路由/pane 级 ErrorBoundary              | yun_er 稳定性大类                  | 根级 `RootErrorBoundary`                                  | `PARTIAL_FAILURE_ISOLATION`               | 无变化                                                      | 单 route/pane 崩溃仍可能拖垮整个 App shell                                    | 条件性   | P2     | 低到中         | S    | 仅在可复现白屏后增加最窄边界                                                             | E12  |
+| P-09 | 通知 deeplink 清理旧响应与连接等待      | yun_er 定向上游功能                | 统一路由 + `getLastNotificationResponseAsync()`           | `PARTIAL_STARTUP_ORDERING`                | 无变化                                                      | 缺消费后清理和 host connection readiness 协调                                 | 条件性   | 未排期 | 中             | S-M  | 先复现重复跳转/冷启动丢转问题                                                            | E15  |
+| P-10 | 任意 TCP tunnel/客户端 localhost 绑定   | fork `ef9499c4d`                   | 声明式 HTTP/WebSocket Service Proxy 与端口分配            | `PARTIAL_SUBSTITUTE`                      | `9292f5889`、`8aa55db1e` 增强替代方案                       | 不代理任意 TCP，也不在 Electron 客户端绑定本地端口                            | 不建议   | 排除   | 取决于产品路线 | L    | 仅产品明确扩展为通用远程开发隧道时重开                                                   | E13  |
 
 ## 8. `MISSING`：当前主线缺失
 
@@ -220,7 +220,7 @@ P0 维持四个独立子 Spec/PR，粗估 3-5 人日。`M-16` 是新增的 P0 �
 |    4 | P-04    | SenseVoice 与听写模型选择                  | 当前 speech provider/worker                                               |
 |    5 | P-03    | 最终答案优先 turn projection               | 当前 server projection 与 renderer                                        |
 |    6 | M-05    | 每回合修改文件面板                         | 依赖 P-03                                                                 |
-|    7 | P-02    | Codex 重试实时 footer                      | optional live message snapshot；Codex 原始 `error.message`                |
+|    7 | P-02    | Codex 重试实时 footer（本地 Review PASS）  | optional live message snapshot；Codex 原始 `error.message`                |
 |    8 | P-05    | Prompt presets、模型偏好 LWW               | 独立最小 store                                                            |
 |    9 | P-06    | Composer 草稿同步与冲突                    | 在 P-05 经验之后，但不强制共用抽象                                        |
 |   10 | M-06    | workspace 文件内容、项目内容、跨 pane 搜索 | 搜索交互可复用，RPC/数据源独立                                            |
@@ -272,18 +272,18 @@ P1 粗估 6-9 周。同步顺序固定为 Prompt presets -> 模型偏好 -> Comp
 
 ### 12.1 子 Spec 注册表
 
-| 子 Spec                                           | 总表 ID | 范围                                                                    | 基线        | 状态                                                     | 结论/父表更新                                                                                                                   |
-| ------------------------------------------------- | ------- | ----------------------------------------------------------------------- | ----------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| [0005](../0005_导入会话标题传递/SPEC.md)          | M-21    | 导入会话真实标题端到端传递与显示加固                                    | `b64f4f357` | `Review PASS (local commit)`                             | 本地提交 `084dca00b` 完成实现与验证；远端仍未修复，尚未 push 或合并                                                             |
-| [0007](../0007_会话重试状态/SPEC.md)              | P-02    | Codex retry 原文、live snapshot 与会话 footer                           | `084dca00b` | `Codex Design Complete / Product Execution Pending`      | Codex CLI 次数位于原始 `error.message`；字段与测试已裁定，等待实施批准                                                          |
-| [0008](../0008_新Workspace页导入会话入口/SPEC.md) | M-22    | New Workspace 页当前 project session 列表、untargeted import 与成功导航 | `084dca00b` | `READY TO COMMIT / 17 paths staged / Linux E2E deferred` | Home failure 组件可见性、`96/96`、static、格式、diff 与 staged review 通过；Linux E2E 为已接受的后续残余验证；未 commit 或 push |
+| 子 Spec                                           | 总表 ID | 范围                                                                    | 基线        | 状态                                                        | 结论/父表更新                                                                                                                   |
+| ------------------------------------------------- | ------- | ----------------------------------------------------------------------- | ----------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| [0005](../0005_导入会话标题传递/SPEC.md)          | M-21    | 导入会话真实标题端到端传递与显示加固                                    | `b64f4f357` | `Review PASS (local commit)`                                | 本地提交 `084dca00b` 完成实现与验证；远端仍未修复，尚未 push 或合并                                                             |
+| [0007](../0007_会话重试状态/SPEC.md)              | P-02    | Codex retry 原文、live snapshot 与会话 footer                           | `084dca00b` | `Pre-Commit Review PASS (local WIP) / Windows E2E deferred` | 三个 P1 根因修复、乱序回归、定向测试、typecheck 与 lint 通过；未 stage/commit/push，浏览器用例待 Linux/CI                       |
+| [0008](../0008_新Workspace页导入会话入口/SPEC.md) | M-22    | New Workspace 页当前 project session 列表、untargeted import 与成功导航 | `084dca00b` | `READY TO COMMIT / 17 paths staged / Linux E2E deferred`    | Home failure 组件可见性、`96/96`、static、格式、diff 与 staged review 通过；Linux E2E 为已接受的后续残余验证；未 commit 或 push |
 
 ## 13. Research、Plan 与 Review 状态
 
 - Research Findings: 证据、纠错和置信度见 `findings.md`。
 - Innovate: Skipped。本轮是既有结论归并，不存在需要裁决的实现方案。
 - Plan: 本文件只规定未来子 Spec 的选择和约束，不包含任何产品实现 checklist。
-- Execute: 父总表未整体授权；`M-22/0008` 已单独取得 `Plan Approved` 并完成本地 Execute/Review。
+- Execute: 父总表未整体授权；`M-22/0008` 与 `P-02/0007` 已分别取得 `Plan Approved` 并完成各自本地 Execute/Review。
 - Review Matrix:
 
 | 轴                                    | 检查                                                     | 结论   | 证据                                                         |
@@ -294,7 +294,7 @@ P1 粗估 6-9 周。同步顺序固定为 Prompt presets -> 模型偏好 -> Comp
 
 - Overall Verdict: `PASS`，可作为后续子 Spec 的选择基准。
 - Baseline Validation: 当前 `npm run typecheck` 与 `npm run lint` 均通过，声明生成未留下额外 Git 状态。
-- Tests: M-21 的既有记录保持有效；M-22 sheet view model `34/34`、Home completion `9/9`、sheet `18/18`、entry model `3/3`、provisioning `32/32`（合计 `96/96`）、typecheck、lint、17 文件格式、diff check 与 staged review 通过。Linux Playwright 由用户明确延后；完整 Home 页面与 import/navigation E2E 仍无默认 provider fixture，作为后续残余验证。
+- Tests: M-21 的既有记录保持有效；M-22 sheet view model `34/34`、Home completion `9/9`、sheet `18/18`、entry model `3/3`、provisioning `32/32`（合计 `96/96`）、typecheck、lint、17 文件格式、diff check 与 staged review 通过。Linux Playwright 由用户明确延后；完整 Home 页面与 import/navigation E2E 仍无默认 provider fixture，作为后续残余验证。P-02 的三个 P1 乱序回归、protocol/server/App 定向测试、`build:client`、typecheck 与 lint 通过，新增 retry 浏览器用例因 Windows harness 限制待 Linux/CI 执行。
 - Plan-Execution Diff: M-22 为保持纯测试边界新增一个 colocated model 文件；最终审查扩展了共享 sheet 的 Host query identity、回调顺序和两条行为回归，其余实现范围与批准计划一致。
 
 ## 14. CodeMap 与 Project Sync
@@ -330,3 +330,5 @@ P1 粗估 6-9 周。同步顺序固定为 Prompt presets -> 模型偏好 -> Comp
 | 2026-07-26 | 校正 `M-22/0008` P1 记录                                                 | pure seam 定向回归 `95/95` 与 static PASS；staged review/Linux E2E 待完成，未提交或 push           |
 | 2026-07-26 | 补 `M-22/0008` Home failure 可见性并第二次重试 Linux                     | 组件组合回归后合计 `96/96`；Linux sshd 无 banner，Playwright 未启动，容器待清理                    |
 | 2026-07-26 | 按 Windows 主场景完成 `M-22/0008` 提交裁决                               | 用户延后 Linux Playwright；隔离环境已清理，17 条精确路径 staged diff 可提交，尚未 commit 或 push   |
+| 2026-07-26 | 完成 `P-02/0007` Codex-only 本地实现与 Review                            | raw retry message、live-only snapshot、footer 与定向测试通过；Windows E2E 留给 Linux/CI            |
+| 2026-07-26 | 完成 `P-02/0007` 三个提交前 P1 修复与最终复审                            | stale compaction、closure 时间戳和 bootstrap completion-order 乱序回归通过；Standards/Spec PASS    |

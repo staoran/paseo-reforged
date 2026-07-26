@@ -259,6 +259,7 @@ function buildDraftAgentSnapshot(input: {
     title: "Agent",
     cwd: workspaceDirectory,
     model,
+    providerRetryMessage: null,
     features: composerState.agentControls.features,
     thinkingOptionId,
     parentAgentId: null,

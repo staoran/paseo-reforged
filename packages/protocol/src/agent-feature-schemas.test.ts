@@ -176,4 +176,44 @@ describe("agent feature schemas", () => {
     expect(parsed.capabilities.supportsRewindFiles).toBe(false);
     expect(parsed.capabilities.supportsRewindBoth).toBe(false);
   });
+
+  it("accepts only optional string provider retry messages", () => {
+    const snapshot = {
+      id: "agent-123",
+      provider: "codex",
+      cwd: "/tmp/project",
+      model: "gpt-5",
+      createdAt: "2026-04-03T12:00:00.000Z",
+      updatedAt: "2026-04-03T12:00:00.000Z",
+      lastUserMessageAt: null,
+      status: "running",
+      capabilities: {
+        supportsStreaming: true,
+        supportsSessionPersistence: true,
+        supportsDynamicModes: true,
+        supportsMcpServers: true,
+        supportsReasoningStream: true,
+        supportsToolInvocations: true,
+      },
+      currentModeId: null,
+      availableModes: [],
+      pendingPermissions: [],
+      persistence: null,
+      title: null,
+      labels: {},
+    };
+
+    expect(AgentSnapshotPayloadSchema.parse(snapshot)).not.toHaveProperty("providerRetryMessage");
+    expect(
+      AgentSnapshotPayloadSchema.parse({
+        ...snapshot,
+        providerRetryMessage: "Reconnecting... 2/5",
+      }).providerRetryMessage,
+    ).toBe("Reconnecting... 2/5");
+    for (const providerRetryMessage of [null, 2, { message: "retrying" }]) {
+      expect(
+        AgentSnapshotPayloadSchema.safeParse({ ...snapshot, providerRetryMessage }).success,
+      ).toBe(false);
+    }
+  });
 });

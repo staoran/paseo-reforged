@@ -39,6 +39,7 @@ function createAgent(id: string): Agent {
       model: null,
       modeId: null,
     },
+    providerRetryMessage: null,
     title: "Agent",
     cwd: "/repo",
     model: null,
@@ -154,6 +155,57 @@ describe("deriveAgentScreenViewState", () => {
     const ready = expectReadyState(result.state);
 
     expect(ready.sync.status).toBe("reconnecting");
+  });
+
+  it("exposes provider retry messages only from synchronized authoritative running state", () => {
+    const retryingAgent = {
+      ...createAgent("agent-1"),
+      providerRetryMessage: "Reconnecting... 2/5",
+    };
+    const authoritative = expectReadyState(
+      deriveAgentScreenViewState({
+        input: { ...createBaseInput(), agent: retryingAgent },
+        memory: createBaseMemory(),
+      }).state,
+    );
+    const reconnecting = expectReadyState(
+      deriveAgentScreenViewState({
+        input: { ...createBaseInput(), agent: retryingAgent, isConnected: false },
+        memory: createBaseMemory(),
+      }).state,
+    );
+    const catchingUp = expectReadyState(
+      deriveAgentScreenViewState({
+        input: {
+          ...createBaseInput(),
+          agent: retryingAgent,
+          needsAuthoritativeSync: true,
+          hasHydratedHistoryBefore: true,
+        },
+        memory: createBaseMemory(),
+      }).state,
+    );
+    const stale = expectReadyState(
+      deriveAgentScreenViewState({
+        input: createBaseInput(),
+        memory: createBaseMemory({ hasRenderedReady: true, lastReadyAgent: retryingAgent }),
+      }).state,
+    );
+    const idle = expectReadyState(
+      deriveAgentScreenViewState({
+        input: {
+          ...createBaseInput(),
+          agent: { ...retryingAgent, status: "idle" },
+        },
+        memory: createBaseMemory(),
+      }).state,
+    );
+
+    expect(authoritative.agent.providerRetryMessage).toBe("Reconnecting... 2/5");
+    expect(reconnecting.agent.providerRetryMessage).toBeNull();
+    expect(catchingUp.agent.providerRetryMessage).toBeNull();
+    expect(stale.agent.providerRetryMessage).toBeNull();
+    expect(idle.agent.providerRetryMessage).toBeNull();
   });
 
   it("shows overlay catching-up state for first open while loading history", () => {

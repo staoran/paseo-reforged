@@ -27,6 +27,7 @@ function createAgent(status: Agent["status"]): Agent {
     title: "Agent",
     cwd: "/tmp",
     model: null,
+    providerRetryMessage: null,
     parentAgentId: null,
     labels: {},
     projectPlacement: null,

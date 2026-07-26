@@ -218,6 +218,43 @@ describe("ReplicaCache", () => {
     expect(timelines?.get("agent-2")).toEqual(secondTimeline.slice(-50));
   });
 
+  it("never restores provider retry messages from persistent cache", async () => {
+    const storage = new MemoryStorage();
+    const writer = new ReplicaCache(storage);
+    writer.setHosts([SERVER_ID]);
+    seedSession();
+    useSessionStore.getState().setAgents(SERVER_ID, (agents) => {
+      const current = agents.get("agent-1");
+      if (!current) throw new Error("expected seeded agent");
+      return new Map(agents).set("agent-1", {
+        ...current,
+        providerRetryMessage: "Reconnecting... 2/5",
+      });
+    });
+    await writer.flush();
+
+    interface CachedPayload {
+      version: number;
+      hosts: Array<{
+        agents: Array<{ snapshot: Record<string, unknown> }>;
+      }>;
+    }
+    const cacheKey = "@paseo:replica-cache";
+    const cached: CachedPayload = JSON.parse(storage.values.get(cacheKey) ?? "");
+    expect(cached.hosts[0]?.agents[0]?.snapshot).not.toHaveProperty("providerRetryMessage");
+    cached.hosts[0]!.agents[0]!.snapshot.providerRetryMessage = "Reconnecting... 5/5";
+    storage.values.set(cacheKey, JSON.stringify(cached));
+
+    useSessionStore.getState().clearSession(SERVER_ID);
+    const reader = new ReplicaCache(storage);
+    reader.setHosts([SERVER_ID]);
+    await reader.restore();
+
+    expect(
+      useSessionStore.getState().sessions[SERVER_ID]?.agents.get("agent-1")?.providerRetryMessage,
+    ).toBeNull();
+  });
+
   it("evicts the least recently written host when the cache exceeds its byte budget", async () => {
     const storage = new MemoryStorage();
     const cache = new ReplicaCache(storage, { maxBytes: 7_000 });

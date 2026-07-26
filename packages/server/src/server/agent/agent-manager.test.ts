@@ -3286,6 +3286,188 @@ test("session config drift events update state through the stream channel", asyn
   expect(streams.map((event) => event.type)).toEqual([]);
 });
 
+test("keeps provider retry updates live-only and ignores duplicate values", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-retry-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let capturedSession: ProviderRetrySession | null = null;
+  class ProviderRetrySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield {
+        type: "provider_retry",
+        provider: "codex",
+        message: "Reconnecting... stale history",
+      };
+    }
+  }
+  class ProviderRetryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      capturedSession = new ProviderRetrySession(config);
+      return capturedSession;
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new ProviderRetryClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000218",
+  });
+
+  try {
+    const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await manager.flush();
+    await storage.flush();
+
+    await manager.hydrateTimelineFromProvider(snapshot.id, { force: true });
+    await manager.flush();
+    await storage.flush();
+    expect(manager.getAgent(snapshot.id)!.providerRetryMessage).toBeNull();
+
+    const initialUpdatedAt = manager.getAgent(snapshot.id)!.updatedAt.getTime();
+    const storedBefore = await storage.get(snapshot.id);
+    const stateUpdates: ManagedAgent[] = [];
+    const streamEvents: AgentStreamEvent[] = [];
+    manager.subscribe(
+      (event) => {
+        if (event.type === "agent_state") {
+          stateUpdates.push(event.agent);
+        } else if (event.type === "agent_stream") {
+          streamEvents.push(event.event);
+        }
+      },
+      { agentId: snapshot.id, replayState: false },
+    );
+
+    capturedSession!.pushEvent({
+      type: "provider_retry",
+      provider: "codex",
+      message: "Reconnecting... 2/5",
+    });
+    await manager.flush();
+
+    const afterSet = manager.getAgent(snapshot.id)!;
+    expect(afterSet.providerRetryMessage).toBe("Reconnecting... 2/5");
+    expect(afterSet.updatedAt.getTime()).toBeGreaterThan(initialUpdatedAt);
+    expect(stateUpdates).toHaveLength(1);
+    expect(streamEvents).toEqual([]);
+    expect(manager.getTimeline(snapshot.id)).toEqual([]);
+    expect(await storage.get(snapshot.id)).toEqual(storedBefore);
+
+    const replayedStates: ManagedAgent[] = [];
+    const unsubscribeReplay = manager.subscribe(
+      (event) => {
+        if (event.type === "agent_state") replayedStates.push(event.agent);
+      },
+      { agentId: snapshot.id },
+    );
+    expect(replayedStates.at(-1)?.providerRetryMessage).toBe("Reconnecting... 2/5");
+    unsubscribeReplay();
+
+    const afterSetUpdatedAt = afterSet.updatedAt.getTime();
+    capturedSession!.pushEvent({
+      type: "provider_retry",
+      provider: "codex",
+      message: "Reconnecting... 2/5",
+    });
+    await manager.flush();
+
+    expect(manager.getAgent(snapshot.id)!.updatedAt.getTime()).toBe(afterSetUpdatedAt);
+    expect(stateUpdates).toHaveLength(1);
+
+    capturedSession!.pushEvent({
+      type: "provider_retry",
+      provider: "codex",
+      message: "Reconnecting... 3/5",
+    });
+    await manager.flush();
+
+    const afterUpdate = manager.getAgent(snapshot.id)!;
+    expect(afterUpdate.providerRetryMessage).toBe("Reconnecting... 3/5");
+    expect(afterUpdate.updatedAt.getTime()).toBeGreaterThan(afterSetUpdatedAt);
+    expect(stateUpdates).toHaveLength(2);
+
+    const afterUpdateUpdatedAt = afterUpdate.updatedAt.getTime();
+    capturedSession!.pushEvent({ type: "provider_retry", provider: "codex", message: null });
+    await manager.flush();
+
+    const afterClear = manager.getAgent(snapshot.id)!;
+    expect(afterClear.providerRetryMessage).toBeNull();
+    expect(afterClear.updatedAt.getTime()).toBeGreaterThan(afterUpdateUpdatedAt);
+    expect(stateUpdates).toHaveLength(3);
+    expect(streamEvents).toEqual([]);
+    expect(manager.getTimeline(snapshot.id)).toEqual([]);
+    expect(await storage.get(snapshot.id)).toEqual(storedBefore);
+
+    capturedSession!.pushEvent({
+      type: "provider_retry",
+      provider: "codex",
+      message: "Reconnecting... 4/5",
+    });
+    await manager.flush();
+    capturedSession!.pushEvent({
+      type: "turn_started",
+      provider: "codex",
+      turnId: "autonomous-retry-turn",
+    });
+    await manager.flush();
+    expect(manager.getAgent(snapshot.id)!.providerRetryMessage).toBeNull();
+
+    capturedSession!.pushEvent({
+      type: "provider_retry",
+      provider: "codex",
+      message: "Reconnecting... 5/5",
+    });
+    await manager.flush();
+    capturedSession!.pushEvent({
+      type: "turn_completed",
+      provider: "codex",
+      turnId: "autonomous-retry-turn",
+    });
+    await manager.flush();
+    expect(manager.getAgent(snapshot.id)!.providerRetryMessage).toBeNull();
+
+    capturedSession!.pushEvent({
+      type: "turn_started",
+      provider: "codex",
+      turnId: "closing-retry-turn",
+    });
+    await manager.flush();
+    capturedSession!.pushEvent({
+      type: "provider_retry",
+      provider: "codex",
+      message: "Reconnecting... 1/5",
+    });
+    await manager.flush();
+    const staleRunningRetryState = stateUpdates.at(-1)!;
+    expect(staleRunningRetryState).toMatchObject({
+      lifecycle: "running",
+      providerRetryMessage: "Reconnecting... 1/5",
+    });
+
+    await manager.closeAgent(snapshot.id);
+    const closedState = stateUpdates.at(-1)!;
+    expect(closedState).toMatchObject({
+      lifecycle: "closed",
+      providerRetryMessage: null,
+    });
+    expect(closedState.updatedAt.getTime()).toBeGreaterThan(
+      staleRunningRetryState.updatedAt.getTime(),
+    );
+
+    const stateAfterOutOfOrderDelivery =
+      staleRunningRetryState.updatedAt > closedState.updatedAt
+        ? staleRunningRetryState
+        : closedState;
+    expect(stateAfterOutOfOrderDelivery).toBe(closedState);
+  } finally {
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("setLabels merges and persists labels", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-set-labels-"));
   const storagePath = join(workdir, "agents");

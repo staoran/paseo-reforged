@@ -2688,6 +2688,247 @@ describe("Codex app-server provider", () => {
     });
   });
 
+  test("forwards raw retry message updates for the current root turn", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    const retryMessages: Array<string | null> = [];
+    session.subscribe((event) => {
+      if (event.type === "provider_retry") {
+        retryMessages.push(event.message);
+      }
+    });
+
+    try {
+      const resultPromise = session.run("Wait through a transient failure.");
+      await appServer.waitForTurnStart();
+      appServer.startsTurn({ threadId: "thread-1", turnId: "retry-turn" });
+      appServer.reportsError({
+        threadId: "thread-1",
+        turnId: "retry-turn",
+        message: "Reconnecting... 2/5",
+        willRetry: true,
+        additionalDetails: "transport detail that must stay internal",
+      });
+      appServer.reportsError({
+        threadId: "thread-1",
+        turnId: "retry-turn",
+        message: "Reconnecting... 3/5",
+        willRetry: true,
+      });
+
+      await vi.waitFor(() => {
+        expect(retryMessages).toEqual(["Reconnecting... 2/5", "Reconnecting... 3/5"]);
+      });
+
+      appServer.completeTurn({ threadId: "thread-1", turnId: "retry-turn" });
+      await resultPromise;
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("clears the retry message at each matching live recovery boundary", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    const retryMessages: Array<string | null> = [];
+    session.subscribe((event) => {
+      if (event.type === "provider_retry") {
+        retryMessages.push(event.message);
+      }
+    });
+
+    const resultPromise = session.run("Recover from several transient failures.");
+    await appServer.waitForTurnStart();
+    appServer.startsTurn({ threadId: "thread-1", turnId: "recovery-turn" });
+    appServer.reportsError({
+      threadId: "thread-1",
+      turnId: "recovery-turn",
+      message: "Reconnecting... 2/5",
+      willRetry: true,
+    });
+    appServer.says({ threadId: "thread-1", text: "Recovered." });
+    appServer.reportsError({
+      threadId: "thread-1",
+      turnId: "recovery-turn",
+      message: "Reconnecting... 5/5",
+      willRetry: true,
+    });
+    appServer.warns({ threadId: "thread-1", message: "Falling back to HTTPS" });
+    appServer.reportsError({
+      threadId: "thread-1",
+      turnId: "recovery-turn",
+      message: "Reconnecting... 1/5",
+      willRetry: true,
+    });
+    appServer.reportsError({
+      threadId: "thread-1",
+      turnId: "recovery-turn",
+      message: "Stream failed",
+      willRetry: false,
+    });
+    appServer.reportsError({
+      threadId: "thread-1",
+      turnId: "recovery-turn",
+      message: "Reconnecting... 2/5",
+      willRetry: true,
+    });
+    appServer.completeTurn({ threadId: "thread-1", turnId: "recovery-turn" });
+
+    await vi.waitFor(() => {
+      expect(retryMessages).toEqual([
+        "Reconnecting... 2/5",
+        null,
+        "Reconnecting... 5/5",
+        null,
+        "Reconnecting... 1/5",
+        null,
+        "Reconnecting... 2/5",
+        null,
+      ]);
+    });
+    await resultPromise;
+    appServer.assertNoErrors();
+    await session.close();
+  });
+
+  test("keeps the current retry message across unowned or stale notifications", async () => {
+    const session = createSession();
+    session.activeForegroundTurnId = null;
+    const retryMessages: Array<string | null> = [];
+    session.subscribe((event) => {
+      if (event.type === "provider_retry") {
+        retryMessages.push(event.message);
+      }
+    });
+
+    asInternals(session).handleNotification("turn/started", {
+      threadId: "test-thread",
+      turn: { id: "current-native-turn" },
+    });
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "subAgentActivity",
+        id: "spawn-retrying-child",
+        kind: "started",
+        agentThreadId: "retrying-child-thread",
+        agentPath: "/root/retrying-child",
+      },
+    });
+    asInternals(session).handleNotification("error", {
+      threadId: "test-thread",
+      turnId: "current-native-turn",
+      willRetry: true,
+      error: { message: "Reconnecting... 2/5" },
+    });
+    asInternals(session).handleNotification("error", {
+      threadId: "test-thread",
+      turnId: "stale-native-turn",
+      willRetry: true,
+      error: { message: "Reconnecting... 4/5" },
+    });
+    asInternals(session).handleNotification("error", {
+      threadId: "retrying-child-thread",
+      turnId: "child-native-turn",
+      willRetry: true,
+      error: { message: "Child reconnecting... 1/5" },
+    });
+    asInternals(session).handleNotification("warning", {
+      message: "Configuration warning without a thread",
+    });
+    asInternals(session).handleNotification("warning", {
+      threadId: null,
+      message: "Initialization warning without a thread",
+    });
+    asInternals(session).handleNotification("error", {
+      threadId: "test-thread",
+      turnId: "current-native-turn",
+      error: { message: "Malformed retry notification" },
+    });
+    asInternals(session).handleNotification("turn/completed", {
+      threadId: "test-thread",
+      turn: { status: "completed" },
+    });
+    asInternals(session).handleNotification("turn/completed", {
+      threadId: "test-thread",
+      turn: { id: "stale-native-turn", status: "completed" },
+    });
+
+    expect(retryMessages).toEqual(["Reconnecting... 2/5"]);
+    await session.close();
+    expect(retryMessages).toEqual(["Reconnecting... 2/5", null]);
+  });
+
+  test("ignores a stale compaction before clearing retry for the current turn", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    const retryMessages: Array<string | null> = [];
+    let completedCompactions = 0;
+    session.subscribe((event) => {
+      if (event.type === "provider_retry") {
+        retryMessages.push(event.message);
+      }
+      if (event.type === "timeline" && event.item.type === "compaction") {
+        completedCompactions += 1;
+      }
+    });
+
+    try {
+      const firstResult = session.run("Complete the first turn.");
+      await appServer.waitForTurnStart();
+      appServer.startsTurn({ threadId: "thread-1", turnId: "turn-a" });
+      appServer.completeTurn({ threadId: "thread-1", turnId: "turn-a" });
+      await firstResult;
+
+      const secondResult = session.run("Retry during the second turn.");
+      await appServer.waitForTurnStart();
+      appServer.startsTurn({ threadId: "thread-1", turnId: "turn-b" });
+      appServer.reportsError({
+        threadId: "thread-1",
+        turnId: "turn-b",
+        message: "Reconnecting... 2/5",
+        willRetry: true,
+      });
+      await vi.waitFor(() => {
+        expect(retryMessages).toEqual(["Reconnecting... 2/5"]);
+      });
+
+      appServer.compactsThread({ threadId: "thread-1", turnId: "turn-a" });
+      await vi.waitFor(() => {
+        expect(completedCompactions).toBe(1);
+      });
+      expect(retryMessages).toEqual(["Reconnecting... 2/5"]);
+
+      appServer.compactsThread({ threadId: "thread-1", turnId: "turn-b" });
+      await vi.waitFor(() => {
+        expect(completedCompactions).toBe(2);
+        expect(retryMessages).toEqual(["Reconnecting... 2/5", null]);
+      });
+
+      appServer.completeTurn({ threadId: "thread-1", turnId: "turn-b" });
+      await secondResult;
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
   test("never replaces the root identity with an early child thread start", () => {
     const session = createSession();
 

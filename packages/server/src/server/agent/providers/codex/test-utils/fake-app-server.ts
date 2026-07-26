@@ -51,7 +51,16 @@ export interface FakeCodexAppServer {
   waitForTurnStart(): Promise<JsonObject>;
   nextResponse(): Promise<string>;
   startsTurn(params: { threadId: string; turnId?: string }): void;
-  completeTurn(params?: { threadId?: string }): void;
+  completeTurn(params?: { threadId?: string; turnId?: string }): void;
+  reportsError(params: {
+    threadId: string;
+    turnId: string;
+    message: string;
+    willRetry: boolean;
+    additionalDetails?: string;
+  }): void;
+  warns(params: { threadId?: string | null; message: string }): void;
+  compactsThread(params: { threadId: string; turnId: string }): void;
   startsSubAgent(params: {
     callId: string;
     threadId: string;
@@ -114,6 +123,7 @@ export function createFakeCodexAppServer(
 ): FakeCodexAppServer {
   const child = createCodexAppServerChildProcess();
   const recordedRollbacks: JsonObject[] = [];
+  const currentTurnIdByThreadId = new Map<string, string>();
   const responseHandlers: Record<string, FakeCodexAppServerHandler> = {
     initialize: () => ({}),
     "collaborationMode/list": () => ({ data: [] }),
@@ -309,23 +319,51 @@ export function createFakeCodexAppServer(
       });
     },
     startsTurn(params) {
+      const turnId = params.turnId ?? `turn-${params.threadId}`;
+      currentTurnIdByThreadId.set(params.threadId, turnId);
       child.stdout.write(
         `${JSON.stringify({
           method: "turn/started",
           params: {
             threadId: params.threadId,
-            turn: { id: params.turnId ?? `turn-${params.threadId}` },
+            turn: { id: turnId },
           },
         })}\n`,
       );
     },
     completeTurn(params = {}) {
+      const threadId = params.threadId ?? "thread-1";
+      const turnId = params.turnId ?? currentTurnIdByThreadId.get(threadId);
       child.stdout.write(
         `${JSON.stringify({
           method: "turn/completed",
-          params: { threadId: params.threadId ?? "thread-1", turn: { status: "completed" } },
+          params: {
+            threadId,
+            turn: { ...(turnId ? { id: turnId } : {}), status: "completed" },
+          },
         })}\n`,
       );
+      currentTurnIdByThreadId.delete(threadId);
+    },
+    reportsError(params) {
+      writeNotification("error", {
+        threadId: params.threadId,
+        turnId: params.turnId,
+        willRetry: params.willRetry,
+        error: {
+          message: params.message,
+          ...(params.additionalDetails ? { additionalDetails: params.additionalDetails } : {}),
+        },
+      });
+    },
+    warns(params) {
+      writeNotification("warning", {
+        ...(params.threadId !== undefined ? { threadId: params.threadId } : {}),
+        message: params.message,
+      });
+    },
+    compactsThread(params) {
+      writeNotification("thread/compacted", params);
     },
     startsSubAgent(params) {
       writeSubAgentActivity("item/completed", { ...params, kind: "started" });

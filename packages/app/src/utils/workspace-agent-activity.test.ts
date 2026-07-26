@@ -45,6 +45,7 @@ function agent(input: {
     cwd: "/repo",
     workspaceId: input.workspaceId,
     model: null,
+    providerRetryMessage: null,
     requiresAttention: input.requiresAttention,
     attentionReason: input.attentionReason,
     attentionTimestamp: input.attentionTimestamp ? new Date(input.attentionTimestamp) : null,

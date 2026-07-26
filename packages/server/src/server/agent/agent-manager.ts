@@ -327,6 +327,7 @@ interface ManagedAgentBase {
   pendingReplacement: boolean;
   persistence: AgentPersistenceHandle | null;
   historyPrimed: boolean;
+  providerRetryMessage: string | null;
   lastUserMessageAt: Date | null;
   lastUsage?: AgentUsage;
   lastError?: string;
@@ -1575,6 +1576,7 @@ export class AgentManager {
         lastUserMessageAt: record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null,
         lastUsage: undefined,
         lastError: record.lastError ?? undefined,
+        providerRetryMessage: null,
         attention: { requiresAttention: false },
         internal: record.internal,
         labels: record.labels,
@@ -2893,6 +2895,7 @@ export class AgentManager {
         config.cwd,
       ),
       historyPrimed: options?.historyPrimed ?? durableTimelineHasRows,
+      providerRetryMessage: null,
       lastUserMessageAt: options?.lastUserMessageAt ?? null,
       lastUsage: options?.lastUsage,
       lastError: options?.lastError,
@@ -2934,6 +2937,7 @@ export class AgentManager {
       turnId,
     }));
     this.runs.clearAgentRun(agent.id);
+    this.touchUpdatedAt(agent);
     return {
       ...agent,
       lifecycle: "closed",
@@ -2943,6 +2947,7 @@ export class AgentManager {
       bufferedPermissionResolutions: new Map(),
       inFlightPermissionResponses: new Set(),
       pendingReplacement: false,
+      providerRetryMessage: null,
       foregroundTurnWaiters: new Set(),
       finalizedForegroundTurnIds: new Set(),
       unsubscribeSession: null,
@@ -3346,6 +3351,9 @@ export class AgentManager {
     event: AgentStreamEvent,
     options?: HandleStreamEventOptions,
   ): Promise<boolean> {
+    if (this.handleProviderRetryEvent(agent, event, options)) {
+      return false;
+    }
     if (event.type === "timeline") {
       event = {
         ...event,
@@ -3372,6 +3380,8 @@ export class AgentManager {
       }
       this.agentStreamCoalescer.flushFor(agent.id);
     }
+
+    this.clearProviderRetryOnTurnBoundary(agent, event, options);
 
     const flags: StreamEventFlags = { shouldDispatchEvent: true, shouldNotifyWaiters: true };
 
@@ -3401,6 +3411,37 @@ export class AgentManager {
     this.traceHandleStreamEventEnd(agent, event, eventTurnId, flags);
 
     return flags.shouldNotifyWaiters;
+  }
+
+  private handleProviderRetryEvent(
+    agent: ActiveManagedAgent,
+    event: AgentStreamEvent,
+    options?: HandleStreamEventOptions,
+  ): boolean {
+    if (event.type !== "provider_retry") {
+      return false;
+    }
+    if (!options?.fromHistory && event.message !== agent.providerRetryMessage) {
+      agent.providerRetryMessage = event.message;
+      this.touchUpdatedAt(agent);
+      this.emitState(agent, { persist: false });
+    }
+    return true;
+  }
+
+  private clearProviderRetryOnTurnBoundary(
+    agent: ActiveManagedAgent,
+    event: AgentStreamEvent,
+    options?: HandleStreamEventOptions,
+  ): void {
+    if (
+      !options?.fromHistory &&
+      agent.providerRetryMessage !== null &&
+      (event.type === "turn_started" || isTurnTerminalEvent(event))
+    ) {
+      agent.providerRetryMessage = null;
+      this.emitState(agent, { persist: false });
+    }
   }
 
   private traceHandleStreamEventStart(

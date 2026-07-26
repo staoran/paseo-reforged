@@ -32,6 +32,7 @@ const AGENT_DEFAULTS: Agent = {
   runtimeInfo: undefined,
   lastUsage: undefined,
   lastError: null,
+  providerRetryMessage: null,
   title: "Agent",
   cwd: "/tmp/project",
   model: null,

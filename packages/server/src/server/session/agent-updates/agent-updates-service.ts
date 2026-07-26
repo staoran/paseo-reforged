@@ -156,7 +156,16 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
       return;
     }
     if (sub.isBootstrapping) {
-      sub.pendingUpdatesByAgentId.set(agentUpdateTargetId(payload), payload);
+      const agentId = agentUpdateTargetId(payload);
+      const pending = sub.pendingUpdatesByAgentId.get(agentId);
+      if (
+        payload.kind === "upsert" &&
+        pending?.kind === "upsert" &&
+        Date.parse(payload.agent.updatedAt) < Date.parse(pending.agent.updatedAt)
+      ) {
+        return;
+      }
+      sub.pendingUpdatesByAgentId.set(agentId, payload);
       return;
     }
 

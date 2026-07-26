@@ -47,6 +47,7 @@ function makeAgent(input: {
     cwd: input.cwd,
     workspaceId: input.workspaceId,
     model: null,
+    providerRetryMessage: null,
     thinkingOptionId: null,
     parentAgentId: input.parentAgentId ?? null,
     labels: {},

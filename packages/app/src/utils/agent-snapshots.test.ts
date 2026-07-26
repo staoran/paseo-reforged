@@ -29,6 +29,9 @@ function createSnapshot(
     availableModes: input.availableModes ?? [],
     pendingPermissions: input.pendingPermissions ?? [],
     persistence: input.persistence ?? null,
+    ...(input.providerRetryMessage !== undefined
+      ? { providerRetryMessage: input.providerRetryMessage }
+      : {}),
     title: input.title ?? null,
     labels: (input.labels ?? {}) as AgentSnapshotPayload["labels"],
   };
@@ -70,5 +73,16 @@ describe("normalizeAgentSnapshot", () => {
     expect(missing.parentAgentId).toBeNull();
     expect(empty.parentAgentId).toBeNull();
     expect(nonString.parentAgentId).toBeNull();
+  });
+
+  it("normalizes optional provider retry messages without rewriting them", () => {
+    const missing = normalizeAgentSnapshot(createSnapshot(), "server-1");
+    const retrying = normalizeAgentSnapshot(
+      createSnapshot({ providerRetryMessage: " Reconnecting... 2/5 " }),
+      "server-1",
+    );
+
+    expect(missing.providerRetryMessage).toBeNull();
+    expect(retrying.providerRetryMessage).toBe(" Reconnecting... 2/5 ");
   });
 });

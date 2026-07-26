@@ -41,6 +41,7 @@ function makeAgent(overrides: Partial<Agent> = {}): Agent {
     labels: {},
     archivedAt: null,
     ...overrides,
+    providerRetryMessage: overrides.providerRetryMessage ?? null,
   };
 }
 

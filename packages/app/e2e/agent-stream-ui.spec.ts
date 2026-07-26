@@ -19,10 +19,88 @@ import { selectModel } from "./helpers/app";
 import { clickNewChat } from "./helpers/launcher";
 import { expectComposerVisible, startRunningMockAgent } from "./helpers/composer";
 import { openAgentRoute, seedMockAgentWorkspace } from "./helpers/mock-agent";
+import { installProviderRetryMessageGate } from "./helpers/provider-retry-message-gate";
+import {
+  expectReconnectingToastGone,
+  expectReconnectingToastVisible,
+} from "./helpers/workspace-ui";
 
 const SCROLL_AWAY_MIN_SCROLLABLE_DISTANCE = 360;
 
 test.describe("Agent stream UI", () => {
+  test("shows live provider retry messages only while the running view is current", async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    const gate = await installProviderRetryMessageGate(page);
+    const agent = await seedMockAgentWorkspace({
+      repoPrefix: "provider-retry-message-",
+      title: "Provider retry message",
+      model: "five-minute-stream",
+      initialPrompt: "Keep the agent running while retry UI is exercised.",
+    });
+    const retryMessage = page.getByTestId("turn-provider-retry-message");
+
+    try {
+      await agent.client.waitForAgentUpsert(
+        agent.agentId,
+        (snapshot) => snapshot.status === "running",
+        30_000,
+      );
+      await openAgentRoute(page, agent);
+      await expectComposerVisible(page);
+
+      await gate.publish(agent.agentId, "Reconnecting... 2/5");
+      await expect(retryMessage).toHaveText("Reconnecting... 2/5");
+      await gate.publish(agent.agentId, "Reconnecting... 3/5");
+      await expect(retryMessage).toHaveText("Reconnecting... 3/5");
+
+      const longMessage =
+        "Reconnecting after a deliberately long provider transport failure... 4/5";
+      await gate.publish(agent.agentId, longMessage);
+      await expect(retryMessage).toHaveText(longMessage);
+      const overflow = await retryMessage.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return {
+          isClipped: element.scrollWidth > element.clientWidth,
+          overflow: style.overflow,
+          textOverflow: style.textOverflow,
+          whiteSpace: style.whiteSpace,
+        };
+      });
+      expect(overflow).toEqual({
+        isClipped: true,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+      });
+
+      await gate.publish(agent.agentId, null);
+      await expect(retryMessage).toHaveCount(0);
+
+      await gate.publish(agent.agentId, "Reconnecting... 2/5");
+      await expect(retryMessage).toHaveText("Reconnecting... 2/5");
+      await gate.drop();
+      await expectReconnectingToastVisible(page);
+      await expect(retryMessage).toHaveCount(0);
+
+      gate.restore();
+      await expectReconnectingToastGone(page);
+      await gate.publish(agent.agentId, "Reconnecting... 3/5");
+      await expect(retryMessage).toHaveText("Reconnecting... 3/5");
+
+      gate.holdAgentRefresh();
+      await gate.remove(agent.agentId);
+      await expect(retryMessage).toHaveCount(0);
+      await expect(page.getByTestId("turn-working-indicator")).toBeVisible();
+      gate.releaseAgentRefresh();
+    } finally {
+      gate.restore();
+      gate.releaseAgentRefresh();
+      await agent.cleanup();
+    }
+  });
+
   test("auto-scroll sticks to bottom across token bursts", async ({ page }) => {
     test.setTimeout(120_000);
     const agent = await startRunningMockAgent(page, {

@@ -55,6 +55,7 @@ const AGENT_DEFAULTS: Agent = {
   runtimeInfo: undefined,
   lastUsage: undefined,
   lastError: null,
+  providerRetryMessage: null,
   title: "Agent",
   cwd: WORKSPACE_DIRECTORY,
   workspaceId: WORKSPACE_ID,

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { AGENT_LIFECYCLE_STATUSES } from "./agent-manager.js";
 import {
+  toAgentListItemPayload,
   toAgentPayload,
   toRecentProviderSessionDescriptorPayload,
   toStoredAgentRecord,
@@ -92,6 +93,7 @@ function createManagedAgent(overrides: ManagedAgentOverrides = {}): ManagedAgent
     lastUsage: undefined,
     lastError: lastErrorValue,
     historyPrimed: true,
+    providerRetryMessage: null,
     lastUserMessageAt: now,
     attention: { requiresAttention: false },
   };
@@ -396,6 +398,19 @@ describe("toAgentPayload", () => {
     const payload = toAgentPayload(agent);
 
     expect(payload.features).toEqual(features);
+  });
+
+  it("projects provider retry messages only to live snapshots", () => {
+    const agent = createManagedAgent({ providerRetryMessage: "Reconnecting... 2/5" });
+
+    const livePayload = toAgentPayload(agent);
+
+    expect(livePayload.providerRetryMessage).toBe("Reconnecting... 2/5");
+    expect(toStoredAgentRecord(agent)).not.toHaveProperty("providerRetryMessage");
+    expect(toAgentListItemPayload(livePayload)).not.toHaveProperty("providerRetryMessage");
+
+    agent.providerRetryMessage = null;
+    expect(toAgentPayload(agent)).not.toHaveProperty("providerRetryMessage");
   });
 });
 

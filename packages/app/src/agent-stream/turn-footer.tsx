@@ -1,5 +1,5 @@
 import React, { memo, useCallback, useMemo, type ReactNode } from "react";
-import { View } from "react-native";
+import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 import type { Theme } from "@/styles/theme";
@@ -36,6 +36,7 @@ export type AssistantTurnForkHandler = (input: {
 
 export const TurnFooter = memo(function TurnFooter({
   isRunning,
+  providerRetryMessage,
   inFlightTurnStartedAt,
   host,
   strategy,
@@ -43,6 +44,7 @@ export const TurnFooter = memo(function TurnFooter({
   onForkAssistantTurn,
 }: {
   isRunning: boolean;
+  providerRetryMessage: string | null;
   inFlightTurnStartedAt: Date | null;
   host: TurnFooterHost | null;
   strategy: TurnContentStrategy;
@@ -52,7 +54,10 @@ export const TurnFooter = memo(function TurnFooter({
   if (isRunning) {
     return (
       <TurnFooterRow>
-        <RunningTurnFooter inFlightTurnStartedAt={inFlightTurnStartedAt} />
+        <RunningTurnFooter
+          inFlightTurnStartedAt={inFlightTurnStartedAt}
+          providerRetryMessage={providerRetryMessage}
+        />
       </TurnFooterRow>
     );
   }
@@ -102,8 +107,10 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
 
 const WorkingIndicator = memo(function WorkingIndicator({
   inFlightTurnStartedAt = null,
+  providerRetryMessage,
 }: {
   inFlightTurnStartedAt?: Date | null;
+  providerRetryMessage: string | null;
 }) {
   const active = useRetainedPanelActive();
   return (
@@ -119,14 +126,33 @@ const WorkingIndicator = memo(function WorkingIndicator({
           testID="turn-working-elapsed"
         />
       ) : null}
+      {providerRetryMessage !== null ? (
+        <Text
+          style={stylesheet.providerRetryMessage}
+          numberOfLines={1}
+          ellipsizeMode="tail"
+          testID="turn-provider-retry-message"
+        >
+          {providerRetryMessage}
+        </Text>
+      ) : null}
     </View>
   );
 });
 
-function RunningTurnFooter({ inFlightTurnStartedAt }: { inFlightTurnStartedAt: Date | null }) {
+function RunningTurnFooter({
+  inFlightTurnStartedAt,
+  providerRetryMessage,
+}: {
+  inFlightTurnStartedAt: Date | null;
+  providerRetryMessage: string | null;
+}) {
   return (
     <View style={stylesheet.turnFooterSlot} testID="turn-working-indicator">
-      <WorkingIndicator inFlightTurnStartedAt={inFlightTurnStartedAt} />
+      <WorkingIndicator
+        inFlightTurnStartedAt={inFlightTurnStartedAt}
+        providerRetryMessage={providerRetryMessage}
+      />
     </View>
   );
 }
@@ -217,5 +243,14 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   workingLoader: {
     marginLeft: -2,
+  },
+  providerRetryMessage: {
+    color:
+      theme.colorScheme === "light"
+        ? theme.colors.palette.amber[700]
+        : theme.colors.palette.amber[500],
+    fontSize: STREAM_METADATA_FONT_SIZE,
+    flexShrink: 1,
+    maxWidth: 180,
   },
 }));
