@@ -1,5 +1,5 @@
 import { once } from "node:events";
-import { spawn, execSync, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import net from "node:net";
 import { tmpdir } from "node:os";
@@ -85,23 +85,26 @@ export async function startIsolatedHostDaemon(serverId: string): Promise<Isolate
 
   const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-e2e-secondary-host-"));
   const serverDir = path.resolve(__dirname, "../../../server");
-  const tsxBin = execSync("which tsx").toString().trim();
   const spawnDaemon = async (): Promise<ChildProcess> => {
-    const child = spawn(tsxBin, ["scripts/supervisor-entrypoint.ts", "--dev"], {
-      cwd: serverDir,
-      env: withDisabledE2ESpeechEnv({
-        ...process.env,
-        PASEO_HOME: paseoHome,
-        PASEO_SERVER_ID: serverId,
-        PASEO_LISTEN: `127.0.0.1:${port}`,
-        PASEO_CORS_ORIGINS: `http://localhost:${metroPort}`,
-        PASEO_RELAY_ENABLED: "0",
-        PASEO_NODE_ENV: "development",
-        NODE_ENV: "development",
-      }),
-      stdio: ["ignore", "ignore", "pipe"],
-      detached: false,
-    });
+    const child = spawn(
+      process.execPath,
+      ["--import", "tsx", "scripts/supervisor-entrypoint.ts", "--dev"],
+      {
+        cwd: serverDir,
+        env: withDisabledE2ESpeechEnv({
+          ...process.env,
+          PASEO_HOME: paseoHome,
+          PASEO_SERVER_ID: serverId,
+          PASEO_LISTEN: `127.0.0.1:${port}`,
+          PASEO_CORS_ORIGINS: `http://localhost:${metroPort}`,
+          PASEO_RELAY_ENABLED: "0",
+          PASEO_NODE_ENV: "development",
+          NODE_ENV: "development",
+        }),
+        stdio: ["ignore", "ignore", "pipe"],
+        detached: false,
+      },
+    );
 
     let stderr = "";
     child.stderr?.on("data", (chunk: Buffer) => {

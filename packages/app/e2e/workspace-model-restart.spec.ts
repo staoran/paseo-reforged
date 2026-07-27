@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { execSync, spawn, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -241,22 +241,25 @@ async function startRestartDaemon(input: {
   }
 
   const serverDir = path.resolve(__dirname, "../../server");
-  const tsxBin = execSync("which tsx").toString().trim();
-  const child = spawn(tsxBin, ["scripts/supervisor-entrypoint.ts", "--dev"], {
-    cwd: serverDir,
-    env: withDisabledE2ESpeechEnv({
-      ...process.env,
-      PASEO_HOME: input.paseoHome,
-      PASEO_SERVER_ID: SERVER_ID,
-      PASEO_LISTEN: `127.0.0.1:${port}`,
-      PASEO_CORS_ORIGINS: input.origin,
-      PASEO_RELAY_ENABLED: "0",
-      PASEO_NODE_ENV: "development",
-      NODE_ENV: "development",
-    }),
-    stdio: ["ignore", "ignore", "pipe"],
-    detached: false,
-  });
+  const child = spawn(
+    process.execPath,
+    ["--import", "tsx", "scripts/supervisor-entrypoint.ts", "--dev"],
+    {
+      cwd: serverDir,
+      env: withDisabledE2ESpeechEnv({
+        ...process.env,
+        PASEO_HOME: input.paseoHome,
+        PASEO_SERVER_ID: SERVER_ID,
+        PASEO_LISTEN: `127.0.0.1:${port}`,
+        PASEO_CORS_ORIGINS: input.origin,
+        PASEO_RELAY_ENABLED: "0",
+        PASEO_NODE_ENV: "development",
+        NODE_ENV: "development",
+      }),
+      stdio: ["ignore", "ignore", "pipe"],
+      detached: false,
+    },
+  );
   let stderr = "";
   child.stderr?.on("data", (chunk: Buffer) => {
     stderr += chunk.toString("utf8");
