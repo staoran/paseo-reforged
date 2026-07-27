@@ -102,7 +102,7 @@ After the stable gates are intentionally removed, this bumps the version across 
 
 The Docker workflow only performs non-publishing source-build checks on pull requests, `main`, or manual dispatch. Release tags never publish Docker images.
 
-Relay deployment is manual-only while `relay.paseo.sh` bridges traffic to the Fly deployment. Releases and pushes to `main` do not deploy the Cloudflare relay worker. Deploy it explicitly with `gh workflow run deploy-relay.yml` only when the production bridge should change.
+The production relay is the Elixir service in [getpaseo/paseo-relay](https://github.com/getpaseo/paseo-relay), with its own deployment process. Paseo releases and pushes to this repository do not deploy it. The Cloudflare relay code and workflow in this repository are legacy and are not used in production.
 
 **Stable means stable.** If the user says "stable" or "ship stable", do not ask whether they want a beta first. They picked stable; treat it as a direct stable release. Only run the beta flow when the user explicitly says "beta".
 

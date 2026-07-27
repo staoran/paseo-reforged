@@ -12,7 +12,6 @@ import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, Folder, FolderPlus, GitBranch, GitPullRequest } from "lucide-react-native";
 import { Composer } from "@/composer";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
-import { DraftAgentModeControl } from "@/composer/agent-controls/mode-control";
 import {
   resolveComposerAttachmentSubmitFormat,
   splitComposerAttachmentsForSubmit,
@@ -1383,6 +1382,7 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
         open={project.openState}
         onOpenChange={project.onOpenChange}
         desktopPlacement="bottom-start"
+        desktopMinWidth={360}
         anchorRef={project.anchorRef}
         emptyText="No projects available."
         renderOption={project.renderOption}
@@ -1403,6 +1403,7 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
         searchable={false}
         title="Host"
         desktopPlacement="bottom-start"
+        desktopMinWidth={200}
         hostOptionTestID={newWorkspaceHostOptionTestID}
       >
         <Pressable
@@ -2110,13 +2111,6 @@ export function NewWorkspaceScreen({
     },
   });
 
-  const composerFooter = useMemo(
-    () =>
-      agentControlsWithDisabled ? (
-        <DraftAgentModeControl placement="footer" {...agentControlsWithDisabled} />
-      ) : null,
-    [agentControlsWithDisabled],
-  );
   const screenHeaderLeft = useMemo(() => <SidebarMenuToggle />, []);
 
   return (
@@ -2163,7 +2157,6 @@ export function NewWorkspaceScreen({
             autoFocus
             commandDraftConfig={composerState?.commandDraftConfig}
             agentControls={agentControlsWithDisabled}
-            footer={composerFooter}
           />
           {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
         </ReanimatedAnimated.View>

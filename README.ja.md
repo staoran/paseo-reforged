@@ -146,9 +146,9 @@ npm run build:server
 npm run typecheck
 ```
 
-## コミュニティ
+## 関連プロジェクト
 
-- [paseo-relay](https://github.com/zenghongtu/paseo-relay) — Go 実装のセルフホスト型リレー
+- [getpaseo/paseo-relay](https://github.com/getpaseo/paseo-relay) — Elixir 製の公式分散リレー
 - [paseo-vscode](https://marketplace.visualstudio.com/items?itemName=hinnes.paseo-vscode) — VS Code 拡張機能
 
 ---

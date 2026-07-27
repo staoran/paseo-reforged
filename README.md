@@ -141,7 +141,7 @@ Quick monorepo package map:
 - `packages/app`: Expo client (iOS, Android, web)
 - `packages/cli`: `paseo` CLI for daemon and agent workflows
 - `packages/desktop`: Electron desktop app
-- `packages/relay`: Relay package for remote connectivity
+- `packages/relay`: Relay transport and encryption used by the daemon and clients
 - `packages/website`: Marketing site and documentation (`paseo.sh`)
 
 Common commands:
@@ -163,9 +163,9 @@ npm run build:server
 npm run typecheck
 ```
 
-## Community
+## Related projects
 
-- [paseo-relay](https://github.com/zenghongtu/paseo-relay) — self-hosted relay in Go
+- [getpaseo/paseo-relay](https://github.com/getpaseo/paseo-relay) — official distributed relay, written in Elixir
 - [paseo-vscode](https://marketplace.visualstudio.com/items?itemName=hinnes.paseo-vscode) — VS Code extension
 
 ---

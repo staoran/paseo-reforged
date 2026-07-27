@@ -146,9 +146,9 @@ npm run build:server
 npm run typecheck
 ```
 
-## 社区
+## 相关项目
 
-- [paseo-relay](https://github.com/zenghongtu/paseo-relay) — Go 实现的自托管 relay
+- [getpaseo/paseo-relay](https://github.com/getpaseo/paseo-relay) — 官方分布式 relay，使用 Elixir 编写
 - [paseo-vscode](https://marketplace.visualstudio.com/items?itemName=hinnes.paseo-vscode) — VS Code 扩展
 
 ### 自托管 relay TLS
