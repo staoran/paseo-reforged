@@ -478,7 +478,14 @@ export function normalizeInlinePathTarget(
     return null;
   }
 
+  const normalizedCwd = normalizePathInput(cwd);
   let normalized = normalizedInput;
+  const isWindowsDriveCwd = /^[A-Za-z]:\//.test(normalizedCwd ?? "");
+  const isBrowserDrivePath = /^\/[A-Za-z]:\//.test(normalized);
+  if (isWindowsDriveCwd && isBrowserDrivePath) {
+    normalized = normalized.slice(1);
+  }
+
   const cwdRelative = resolvePathAgainstCwd(normalized, cwd);
   if (cwdRelative) {
     normalized = cwdRelative;

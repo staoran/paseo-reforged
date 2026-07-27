@@ -1,7 +1,9 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, test, type Page } from "./fixtures";
+import { expectAgentIdle } from "./helpers/agent-stream";
 import { openFileExplorer, openFileFromExplorer, expectFileTabOpen } from "./helpers/file-explorer";
+import { submitMessage } from "./helpers/composer";
 import { installDaemonWebSocketGate } from "./helpers/daemon-websocket-gate";
 import { openAgentRoute, seedMockAgentWorkspace } from "./helpers/mock-agent";
 
@@ -55,6 +57,14 @@ async function seedAgentWithFileLink(target: string) {
   return session;
 }
 
+async function openToolCallFile(page: Page, filePathText: string): Promise<void> {
+  const toolCall = page.getByTestId("tool-call-badge").filter({ hasText: filePathText }).first();
+  await expect(toolCall).toBeVisible({ timeout: 30_000 });
+  await expectAgentIdle(page);
+  await toolCall.hover();
+  await toolCall.getByTestId("tool-call-open-file").click();
+}
+
 test.describe("CodeMirror workspace file editing", () => {
   test("opens an assistant file link at its referenced line", async ({ page }) => {
     const target = "target.ts:42";
@@ -90,6 +100,87 @@ test.describe("CodeMirror workspace file editing", () => {
       await expect(
         page.getByTestId("file-source-editor").locator(".cm-line", { hasText: "line42 = 42" }),
       ).toBeVisible();
+    } finally {
+      await session.cleanup();
+    }
+  });
+
+  test("opens tool-call file paths at an absolute line target", async ({ page }) => {
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "file-editing-tool-call-line-",
+      title: "Tool call line e2e",
+    });
+    const line93Text = "export const markerLine93 = true;";
+    const targetPath = path.join(session.cwd, "target.ts");
+    const browserPath = targetPath.split(path.sep).join("/");
+    const browserPathPrefix = process.platform === "win32" ? "/" : "";
+    const target = `${browserPathPrefix}${browserPath}:93`;
+
+    try {
+      await writeFile(
+        targetPath,
+        Array.from({ length: 100 }, (_, index) =>
+          index === 92 ? line93Text : `export const line${index + 1} = ${index + 1};`,
+        ).join("\n"),
+        "utf8",
+      );
+      await openAgentRoute(page, session);
+      await submitMessage(page, `Mock read file path: ${target}`);
+      await openToolCallFile(page, "target.ts");
+
+      const fileTab = page.getByTestId("workspace-tab-file_target.ts").filter({ visible: true });
+      await expectFileTabOpen(page, "target.ts");
+      await expect(fileTab).toHaveCount(1);
+      await expect(page.getByTestId("file-source-editor").filter({ visible: true })).toBeVisible();
+      await expect(page.getByLabel("Line 93, column 1")).toBeVisible();
+      await expect(
+        page.getByTestId("file-source-editor").locator(".cm-line", { hasText: line93Text }),
+      ).toBeVisible();
+      await expect(
+        page.getByText("Access outside of workspace is not allowed", { exact: true }),
+      ).toHaveCount(0);
+
+      await editor(page).click();
+      await editor(page).press("Control+Home");
+      await expect(page.getByLabel(/^Line 1, column \d+$/)).toBeVisible();
+      await page
+        .getByTestId(`workspace-tab-agent_${session.agentId}`)
+        .filter({ visible: true })
+        .click();
+      await openToolCallFile(page, "target.ts");
+
+      await expect(fileTab).toHaveCount(1);
+      await expect(page.getByLabel("Line 93, column 1")).toBeVisible();
+      await expect(
+        page.getByTestId("file-source-editor").locator(".cm-line", { hasText: line93Text }),
+      ).toBeVisible();
+    } finally {
+      await session.cleanup();
+    }
+  });
+
+  test("opens tool-call file paths without a line token", async ({ page }) => {
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "file-editing-tool-call-raw-",
+      title: "Tool call raw path e2e",
+    });
+
+    try {
+      await writeFile(
+        path.join(session.cwd, "notes.customext"),
+        "raw path fallback content\n",
+        "utf8",
+      );
+      await openAgentRoute(page, session);
+      await submitMessage(page, "Mock read file path: notes.customext");
+      await openToolCallFile(page, "notes.customext");
+
+      const fileTab = page
+        .getByTestId("workspace-tab-file_notes.customext")
+        .filter({ visible: true });
+      await expectFileTabOpen(page, "notes.customext");
+      await expect(fileTab).toHaveCount(1);
+      await expect(editor(page)).toContainText("raw path fallback content");
     } finally {
       await session.cleanup();
     }

@@ -36,6 +36,7 @@ export const MOCK_LOAD_TEST_DEFAULT_MODEL_ID = "five-minute-stream";
 const MOCK_LOAD_TEST_MODE_ID = "load-test";
 const MOCK_LOAD_TEST_DURATION_MS = 5 * 60 * 1000;
 const MOCK_LOAD_TEST_INTERVAL_MS = 40;
+const DEFAULT_READ_FILE_PATH = "packages/app/src/components/conversation-list.tsx";
 
 const CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
@@ -99,6 +100,7 @@ interface ActiveTurn {
   turnId: string;
   assistantMessageId: string;
   prompt: AgentPromptInput;
+  readFilePath: string;
   startedAt: number;
   cycle: number;
   durationMs: number;
@@ -232,6 +234,10 @@ function promptToText(prompt: AgentPromptInput): string {
     .flatMap((block) => (block.type === "text" ? [block.text] : []))
     .join("\n")
     .trim();
+}
+
+function parseMockReadFilePathPrompt(prompt: AgentPromptInput): string | null {
+  return /^Mock read file path:\s*(.+)$/im.exec(promptToText(prompt))?.[1]?.trim() || null;
 }
 
 function parseLargeAgentStreamPayloadPrompt(
@@ -400,7 +406,8 @@ function buildEditDiff(filePath: string): string {
   ].join("\n");
 }
 
-function buildCycleQueue(turnId: string, cycle: number): CycleEvent[] {
+function buildCycleQueue(turn: ActiveTurn): CycleEvent[] {
+  const { turnId, cycle, readFilePath } = turn;
   const queue: CycleEvent[] = [];
 
   for (const tok of tokenize(buildIntroParagraph(cycle))) {
@@ -413,7 +420,7 @@ function buildCycleQueue(turnId: string, cycle: number): CycleEvent[] {
 
   const readDetail: ToolCallDetail = {
     type: "read",
-    filePath: "packages/app/src/components/conversation-list.tsx",
+    filePath: readFilePath,
   };
   const readId = `${turnId}:read:${cycle}`;
   queue.push({ kind: "tool_running", callId: readId, name: "read", detail: readDetail });
@@ -623,6 +630,7 @@ export class MockLoadTestAgentSession implements AgentSession {
       turnId,
       assistantMessageId,
       prompt,
+      readFilePath: parseMockReadFilePathPrompt(prompt) ?? DEFAULT_READ_FILE_PATH,
       startedAt: Date.now(),
       cycle: 0,
       durationMs: profile.durationMs,
@@ -1157,7 +1165,7 @@ export class MockLoadTestAgentSession implements AgentSession {
 
     if (turn.queue.length === 0) {
       turn.cycle += 1;
-      turn.queue = buildCycleQueue(turn.turnId, turn.cycle);
+      turn.queue = buildCycleQueue(turn);
     }
 
     const event = turn.queue.shift();

@@ -420,6 +420,36 @@ describe("parseAssistantFileLink", () => {
 });
 
 describe("normalizeInlinePathTarget", () => {
+  it("normalizes a browser-shaped drive path before resolving a tool line target", () => {
+    const parsed = parseInlinePathToken("/C:/outside/file.ts:93");
+    expect(parsed).toEqual({
+      raw: "/C:/outside/file.ts:93",
+      path: "/C:/outside/file.ts",
+      lineStart: 93,
+      lineEnd: undefined,
+    });
+
+    const normalized = normalizeInlinePathTarget(parsed!.path, "D:\\repo");
+    expect({ path: normalized?.file, lineStart: parsed?.lineStart }).toEqual({
+      path: "C:/outside/file.ts",
+      lineStart: 93,
+    });
+  });
+
+  it("resolves a browser-shaped same-drive path against a Windows cwd", () => {
+    expect(normalizeInlinePathTarget("/C:/repo/目录/含 空格.ts", "C:\\repo")).toEqual({
+      directory: "目录",
+      file: "目录/含 空格.ts",
+    });
+  });
+
+  it("keeps a slash-drive path unchanged for a POSIX cwd", () => {
+    expect(normalizeInlinePathTarget("/E:/repo/file.ts", "/repo")).toEqual({
+      directory: "/E:/repo",
+      file: "/E:/repo/file.ts",
+    });
+  });
+
   it("keeps relative file paths as file targets", () => {
     expect(normalizeInlinePathTarget("packages/app/src/components/message.tsx")).toEqual({
       directory: "packages/app/src/components",

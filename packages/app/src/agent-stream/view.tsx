@@ -80,6 +80,7 @@ import {
   AssistantFileLinkResolverProvider,
   normalizeInlinePathTarget,
 } from "@/assistant-file-links";
+import { parseInlinePathToken } from "@/assistant-file-links/parse";
 import {
   createWorkspaceFileTabTarget,
   normalizeWorkspaceFileLocation,
@@ -470,7 +471,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     );
 
     const handleToolCallOpenFile = useStableEvent((filePath: string) => {
-      handleInlinePathPress({ raw: filePath, path: filePath }, "main");
+      handleInlinePathPress(
+        parseInlinePathToken(filePath) ?? { raw: filePath, path: filePath },
+        "main",
+      );
     });
 
     const handleForkAssistantTurn: AssistantTurnForkHandler = useStableEvent(

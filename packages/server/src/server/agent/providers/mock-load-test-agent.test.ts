@@ -118,6 +118,18 @@ describe("MockLoadTestAgentClient", () => {
     const reasoningTokens = timelineItems.filter((item) => item.type === "reasoning");
     const toolCalls = timelineItems.filter((item) => item.type === "tool_call");
 
+    expect(
+      toolCalls.find(
+        (item) => item.type === "tool_call" && item.name === "read" && item.status === "running",
+      ),
+    ).toMatchObject({
+      type: "tool_call",
+      detail: {
+        type: "read",
+        filePath: "packages/app/src/components/conversation-list.tsx",
+      },
+    });
+
     // Many small token deltas, not a few big chunks.
     expect(assistantTokens.length).toBeGreaterThan(200);
     expect(reasoningTokens.length).toBeGreaterThan(20);
@@ -150,6 +162,38 @@ describe("MockLoadTestAgentClient", () => {
     expect(completedNames).toContain("grep");
     expect(completedNames).toContain("edit");
     expect(completedNames).toContain("bash");
+  });
+
+  test("emits the requested read path for a mock fixture prompt", async () => {
+    vi.useFakeTimers();
+    const client = new MockLoadTestAgentClient();
+    const session = await client.createSession({
+      provider: "mock",
+      cwd: process.cwd(),
+      model: "ten-second-stream",
+    });
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
+
+    const resultPromise = session.run("Mock read file path: /C:/outside/file.ts:93");
+    await vi.advanceTimersByTimeAsync(10_000);
+    await resultPromise;
+    unsubscribe();
+
+    const readCall = events
+      .flatMap((event): AgentTimelineItem[] => (event.type === "timeline" ? [event.item] : []))
+      .find(
+        (item) => item.type === "tool_call" && item.name === "read" && item.status === "running",
+      );
+    expect(readCall).toMatchObject({
+      type: "tool_call",
+      name: "read",
+      status: "running",
+      detail: {
+        type: "read",
+        filePath: "/C:/outside/file.ts:93",
+      },
+    });
   });
 
   test("interrupt cancels the active foreground turn and stops future chunks", async () => {
