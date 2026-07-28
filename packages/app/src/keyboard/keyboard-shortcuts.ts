@@ -72,7 +72,7 @@ interface ShortcutWhen {
   /** false = disabled when command center is open */
   commandCenter?: false;
   /** Exact focus scope match */
-  focusScope?: KeyboardFocusScope;
+  focusScope?: KeyboardFocusScope | readonly KeyboardFocusScope[];
 }
 
 type ShortcutPayloadDef =
@@ -237,7 +237,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     id: "workspace-project-pick-cmd-p-mac",
     action: "workspace.project.pick",
     combo: "Cmd+P",
-    when: { mac: true, commandCenter: false, focusScope: "other" },
+    when: { mac: true, commandCenter: false, focusScope: ["other", "message-input"] },
     help: {
       id: "switch-project",
       section: "projects",
@@ -249,7 +249,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     id: "workspace-project-pick-ctrl-p-non-mac",
     action: "workspace.project.pick",
     combo: "Ctrl+P",
-    when: { mac: false, commandCenter: false, focusScope: "other" },
+    when: { mac: false, commandCenter: false, focusScope: ["other", "message-input"] },
     help: {
       id: "switch-project",
       section: "projects",
@@ -1170,7 +1170,10 @@ export function matchesKeyboardShortcutContext(
   }
   if (when.terminal === false && context.focusScope === "terminal") return false;
   if (when.commandCenter === false && context.commandCenterOpen) return false;
-  if (when.focusScope !== undefined && context.focusScope !== when.focusScope) return false;
+  if (when.focusScope !== undefined) {
+    const focusScopes = typeof when.focusScope === "string" ? [when.focusScope] : when.focusScope;
+    if (!focusScopes.includes(context.focusScope)) return false;
+  }
   return true;
 }
 

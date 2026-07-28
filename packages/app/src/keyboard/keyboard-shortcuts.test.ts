@@ -149,9 +149,21 @@ describe("keyboard-shortcuts", () => {
       action: "workspace.project.pick",
     },
     {
+      name: "matches Cmd+P to switch project while the message input is focused on mac",
+      event: { key: "p", code: "KeyP", metaKey: true },
+      context: { isMac: true, commandCenterOpen: false, focusScope: "message-input" },
+      action: "workspace.project.pick",
+    },
+    {
       name: "matches Ctrl+P to switch project on non-mac",
       event: { key: "p", code: "KeyP", ctrlKey: true },
       context: { isMac: false, commandCenterOpen: false, focusScope: "other" },
+      action: "workspace.project.pick",
+    },
+    {
+      name: "matches Ctrl+P to switch project while the message input is focused on non-mac",
+      event: { key: "p", code: "KeyP", ctrlKey: true },
+      context: { isMac: false, commandCenterOpen: false, focusScope: "message-input" },
       action: "workspace.project.pick",
     },
     {
