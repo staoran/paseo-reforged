@@ -60,7 +60,7 @@ type RecoveryPlan =
 type UnavailableRecoveryState = Extract<WorkspaceRecoveryState, { kind: "unavailable" }>;
 
 export function createWorkspaceRecoveryService(deps: {
-  logger: Logger;
+  logger: Pick<Logger, "warn">;
   paseoHome: string;
   worktreesRoot?: string;
   getWorkspace: (workspaceId: string) => Promise<PersistedWorkspaceRecord | null>;

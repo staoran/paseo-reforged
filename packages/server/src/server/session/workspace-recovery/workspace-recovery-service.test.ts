@@ -76,7 +76,7 @@ function createHarness(input?: {
   const directories = new Set(input?.directories ?? ["/repo"]);
   const unarchived: string[] = [];
   const service = createWorkspaceRecoveryService({
-    logger: { warn: () => undefined } as never,
+    logger: { warn: () => undefined },
     paseoHome: input?.paseoHome ?? "/paseo-home",
     worktreesRoot: input?.worktreesRoot ?? "/worktrees",
     getWorkspace: async (workspaceId) =>
@@ -174,7 +174,7 @@ describe("workspace recovery", () => {
     const unarchived: string[] = [];
     const warnings: unknown[][] = [];
     const service = createWorkspaceRecoveryService({
-      logger: { warn: (...args: unknown[]) => warnings.push(args) } as never,
+      logger: { warn: (...args: unknown[]) => warnings.push(args) },
       paseoHome,
       worktreesRoot,
       getWorkspace: async (workspaceId) =>
@@ -233,7 +233,7 @@ describe("workspace recovery", () => {
     });
     const unarchived: string[] = [];
     const service = createWorkspaceRecoveryService({
-      logger: { warn: () => undefined } as never,
+      logger: { warn: () => undefined },
       paseoHome,
       worktreesRoot,
       getWorkspace: async (workspaceId) =>

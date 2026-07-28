@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import pino from "pino";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderUsage } from "../../server/messages.js";
 import type { ProviderUsageFetcher } from "./provider.js";
@@ -113,14 +114,10 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 function createLogger() {
-  const logger = {
-    debug: vi.fn(),
-    warn: vi.fn(),
-    info: vi.fn(),
-    error: vi.fn(),
-    child: () => logger,
-  };
-  return logger as never;
+  const logger = pino({ level: "silent" });
+  vi.spyOn(logger, "child").mockReturnValue(logger);
+  vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+  return logger;
 }
 
 function usageFetcher(usage: ProviderUsage): ProviderUsageFetcher {
@@ -1054,9 +1051,9 @@ describe("ClaudeQuotaProvider scoped weekly limits", () => {
 
   function claudeProvider(body: unknown) {
     writeClaudeCredentials(claudeHome, "at_valid");
-    const logger = createLogger() as unknown as { warn: ReturnType<typeof vi.fn> };
+    const logger = createLogger();
     const provider = new ClaudeQuotaProvider({
-      logger: logger as never,
+      logger,
       claudeHome,
       claudeKeychainReader: async () => null,
       fetch: mockFetch(
