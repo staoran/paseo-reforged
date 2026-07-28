@@ -8,6 +8,7 @@ import { useToast } from "@/contexts/toast-context";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import type { Theme } from "@/styles/theme";
 import { openDesktopTarget, useDesktopOpenTargets } from "@/workspace/desktop-open-targets";
+import { resolveOpenInFileManagerPath } from "./availability";
 
 interface OpenInFileManagerMenuItemProps {
   serverId?: string | null;
@@ -32,14 +33,14 @@ export function OpenInFileManagerMenuItem({
   const toast = useToast();
   const isElectron = getIsElectron();
   const isLocalDaemon = useIsLocalDaemon(serverId ?? "");
-  const workspacePath = path?.trim() ?? "";
+  const workspacePath = resolveOpenInFileManagerPath({ isElectron, isLocalDaemon, path });
   const { targets } = useDesktopOpenTargets({
-    isLocalExecution: isElectron && isLocalDaemon && workspacePath.length > 0,
+    isLocalExecution: workspacePath !== null,
   });
   const fileManagerTarget = targets.find((target) => target.kind === "file-manager");
 
   const openInFileManager = useCallback(() => {
-    if (!fileManagerTarget || workspacePath.length === 0) return;
+    if (!fileManagerTarget || workspacePath === null) return;
     void openDesktopTarget({
       editorId: fileManagerTarget.id,
       workspacePath,
@@ -49,7 +50,7 @@ export function OpenInFileManagerMenuItem({
     });
   }, [fileManagerTarget, t, toast, workspacePath]);
 
-  if (!isElectron || !isLocalDaemon || !fileManagerTarget || workspacePath.length === 0) {
+  if (!fileManagerTarget || workspacePath === null) {
     return null;
   }
 
