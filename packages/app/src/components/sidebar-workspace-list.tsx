@@ -131,6 +131,8 @@ import {
   getIsElectron,
 } from "@/constants/platform";
 import { getDesktopHost } from "@/desktop/host";
+import { OpenInFileManagerMenuItem } from "@/workspace/open-in-file-manager/menu-item";
+import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 
 const workspaceKeyExtractor = (workspace: SidebarWorkspacePlacement) => workspace.workspaceKey;
 
@@ -523,6 +525,7 @@ function ProjectRowTrailingActions({
           <ProjectKebabMenu
             projectKey={project.projectKey}
             projectPath={project.iconWorkingDir}
+            projectHosts={project.hosts}
             onRemoveProject={onRemoveProject}
             removeProjectStatus={removeProjectStatus}
           />
@@ -550,16 +553,20 @@ function renderKebabTriggerIcon({ hovered }: { hovered?: boolean }) {
 function ProjectKebabMenu({
   projectKey,
   projectPath,
+  projectHosts,
   onRemoveProject,
   removeProjectStatus,
 }: {
   projectKey: string;
   projectPath: string;
+  projectHosts: SidebarProjectEntry["hosts"];
   onRemoveProject: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
 }) {
   const { t } = useTranslation();
   const toast = useToast();
+  const localDaemonServerId = useLocalDaemonServerId();
+  const localProjectHost = projectHosts.find((host) => host.serverId === localDaemonServerId);
   const handleOpenProjectSettings = useCallback(() => {
     if (projectKey.trim().length === 0) return;
     router.navigate(buildProjectSettingsRoute(projectKey));
@@ -609,6 +616,11 @@ function ProjectKebabMenu({
             {t("sidebar.project.actions.openNewWindow")}
           </DropdownMenuItem>
         ) : null}
+        <OpenInFileManagerMenuItem
+          serverId={localProjectHost?.serverId}
+          path={localProjectHost?.iconWorkingDir}
+          testID={`sidebar-project-menu-open-folder-${projectKey}`}
+        />
         <DropdownMenuItem
           testID={`sidebar-project-menu-remove-${projectKey}`}
           leading={trash2LeadingIcon}
@@ -660,6 +672,7 @@ function WorkspaceRowRightGroup({
   isPinned?: boolean;
   onTogglePin?: () => void;
 }) {
+  const workspacePath = workspace.workspaceDirectory ?? workspace.projectRootPath;
   const { t } = useTranslation();
   const showShortcut = showShortcutBadge && shortcutNumber !== null;
   const showKebab = Boolean(onArchive && (isHovered || isTouchPlatform));
@@ -687,6 +700,7 @@ function WorkspaceRowRightGroup({
             {onArchive ? (
               <SidebarWorkspaceMenu
                 workspaceKey={workspace.workspaceKey}
+                openInFileManagerServerId={workspace.serverId}
                 onCopyPath={onCopyPath}
                 onCopyBranchName={onCopyBranchName}
                 onRename={onRename}
@@ -698,6 +712,7 @@ function WorkspaceRowRightGroup({
                 archiveShortcutKeys={archiveShortcutKeys}
                 isPinned={isPinned}
                 onTogglePin={onTogglePin}
+                openInFileManagerPath={workspacePath}
               />
             ) : null}
           </SidebarWorkspaceTrailingActionOverlay>

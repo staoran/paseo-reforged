@@ -77,4 +77,13 @@ describe("resolveKeyboardFocusScope", () => {
     });
     expect(scope).toBe("editable");
   });
+
+  it("keeps global shortcuts outside an aria-modal focus scope", () => {
+    const target = new FakeElement({ selectors: ["[aria-modal='true']"] });
+    const scope = resolveKeyboardFocusScope({
+      target: target as unknown as EventTarget,
+      commandCenterOpen: false,
+    });
+    expect(scope).toBe("modal");
+  });
 });

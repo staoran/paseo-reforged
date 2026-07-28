@@ -38,6 +38,10 @@ export function resolveKeyboardFocusScope(input: {
     return commandCenterOpen ? "command-center" : "other";
   }
 
+  if (candidates.some((element) => Boolean(element.closest("[aria-modal='true']")))) {
+    return "modal";
+  }
+
   if (
     candidates.some((element) =>
       Boolean(element.closest("[data-testid='terminal-surface']") || element.closest(".xterm")),
