@@ -173,6 +173,12 @@ describe("keyboard-shortcuts", () => {
       action: "shortcuts.dialog.toggle",
     },
     {
+      name: "matches question-mark shortcut while a modal is focused",
+      event: { key: "?", code: "Slash", shiftKey: true },
+      context: { focusScope: "modal" },
+      action: "shortcuts.dialog.toggle",
+    },
+    {
       name: "matches workspace index jump on web via Alt+digit",
       event: { key: "2", code: "Digit2", altKey: true },
       context: { isDesktop: false },

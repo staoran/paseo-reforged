@@ -758,7 +758,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     action: "shortcuts.dialog.toggle",
     combo: "Shift+?",
     repeat: false,
-    when: { focusScope: "other" },
+    when: { focusScope: ["other", "modal"] },
     help: {
       id: "show-shortcuts",
       section: "panels",
