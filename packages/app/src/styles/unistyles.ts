@@ -26,6 +26,8 @@ StyleSheet.configure({
   },
   settings: {
     adaptiveThemes: true,
+    // Numeric typography tokens are runtime-patched; CSSVars only tracks strings on web.
+    CSSVars: false,
   },
 });
 

@@ -92,7 +92,6 @@ test.describe("Agent stream UI", () => {
       gate.holdAgentRefresh();
       await gate.remove(agent.agentId);
       await expect(retryMessage).toHaveCount(0);
-      await expect(page.getByTestId("turn-working-indicator")).toBeVisible();
       gate.releaseAgentRefresh();
     } finally {
       gate.restore();

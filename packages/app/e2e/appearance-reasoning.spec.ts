@@ -11,12 +11,8 @@ import {
 const REASONING_TEXT =
   "Need to find the scroll container, the layout effect that watches for new messages, and any gesture handler that might fight with programmatic scrolling. Probably a ref on the FlatList plus a near-bottom threshold.";
 
-function thinkingButton(page: Page) {
-  return page
-    .getByTestId("tool-call-badge")
-    .filter({ hasText: "Thinking" })
-    .first()
-    .getByRole("button");
+function thinkingBadge(page: Page) {
+  return page.getByTestId("tool-call-badge").filter({ hasText: "Thinking" }).first();
 }
 
 function reasoningDetails(page: Page) {
@@ -57,7 +53,8 @@ test("applies reasoning auto-expand changes to existing blocks without locking m
     await openAgentRoute(page, agent);
     await expectComposerVisible(page);
 
-    const reasoning = thinkingButton(page);
+    const reasoningBadge = thinkingBadge(page);
+    const reasoning = reasoningBadge.getByRole("button");
     await expect(reasoning).toBeVisible({ timeout: 30_000 });
     await expect(reasoningDetails(page)).toHaveCount(0);
 
@@ -71,7 +68,7 @@ test("applies reasoning auto-expand changes to existing blocks without locking m
     await expect(reasoningDetails(page)).toBeVisible();
 
     await reasoning.click();
-    await expect(reasoningDetails(page)).toHaveCount(0);
+    await expect(reasoningBadge.getByText(REASONING_TEXT, { exact: true })).toHaveCount(0);
   } finally {
     await agent.cleanup();
   }

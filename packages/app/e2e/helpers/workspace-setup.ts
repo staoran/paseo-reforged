@@ -1,4 +1,5 @@
 import { realpathSync } from "node:fs";
+import { basename } from "node:path";
 import { expect, type Page } from "@playwright/test";
 import type { DaemonClient as InternalDaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { parseHostWorkspaceRouteFromPathname } from "../../src/utils/host-routes";
@@ -62,7 +63,7 @@ export async function seedProjectForWorkspaceSetup(
 }
 
 export function projectNameFromPath(repoPath: string): string {
-  return repoPath.replace(/\/+$/, "").split("/").findLast(Boolean) ?? repoPath;
+  return basename(repoPath) || repoPath;
 }
 
 export async function openHomeWithProject(page: Page, repoPath: string): Promise<void> {

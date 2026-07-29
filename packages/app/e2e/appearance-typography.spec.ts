@@ -74,15 +74,17 @@ async function returnToWorkspace(page: Page): Promise<void> {
 }
 
 function workspaceTypographyLocators(page: Page, prompt: string) {
-  const assistant = page.getByTestId("assistant-message").last();
+  const assistantMessages = page.getByTestId("assistant-message");
   return {
     user: page
       .getByTestId("user-message")
       .filter({ hasText: prompt })
       .locator("[data-pworkspace]")
       .first(),
-    assistant: assistant.getByText(/The change should keep scroll-to-bottom working/).first(),
-    code: assistant.locator("[data-pmono]").last(),
+    assistant: assistantMessages
+      .getByText(/The change should keep scroll-to-bottom working/)
+      .first(),
+    code: assistantMessages.locator("[data-pmono]").last(),
     composer: page.getByRole("textbox", { name: "Message agent...", exact: true }).first(),
   };
 }
@@ -149,6 +151,7 @@ test("keeps interface, workspace, and code typography independent", async ({ pag
     const uiHeader = await openAppearanceSettings(page);
     await commitAppearanceField(page, "Interface font family", "uiFontFamily", "serif", "serif");
     await commitAppearanceField(page, "Interface font size", "uiFontSize", "20", 20);
+    await expect.poll(async () => (await readTypography(uiHeader)).fontSize).toBe(20);
     const changedUi = await readTypography(uiHeader);
     expect(changedUi.fontFamily.toLowerCase()).toContain("serif");
     expect(changedUi.fontSize).toBe(20);
