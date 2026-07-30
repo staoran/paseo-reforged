@@ -2142,14 +2142,16 @@ export function NewWorkspaceScreen({
           <View style={styles.composerTitleContainer}>
             <Text style={styles.composerTitle}>{t("newWorkspace.title")}</Text>
           </View>
-          {formStack}
-          <View style={styles.secondaryActions}>
-            <NewWorkspaceImportSessionEntry
-              serverId={selectedServerId}
-              client={client}
-              cwd={selectedSourceDirectory}
-              blocked={isPending || !isConnected}
-            />
+          <View style={styles.controlBand}>
+            {formStack}
+            <View style={styles.secondaryActions}>
+              <NewWorkspaceImportSessionEntry
+                serverId={selectedServerId}
+                client={client}
+                cwd={selectedSourceDirectory}
+                blocked={isPending || !isConnected}
+              />
+            </View>
           </View>
           <Composer
             externalKeyboardShift
@@ -2220,10 +2222,15 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foreground,
   },
+  controlBand: {
+    flexDirection: { xs: "column", md: "row" },
+    alignItems: { xs: "stretch", md: "center" },
+    gap: theme.spacing[2],
+    marginBottom: theme.spacing[8],
+  },
   secondaryActions: {
     flexDirection: "row",
-    paddingHorizontal: theme.spacing[4],
-    marginBottom: theme.spacing[2],
+    paddingHorizontal: { xs: theme.spacing[4], md: 0 },
   },
   errorText: {
     fontSize: theme.fontSize.sm,
@@ -2231,13 +2238,11 @@ const styles = StyleSheet.create((theme) => ({
     lineHeight: 20,
   },
   formStack: {
-    marginBottom: theme.spacing[8],
     gap: theme.spacing[2],
   },
   formStackDesktop: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: theme.spacing[8],
     // The badge adds its own left padding; offset it so the project icon's left
     // edge lands exactly on the "New workspace" title's left edge.
     paddingLeft: theme.spacing[4],

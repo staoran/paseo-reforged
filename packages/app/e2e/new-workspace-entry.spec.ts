@@ -106,11 +106,12 @@ test.describe("New workspace entry points", () => {
     }
   });
 
-  test("opens import sessions for the selected New Workspace project", async ({ page }) => {
-    const seeded = await seedWorkspace({ repoPrefix: "entry-import-session-" });
+  test("lays out and opens import sessions on desktop", async ({ page }) => {
+    const seeded = await seedWorkspace({ repoPrefix: "entry-import-session-desktop-" });
     const recentSessionRequests = observeRecentSessionRequestCwds(page);
 
     try {
+      await page.setViewportSize({ width: 1280, height: 900 });
       await gotoAppShell(page);
       await waitForSidebarHydration(page);
       await openNewWorkspaceComposer(page, {
@@ -122,10 +123,61 @@ test.describe("New workspace entry points", () => {
       const importSession = page.getByTestId("new-workspace-import-session");
       await expect(importSession).toBeVisible({ timeout: 30_000 });
       await expect(importSession).toBeEnabled();
-      await importSession.click();
 
+      const controlRow = page.getByTestId("new-workspace-ref-picker-row");
+      const [desktopControlBox, desktopImportBox] = await Promise.all([
+        controlRow.boundingBox(),
+        importSession.boundingBox(),
+      ]);
+      if (!desktopControlBox || !desktopImportBox) {
+        throw new Error("New Workspace controls have no desktop browser geometry");
+      }
+      const desktopControlCenter = desktopControlBox.y + desktopControlBox.height / 2;
+      const desktopImportCenter = desktopImportBox.y + desktopImportBox.height / 2;
+      expect(Math.abs(desktopControlCenter - desktopImportCenter)).toBeLessThanOrEqual(1);
+
+      await importSession.click();
       await expect(page.getByTestId("import-session-sheet")).toBeVisible({ timeout: 15_000 });
       await recentSessionRequests.waitFor(seeded.repoPath);
+    } finally {
+      await seeded.cleanup();
+    }
+  });
+
+  test("stacks and opens import sessions on compact viewports", async ({ page }) => {
+    const seeded = await seedWorkspace({ repoPrefix: "entry-import-session-compact-" });
+
+    try {
+      await page.setViewportSize({ width: 1280, height: 900 });
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+      await openNewWorkspaceComposer(page, {
+        projectKey: seeded.projectId,
+        projectDisplayName: seeded.projectDisplayName,
+      });
+      await expectNewWorkspaceProjectSelected(page, seeded.projectDisplayName);
+      await page.setViewportSize({ width: 390, height: 844 });
+
+      const importSession = page.getByTestId("new-workspace-import-session");
+      await expect(importSession).toBeVisible({ timeout: 30_000 });
+      await expect(importSession).toBeEnabled();
+
+      const controlRow = page.getByTestId("new-workspace-ref-picker-row");
+      const [compactControlBox, compactImportBox] = await Promise.all([
+        controlRow.boundingBox(),
+        importSession.boundingBox(),
+      ]);
+      if (!compactControlBox || !compactImportBox) {
+        throw new Error("New Workspace controls have no compact browser geometry");
+      }
+      expect(compactImportBox.y).toBeGreaterThanOrEqual(
+        compactControlBox.y + compactControlBox.height,
+      );
+      expect(compactImportBox.x).toBeGreaterThanOrEqual(0);
+      expect(compactImportBox.x + compactImportBox.width).toBeLessThanOrEqual(390);
+
+      await importSession.click();
+      await expect(page.getByTestId("import-session-sheet")).toBeVisible({ timeout: 15_000 });
     } finally {
       await seeded.cleanup();
     }
