@@ -24,6 +24,11 @@ function trimNonEmpty(value: string | null | undefined): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function normalizeBranchName(value: string | null | undefined): string | null {
+  const branchName = trimNonEmpty(value);
+  return branchName === "HEAD" ? null : branchName;
+}
+
 function areHeaderLabelsEquivalent(
   a: string | null | undefined,
   b: string | null | undefined,
@@ -41,7 +46,10 @@ export function resolveWorkspaceHeader(input: { workspace: WorkspaceDescriptor }
   subtitle: string;
 } {
   return {
-    title: input.workspace.name,
+    title:
+      input.workspace.projectKind === "git"
+        ? input.workspace.projectDisplayName
+        : input.workspace.name,
     subtitle: input.workspace.projectDisplayName,
   };
 }
@@ -56,16 +64,21 @@ export function resolveWorkspaceHeaderRenderState(input: {
 
   const header = resolveWorkspaceHeader({ workspace: input.workspace });
   const checkout = input.checkoutState.kind === "ready" ? input.checkoutState.checkout : null;
-  const currentBranchName =
-    checkout?.isGit && checkout.currentBranch !== "HEAD"
-      ? trimNonEmpty(checkout.currentBranch)
+  const currentBranchName = checkout?.isGit ? normalizeBranchName(checkout.currentBranch) : null;
+  const cachedBranchName =
+    input.workspace.projectKind === "git"
+      ? normalizeBranchName(input.workspace.gitRuntime?.currentBranch)
       : null;
+  const title =
+    input.checkoutState.kind === "ready"
+      ? (currentBranchName ?? header.title)
+      : (cachedBranchName ?? header.title);
 
   return {
     kind: "ready",
-    title: header.title,
+    title,
     subtitle: header.subtitle,
-    shouldShowSubtitle: !areHeaderLabelsEquivalent(header.title, header.subtitle),
+    shouldShowSubtitle: !areHeaderLabelsEquivalent(title, header.subtitle),
     isGitCheckout: checkout?.isGit ?? false,
     currentBranchName,
   };

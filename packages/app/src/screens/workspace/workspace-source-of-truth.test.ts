@@ -32,7 +32,7 @@ function createWorkspaceDescriptor(input: Partial<WorkspaceDescriptor> = {}): Wo
 }
 
 describe("workspace source of truth consumption", () => {
-  it("uses the same descriptor name in header and sidebar row", () => {
+  it("keeps the workspace name in the sidebar while the git header falls back to the project", () => {
     const workspace = createWorkspaceDescriptor();
 
     const header = resolveWorkspaceHeader({ workspace });
@@ -41,9 +41,9 @@ describe("workspace source of truth consumption", () => {
       workspace,
     });
 
-    expect(header.title).toBe("feat/workspace-sot");
+    expect(header.title).toBe("getpaseo/paseo");
     expect(header.subtitle).toBe("getpaseo/paseo");
-    expect(sidebarWorkspace.name).toBe(header.title);
+    expect(sidebarWorkspace.name).toBe("feat/workspace-sot");
     expect(sidebarWorkspace.statusBucket).toBe("running");
   });
 
@@ -95,15 +95,22 @@ describe("workspace source of truth consumption", () => {
     ).toEqual({ kind: "skeleton" });
   });
 
-  it("keeps cached git workspace identity visible while checkout status refreshes", () => {
+  it("keeps the cached branch visible while checkout status refreshes", () => {
     expect(
       resolveWorkspaceHeaderRenderState({
-        workspace: createWorkspaceDescriptor({ projectKind: "git" }),
+        workspace: createWorkspaceDescriptor({
+          name: "Imported Claude session",
+          gitRuntime: {
+            currentBranch: "feat/cached-branch",
+            isDirty: false,
+            aheadOfOrigin: 0,
+          },
+        }),
         checkoutState: { kind: "pending" },
       }),
     ).toEqual({
       kind: "ready",
-      title: "feat/workspace-sot",
+      title: "feat/cached-branch",
       subtitle: "getpaseo/paseo",
       shouldShowSubtitle: true,
       isGitCheckout: false,
@@ -132,23 +139,106 @@ describe("workspace source of truth consumption", () => {
     });
   });
 
-  it("renders git checkout headers with branch affordance after checkout status resolves", () => {
+  it("renders the live branch instead of an imported session name", () => {
     expect(
       resolveWorkspaceHeaderRenderState({
-        workspace: createWorkspaceDescriptor(),
+        workspace: createWorkspaceDescriptor({
+          name: "Imported Claude session",
+          gitRuntime: {
+            currentBranch: "feat/stale-cached-branch",
+            isDirty: false,
+            aheadOfOrigin: 0,
+          },
+        }),
         checkoutState: {
           kind: "ready",
-          checkout: { isGit: true, currentBranch: "feat/workspace-sot" },
+          checkout: { isGit: true, currentBranch: "feat/real-branch" },
         },
       }),
     ).toEqual({
       kind: "ready",
-      title: "feat/workspace-sot",
+      title: "feat/real-branch",
       subtitle: "getpaseo/paseo",
       shouldShowSubtitle: true,
       isGitCheckout: true,
-      currentBranchName: "feat/workspace-sot",
+      currentBranchName: "feat/real-branch",
     });
+  });
+
+  it("falls back to the git project name when the ready branch is unusable", () => {
+    const workspace = createWorkspaceDescriptor({
+      name: "Imported Claude session",
+      gitRuntime: {
+        currentBranch: "feat/stale-cached-branch",
+        isDirty: false,
+        aheadOfOrigin: 0,
+      },
+    });
+    const expectedFallback = {
+      kind: "ready",
+      title: "getpaseo/paseo",
+      subtitle: "getpaseo/paseo",
+      shouldShowSubtitle: false,
+      currentBranchName: null,
+    };
+
+    expect([
+      resolveWorkspaceHeaderRenderState({
+        workspace,
+        checkoutState: {
+          kind: "ready",
+          checkout: { isGit: true, currentBranch: "HEAD" },
+        },
+      }),
+      resolveWorkspaceHeaderRenderState({
+        workspace,
+        checkoutState: {
+          kind: "ready",
+          checkout: { isGit: true, currentBranch: "  " },
+        },
+      }),
+      resolveWorkspaceHeaderRenderState({
+        workspace,
+        checkoutState: {
+          kind: "ready",
+          checkout: { isGit: true, currentBranch: null },
+        },
+      }),
+    ]).toEqual([
+      { ...expectedFallback, isGitCheckout: true },
+      { ...expectedFallback, isGitCheckout: true },
+      { ...expectedFallback, isGitCheckout: true },
+    ]);
+  });
+
+  it("falls back to the git project name when the cached branch is unusable or unavailable", () => {
+    const expectedFallback = {
+      kind: "ready",
+      title: "getpaseo/paseo",
+      subtitle: "getpaseo/paseo",
+      shouldShowSubtitle: false,
+      isGitCheckout: false,
+      currentBranchName: null,
+    };
+
+    expect([
+      resolveWorkspaceHeaderRenderState({
+        workspace: createWorkspaceDescriptor({
+          gitRuntime: { currentBranch: "HEAD", isDirty: false, aheadOfOrigin: 0 },
+        }),
+        checkoutState: { kind: "pending" },
+      }),
+      resolveWorkspaceHeaderRenderState({
+        workspace: createWorkspaceDescriptor({
+          gitRuntime: { currentBranch: "  ", isDirty: false, aheadOfOrigin: 0 },
+        }),
+        checkoutState: { kind: "error" },
+      }),
+      resolveWorkspaceHeaderRenderState({
+        workspace: createWorkspaceDescriptor(),
+        checkoutState: { kind: "error" },
+      }),
+    ]).toEqual([expectedFallback, expectedFallback, expectedFallback]);
   });
 
   it("renders non-git checkout headers without branch affordance after checkout status resolves", () => {
@@ -175,15 +265,22 @@ describe("workspace source of truth consumption", () => {
     });
   });
 
-  it("renders descriptor identity after checkout status errors", () => {
+  it("keeps the cached branch visible after checkout status errors", () => {
     expect(
       resolveWorkspaceHeaderRenderState({
-        workspace: createWorkspaceDescriptor(),
+        workspace: createWorkspaceDescriptor({
+          name: "Imported Claude session",
+          gitRuntime: {
+            currentBranch: "feat/cached-branch",
+            isDirty: false,
+            aheadOfOrigin: 0,
+          },
+        }),
         checkoutState: { kind: "error" },
       }),
     ).toEqual({
       kind: "ready",
-      title: "feat/workspace-sot",
+      title: "feat/cached-branch",
       subtitle: "getpaseo/paseo",
       shouldShowSubtitle: true,
       isGitCheckout: false,
