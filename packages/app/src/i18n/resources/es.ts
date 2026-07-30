@@ -100,6 +100,21 @@ export const es: TranslationResources = {
       dictation: "Dictado",
       interruptBeforeVoice: "Interrumpir al agente antes de iniciar el modo de voz.",
     },
+    selection: {
+      ask: "Preguntar",
+      askInNewWindow: "Preguntar en ventana nueva",
+      savePreset: "Guardar como predefinido",
+      savedPreset: "Guardado como predefinido",
+    },
+    presets: {
+      trigger: "Mensajes predefinidos",
+      empty: "Aún no hay predefinidos",
+      saveCurrent: "Guardar el mensaje actual como predefinido",
+      add: "Añadir predefinido...",
+      addTitle: "Añadir predefinido",
+      placeholder: "Texto del predefinido",
+      delete: "Eliminar predefinido...",
+    },
     attachments: {
       addImage: "Agregar imagen",
       addFile: "Upload file",

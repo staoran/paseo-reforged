@@ -100,6 +100,21 @@ export const ru: TranslationResources = {
       dictation: "Диктант",
       interruptBeforeVoice: "Прерывайте агента перед запуском голосового режима",
     },
+    selection: {
+      ask: "Спросить",
+      askInNewWindow: "Спросить в новом окне",
+      savePreset: "Сохранить как шаблон",
+      savedPreset: "Сохранено как шаблон",
+    },
+    presets: {
+      trigger: "Шаблоны сообщений",
+      empty: "Шаблонов пока нет",
+      saveCurrent: "Сохранить текущее сообщение как шаблон",
+      add: "Добавить шаблон...",
+      addTitle: "Добавить шаблон",
+      placeholder: "Текст шаблона",
+      delete: "Удалить шаблон...",
+    },
     attachments: {
       addImage: "Добавить изображение",
       addFile: "Upload file",

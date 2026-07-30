@@ -100,6 +100,21 @@ export const ar: TranslationResources = {
       dictation: "الإملاء",
       interruptBeforeVoice: "قم بمقاطعة الوكيل قبل بدء الوضع الصوتي",
     },
+    selection: {
+      ask: "اسأل",
+      askInNewWindow: "اسأل في نافذة جديدة",
+      savePreset: "حفظ كإعداد مسبق",
+      savedPreset: "تم الحفظ كإعداد مسبق",
+    },
+    presets: {
+      trigger: "الرسائل المعدة مسبقًا",
+      empty: "لا توجد قوالب بعد",
+      saveCurrent: "حفظ الرسالة الحالية كقالب",
+      add: "إضافة قالب...",
+      addTitle: "إضافة قالب",
+      placeholder: "نص القالب",
+      delete: "حذف قالب...",
+    },
     attachments: {
       addImage: "أضف صورة",
       addFile: "Upload file",

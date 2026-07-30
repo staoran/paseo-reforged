@@ -100,6 +100,21 @@ export const ptBR: TranslationResources = {
       dictation: "Ditado",
       interruptBeforeVoice: "Interrompa o agente antes de iniciar o modo de voz",
     },
+    selection: {
+      ask: "Perguntar",
+      askInNewWindow: "Perguntar em nova janela",
+      savePreset: "Salvar como predefinição",
+      savedPreset: "Salvo como predefinição",
+    },
+    presets: {
+      trigger: "Prompt presets",
+      empty: "No presets yet",
+      saveCurrent: "Save current message as preset",
+      add: "Add preset...",
+      addTitle: "Add preset",
+      placeholder: "Preset text",
+      delete: "Delete preset...",
+    },
     attachments: {
       addImage: "Adicionar imagem",
       addFile: "Enviar arquivo",

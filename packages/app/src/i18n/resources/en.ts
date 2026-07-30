@@ -98,6 +98,21 @@ export const en = {
       dictation: "Dictation",
       interruptBeforeVoice: "Interrupt the agent before starting voice mode",
     },
+    selection: {
+      ask: "Ask",
+      askInNewWindow: "Ask in new window",
+      savePreset: "Save as preset",
+      savedPreset: "Saved as preset",
+    },
+    presets: {
+      trigger: "Prompt presets",
+      empty: "No presets yet",
+      saveCurrent: "Save current message as preset",
+      add: "Add preset...",
+      addTitle: "Add preset",
+      placeholder: "Preset text",
+      delete: "Delete preset...",
+    },
     attachments: {
       addImage: "Add image",
       addFile: "Upload file",

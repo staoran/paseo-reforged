@@ -100,6 +100,21 @@ export const zhCN: TranslationResources = {
       dictation: "听写",
       interruptBeforeVoice: "启动语音模式前请先中断 Agent",
     },
+    selection: {
+      ask: "提问",
+      askInNewWindow: "新窗口提问",
+      savePreset: "保存为预设",
+      savedPreset: "已保存为预设",
+    },
+    presets: {
+      trigger: "提示词预设",
+      empty: "暂无预设",
+      saveCurrent: "将当前内容保存为预设",
+      add: "添加预设...",
+      addTitle: "添加预设",
+      placeholder: "预设内容",
+      delete: "删除预设...",
+    },
     attachments: {
       addImage: "添加图片",
       addFile: "Upload file",

@@ -121,6 +121,7 @@ import { getForgePresentation } from "@/git/forge";
 import { ForgeBrandIcon } from "@/git/forge-icon";
 import { useComposerGithubAutoAttach } from "./github/auto-attach";
 import { resolveClientSlashCommand, type ClientSlashCommand } from "@/client-slash-commands";
+import { ComposerPresetsMenu } from "@/composer/prompt-presets-menu";
 import {
   appendWorkspaceFileAttachment,
   getWorkspaceFileAttachmentKey,
@@ -850,6 +851,8 @@ interface ComposerProps {
   externalKeyboardShift?: boolean;
   /** Optional panel/container layout breakpoint. Defaults to the screen breakpoint. */
   isCompactLayout?: boolean;
+  /** Shows the prompt-presets menu in chat and draft composers. */
+  enablePromptPresets?: boolean;
 }
 
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
@@ -1057,6 +1060,7 @@ export function Composer({
   inputWrapperStyle,
   externalKeyboardShift,
   isCompactLayout: isCompactLayoutOverride,
+  enablePromptPresets = false,
 }: ComposerProps) {
   const { t } = useTranslation();
   const buttonIconSize = resolveComposerButtonIconSize();
@@ -1258,6 +1262,14 @@ export function Composer({
   useEffect(() => {
     onFocusInput?.(focusInput);
   }, [focusInput, onFocusInput]);
+
+  const insertPromptPreset = useCallback(
+    (text: string) => {
+      setUserInput(userInput.trim() ? `${userInput}\n${text}` : text);
+      focusInput();
+    },
+    [focusInput, setUserInput, userInput],
+  );
 
   const submitMessage = useCallback(
     async (text: string, submitAttachments: ComposerAttachment[]) => {
@@ -1729,26 +1741,32 @@ export function Composer({
 
   const rightContent = useMemo(
     () => (
-      <ComposerRightControlsSlot
-        isVoiceModeForAgent={isVoiceModeForAgent}
-        hasAgent={hasAgent}
-        isAgentRunning={isAgentRunning}
-        hasSendableContent={hasSendableContent}
-        isProcessing={isProcessing}
-        isCompact={isCompactLayout}
-        buttonIconSize={buttonIconSize}
-        handleToggleRealtimeVoice={handleToggleRealtimeVoice}
-        isConnected={isConnected}
-        isVoiceSwitching={isVoiceSwitching}
-        realtimeVoiceButtonStyle={realtimeVoiceButtonStyle}
-        voiceToggleKeys={voiceToggleKeys}
-        t={t}
-        cancelButton={cancelButton}
-      />
+      <>
+        {enablePromptPresets ? (
+          <ComposerPresetsMenu currentText={userInput} onPick={insertPromptPreset} />
+        ) : null}
+        <ComposerRightControlsSlot
+          isVoiceModeForAgent={isVoiceModeForAgent}
+          hasAgent={hasAgent}
+          isAgentRunning={isAgentRunning}
+          hasSendableContent={hasSendableContent}
+          isProcessing={isProcessing}
+          isCompact={isCompactLayout}
+          buttonIconSize={buttonIconSize}
+          handleToggleRealtimeVoice={handleToggleRealtimeVoice}
+          isConnected={isConnected}
+          isVoiceSwitching={isVoiceSwitching}
+          realtimeVoiceButtonStyle={realtimeVoiceButtonStyle}
+          voiceToggleKeys={voiceToggleKeys}
+          t={t}
+          cancelButton={cancelButton}
+        />
+      </>
     ),
     [
       buttonIconSize,
       cancelButton,
+      enablePromptPresets,
       handleToggleRealtimeVoice,
       hasAgent,
       hasSendableContent,
@@ -1758,8 +1776,10 @@ export function Composer({
       isProcessing,
       isVoiceModeForAgent,
       isVoiceSwitching,
+      insertPromptPreset,
       realtimeVoiceButtonStyle,
       t,
+      userInput,
       voiceToggleKeys,
     ],
   );

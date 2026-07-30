@@ -102,6 +102,21 @@ export const fr: TranslationResources = {
       dictation: "Dictée",
       interruptBeforeVoice: "Interrompre l'agent avant de démarrer le mode vocal",
     },
+    selection: {
+      ask: "Demander",
+      askInNewWindow: "Demander dans une nouvelle fenêtre",
+      savePreset: "Enregistrer comme préréglage",
+      savedPreset: "Enregistré comme préréglage",
+    },
+    presets: {
+      trigger: "Messages prédéfinis",
+      empty: "Aucun préréglage",
+      saveCurrent: "Enregistrer le message actuel comme préréglage",
+      add: "Ajouter un préréglage...",
+      addTitle: "Ajouter un préréglage",
+      placeholder: "Texte du préréglage",
+      delete: "Supprimer un préréglage...",
+    },
     attachments: {
       addImage: "Ajouter une image",
       addFile: "Upload file",

@@ -20,6 +20,9 @@ import invariant from "tiny-invariant";
 import { shallow, useShallow } from "zustand/shallow";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { AgentStreamView, type AgentStreamViewHandle } from "@/agent-stream/view";
+import { ChatSelectionBubble } from "@/agent-stream/selection/chat-selection-bubble";
+import { openSeededDraftWindow } from "@/agent-stream/selection/open-seeded-draft-window";
+import { useChatTextSelection } from "@/agent-stream/selection/use-chat-text-selection";
 import { ArchivedAgentCallout } from "@/components/archived-agent-callout";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { useRetainedPanelActive } from "@/components/retained-panel";
@@ -92,6 +95,7 @@ import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { buildDraftAgentSetup, type ClientSlashCommand } from "@/client-slash-commands";
+import { useCommitMessagePresetsStore } from "@/git/commit-message-presets-store";
 
 interface ChatAgentStateShape {
   serverId: string | null;
@@ -1198,6 +1202,48 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
       composerState,
     ],
   );
+  const isCompactFormFactor = useIsCompactFormFactor();
+  const { workspaceId, tabId } = usePaneContext();
+  const selectionOwnerId = `${serverId}:${workspaceId}:${tabId}`;
+  const selectionOwnerDataSet = useMemo(
+    () => ({ chatSelectionOwner: selectionOwnerId }),
+    [selectionOwnerId],
+  );
+  const addPromptPreset = useCommitMessagePresetsStore((state) => state.addPreset);
+  const { selection: chatSelection, clear: clearChatSelection } = useChatTextSelection({
+    enabled: isPaneFocused,
+    ownerId: selectionOwnerId,
+  });
+  const composerTextRef = useRef(text);
+  composerTextRef.current = text;
+  const handleSelectionAsk = useCallback(
+    (selected: string) => {
+      const current = composerTextRef.current;
+      setText(current.trim() ? `${current}\n${selected}` : selected);
+      clearChatSelection();
+    },
+    [clearChatSelection, setText],
+  );
+  const handleSelectionAskInNewWindow = useCallback(
+    (selected: string) => {
+      openSeededDraftWindow({
+        serverId,
+        workspaceId,
+        text: selected,
+        splitRight: !isCompactFormFactor,
+      });
+      clearChatSelection();
+    },
+    [clearChatSelection, isCompactFormFactor, serverId, workspaceId],
+  );
+  const handleSelectionSavePreset = useCallback(
+    (selected: string) => {
+      addPromptPreset(selected);
+      toastApi.show(t("composer.selection.savedPreset"), { variant: "success" });
+      clearChatSelection();
+    },
+    [addPromptPreset, clearChatSelection, t, toastApi],
+  );
   const streamSection = (
     <RenderProfile id={`AgentStreamSection:${agentId}`}>
       <AgentStreamSection
@@ -1237,7 +1283,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
 
   return (
     <RewindComposerRestoreProvider text={agentInputDraft.text} setText={agentInputDraft.setText}>
-      <View style={styles.root}>
+      <View style={styles.root} dataSet={selectionOwnerDataSet}>
         <FileDropZone style={styles.container} disabled={isArchivingCurrentAgent}>
           {contentContainer}
 
@@ -1256,6 +1302,13 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
               <ThemedLoadingSpinner size="large" uniProps={foregroundMutedColorMapping} />
             </View>
           ) : null}
+
+          <ChatSelectionBubble
+            selection={chatSelection}
+            onAsk={handleSelectionAsk}
+            onAskInNewWindow={handleSelectionAskInNewWindow}
+            onSavePreset={handleSelectionSavePreset}
+          />
 
           <ToastViewport toast={toast} onDismiss={dismiss} placement="panel" />
         </FileDropZone>
@@ -1574,6 +1627,7 @@ function ActiveAgentComposer({
         onMessageSent={onMessageSent}
         onClientSlashCommand={handleClientSlashCommand}
         isCompactLayout={isCompactComposerLayout}
+        enablePromptPresets
       />
     </ReanimatedAnimated.View>
   );

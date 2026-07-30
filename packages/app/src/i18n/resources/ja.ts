@@ -100,6 +100,21 @@ export const ja: TranslationResources = {
       dictation: "音声入力",
       interruptBeforeVoice: "音声モードを開始する前にエージェントを中断してください",
     },
+    selection: {
+      ask: "質問",
+      askInNewWindow: "新しいウィンドウで質問",
+      savePreset: "プリセットとして保存",
+      savedPreset: "プリセットとして保存しました",
+    },
+    presets: {
+      trigger: "プロンプトプリセット",
+      empty: "プリセットがありません",
+      saveCurrent: "現在のメッセージをプリセットとして保存",
+      add: "プリセットを追加...",
+      addTitle: "プリセットを追加",
+      placeholder: "プリセットのテキスト",
+      delete: "プリセットを削除...",
+    },
     attachments: {
       addImage: "画像を追加",
       addFile: "ファイルをアップロード",
