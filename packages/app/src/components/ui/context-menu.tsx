@@ -13,6 +13,7 @@ import {
   type ReactNode,
   type Ref,
 } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import {
   Dimensions,
@@ -40,6 +41,12 @@ import {
 } from "@/components/ui/isolated-bottom-sheet-modal";
 import { FloatingScrollView, FloatingSurface } from "@/components/ui/floating";
 import { isWeb, isNative } from "@/constants/platform";
+import {
+  getOverlayRoot,
+  OverlayLayerProvider,
+  useOverlayLayer,
+  useWebOverlayRegistration,
+} from "@/lib/overlay-root";
 
 // Keep parity with dropdown-menu action statuses.
 export type ActionStatus = "idle" | "pending" | "success";
@@ -64,6 +71,8 @@ interface ContextMenuContextValue {
 }
 
 const ContextMenuContext = createContext<ContextMenuContextValue | null>(null);
+
+let activeWebContextMenu: { owner: symbol; close: () => void } | null = null;
 
 function useContextMenuContext(componentName: string): ContextMenuContextValue {
   const ctx = useContext(ContextMenuContext);
@@ -218,12 +227,43 @@ export function ContextMenu({
   onOpenChange?: (open: boolean) => void;
 }>): ReactElement {
   const triggerRef = useRef<View>(null);
+  const ownerRef = useRef(Symbol("context-menu"));
   const [isOpen, setIsOpen] = useControllableOpenState({
     open,
     defaultOpen,
     onOpenChange,
   });
   const [anchorRect, setAnchorRect] = useState<Rect | null>(null);
+
+  const close = useCallback(() => {
+    setIsOpen(false);
+  }, [setIsOpen]);
+
+  const setOpen = useCallback(
+    (next: boolean) => {
+      if (isWeb) {
+        const owner = ownerRef.current;
+        if (next) {
+          if (activeWebContextMenu?.owner !== owner) activeWebContextMenu?.close();
+          activeWebContextMenu = { owner, close };
+        } else if (activeWebContextMenu?.owner === owner) {
+          activeWebContextMenu = null;
+        }
+      }
+      setIsOpen(next);
+    },
+    [close, setIsOpen],
+  );
+
+  useEffect(() => {
+    if (!isWeb || !isOpen) return undefined;
+    const owner = ownerRef.current;
+    if (activeWebContextMenu?.owner !== owner) activeWebContextMenu?.close();
+    activeWebContextMenu = { owner, close };
+    return () => {
+      if (activeWebContextMenu?.owner === owner) activeWebContextMenu = null;
+    };
+  }, [close, isOpen]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -234,12 +274,12 @@ export function ContextMenu({
   const value = useMemo<ContextMenuContextValue>(
     () => ({
       open: isOpen,
-      setOpen: setIsOpen,
+      setOpen,
       triggerRef,
       anchorRect,
       setAnchorRect,
     }),
-    [anchorRect, isOpen, setAnchorRect, setIsOpen],
+    [anchorRect, isOpen, setAnchorRect, setOpen],
   );
 
   return <ContextMenuContext.Provider value={value}>{children}</ContextMenuContext.Provider>;
@@ -388,6 +428,7 @@ export function ContextMenuContent({
   const { t } = useTranslation();
   const context = useContextMenuContext("ContextMenuContent");
   const { theme } = useUnistyles();
+  const floatingLayer = useOverlayLayer("floating");
   const isMobile = useIsCompactFormFactor();
   const useMobileSheet = isMobile && mobileMode === "sheet";
   const { open, setOpen, triggerRef, anchorRect } = context;
@@ -395,10 +436,68 @@ export function ContextMenuContent({
   const [triggerRect, setTriggerRect] = useState<Rect | null>(null);
   const [contentSize, setContentSize] = useState<{ width: number; height: number } | null>(null);
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
+  const webSurfaceRef = useRef<HTMLElement | null>(null);
 
   const handleClose = useCallback(() => {
     setOpen(false);
   }, [setOpen]);
+
+  const handleWebOverlayKeyDown = useCallback(
+    (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return false;
+      event.preventDefault();
+      event.stopPropagation();
+      handleClose();
+      return true;
+    },
+    [handleClose],
+  );
+  const setWebOverlayScope = useWebOverlayRegistration({
+    active: isWeb && open,
+    layer: floatingLayer,
+    onKeyDown: handleWebOverlayKeyDown,
+  });
+  const setWebSurface = useCallback(
+    (node: View | null) => {
+      webSurfaceRef.current = node as unknown as HTMLElement | null;
+      setWebOverlayScope(node);
+    },
+    [setWebOverlayScope],
+  );
+
+  useEffect(() => {
+    if (!isWeb || !open || typeof document === "undefined") return undefined;
+
+    const isInsideMenu = (target: EventTarget | null) =>
+      target instanceof Node && webSurfaceRef.current?.contains(target);
+    const handlePointerDown = (event: PointerEvent) => {
+      if (isInsideMenu(event.target) || event.button === 2 || event.ctrlKey) return;
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    const handleClick = (event: MouseEvent) => {
+      if (isInsideMenu(event.target) || event.ctrlKey) return;
+      event.preventDefault();
+      event.stopPropagation();
+      handleClose();
+    };
+    const handleContextMenu = (event: MouseEvent) => {
+      if (isInsideMenu(event.target)) {
+        event.preventDefault();
+        return;
+      }
+      handleClose();
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("click", handleClick, true);
+    document.addEventListener("contextmenu", handleContextMenu, true);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("click", handleClick, true);
+      document.removeEventListener("contextmenu", handleContextMenu, true);
+    };
+  }, [handleClose, open]);
 
   const {
     sheetRef: bottomSheetRef,
@@ -549,6 +648,41 @@ export function ContextMenuContent({
 
   if (!open) return null;
 
+  const surfacePlatformProps = isWeb
+    ? {
+        ref: setWebSurface,
+        pointerEvents: "auto" as const,
+        tabIndex: -1 as const,
+        frameStyle: [frameStyle, { zIndex: floatingLayer }],
+      }
+    : { frameStyle };
+  const menuSurface = (
+    <FloatingSurface
+      {...surfacePlatformProps}
+      entering={FadeIn.duration(100)}
+      exiting={FadeOut.duration(100)}
+      collapsable={false}
+      testID={testID}
+      onLayout={handleContentLayout}
+      style={styles.content}
+    >
+      <FloatingScrollView
+        bounces={false}
+        showsVerticalScrollIndicator
+        contentContainerStyle={SCROLL_CONTENT_CONTAINER_STYLE}
+      >
+        {children}
+      </FloatingScrollView>
+    </FloatingSurface>
+  );
+
+  if (isWeb && typeof document !== "undefined") {
+    return createPortal(
+      <OverlayLayerProvider layer={floatingLayer}>{menuSurface}</OverlayLayerProvider>,
+      getOverlayRoot(),
+    );
+  }
+
   return (
     <Modal
       visible={open}
@@ -565,23 +699,7 @@ export function ContextMenuContent({
           onPress={handleClose}
           testID={testID ? `${testID}-backdrop` : undefined}
         />
-        <FloatingSurface
-          entering={FadeIn.duration(100)}
-          exiting={FadeOut.duration(100)}
-          collapsable={false}
-          testID={testID}
-          onLayout={handleContentLayout}
-          style={styles.content}
-          frameStyle={frameStyle}
-        >
-          <FloatingScrollView
-            bounces={false}
-            showsVerticalScrollIndicator
-            contentContainerStyle={SCROLL_CONTENT_CONTAINER_STYLE}
-          >
-            {children}
-          </FloatingScrollView>
-        </FloatingSurface>
+        {menuSurface}
       </View>
     </Modal>
   );

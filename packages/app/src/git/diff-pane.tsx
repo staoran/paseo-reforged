@@ -82,7 +82,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import * as Clipboard from "expo-clipboard";
-import { FILE_ACTIONS_MENU_WIDTH, FileActionsMenu } from "@/components/file-actions-menu";
+import {
+  FILE_ACTIONS_MENU_WIDTH,
+  FileActionsContextMenuContent,
+  FileActionsMenu,
+} from "@/components/file-actions-menu";
+import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { useFileDownload } from "@/hooks/use-file-download";
 import { buildAbsoluteExplorerPath } from "@/utils/explorer-paths";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
@@ -935,7 +940,6 @@ const DiffFileHeader = memo(function DiffFileHeader({
   const layoutYRef = useRef<number | null>(null);
   const pressHandledRef = useRef(false);
   const pressInRef = useRef<{ ts: number; pageX: number; pageY: number } | null>(null);
-  const [isActionsOpen, setIsActionsOpen] = useState(false);
 
   const toggleExpanded = useCallback(() => {
     if (!interactive) {
@@ -960,15 +964,6 @@ const DiffFileHeader = memo(function DiffFileHeader({
   const handleDownload = useCallback(() => {
     onDownload?.(file.path);
   }, [file.path, onDownload]);
-
-  const handleContextMenu = useCallback(
-    (event: { preventDefault: () => void; stopPropagation: () => void }) => {
-      event.preventDefault();
-      event.stopPropagation();
-      setIsActionsOpen(true);
-    },
-    [],
-  );
 
   const handleLayout = useCallback(
     (event: LayoutChangeEvent) => {
@@ -1025,6 +1020,15 @@ const DiffFileHeader = memo(function DiffFileHeader({
   );
 
   const fileName = file.path.split("/").pop() ?? file.path;
+  const fileActionsProps = {
+    fileKind: "file" as const,
+    fileExists: !file.isDeleted,
+    onOpenFile: onOpenFile ? handleOpenFile : undefined,
+    onCopyPath: onCopyPath ? handleCopyPath : undefined,
+    onDownload: onDownload ? handleDownload : undefined,
+    onAddToChat: onAddToChat ? handleAddToChat : undefined,
+    testIDPrefix: testID,
+  };
   const headerContent = (
     <>
       <View ref={dragSourceRef} style={styles.fileHeaderLeft}>
@@ -1064,16 +1068,8 @@ const DiffFileHeader = memo(function DiffFileHeader({
         />
         {interactive ? (
           <FileActionsMenu
-            fileKind="file"
-            fileExists={!file.isDeleted}
-            onOpenFile={onOpenFile ? handleOpenFile : undefined}
-            onCopyPath={onCopyPath ? handleCopyPath : undefined}
-            onDownload={onDownload ? handleDownload : undefined}
-            onAddToChat={onAddToChat ? handleAddToChat : undefined}
-            open={isActionsOpen}
-            onOpenChange={setIsActionsOpen}
+            {...fileActionsProps}
             accessibilityLabel={t("workspace.fileActions.moreActions")}
-            testIDPrefix={testID}
           />
         ) : null}
       </View>
@@ -1087,7 +1083,7 @@ const DiffFileHeader = memo(function DiffFileHeader({
     );
   } else {
     trigger = (
-      <Pressable
+      <ContextMenuTrigger
         testID={testID ? `${testID}-toggle` : undefined}
         style={headerPressableStyle}
         // Android: prevent parent pan/scroll gestures from canceling the tap release.
@@ -1095,24 +1091,25 @@ const DiffFileHeader = memo(function DiffFileHeader({
         onPressIn={handlePressIn}
         onPressOut={handlePressOut}
         onPress={toggleExpanded}
-        // @ts-ignore - onContextMenu is web-only and not in RN types.
-        onContextMenu={handleContextMenu}
       >
         {headerContent}
-      </Pressable>
+      </ContextMenuTrigger>
     );
   }
 
   return (
-    <View style={containerStyle} onLayout={handleLayout} testID={testID}>
-      <TreeIndentGuides depth={depth} />
-      <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
-        <TooltipTrigger asChild>{trigger}</TooltipTrigger>
-        <TooltipContent side="bottom" align="start" offset={6} maxWidth={520}>
-          <Text style={styles.tooltipText}>{file.path}</Text>
-        </TooltipContent>
-      </Tooltip>
-    </View>
+    <ContextMenu>
+      <View style={containerStyle} onLayout={handleLayout} testID={testID}>
+        <TreeIndentGuides depth={depth} />
+        <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
+          <TooltipTrigger asChild>{trigger}</TooltipTrigger>
+          <TooltipContent side="bottom" align="start" offset={6} maxWidth={520}>
+            <Text style={styles.tooltipText}>{file.path}</Text>
+          </TooltipContent>
+        </Tooltip>
+      </View>
+      {interactive ? <FileActionsContextMenuContent {...fileActionsProps} /> : null}
+    </ContextMenu>
   );
 });
 

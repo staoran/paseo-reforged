@@ -18,6 +18,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+} from "@/components/ui/context-menu";
 
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const ThemedMoreVertical = withUnistyles(MoreVertical);
@@ -33,7 +38,7 @@ interface FileAction {
   testID?: string;
 }
 
-interface FileActionsMenuProps {
+interface FileActionsContentProps {
   fileKind: "file" | "directory";
   fileExists?: boolean;
   onOpenFile?: () => void;
@@ -42,11 +47,14 @@ interface FileActionsMenuProps {
   onAddToChat?: () => void;
   /** Optional metadata block rendered above the actions (e.g. size/modified). */
   header?: ReactNode;
+  testIDPrefix?: string;
+}
+
+interface FileActionsMenuProps extends FileActionsContentProps {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   hitSlop?: number;
   accessibilityLabel: string;
-  testIDPrefix?: string;
 }
 
 // The menu lives inside pressable rows (diff header, explorer entry); stop the
@@ -81,8 +89,97 @@ export function FileActionsMenu({
   accessibilityLabel,
   testIDPrefix,
 }: FileActionsMenuProps): ReactElement | null {
+  const actions = useFileActions({
+    fileKind,
+    fileExists,
+    onOpenFile,
+    onCopyPath,
+    onDownload,
+    onAddToChat,
+    testIDPrefix,
+  });
+
+  if (actions.length === 0) {
+    return null;
+  }
+  return (
+    <DropdownMenu open={open} onOpenChange={onOpenChange}>
+      <DropdownMenuTrigger
+        hitSlop={hitSlop}
+        onPressIn={stopTriggerPropagation}
+        style={triggerStyle}
+        accessibilityLabel={accessibilityLabel}
+        testID={testIDPrefix ? `${testIDPrefix}-actions` : undefined}
+      >
+        <ThemedMoreVertical size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" width={220}>
+        {header ? (
+          <>
+            {header}
+            <DropdownMenuSeparator />
+          </>
+        ) : null}
+        {actions.map((action) => (
+          <FileActionMenuItem key={action.key} action={action} variant="dropdown" />
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+export function FileActionsContextMenuContent({
+  fileKind,
+  fileExists = true,
+  onOpenFile,
+  onCopyPath,
+  onDownload,
+  onAddToChat,
+  header,
+  testIDPrefix,
+}: FileActionsContentProps): ReactElement | null {
+  const actions = useFileActions({
+    fileKind,
+    fileExists,
+    onOpenFile,
+    onCopyPath,
+    onDownload,
+    onAddToChat,
+    testIDPrefix,
+  });
+
+  if (actions.length === 0) return null;
+
+  return (
+    <ContextMenuContent
+      align="start"
+      width={220}
+      testID={testIDPrefix ? `${testIDPrefix}-context` : undefined}
+    >
+      {header ? (
+        <>
+          {header}
+          <ContextMenuSeparator />
+        </>
+      ) : null}
+      {actions.map((action) => (
+        <FileActionMenuItem key={action.key} action={action} variant="context" />
+      ))}
+    </ContextMenuContent>
+  );
+}
+
+function useFileActions({
+  fileKind,
+  fileExists = true,
+  onOpenFile,
+  onCopyPath,
+  onDownload,
+  onAddToChat,
+  testIDPrefix,
+}: FileActionsContentProps): FileAction[] {
   const { t } = useTranslation();
-  const actions = useMemo<FileAction[]>(() => {
+  return useMemo<FileAction[]>(() => {
     const availableFile = fileKind === "file" && fileExists;
     const next: FileAction[] = [];
     if (availableFile && onOpenFile) {
@@ -121,47 +218,26 @@ export function FileActionsMenu({
     }
     return next;
   }, [fileExists, fileKind, onAddToChat, onCopyPath, onDownload, onOpenFile, t, testIDPrefix]);
-
-  if (actions.length === 0) {
-    return null;
-  }
-  return (
-    <DropdownMenu open={open} onOpenChange={onOpenChange}>
-      <DropdownMenuTrigger
-        hitSlop={hitSlop}
-        onPressIn={stopTriggerPropagation}
-        style={triggerStyle}
-        accessibilityLabel={accessibilityLabel}
-        testID={testIDPrefix ? `${testIDPrefix}-actions` : undefined}
-      >
-        <ThemedMoreVertical size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" width={220}>
-        {header ? (
-          <>
-            {header}
-            <DropdownMenuSeparator />
-          </>
-        ) : null}
-        {actions.map((action) => (
-          <FileActionMenuItem key={action.key} action={action} />
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
 }
 
-function FileActionMenuItem({ action }: { action: FileAction }): ReactElement {
+function FileActionMenuItem({
+  action,
+  variant,
+}: {
+  action: FileAction;
+  variant: "dropdown" | "context";
+}): ReactElement {
   const Icon = action.icon;
   const ThemedIcon = useMemo(() => withUnistyles(Icon), [Icon]);
   const leading = useMemo(
     () => <ThemedIcon size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />,
     [ThemedIcon],
   );
+  const MenuItem = variant === "context" ? ContextMenuItem : DropdownMenuItem;
   return (
-    <DropdownMenuItem leading={leading} onSelect={action.onSelect} testID={action.testID}>
+    <MenuItem leading={leading} onSelect={action.onSelect} testID={action.testID}>
       {action.label}
-    </DropdownMenuItem>
+    </MenuItem>
   );
 }
 

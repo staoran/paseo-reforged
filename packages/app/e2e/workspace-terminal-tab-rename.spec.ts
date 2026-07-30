@@ -3,6 +3,10 @@ import { clickNewTerminal, gotoWorkspace } from "./helpers/launcher";
 import { renameModalInput, renameModalSubmit } from "./helpers/rename";
 import { seedWorkspace, type SeededWorkspace } from "./helpers/seed-client";
 
+function selectTerminalId(terminal: { id: string }): string {
+  return terminal.id;
+}
+
 async function fetchTerminalTitle(
   workspace: SeededWorkspace,
   terminalId: string,
@@ -21,7 +25,7 @@ async function waitForCreatedTerminalId(workspace: SeededWorkspace): Promise<str
         const result = await workspace.client.listTerminals(workspace.repoPath, undefined, {
           workspaceId: workspace.workspaceId,
         });
-        return result.terminals.map((entry) => entry.id);
+        return result.terminals.map(selectTerminalId);
       },
       { timeout: 30_000 },
     )
@@ -51,6 +55,69 @@ async function readClipboard(page: Page): Promise<string> {
 }
 
 test.describe("Workspace terminal tab rename", () => {
+  test("switches directly between terminal tab menus on consecutive right-clicks", async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+
+    const workspace = await seedWorkspace({ repoPrefix: "workspace-terminal-menu-switch-" });
+    let terminalIds: string[] = [];
+
+    try {
+      await gotoWorkspace(page, workspace.workspaceId);
+      await clickNewTerminal(page);
+      const firstTerminalId = await waitForCreatedTerminalId(workspace);
+      terminalIds = [firstTerminalId];
+
+      await clickNewTerminal(page);
+      await expect
+        .poll(
+          async () => {
+            const result = await workspace.client.listTerminals(workspace.repoPath, undefined, {
+              workspaceId: workspace.workspaceId,
+            });
+            return result.terminals.map(selectTerminalId);
+          },
+          { timeout: 30_000 },
+        )
+        .toHaveLength(2);
+      const result = await workspace.client.listTerminals(workspace.repoPath, undefined, {
+        workspaceId: workspace.workspaceId,
+      });
+      terminalIds = result.terminals.map(selectTerminalId);
+      const secondTerminalId = terminalIds.find((id) => id !== firstTerminalId);
+      if (!secondTerminalId) throw new Error("Expected a second terminal");
+
+      const firstTab = page.getByTestId(`workspace-tab-terminal_${firstTerminalId}`).first();
+      const secondTab = page.getByTestId(`workspace-tab-terminal_${secondTerminalId}`).first();
+      await expect(firstTab).toBeVisible();
+      await expect(secondTab).toBeVisible();
+
+      const secondTabBounds = await secondTab.boundingBox();
+      if (!secondTabBounds) throw new Error("Second terminal tab has no clickable bounds");
+
+      await firstTab.click({ button: "right" });
+      const firstMenu = page.getByTestId(`workspace-tab-context-terminal_${firstTerminalId}`);
+      await expect(firstMenu).toBeVisible();
+
+      await page.mouse.click(
+        secondTabBounds.x + secondTabBounds.width / 2,
+        secondTabBounds.y + secondTabBounds.height / 2,
+        { button: "right" },
+      );
+
+      await expect(
+        page.getByTestId(`workspace-tab-context-terminal_${secondTerminalId}`),
+      ).toBeVisible();
+      await expect(firstMenu).not.toBeVisible();
+    } finally {
+      for (const terminalId of terminalIds) {
+        await workspace.client.killTerminal(terminalId).catch(() => undefined);
+      }
+      await workspace.cleanup();
+    }
+  });
+
   test("right-click copy terminal id writes the terminal id to the clipboard", async ({
     context,
     page,

@@ -15,6 +15,7 @@ interface DirtyWorkspace {
 
 interface WorkspaceFixtureOptions {
   includeDeletedFile?: boolean;
+  includeSecondModifiedFile?: boolean;
 }
 
 interface CleanupTask {
@@ -240,6 +241,37 @@ test("changes file actions open from the kebab and right-click", async ({ page }
 
   await expect(page.getByTestId("workspace-file-pane")).toBeVisible();
   await expect(page.getByTestId("workspace-tab-file_src/use-mounted-tab-set.ts")).toBeVisible();
+});
+
+test("changes switches directly between file menus on consecutive right-clicks", async ({
+  page,
+}) => {
+  const workspace = await createWorkspaceWithMountedTabDiff({ includeSecondModifiedFile: true });
+  await useUnwrappedDiffLines(page);
+  await openWorkspaceChanges(page, workspace);
+
+  const firstRow = page.getByTestId("diff-file-0-toggle");
+  const secondRow = page.getByTestId("diff-file-1-toggle");
+  await expect(firstRow).toBeVisible();
+  await expect(secondRow).toBeVisible();
+
+  await firstRow.click();
+  await expect(page.getByTestId("diff-file-0-body")).toHaveCount(0);
+  await expect(secondRow).toBeInViewport({ ratio: 1 });
+
+  const secondRowBounds = await secondRow.boundingBox();
+  if (!secondRowBounds) throw new Error("Second diff row has no clickable bounds");
+
+  await firstRow.click({ button: "right" });
+  const firstMenuItem = page.getByTestId("diff-file-0-open-file");
+  await expect(firstMenuItem).toBeVisible();
+
+  await page.mouse.click(secondRowBounds.x + 12, secondRowBounds.y + secondRowBounds.height / 2, {
+    button: "right",
+  });
+
+  await expect(page.getByTestId("diff-file-1-open-file")).toBeVisible();
+  await expect(firstMenuItem).not.toBeVisible();
 });
 
 test("Changes switches between inline and full-tab navigation", async ({ page }) => {
@@ -553,6 +585,9 @@ async function createWorkspaceWithMountedTabDiff(
   options: WorkspaceFixtureOptions = {},
 ): Promise<DirtyWorkspace> {
   const files = [{ path: "src/use-mounted-tab-set.ts", content: BEFORE }];
+  if (options.includeSecondModifiedFile) {
+    files.push({ path: "src/zz-second.ts", content: "export const second = 1;\n" });
+  }
   if (options.includeDeletedFile) {
     files.push({ path: "src/zz-deleted.ts", content: "export const deleted = true;\n" });
   }
@@ -566,6 +601,9 @@ async function createWorkspaceWithMountedTabDiff(
   });
 
   await writeFile(path.join(repo.path, "src/use-mounted-tab-set.ts"), AFTER);
+  if (options.includeSecondModifiedFile) {
+    await writeFile(path.join(repo.path, "src/zz-second.ts"), "export const second = 2;\n");
+  }
   if (options.includeDeletedFile) {
     await unlink(path.join(repo.path, "src/zz-deleted.ts"));
   }

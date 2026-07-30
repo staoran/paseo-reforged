@@ -35,6 +35,65 @@ test.describe("Sidebar context menus", () => {
     }
   });
 
+  test("switches directly from a workspace menu to its project menu on consecutive right-clicks", async ({
+    page,
+  }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "sidebar-context-switch-" });
+    const workspaceKey = `${getServerId()}:${workspace.workspaceId}`;
+
+    try {
+      await gotoAppShell(page);
+      const workspaceRow = page.getByTestId(`sidebar-workspace-row-${workspaceKey}`);
+      const projectRow = page.getByTestId(`sidebar-project-row-${workspace.projectId}`);
+      await expect(workspaceRow).toBeVisible({ timeout: 30_000 });
+      await expect(projectRow).toBeVisible();
+
+      const projectBounds = await projectRow.boundingBox();
+      if (!projectBounds) throw new Error("Project row has no clickable bounds");
+
+      await workspaceRow.click({ button: "right" });
+      const workspaceMenu = page.getByTestId(`sidebar-workspace-context-${workspaceKey}`);
+      await expect(workspaceMenu).toBeVisible();
+
+      await page.mouse.click(projectBounds.x + 12, projectBounds.y + projectBounds.height / 2, {
+        button: "right",
+      });
+
+      await expect(
+        page.getByTestId(`sidebar-project-context-${workspace.projectId}`),
+      ).toBeVisible();
+      await expect(workspaceMenu).not.toBeVisible();
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  test("outside left-click closes the menu and does not activate an underlying control", async ({
+    page,
+  }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "sidebar-context-dismiss-" });
+    const workspaceKey = `${getServerId()}:${workspace.workspaceId}`;
+
+    try {
+      await gotoAppShell(page);
+      const workspaceRow = page.getByTestId(`sidebar-workspace-row-${workspaceKey}`);
+      const displayPreferences = page.getByTestId("sidebar-display-preferences-menu");
+      await expect(workspaceRow).toBeVisible({ timeout: 30_000 });
+      await expect(displayPreferences).toBeVisible();
+
+      await workspaceRow.click({ button: "right" });
+      const workspaceMenu = page.getByTestId(`sidebar-workspace-context-${workspaceKey}`);
+      await expect(workspaceMenu).toBeVisible();
+
+      await displayPreferences.click();
+
+      await expect(page.getByTestId("sidebar-grouping-status")).not.toBeVisible();
+      await expect(workspaceMenu).not.toBeVisible();
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
   test("status workspace row opens the same actions on right-click as its kebab", async ({
     page,
   }) => {
