@@ -32,6 +32,7 @@ import type { ShortcutKey } from "@/utils/format-shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import { useClearWorkspaceAttention } from "@/hooks/use-clear-workspace-attention";
+import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import {
   SidebarWorkspaceRowFrame,
   SidebarWorkspaceRowContent,
@@ -40,7 +41,10 @@ import {
   SidebarWorkspaceTrailingActionSlot,
 } from "@/components/sidebar/sidebar-workspace-row-content";
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
-import { SidebarWorkspaceMenu } from "@/components/sidebar/sidebar-workspace-menu";
+import {
+  SidebarWorkspaceContextMenuContent,
+  SidebarWorkspaceMenu,
+} from "@/components/sidebar/sidebar-workspace-menu";
 import { PinnedSectionHeader } from "@/components/sidebar/pinned-section-header";
 import { SidebarGroupToggleRow } from "@/components/sidebar/sidebar-group-toggle-row";
 import { useLimitedSidebarGroup } from "@/components/sidebar/use-limited-sidebar-group";
@@ -433,6 +437,18 @@ const StatusWorkspaceRow = memo(function StatusWorkspaceRow({
   );
 });
 
+interface StatusWorkspaceRowWithMenuProps {
+  workspace: SidebarWorkspaceEntry;
+  subtitle: string;
+  selected: boolean;
+  shortcutNumber: number | null;
+  showShortcutBadge: boolean;
+  canPin: boolean;
+  onToggleWorkspacePin: ToggleSidebarWorkspacePin;
+  reserveIdleStatusIndicatorSpace?: boolean;
+  onPress: () => void;
+}
+
 function StatusWorkspaceRowWithMenu({
   workspace,
   subtitle,
@@ -443,17 +459,7 @@ function StatusWorkspaceRowWithMenu({
   onToggleWorkspacePin,
   reserveIdleStatusIndicatorSpace = true,
   onPress,
-}: {
-  workspace: SidebarWorkspaceEntry;
-  subtitle: string;
-  selected: boolean;
-  shortcutNumber: number | null;
-  showShortcutBadge: boolean;
-  canPin: boolean;
-  onToggleWorkspacePin: ToggleSidebarWorkspacePin;
-  reserveIdleStatusIndicatorSpace?: boolean;
-  onPress: () => void;
-}) {
+}: StatusWorkspaceRowWithMenuProps) {
   const { t } = useTranslation();
   const toast = useToast();
   const [isHidingWorkspace, setIsHidingWorkspace] = useState(false);
@@ -550,7 +556,7 @@ function StatusWorkspaceRowWithMenu({
   });
 
   return (
-    <>
+    <ContextMenu>
       <StatusWorkspaceRowInner
         workspace={workspace}
         subtitle={subtitle}
@@ -572,6 +578,20 @@ function StatusWorkspaceRowWithMenu({
         onTogglePin={onTogglePin}
         reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
       />
+      <SidebarWorkspaceContextMenuContent
+        workspaceKey={workspace.workspaceKey}
+        onCopyPath={handleCopyPath}
+        onCopyBranchName={workspace.projectKind === "git" ? handleCopyBranchName : undefined}
+        onRename={handleOpenRename}
+        onMarkAsRead={hasClearableAttention ? handleMarkAsRead : undefined}
+        onArchive={handleArchive}
+        archiveLabel={t("sidebar.workspace.actions.archive")}
+        archiveStatus={isArchiving ? "pending" : "idle"}
+        archivePendingLabel={t("sidebar.workspace.actions.archiving")}
+        archiveShortcutKeys={selected ? archiveShortcutKeys : null}
+        isPinned={isPinned}
+        onTogglePin={onTogglePin}
+      />
       <AdaptiveRenameModal
         visible={isRenameOpen}
         title="Rename workspace"
@@ -582,7 +602,7 @@ function StatusWorkspaceRowWithMenu({
         onSubmit={handleSubmitRename}
         testID={`sidebar-workspace-rename-modal-${workspace.workspaceKey}`}
       />
-    </>
+    </ContextMenu>
   );
 }
 
@@ -651,7 +671,8 @@ function StatusWorkspaceRowInner({
         const workspaceRowStyle = getStatusWorkspaceRowStyle({ selected, isHovered });
         return (
           <View style={styles.workspaceRowContainer} {...hoverHandlers}>
-            <Pressable
+            <ContextMenuTrigger
+              enabledOnMobile={false}
               disabled={isArchiving}
               accessibilityRole="button"
               accessibilityState={accessibilityState}
@@ -688,7 +709,7 @@ function StatusWorkspaceRowInner({
                   />
                 ) : null}
               </SidebarWorkspaceRowContent>
-            </Pressable>
+            </ContextMenuTrigger>
           </View>
         );
       }}

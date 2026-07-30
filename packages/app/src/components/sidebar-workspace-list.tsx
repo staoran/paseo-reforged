@@ -72,7 +72,12 @@ import {
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import { useSidebarViewStore } from "@/stores/sidebar-view-store";
 import { useShowShortcutBadges } from "@/hooks/use-show-shortcut-badges";
-import { ContextMenuTrigger, useContextMenu } from "@/components/ui/context-menu";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -91,7 +96,10 @@ import { isEmphasizedStatusDotBucket } from "@/utils/status-dot-color";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { SidebarStatusWorkspaceList } from "@/components/sidebar/sidebar-status-list";
 import type { StatusGroup } from "@/hooks/sidebar-status-view-model";
-import { SidebarWorkspaceMenu } from "@/components/sidebar/sidebar-workspace-menu";
+import {
+  SidebarWorkspaceContextMenuContent,
+  SidebarWorkspaceMenu,
+} from "@/components/sidebar/sidebar-workspace-menu";
 import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press-drag-interaction";
 import { PinnedSectionHeader } from "@/components/sidebar/pinned-section-header";
 import { SidebarGroupToggleRow } from "@/components/sidebar/sidebar-group-toggle-row";
@@ -267,7 +275,6 @@ interface ProjectHeaderRowProps {
   drag: () => void;
   isDragging: boolean;
   isArchiving?: boolean;
-  menuController: ReturnType<typeof useContextMenu> | null;
   onRemoveProject?: () => void;
   removeProjectStatus?: "idle" | "pending";
   dragHandleProps?: DraggableListDragHandleProps;
@@ -285,7 +292,6 @@ interface WorkspaceRowInnerProps {
   isArchiving: boolean;
   isCreating?: boolean;
   dragHandleProps?: DraggableListDragHandleProps;
-  menuController: ReturnType<typeof useContextMenu> | null;
   archiveLabel?: string;
   archiveStatus?: "idle" | "pending" | "success";
   archivePendingLabel?: string;
@@ -550,19 +556,22 @@ function renderKebabTriggerIcon({ hovered }: { hovered?: boolean }) {
   );
 }
 
-function ProjectKebabMenu({
-  projectKey,
-  projectPath,
-  projectHosts,
-  onRemoveProject,
-  removeProjectStatus,
-}: {
+interface ProjectMenuProps {
   projectKey: string;
   projectPath: string;
   projectHosts: SidebarProjectEntry["hosts"];
   onRemoveProject: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
-}) {
+}
+
+function ProjectMenuItems({
+  variant,
+  projectKey,
+  projectPath,
+  projectHosts,
+  onRemoveProject,
+  removeProjectStatus,
+}: ProjectMenuProps & { variant: "dropdown" | "context" }) {
   const { t } = useTranslation();
   const toast = useToast();
   const localDaemonServerId = useLocalDaemonServerId();
@@ -586,6 +595,50 @@ function ProjectKebabMenu({
         toast.error(t("sidebar.project.actions.openNewWindowFailed"));
       });
   }, [projectPath, t, toast]);
+  const MenuItem = variant === "context" ? ContextMenuItem : DropdownMenuItem;
+
+  return (
+    <>
+      {canOpenProjectSettings ? (
+        <MenuItem
+          testID={`sidebar-project-menu-open-settings-${projectKey}`}
+          leading={settingsLeadingIcon}
+          onSelect={handleOpenProjectSettings}
+        >
+          {t("sidebar.project.actions.openSettings")}
+        </MenuItem>
+      ) : null}
+      {canOpenInNewWindow ? (
+        <MenuItem
+          testID={`sidebar-project-menu-open-new-window-${projectKey}`}
+          leading={openInNewWindowLeadingIcon}
+          onSelect={handleOpenInNewWindow}
+        >
+          {t("sidebar.project.actions.openNewWindow")}
+        </MenuItem>
+      ) : null}
+      <OpenInFileManagerMenuItem
+        variant={variant}
+        serverId={localProjectHost?.serverId}
+        path={localProjectHost?.iconWorkingDir}
+        testID={`sidebar-project-menu-open-folder-${projectKey}`}
+      />
+      <MenuItem
+        testID={`sidebar-project-menu-remove-${projectKey}`}
+        leading={trash2LeadingIcon}
+        status={removeProjectStatus}
+        pendingLabel={t("sidebar.project.actions.removing")}
+        onSelect={onRemoveProject}
+      >
+        {t("sidebar.project.actions.remove")}
+      </MenuItem>
+    </>
+  );
+}
+
+function ProjectKebabMenu(props: ProjectMenuProps) {
+  const { t } = useTranslation();
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -593,45 +646,26 @@ function ProjectKebabMenu({
         style={projectKebabStyle}
         accessibilityRole={platformIsWeb ? undefined : "button"}
         accessibilityLabel={t("sidebar.project.actions.menu")}
-        testID={`sidebar-project-kebab-${projectKey}`}
+        testID={`sidebar-project-kebab-${props.projectKey}`}
       >
         {renderKebabTriggerIcon}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" width={220}>
-        {canOpenProjectSettings ? (
-          <DropdownMenuItem
-            testID={`sidebar-project-menu-open-settings-${projectKey}`}
-            leading={settingsLeadingIcon}
-            onSelect={handleOpenProjectSettings}
-          >
-            {t("sidebar.project.actions.openSettings")}
-          </DropdownMenuItem>
-        ) : null}
-        {canOpenInNewWindow ? (
-          <DropdownMenuItem
-            testID={`sidebar-project-menu-open-new-window-${projectKey}`}
-            leading={openInNewWindowLeadingIcon}
-            onSelect={handleOpenInNewWindow}
-          >
-            {t("sidebar.project.actions.openNewWindow")}
-          </DropdownMenuItem>
-        ) : null}
-        <OpenInFileManagerMenuItem
-          serverId={localProjectHost?.serverId}
-          path={localProjectHost?.iconWorkingDir}
-          testID={`sidebar-project-menu-open-folder-${projectKey}`}
-        />
-        <DropdownMenuItem
-          testID={`sidebar-project-menu-remove-${projectKey}`}
-          leading={trash2LeadingIcon}
-          status={removeProjectStatus}
-          pendingLabel={t("sidebar.project.actions.removing")}
-          onSelect={onRemoveProject}
-        >
-          {t("sidebar.project.actions.remove")}
-        </DropdownMenuItem>
+        <ProjectMenuItems {...props} variant="dropdown" />
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+function ProjectContextMenuContent(props: ProjectMenuProps) {
+  return (
+    <ContextMenuContent
+      align="start"
+      width={220}
+      testID={`sidebar-project-context-${props.projectKey}`}
+    >
+      <ProjectMenuItems {...props} variant="context" />
+    </ContextMenuContent>
   );
 }
 
@@ -979,7 +1013,6 @@ function ProjectHeaderRow({
   drag,
   isDragging,
   isArchiving = false,
-  menuController,
   onRemoveProject,
   removeProjectStatus = "idle",
   dragHandleProps,
@@ -1002,7 +1035,7 @@ function ProjectHeaderRow({
   }, [displayName, onWorkspacePress, project.projectKey, worktreeTarget]);
   const interaction = useLongPressDragInteraction({
     drag,
-    menuController,
+    menuController: null,
   });
   const {
     role: _dragRole,
@@ -1071,31 +1104,6 @@ function ProjectHeaderRow({
     </>
   );
 
-  if (menuController) {
-    return (
-      <View
-        {...dragAttributes}
-        {...dragHandleProps?.listeners}
-        ref={dragHandleProps?.setActivatorNodeRef as unknown as Ref<View>}
-        onPointerEnter={handlePointerEnter}
-        onPointerLeave={handlePointerLeave}
-      >
-        <ContextMenuTrigger
-          enabledOnMobile={false}
-          accessibilityRole="button"
-          style={projectRowStyle}
-          onPressIn={interaction.handlePressIn}
-          onTouchMove={interaction.handleTouchMove}
-          onPressOut={interaction.handlePressOut}
-          onPress={handlePress}
-          testID={`sidebar-project-row-${project.projectKey}`}
-        >
-          {rowChildren}
-        </ContextMenuTrigger>
-      </View>
-    );
-  }
-
   return (
     <View
       {...dragAttributes}
@@ -1104,7 +1112,8 @@ function ProjectHeaderRow({
       onPointerEnter={handlePointerEnter}
       onPointerLeave={handlePointerLeave}
     >
-      <Pressable
+      <ContextMenuTrigger
+        enabledOnMobile={false}
         accessibilityRole="button"
         style={projectRowStyle}
         onPressIn={interaction.handlePressIn}
@@ -1114,7 +1123,7 @@ function ProjectHeaderRow({
         testID={`sidebar-project-row-${project.projectKey}`}
       >
         {rowChildren}
-      </Pressable>
+      </ContextMenuTrigger>
     </View>
   );
 }
@@ -1131,7 +1140,6 @@ function WorkspaceRowInner({
   isArchiving,
   isCreating = false,
   dragHandleProps,
-  menuController,
   archiveLabel,
   archiveStatus = "idle",
   archivePendingLabel,
@@ -1139,6 +1147,7 @@ function WorkspaceRowInner({
   onCopyBranchName,
   onCopyPath,
   onRename,
+  onMarkAsRead,
   archiveShortcutKeys,
   isPinned,
   onTogglePin,
@@ -1148,7 +1157,7 @@ function WorkspaceRowInner({
   const isTouchPlatform = platformIsNative;
   const interaction = useLongPressDragInteraction({
     drag,
-    menuController,
+    menuController: null,
   });
   const {
     role: _dragRole,
@@ -1192,7 +1201,8 @@ function WorkspaceRowInner({
             style={styles.workspaceRowContainer}
             {...hoverHandlers}
           >
-            <Pressable
+            <ContextMenuTrigger
+              enabledOnMobile={false}
               disabled={isArchiving}
               aria-selected={selected}
               accessibilityRole="button"
@@ -1230,16 +1240,34 @@ function WorkspaceRowInner({
                   onCopyBranchName={onCopyBranchName}
                   onCopyPath={onCopyPath}
                   onRename={onRename}
+                  onMarkAsRead={onMarkAsRead}
                   isPinned={isPinned}
                   onTogglePin={onTogglePin}
                 />
               </SidebarWorkspaceRowContent>
-            </Pressable>
+            </ContextMenuTrigger>
           </View>
         );
       }}
     </SidebarWorkspaceRowFrame>
   );
+}
+
+interface WorkspaceRowWithMenuProps {
+  workspace: SidebarWorkspaceEntry;
+  subtitle?: string | null;
+  selected: boolean;
+  shortcutNumber: number | null;
+  showShortcutBadge: boolean;
+  onPress: () => void;
+  drag: () => void;
+  isDragging: boolean;
+  dragHandleProps?: DraggableListDragHandleProps;
+  canCopyBranchName: boolean;
+  canPin: boolean;
+  onToggleWorkspacePin: ToggleSidebarWorkspacePin;
+  reserveIdleStatusIndicatorSpace?: boolean;
+  isCreating?: boolean;
 }
 
 function WorkspaceRowWithMenu({
@@ -1257,22 +1285,7 @@ function WorkspaceRowWithMenu({
   onToggleWorkspacePin,
   reserveIdleStatusIndicatorSpace = true,
   isCreating = false,
-}: {
-  workspace: SidebarWorkspaceEntry;
-  subtitle?: string | null;
-  selected: boolean;
-  shortcutNumber: number | null;
-  showShortcutBadge: boolean;
-  onPress: () => void;
-  drag: () => void;
-  isDragging: boolean;
-  dragHandleProps?: DraggableListDragHandleProps;
-  canCopyBranchName: boolean;
-  canPin: boolean;
-  onToggleWorkspacePin: ToggleSidebarWorkspacePin;
-  reserveIdleStatusIndicatorSpace?: boolean;
-  isCreating?: boolean;
-}) {
+}: WorkspaceRowWithMenuProps) {
   const { t } = useTranslation();
   const toast = useToast();
   const [isHidingWorkspace, setIsHidingWorkspace] = useState(false);
@@ -1384,7 +1397,7 @@ function WorkspaceRowWithMenu({
   });
 
   return (
-    <>
+    <ContextMenu>
       <WorkspaceRowInner
         workspace={workspace}
         subtitle={subtitle}
@@ -1397,7 +1410,6 @@ function WorkspaceRowWithMenu({
         isArchiving={isArchiving}
         isCreating={isCreating}
         dragHandleProps={dragHandleProps}
-        menuController={null}
         archiveLabel={t("sidebar.workspace.actions.archive")}
         archiveStatus={isArchiving ? "pending" : "idle"}
         archivePendingLabel={t("sidebar.workspace.actions.archiving")}
@@ -1411,6 +1423,22 @@ function WorkspaceRowWithMenu({
         onTogglePin={onTogglePin}
         reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
       />
+      <SidebarWorkspaceContextMenuContent
+        workspaceKey={workspace.workspaceKey}
+        openInFileManagerServerId={workspace.serverId}
+        openInFileManagerPath={workspace.workspaceDirectory ?? workspace.projectRootPath}
+        onCopyPath={handleCopyPath}
+        onCopyBranchName={canCopyBranchName ? handleCopyBranchName : undefined}
+        onRename={handleOpenRename}
+        onMarkAsRead={hasClearableAttention ? handleMarkAsRead : undefined}
+        onArchive={handleArchive}
+        archiveLabel={t("sidebar.workspace.actions.archive")}
+        archiveStatus={isArchiving ? "pending" : "idle"}
+        archivePendingLabel={t("sidebar.workspace.actions.archiving")}
+        archiveShortcutKeys={selected ? archiveShortcutKeys : null}
+        isPinned={isPinned}
+        onTogglePin={onTogglePin}
+      />
       <AdaptiveRenameModal
         visible={isRenameOpen}
         title={t("sidebar.workspace.rename.title")}
@@ -1421,7 +1449,7 @@ function WorkspaceRowWithMenu({
         onSubmit={handleSubmitRename}
         testID={`sidebar-workspace-rename-modal-${workspace.workspaceKey}`}
       />
-    </>
+    </ContextMenu>
   );
 }
 
@@ -1833,28 +1861,36 @@ function ProjectBlock({
 
   return (
     <View style={styles.projectBlock}>
-      <ProjectHeaderRow
-        project={project}
-        displayName={displayName}
-        iconDataUri={iconDataUri}
-        workspace={null}
-        selected={false}
-        chevron={rowModel.chevron}
-        onPress={handleToggleCollapsed}
-        worktreeTarget={
-          rowModel.trailingAction.kind === "new_workspace" ? rowModel.trailingAction.target : null
-        }
-        isProjectActive={active}
-        onWorkspacePress={onWorkspacePress}
-        onWorktreeCreated={onWorktreeCreated}
-        drag={drag}
-        isDragging={isDragging}
-        isArchiving={isRemovingProject}
-        menuController={null}
-        onRemoveProject={handleRemoveProject}
-        removeProjectStatus={isRemovingProject ? "pending" : "idle"}
-        dragHandleProps={dragHandleProps}
-      />
+      <ContextMenu>
+        <ProjectHeaderRow
+          project={project}
+          displayName={displayName}
+          iconDataUri={iconDataUri}
+          workspace={null}
+          selected={false}
+          chevron={rowModel.chevron}
+          onPress={handleToggleCollapsed}
+          worktreeTarget={
+            rowModel.trailingAction.kind === "new_workspace" ? rowModel.trailingAction.target : null
+          }
+          isProjectActive={active}
+          onWorkspacePress={onWorkspacePress}
+          onWorktreeCreated={onWorktreeCreated}
+          drag={drag}
+          isDragging={isDragging}
+          isArchiving={isRemovingProject}
+          onRemoveProject={handleRemoveProject}
+          removeProjectStatus={isRemovingProject ? "pending" : "idle"}
+          dragHandleProps={dragHandleProps}
+        />
+        <ProjectContextMenuContent
+          projectKey={project.projectKey}
+          projectPath={project.iconWorkingDir}
+          projectHosts={project.hosts}
+          onRemoveProject={handleRemoveProject}
+          removeProjectStatus={isRemovingProject ? "pending" : "idle"}
+        />
+      </ContextMenu>
 
       {projectChildren}
     </View>

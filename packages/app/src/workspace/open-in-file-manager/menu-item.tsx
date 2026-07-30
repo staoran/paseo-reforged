@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { FolderOpen } from "lucide-react-native";
 import { withUnistyles } from "react-native-unistyles";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { ContextMenuItem } from "@/components/ui/context-menu";
 import { getIsElectron } from "@/constants/platform";
 import { useToast } from "@/contexts/toast-context";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
@@ -11,6 +12,7 @@ import { openDesktopTarget, useDesktopOpenTargets } from "@/workspace/desktop-op
 import { resolveOpenInFileManagerPath } from "./availability";
 
 interface OpenInFileManagerMenuItemProps {
+  variant?: "dropdown" | "context";
   serverId?: string | null;
   path?: string | null;
   testID: string;
@@ -25,6 +27,7 @@ const foregroundMutedColorMapping = (theme: Theme) => ({
 const leadingIcon = <ThemedFolderOpen size={14} uniProps={foregroundMutedColorMapping} />;
 
 export function OpenInFileManagerMenuItem({
+  variant = "dropdown",
   serverId,
   path,
   testID,
@@ -54,9 +57,11 @@ export function OpenInFileManagerMenuItem({
     return null;
   }
 
+  const MenuItem = variant === "context" ? ContextMenuItem : DropdownMenuItem;
+
   return (
-    <DropdownMenuItem testID={testID} leading={leadingIcon} onSelect={openInFileManager}>
+    <MenuItem testID={testID} leading={leadingIcon} onSelect={openInFileManager}>
       {t("sidebar.project.actions.openFolder")}
-    </DropdownMenuItem>
+    </MenuItem>
   );
 }
