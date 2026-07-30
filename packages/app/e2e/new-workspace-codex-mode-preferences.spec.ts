@@ -87,7 +87,13 @@ async function readCodexModePreference(page: Page): Promise<unknown> {
   }, CREATE_AGENT_PREFERENCES_KEY);
 }
 
-async function selectMode(page: Page, label: string): Promise<void> {
+async function selectMode(
+  page: Page,
+  label: string,
+): Promise<{
+  color: string;
+  fontWeight: string;
+}> {
   const modeControl = page.getByTestId("mode-control").first();
   await expect(modeControl).toBeVisible({ timeout: 30_000 });
   await modeControl.click();
@@ -102,8 +108,31 @@ async function selectMode(page: Page, label: string): Promise<void> {
 
   const option = popup.getByText(new RegExp(`^${escapeRegex(label)}$`, "i")).first();
   await expect(option).toBeVisible({ timeout: 10_000 });
+  const optionStyle = await option.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { color: style.color, fontWeight: style.fontWeight };
+  });
   await option.click({ force: true });
   await expect(searchInput).not.toBeVisible({ timeout: 5_000 });
+  return optionStyle;
+}
+
+async function readModeControlTextStyle(
+  page: Page,
+  label: string,
+): Promise<{
+  color: string;
+  fontWeight: string;
+}> {
+  const text = page
+    .getByTestId("mode-control")
+    .first()
+    .getByText(new RegExp(`^${escapeRegex(label)}$`, "i"));
+  await expect(text).toBeVisible();
+  return text.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { color: style.color, fontWeight: style.fontWeight };
+  });
 }
 
 async function expectThinkingOptionsFit(page: Page): Promise<void> {
@@ -172,9 +201,14 @@ test.describe("New workspace Codex mode preferences", () => {
       await expect(page.getByTestId("mode-control").first()).toContainText("Default permissions", {
         timeout: 30_000,
       });
+      const defaultModeStyle = await readModeControlTextStyle(page, "Default permissions");
       await expectThinkingOptionsFit(page);
-      await selectMode(page, "Full access");
+      const fullAccessOptionStyle = await selectMode(page, "Full access");
       await expect(page.getByTestId("mode-control").first()).toContainText("Full access");
+      const fullAccessStyle = await readModeControlTextStyle(page, "Full access");
+      expect(fullAccessStyle.color).toBe(fullAccessOptionStyle.color);
+      expect(fullAccessStyle.color).not.toBe(defaultModeStyle.color);
+      expect(Number(fullAccessStyle.fontWeight)).toBeGreaterThanOrEqual(600);
 
       await submitNewWorkspacePrompt(page, "Keep Codex full access selected globally.");
       const createAgentRequest = await createAgentRecorder.waitForCreateAgentRequest();

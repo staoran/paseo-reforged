@@ -36,10 +36,11 @@ import { formatAgentModeLabel, getAgentControlHintKey } from "@/composer/agent-c
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
-import { resolveNextAgentModeId } from "@/composer/agent-controls/mode";
+import { resolveModeAccentColor, resolveNextAgentModeId } from "@/composer/agent-controls/mode";
 import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import { useComposerControlLayout } from "@/composer/agent-controls/layout-context";
 import { AgentControlTrigger } from "@/composer/agent-controls/control";
+import type { Theme } from "@/styles/theme";
 import type { AgentMode } from "@getpaseo/protocol/agent-types";
 import { getModeVisuals, type AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 
@@ -66,7 +67,7 @@ interface ModeComboboxOptionProps {
   onPress: () => void;
   provider: string;
   providerDefinitions: AgentProviderDefinition[];
-  iconColor: string;
+  theme: Theme;
 }
 
 function ModeComboboxOption({
@@ -76,17 +77,26 @@ function ModeComboboxOption({
   onPress,
   provider,
   providerDefinitions,
-  iconColor,
+  theme,
 }: ModeComboboxOptionProps) {
   const visuals = getModeVisuals(provider, option.id, providerDefinitions);
+  const modeColor = resolveModeAccentColor(option.id, visuals?.colorTier, theme.colors);
   const IconComponent = visuals?.icon ? MODE_ICONS[visuals.icon] : undefined;
   const leadingSlot = useMemo(
-    () => (IconComponent ? <IconComponent size={16} color={iconColor} /> : null),
-    [IconComponent, iconColor],
+    () => (IconComponent ? <IconComponent size={16} color={modeColor} /> : null),
+    [IconComponent, modeColor],
+  );
+  const labelStyle = useMemo(
+    () => [
+      { color: modeColor },
+      modeColor !== theme.colors.foregroundMuted ? { fontWeight: theme.fontWeight.bold } : null,
+    ],
+    [modeColor, theme.colors.foregroundMuted, theme.fontWeight.bold],
   );
   return (
     <ComboboxItem
       label={option.label}
+      labelStyle={labelStyle}
       selected={selected}
       active={active}
       onPress={onPress}
@@ -138,7 +148,18 @@ export function AgentModeControl({
     ? getModeVisuals(provider, selectedMode.id, providerDefinitions)
     : undefined;
   const Icon = visuals?.icon ? (MODE_ICONS[visuals.icon] ?? Bot) : Bot;
-  const iconColor = theme.colors.foregroundMuted;
+  const iconColor = resolveModeAccentColor(
+    selectedMode?.id ?? "",
+    visuals?.colorTier,
+    theme.colors,
+  );
+  const valueStyle = useMemo(
+    () => [
+      { color: iconColor },
+      iconColor !== theme.colors.foregroundMuted ? { fontWeight: theme.fontWeight.bold } : null,
+    ],
+    [iconColor, theme.colors.foregroundMuted, theme.fontWeight.bold],
+  );
   const selectedModeLabel = selectedMode ? formatAgentModeLabel(selectedMode) : "";
 
   const allOptions = useMemo<ComboboxOption[]>(
@@ -207,10 +228,10 @@ export function AgentModeControl({
         onPress={args.onPress}
         provider={provider}
         providerDefinitions={providerDefinitions}
-        iconColor={theme.colors.foreground}
+        theme={theme}
       />
     ),
-    [provider, providerDefinitions, theme.colors.foreground],
+    [provider, providerDefinitions, theme],
   );
 
   const sheetHeader = useMemo<SheetHeader>(
@@ -238,6 +259,7 @@ export function AgentModeControl({
             surface={surface}
             label={t("agentControls.mode.title")}
             value={selectedModeLabel}
+            valueStyle={valueStyle}
             showToolbarLabel={presentation.showModeLabel}
             showCaret={surface === "toolbar" && presentation.showCarets}
             open={open}

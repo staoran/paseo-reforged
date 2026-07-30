@@ -128,6 +128,10 @@ const lightStatusColors = {
   statusDanger: "#b91c1c", // red-700
   statusWarning: "#d97706", // amber-600
   statusMerged: "#7c3aed", // purple-600
+  modeDanger: "#b91c1c", // red-700
+  modeModerate: "#b45309", // amber-700
+  modeAcceptEdits: "#7c3aed", // purple-600
+  modePlanning: "#0e7490", // cyan-700
 };
 
 const darkStatusColors = {
@@ -135,6 +139,10 @@ const darkStatusColors = {
   statusDanger: "#dc2626", // red-600
   statusWarning: "#f59e0b", // amber-500
   statusMerged: "#9333ea", // purple-600
+  modeDanger: "#fca5a5", // red-300
+  modeModerate: "#f59e0b", // amber-500
+  modeAcceptEdits: "#d8b4fe", // purple-300
+  modePlanning: "#06b6d4", // cyan-500
 };
 
 // Semantic color tokens - Layer-based system
