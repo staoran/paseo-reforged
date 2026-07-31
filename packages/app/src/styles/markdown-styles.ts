@@ -23,7 +23,7 @@ export function createMarkdownStyles(theme: Theme) {
       fontSize: theme.workspaceFontSize.base,
       // Prose line-height scales with the workspace ramp, NOT the
       // code-size-coupled lineHeight.diff token used by code/diff surfaces.
-      lineHeight: Math.round(theme.workspaceFontSize.base * 1.5),
+      lineHeight: Math.round(theme.workspaceFontSize.base * 1.4),
       letterSpacing: 0,
       flexShrink: 1,
       minWidth: 0,
@@ -286,7 +286,7 @@ export function createMarkdownStyles(theme: Theme) {
     },
 
     list_item: {
-      marginBottom: theme.spacing[1],
+      marginBottom: theme.spacing[2],
       flexDirection: "row" as const,
       alignItems: "flex-start" as const,
       flexShrink: 1,

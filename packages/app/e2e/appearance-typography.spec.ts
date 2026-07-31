@@ -20,7 +20,13 @@ const RICH_MARKDOWN = [
   "",
   "The next paragraph starts after a Markdown block boundary, so its first line must keep a visibly larger rhythm than two automatically wrapped lines inside the paragraph above.",
   "",
-  "**Genuinely bold text** sits beside `inlineCode`, [Paseo docs](https://example.com), and [target.ts:42](target.ts#L42).",
+  "**Genuinely bold text** sits beside `inlineCode`, [Paseo docs](https://example.com), and [target.ts](target.ts#L42).",
+  "",
+  "### List rhythm",
+  "",
+  "- The first list item deliberately wraps across multiple visual lines so wrapped lines retain the normal prose line height while neighboring list items get extra separation.",
+  "- The second list item starts after a visibly larger item-to-item gap.",
+  "- The third list item includes [list-target.ts](list-target.ts#L88).",
 ].join("\n");
 
 type AppearanceField =
@@ -225,7 +231,7 @@ async function expectTextFits(locator: Locator): Promise<void> {
 test("renders final answer Markdown with distinct line and block rhythm", async ({
   page,
 }, testInfo) => {
-  test.setTimeout(90_000);
+  test.setTimeout(180_000);
   const agent = await seedMockAgentWorkspace({
     repoPrefix: "final-answer-markdown-",
     title: "Final answer Markdown",
@@ -250,11 +256,13 @@ test("renders final answer Markdown with distinct line and block rhythm", async 
     const strong = assistant.getByText("Genuinely bold text", { exact: true });
     const inlineCode = assistant.getByText("inlineCode", { exact: true });
     const externalLink = assistant.getByText("Paseo docs", { exact: true });
-    const fileLink = assistant.getByText("target.ts:42", { exact: true });
+    const fileLink = assistant.getByText("target.ts (line 42)", { exact: true });
+    const firstListItem = assistant.getByText(/The first list item deliberately wraps/);
+    const secondListItem = assistant.getByText(/The second list item starts after/);
 
     await expect(assistant).toBeVisible();
     const proseStyle = await readLeafTextStyle(wrappedParagraph);
-    const expectedLineHeight = 24;
+    const expectedLineHeight = 22;
     expect(proseStyle).toMatchObject({
       fontSize: 16,
       lineHeight: expectedLineHeight,
@@ -270,7 +278,23 @@ test("renders final answer Markdown with distinct line and block rhythm", async 
         0,
       );
     }
-    expect(nextLineTops[0]! - wrappedLineTops.at(-1)!).toBeGreaterThan(expectedLineHeight);
+    const blockBaselineDelta = nextLineTops[0]! - wrappedLineTops.at(-1)!;
+    expect(blockBaselineDelta).toBeGreaterThan(expectedLineHeight);
+    expect(blockBaselineDelta).toBeLessThanOrEqual(expectedLineHeight + 18);
+
+    const firstListItemTops = await readTextLineTops(firstListItem);
+    const secondListItemTops = await readTextLineTops(secondListItem);
+    expect(firstListItemTops.length).toBeGreaterThan(1);
+    for (let index = 1; index < firstListItemTops.length; index += 1) {
+      expect(firstListItemTops[index]! - firstListItemTops[index - 1]!).toBeCloseTo(
+        expectedLineHeight,
+        0,
+      );
+    }
+    expect(secondListItemTops[0]! - firstListItemTops.at(-1)!).toBeCloseTo(
+      expectedLineHeight + 8,
+      0,
+    );
 
     expect((await readLeafTextStyle(strong)).fontWeight).toBe("700");
     expect((await readLeafTextStyle(heading)).fontSize).toBeGreaterThan(16);
@@ -283,6 +307,12 @@ test("renders final answer Markdown with distinct line and block rhythm", async 
       "https://example.com",
     );
     await expect(fileLink.locator("xpath=ancestor::a[1]")).toHaveAttribute("href", "target.ts#L42");
+
+    await expect(page.getByText(/^Worked for /).last()).toBeVisible();
+    await expect(page.getByTestId("assistant-turn-completed-at").last()).toBeVisible();
+    await expect(page.getByTestId("assistant-turn-completed-at").last()).toHaveText(
+      /\d{1,2}:\d{2}/,
+    );
 
     expect(
       await assistant.evaluate((element) => element.scrollWidth <= element.clientWidth + 1),

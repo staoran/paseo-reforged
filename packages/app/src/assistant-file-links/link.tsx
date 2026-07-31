@@ -17,6 +17,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { useAssistantFileLinkResolverContext } from "./provider";
+import { parseAssistantFileLink } from "./parse";
 import type { AssistantFileLinkSource } from "./resolver";
 import { useFileLink } from "./use-file-link";
 
@@ -40,6 +41,14 @@ export function AssistantMarkdownLink({
   const tooltipPath = useMemo(
     () => (target ? formatInlinePathTargetForTooltip(target, workspaceRoot) : null),
     [target, workspaceRoot],
+  );
+  const displayTarget = useMemo(
+    () => target ?? parseAssistantFileLink(source.href, { workspaceRoot }),
+    [source.href, target, workspaceRoot],
+  );
+  const lineLabel = useMemo(
+    () => formatInlinePathLineLabel(source.text, displayTarget),
+    [displayTarget, source.text],
   );
   const handleAnchorClickCapture = useStableEvent((event: MouseEvent<HTMLAnchorElement>) => {
     event.preventDefault();
@@ -85,6 +94,7 @@ export function AssistantMarkdownLink({
         style={style}
       >
         {children}
+        {lineLabel ? ` ${lineLabel}` : null}
       </MarkdownTextSpan>
     );
     return (
@@ -113,12 +123,40 @@ export function AssistantMarkdownLink({
       >
         <Text dataSet={monoSurface ? CODE_SURFACE_DATASET : undefined} style={hoveredTextStyle}>
           {children}
+          {lineLabel ? ` ${lineLabel}` : null}
         </Text>
       </Pressable>
     </a>
   );
 
   return <FileLinkHoverTooltip filePath={tooltipPath}>{anchor}</FileLinkHoverTooltip>;
+}
+
+function formatInlinePathLineLabel(
+  sourceText: string | undefined,
+  target: { lineStart?: number; lineEnd?: number } | null,
+): string | null {
+  const lineStart = target?.lineStart;
+  if (!lineStart || sourceTextIncludesLine(sourceText, lineStart)) {
+    return null;
+  }
+
+  const lineEnd = target?.lineEnd;
+  return lineEnd && lineEnd !== lineStart
+    ? `(lines ${lineStart}-${lineEnd})`
+    : `(line ${lineStart})`;
+}
+
+function sourceTextIncludesLine(sourceText: string | undefined, lineStart: number): boolean {
+  if (!sourceText) {
+    return false;
+  }
+
+  const text = sourceText.trim();
+  return (
+    new RegExp(`(?:^|[^0-9])(?:#L|:)${lineStart}(?:$|[-:,])`, "i").test(text) ||
+    new RegExp(`\\blines?\\s+${lineStart}\\b`, "i").test(text)
+  );
 }
 
 interface AssistantMarkdownCodeLinkProps {

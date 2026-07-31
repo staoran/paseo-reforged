@@ -24,7 +24,7 @@ describe("createMarkdownStyles", () => {
     expect(styles.body).toMatchObject({
       fontFamily: "Workspace Sans",
       fontSize: 19,
-      lineHeight: Math.round(19 * 1.5),
+      lineHeight: Math.round(19 * 1.4),
       letterSpacing: 0,
     });
     expect(styles.heading1).toMatchObject({
