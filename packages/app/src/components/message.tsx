@@ -1881,6 +1881,7 @@ export const AssistantMessage = memo(function AssistantMessage({
         <MarkdownParagraphView
           key={node.key}
           paragraphStyle={styles.paragraph}
+          paragraphTextStyle={styles.body}
           containsImage={markdownNodeContainsType(node, "image")}
         >
           {children}

@@ -24,7 +24,8 @@ describe("createMarkdownStyles", () => {
     expect(styles.body).toMatchObject({
       fontFamily: "Workspace Sans",
       fontSize: 19,
-      lineHeight: Math.round(19 * 1.4),
+      lineHeight: Math.round(19 * 1.5),
+      letterSpacing: 0,
     });
     expect(styles.heading1).toMatchObject({
       fontFamily: "Workspace Sans",
@@ -33,10 +34,29 @@ describe("createMarkdownStyles", () => {
     expect(styles.td).toMatchObject({
       fontFamily: "Workspace Sans",
       fontSize: 17,
+      lineHeight: Math.round(17 * 1.4),
+      letterSpacing: 0,
     });
     expect(styles.code_inline).toMatchObject({
       fontFamily: "Code Mono",
       fontSize: darkTheme.fontSize.code,
+      letterSpacing: 0,
+    });
+  });
+
+  it("preserves semantic typography while separating line and block spacing", () => {
+    const styles = createMarkdownStyles(darkTheme);
+
+    expect(styles.strong).toMatchObject({ fontWeight: darkTheme.fontWeight.bold });
+    expect(styles.text).not.toHaveProperty("fontFamily");
+    expect(styles.text).not.toHaveProperty("fontSize");
+    expect(styles.text).toMatchObject({ letterSpacing: 0 });
+    expect(styles.paragraph.marginBottom).toBeGreaterThan(0);
+    expect(styles.code_block).toMatchObject({ letterSpacing: 0 });
+    expect(styles.fence).toMatchObject({ letterSpacing: 0 });
+    expect(styles.th).toMatchObject({
+      lineHeight: Math.round(darkTheme.workspaceFontSize.sm * 1.4),
+      letterSpacing: 0,
     });
   });
 

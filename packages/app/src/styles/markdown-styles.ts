@@ -23,7 +23,8 @@ export function createMarkdownStyles(theme: Theme) {
       fontSize: theme.workspaceFontSize.base,
       // Prose line-height scales with the workspace ramp, NOT the
       // code-size-coupled lineHeight.diff token used by code/diff surfaces.
-      lineHeight: Math.round(theme.workspaceFontSize.base * 1.4),
+      lineHeight: Math.round(theme.workspaceFontSize.base * 1.5),
+      letterSpacing: 0,
       flexShrink: 1,
       minWidth: 0,
       width: "100%" as const,
@@ -32,8 +33,7 @@ export function createMarkdownStyles(theme: Theme) {
     text: {
       ...webSelectableTextStyle,
       color: theme.colors.foreground,
-      fontFamily: theme.fontFamily.workspace,
-      fontSize: theme.workspaceFontSize.base,
+      letterSpacing: 0,
       flexShrink: 1,
       minWidth: 0,
       overflowWrap: "anywhere" as const,
@@ -135,7 +135,7 @@ export function createMarkdownStyles(theme: Theme) {
 
     strong: {
       ...webSelectableTextStyle,
-      fontWeight: theme.fontWeight.medium,
+      fontWeight: theme.fontWeight.bold,
     },
 
     em: {
@@ -184,6 +184,7 @@ export function createMarkdownStyles(theme: Theme) {
       fontFamily: theme.fontFamily.mono,
       fontSize: theme.fontSize.code,
       lineHeight: Math.round(theme.fontSize.code * 1.45),
+      letterSpacing: 0,
     },
 
     code_block: {
@@ -195,6 +196,7 @@ export function createMarkdownStyles(theme: Theme) {
       fontFamily: theme.fontFamily.mono,
       fontSize: theme.fontSize.code,
       lineHeight: theme.lineHeight.diff,
+      letterSpacing: 0,
       marginVertical: theme.spacing[2],
     },
 
@@ -209,6 +211,7 @@ export function createMarkdownStyles(theme: Theme) {
       fontFamily: theme.fontFamily.mono,
       fontSize: theme.fontSize.code,
       lineHeight: theme.lineHeight.diff,
+      letterSpacing: 0,
       marginVertical: theme.spacing[3],
     },
 
@@ -244,6 +247,8 @@ export function createMarkdownStyles(theme: Theme) {
       color: theme.colors.foreground,
       fontFamily: theme.fontFamily.workspace,
       fontSize: theme.workspaceFontSize.sm,
+      lineHeight: Math.round(theme.workspaceFontSize.sm * 1.4),
+      letterSpacing: 0,
       textAlign: "left" as const,
     },
 
@@ -261,6 +266,8 @@ export function createMarkdownStyles(theme: Theme) {
       color: theme.colors.foreground,
       fontFamily: theme.fontFamily.workspace,
       fontSize: theme.workspaceFontSize.sm,
+      lineHeight: Math.round(theme.workspaceFontSize.sm * 1.4),
+      letterSpacing: 0,
       flex: 1,
     },
 

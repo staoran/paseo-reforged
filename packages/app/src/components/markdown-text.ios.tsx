@@ -72,6 +72,7 @@ export function MarkdownTextSpan({
 
 interface MarkdownParagraphViewProps {
   paragraphStyle: ViewStyle;
+  paragraphTextStyle: TextStyle;
   containsImage?: boolean;
   children: ReactNode;
 }
@@ -86,16 +87,18 @@ const MARKDOWN_PARAGRAPH_RESET: ViewStyle = {};
 // flow through unchanged.
 export function MarkdownParagraphView({
   paragraphStyle,
+  paragraphTextStyle,
   containsImage = false,
   children,
 }: MarkdownParagraphViewProps) {
   const textStyle = useMemo(
     () =>
       resolvePlainMarkdownTextStyle([
+        paragraphTextStyle,
         paragraphStyle,
         MARKDOWN_PARAGRAPH_RESET,
       ] as StyleProp<TextStyle>),
-    [paragraphStyle],
+    [paragraphStyle, paragraphTextStyle],
   );
   const viewStyle = useMemo(() => [paragraphStyle, MARKDOWN_PARAGRAPH_RESET], [paragraphStyle]);
 

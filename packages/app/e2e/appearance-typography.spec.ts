@@ -3,6 +3,7 @@ import { test, expect, type Page } from "./fixtures";
 import { openSettings } from "./helpers/app";
 import { expectComposerVisible } from "./helpers/composer";
 import { openAgentRoute, seedMockAgentWorkspace } from "./helpers/mock-agent";
+import { daemonWsRoutePattern } from "./helpers/daemon-port";
 import {
   clickSettingsBackToWorkspace,
   expectSettingsHeader,
@@ -10,6 +11,16 @@ import {
 } from "./helpers/settings";
 
 const APP_SETTINGS_KEY = "@paseo:app-settings";
+
+const RICH_MARKDOWN = [
+  "## Markdown rhythm",
+  "",
+  "This deliberately long paragraph verifies that automatic wrapping follows one stable prose line height across the full conversation width. It contains enough words to wrap onto several visual lines even on a compact viewport without introducing a Markdown block boundary.",
+  "",
+  "The next paragraph starts after a Markdown block boundary, so its first line must keep a visibly larger rhythm than two automatically wrapped lines inside the paragraph above.",
+  "",
+  "**Genuinely bold text** sits beside `inlineCode`, [Paseo docs](https://example.com), and [target.ts:42](target.ts#L42).",
+].join("\n");
 
 type AppearanceField =
   | "uiFontFamily"
@@ -23,6 +34,77 @@ interface Typography {
   fontFamily: string;
   fontSize: number;
   lineHeight: number;
+}
+
+async function installFinalAnswerFixture(page: Page, markdown: string): Promise<void> {
+  await page.routeWebSocket(daemonWsRoutePattern(), (socket) => {
+    const server = socket.connectToServer();
+    socket.onMessage((message) => server.send(message));
+    server.onMessage((message) => {
+      if (typeof message !== "string") {
+        socket.send(message);
+        return;
+      }
+
+      try {
+        const envelope = JSON.parse(message) as {
+          type?: unknown;
+          message?: {
+            type?: unknown;
+            payload?: { entries?: Array<{ item?: Record<string, unknown> }> };
+          };
+        };
+        if (
+          envelope.type === "session" &&
+          envelope.message?.type === "fetch_agent_timeline_response"
+        ) {
+          const entries = envelope.message.payload?.entries;
+          const finalAnswer = entries
+            ?.map((entry) => entry.item)
+            .findLast(
+              (item) =>
+                item?.type === "assistant_message" &&
+                (item.phase === "final_answer" || item.text === "Synthetic load test complete"),
+            );
+          if (finalAnswer) finalAnswer.text = markdown;
+          socket.send(JSON.stringify(envelope));
+          return;
+        }
+      } catch {
+        // Forward non-JSON daemon traffic unchanged.
+      }
+
+      socket.send(message);
+    });
+  });
+}
+
+async function readTextLineTops(locator: Locator): Promise<number[]> {
+  await expect(locator).toBeVisible();
+  return locator.evaluate((element) => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    const tops = Array.from(range.getClientRects(), (rect) => Math.round(rect.top * 10) / 10);
+    return [...new Set(tops)];
+  });
+}
+
+async function readLeafTextStyle(locator: Locator) {
+  await expect(locator).toBeVisible();
+  return locator.evaluate((element) => {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    const textNode = walker.nextNode();
+    const textElement = textNode?.parentElement ?? element;
+    const style = getComputedStyle(textElement);
+    return {
+      fontSize: Number.parseFloat(style.fontSize),
+      lineHeight: Number.parseFloat(style.lineHeight),
+      letterSpacing: style.letterSpacing === "normal" ? 0 : Number.parseFloat(style.letterSpacing),
+      fontWeight: style.fontWeight,
+      color: style.color,
+      backgroundColor: style.backgroundColor,
+    };
+  });
 }
 
 async function readTypography(locator: Locator): Promise<Typography> {
@@ -128,6 +210,82 @@ async function expectTextFits(locator: Locator): Promise<void> {
   expect(metrics.horizontalOverflow).toBe(false);
   expect(metrics.height).toBeGreaterThanOrEqual(metrics.lineHeight);
 }
+
+test("renders final answer Markdown with distinct line and block rhythm", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(90_000);
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "final-answer-markdown-",
+    title: "Final answer Markdown",
+    model: "ten-second-stream",
+    initialPrompt: "Render the rich Markdown typography fixture.",
+  });
+
+  try {
+    await agent.client.waitForFinish(agent.agentId, 30_000);
+    await installFinalAnswerFixture(page, RICH_MARKDOWN);
+    await page.setViewportSize({ width: 960, height: 900 });
+    await openAgentRoute(page, agent);
+    await expectComposerVisible(page);
+
+    const assistant = page
+      .getByTestId("assistant-message")
+      .filter({ hasText: "Markdown rhythm" })
+      .last();
+    const heading = assistant.getByText("Markdown rhythm", { exact: true });
+    const wrappedParagraph = assistant.getByText(/This deliberately long paragraph verifies/);
+    const nextParagraph = assistant.getByText(/The next paragraph starts after/);
+    const strong = assistant.getByText("Genuinely bold text", { exact: true });
+    const inlineCode = assistant.getByText("inlineCode", { exact: true });
+    const externalLink = assistant.getByText("Paseo docs", { exact: true });
+    const fileLink = assistant.getByText("target.ts:42", { exact: true });
+
+    await expect(assistant).toBeVisible();
+    const proseStyle = await readLeafTextStyle(wrappedParagraph);
+    const expectedLineHeight = 24;
+    expect(proseStyle).toMatchObject({
+      fontSize: 16,
+      lineHeight: expectedLineHeight,
+      letterSpacing: 0,
+    });
+
+    const wrappedLineTops = await readTextLineTops(wrappedParagraph);
+    const nextLineTops = await readTextLineTops(nextParagraph);
+    expect(wrappedLineTops.length).toBeGreaterThan(1);
+    for (let index = 1; index < wrappedLineTops.length; index += 1) {
+      expect(wrappedLineTops[index]! - wrappedLineTops[index - 1]!).toBeCloseTo(
+        expectedLineHeight,
+        0,
+      );
+    }
+    expect(nextLineTops[0]! - wrappedLineTops.at(-1)!).toBeGreaterThan(expectedLineHeight);
+
+    expect((await readLeafTextStyle(strong)).fontWeight).toBe("700");
+    expect((await readLeafTextStyle(heading)).fontSize).toBeGreaterThan(16);
+    expect((await readLeafTextStyle(inlineCode)).backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
+
+    const externalColor = (await readLeafTextStyle(externalLink)).color;
+    expect((await readLeafTextStyle(fileLink)).color).toBe(externalColor);
+    await expect(externalLink.locator("xpath=ancestor::a[1]")).toHaveAttribute(
+      "href",
+      "https://example.com",
+    );
+    await expect(fileLink.locator("xpath=ancestor::a[1]")).toHaveAttribute("href", "target.ts#L42");
+
+    expect(
+      await assistant.evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
+    ).toBe(true);
+    const screenshotPath = testInfo.outputPath("final-answer-markdown-960x900-16px.png");
+    await assistant.screenshot({ path: screenshotPath });
+    await testInfo.attach("final-answer-markdown-960x900-16px", {
+      path: screenshotPath,
+      contentType: "image/png",
+    });
+  } finally {
+    await agent.cleanup();
+  }
+});
 
 test("keeps interface, workspace, and code typography independent", async ({ page }, testInfo) => {
   test.setTimeout(180_000);

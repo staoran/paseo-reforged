@@ -46,6 +46,7 @@ export function MarkdownTextSpan({
 
 interface MarkdownParagraphViewProps {
   paragraphStyle: ViewStyle;
+  paragraphTextStyle: TextStyle;
   containsImage?: boolean;
   children: ReactNode;
 }

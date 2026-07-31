@@ -35,20 +35,35 @@ export function MarkdownTextSpan({
 
 interface MarkdownParagraphViewProps {
   paragraphStyle: ViewStyle;
+  paragraphTextStyle: TextStyle;
   containsImage?: boolean;
   children: ReactNode;
 }
 
 const MARKDOWN_PARAGRAPH_RESET: ViewStyle = {};
 
-// Paragraph stays a <View>, not a <Text>, for layout fidelity. RN Android's
-// text engine *does* accept inline View children (TextInlineViewPlaceholderSpan
-// in ReactBaseTextShadowNode), so this isn't a crash-avoidance choice — but
-// inline-placeholder spans collapse block-level children (e.g. paragraph
-// images) into one-character placeholders, which destroys image row layout.
-// <View> preserves the original block layout; the trade-off is no cross-span
-// selection on Android (a UITextView-style trick has no Android equivalent).
-export function MarkdownParagraphView({ paragraphStyle, children }: MarkdownParagraphViewProps) {
-  const style = useMemo(() => [paragraphStyle, MARKDOWN_PARAGRAPH_RESET], [paragraphStyle]);
-  return <View style={style}>{children}</View>;
+// One Text owns a text-only paragraph so wrapping and selection span every
+// inline Markdown node. Images keep the View path because Android represents
+// an inline View as a one-character placeholder, which collapses image layout.
+export function MarkdownParagraphView({
+  paragraphStyle,
+  paragraphTextStyle,
+  containsImage = false,
+  children,
+}: MarkdownParagraphViewProps) {
+  const viewStyle = useMemo(() => [paragraphStyle, MARKDOWN_PARAGRAPH_RESET], [paragraphStyle]);
+  const textStyle = useMemo(
+    () => [paragraphTextStyle, paragraphStyle, MARKDOWN_PARAGRAPH_RESET] as StyleProp<TextStyle>,
+    [paragraphStyle, paragraphTextStyle],
+  );
+
+  if (containsImage) {
+    return <View style={viewStyle}>{children}</View>;
+  }
+
+  return (
+    <Text selectable style={textStyle}>
+      {children}
+    </Text>
+  );
 }
