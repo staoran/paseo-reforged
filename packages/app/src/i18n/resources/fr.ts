@@ -269,6 +269,10 @@ export const fr: TranslationResources = {
   message: {
     actions: {
       copyCode: "Copier le code",
+      copyMermaidSource: "Copier la source Mermaid",
+      expandMermaidDiagram: "Agrandir le diagramme Mermaid",
+      hideMermaidSource: "Masquer la source Mermaid",
+      showMermaidSource: "Afficher la source Mermaid",
       copyTurn: "Copier le tour",
       copyMessage: "Copier le message",
       forkMenu: "Dupliquer le message",

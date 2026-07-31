@@ -265,6 +265,10 @@ export const ar: TranslationResources = {
   message: {
     actions: {
       copyCode: "نسخ الرمز",
+      copyMermaidSource: "نسخ مصدر Mermaid",
+      expandMermaidDiagram: "توسيع مخطط Mermaid",
+      hideMermaidSource: "إخفاء مصدر Mermaid",
+      showMermaidSource: "عرض مصدر Mermaid",
       copyTurn: "نسخ بدوره",
       copyMessage: "انسخ الرسالة",
       forkMenu: "تفريع الرسالة",

@@ -264,6 +264,10 @@ export const en = {
   message: {
     actions: {
       copyCode: "Copy code",
+      copyMermaidSource: "Copy Mermaid source",
+      expandMermaidDiagram: "Expand Mermaid diagram",
+      hideMermaidSource: "Hide Mermaid source",
+      showMermaidSource: "Show Mermaid source",
       copyTurn: "Copy turn",
       copyMessage: "Copy message",
       forkMenu: "Fork chat",

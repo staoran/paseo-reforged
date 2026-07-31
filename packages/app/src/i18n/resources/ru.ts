@@ -267,6 +267,10 @@ export const ru: TranslationResources = {
   message: {
     actions: {
       copyCode: "Скопировать код",
+      copyMermaidSource: "Скопировать исходник Mermaid",
+      expandMermaidDiagram: "Развернуть диаграмму Mermaid",
+      hideMermaidSource: "Скрыть исходник Mermaid",
+      showMermaidSource: "Показать исходник Mermaid",
       copyTurn: "Копировать ход",
       copyMessage: "Копировать сообщение",
       forkMenu: "Форкнуть сообщение",

@@ -1,3 +1,5 @@
+import { createElement, type ComponentType } from "react";
+
 const testTheme = {
   colorScheme: "light",
   colors: {
@@ -22,6 +24,11 @@ const testTheme = {
   fontSize: {
     xs: 12,
     sm: 14,
+  },
+  fontFamily: {
+    ui: "Arial, sans-serif",
+    workspace: "Arial, sans-serif",
+    mono: "monospace",
   },
   fontWeight: {
     normal: "400",
@@ -51,7 +58,16 @@ export const StyleSheet = {
     isStyleFactory(styles) ? styles(testTheme) : styles,
 };
 
-export const withUnistyles = <T>(Component: T): T => Component;
+export function withUnistyles<Props extends object>(
+  Component: ComponentType<Props>,
+  mapThemeToProps?: (theme: typeof testTheme) => Partial<Props>,
+): ComponentType<Props> {
+  if (!mapThemeToProps) return Component;
+
+  return function TestThemedComponent(props: Props) {
+    return createElement(Component, { ...props, ...mapThemeToProps(testTheme) });
+  };
+}
 
 export const useUnistyles = () => ({
   theme: testTheme,

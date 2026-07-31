@@ -296,6 +296,19 @@ values are available as `PASEO_SCRIPTNAME`, `PASEO_WORKSPACE_ID`, `PASEO_BRANCH_
 `PASEO_WORKTREE_PATH`. The script must print one valid TCP port. Paseo trusts the external allocator,
 so the port may already be bound. `portScript` takes precedence when both values are present.
 
+## Generated app WebView assets
+
+The app builds its terminal and Mermaid WebView documents from TypeScript entry points:
+
+```bash
+npm run build:terminal-webview --workspace=@getpaseo/app
+npm run build:mermaid-webview --workspace=@getpaseo/app
+```
+
+`eas-build-post-install` runs both generators for native builds. Edit the entry points and build scripts, not the generated HTML.
+
+Keep large WebView documents as standalone Metro assets. Native components should resolve them with `Asset.fromModule(require(...))`, call `downloadAsync()`, and load only `asset.localUri`. Do not export a multi-megabyte HTML document as a TypeScript string: it becomes part of the main React Native bundle, and Hermes must parse and optimize the full literal while generating bytecode. The Mermaid runtime triggered a Windows Hermes out-of-memory failure in that shape; the standalone `.html` asset is copied separately into Android and iOS exports.
+
 ## Bundled daemon web UI
 
 > The user-facing guide for this feature (enabling it, reverse proxy, TLS, tunnels, security) lives at [public-docs/web-ui.md](../public-docs/web-ui.md). This section is the contributor/build reference: how the artifact is produced, bundled, and excluded from desktop packaging.

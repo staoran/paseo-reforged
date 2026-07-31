@@ -13,6 +13,36 @@ const resolvePackageEntry = (packageName: string) => {
 };
 
 export default defineConfig({
+  define: {
+    __DEV__: "false",
+    global: "globalThis",
+    "process.env.EXPO_OS": JSON.stringify("web"),
+  },
+  esbuild: {
+    jsx: "automatic",
+  },
+  optimizeDeps: {
+    include: ["react/jsx-dev-runtime"],
+    esbuildOptions: {
+      loader: { ".js": "jsx" },
+      resolveExtensions: [
+        ".web.mjs",
+        ".web.js",
+        ".web.mts",
+        ".web.ts",
+        ".web.jsx",
+        ".web.tsx",
+        ".mjs",
+        ".js",
+        ".mts",
+        ".ts",
+        ".jsx",
+        ".tsx",
+        ".css",
+        ".json",
+      ],
+    },
+  },
   test: {
     environment: "node",
     exclude: [...configDefaults.exclude, "e2e/**"],
@@ -116,6 +146,10 @@ export default defineConfig({
       {
         find: /^expo-linking$/,
         replacement: path.resolve(__dirname, "test-stubs/expo-linking.ts"),
+      },
+      {
+        find: /^expo-clipboard$/,
+        replacement: path.resolve(__dirname, "test-stubs/expo-clipboard.ts"),
       },
       {
         find: /^lucide-react-native$/,

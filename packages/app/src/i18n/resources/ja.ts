@@ -268,6 +268,10 @@ export const ja: TranslationResources = {
   message: {
     actions: {
       copyCode: "コードをコピー",
+      copyMermaidSource: "Mermaid ソースをコピー",
+      expandMermaidDiagram: "Mermaid 図を拡大",
+      hideMermaidSource: "Mermaid ソースを隠す",
+      showMermaidSource: "Mermaid ソースを表示",
       copyTurn: "ターンをコピー",
       copyMessage: "メッセージをコピー",
       forkMenu: "メッセージをフォーク",

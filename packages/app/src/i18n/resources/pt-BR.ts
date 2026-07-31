@@ -268,6 +268,10 @@ export const ptBR: TranslationResources = {
   message: {
     actions: {
       copyCode: "Copiar código",
+      copyMermaidSource: "Copiar fonte Mermaid",
+      expandMermaidDiagram: "Ampliar diagrama Mermaid",
+      hideMermaidSource: "Ocultar fonte Mermaid",
+      showMermaidSource: "Mostrar fonte Mermaid",
       copyTurn: "Copiar turno",
       copyMessage: "Copiar mensagem",
       forkMenu: "Bifurcar mensagem",

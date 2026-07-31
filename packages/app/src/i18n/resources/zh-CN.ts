@@ -265,6 +265,10 @@ export const zhCN: TranslationResources = {
   message: {
     actions: {
       copyCode: "复制代码",
+      copyMermaidSource: "复制 Mermaid 源码",
+      expandMermaidDiagram: "展开 Mermaid 图",
+      hideMermaidSource: "隐藏 Mermaid 源码",
+      showMermaidSource: "显示 Mermaid 源码",
       copyTurn: "复制回合",
       copyMessage: "复制消息",
       forkMenu: "分叉消息",

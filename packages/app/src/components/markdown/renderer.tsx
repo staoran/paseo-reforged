@@ -24,6 +24,11 @@ import Markdown, {
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { AppearanceStyleBoundary } from "@/components/appearance-style-boundary";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
+import { MarkdownFenceBlock } from "@/components/markdown/markdown-fence-block";
+import {
+  configureMarkdownFenceMetadata,
+  isMarkdownFenceNodeClosed,
+} from "@/components/markdown/fence-metadata";
 import { MarkdownParagraphView, MarkdownTextSpan } from "@/components/markdown-text";
 import { MarkdownTableCellText } from "@/components/markdown-text-selection";
 import { getMarkdownListMarker, getMarkdownListSpacing } from "@/utils/markdown-list";
@@ -63,7 +68,9 @@ function compactMarkdownStyleMapping(theme: Theme): Partial<MarkdownWithStableRe
   return { style: createCompactMarkdownStyles(theme) };
 }
 
-const defaultMarkdownParser = MarkdownIt({ typographer: true, linkify: true });
+const defaultMarkdownParser = configureMarkdownFenceMetadata(
+  MarkdownIt({ typographer: true, linkify: true }),
+);
 const EMPTY_TEXT_STYLE: TextStyle = {};
 const MARKDOWN_LIST_ITEM_CONTENT_FLEX: ViewStyle = { flex: 1, flexShrink: 1, minWidth: 0 };
 export interface MarkdownRendererProps {
@@ -614,10 +621,11 @@ export function createSharedMarkdownRules(): RenderRules {
       styles: MarkdownStyles,
       inheritedStyles: TextStyle = {},
     ) => (
-      <HighlightedCodeBlock
+      <MarkdownFenceBlock
         key={node.key}
         code={node.content}
         language={node.sourceInfo}
+        isClosed={isMarkdownFenceNodeClosed(node)}
         inheritedStyles={inheritedStyles}
         textStyle={styles.fence}
       />
