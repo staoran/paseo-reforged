@@ -4,6 +4,7 @@
 import { act } from "@testing-library/react";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { WorkspaceScriptPayload } from "@getpaseo/protocol/messages";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import React from "react";
@@ -11,6 +12,19 @@ import type { ReactElement } from "react";
 
 vi.hoisted(() => {
   (globalThis as unknown as { __DEV__: boolean }).__DEV__ = false;
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    value: () => ({
+      addEventListener: () => {},
+      addListener: () => {},
+      dispatchEvent: () => false,
+      matches: false,
+      media: "",
+      onchange: null,
+      removeEventListener: () => {},
+      removeListener: () => {},
+    }),
+  });
 });
 
 const pathnameState = vi.hoisted(() => ({
@@ -25,11 +39,103 @@ vi.mock("expo-router", () => ({
   usePathname: () => pathnameState.value,
 }));
 
+vi.mock("react-native-draggable-flatlist", async () => {
+  const ReactModule = await import("react");
+  return {
+    NestableScrollContainer: ({ children }: { children: React.ReactNode }) =>
+      ReactModule.createElement("div", null, children),
+  };
+});
+
+vi.mock("@/components/draggable-list", async () => {
+  const ReactModule = await import("react");
+  return {
+    DraggableList: ({
+      data,
+      keyExtractor,
+      renderItem,
+    }: {
+      data: unknown[];
+      keyExtractor: (item: unknown, index: number) => string;
+      renderItem: (input: {
+        item: unknown;
+        index: number;
+        drag: () => void;
+        isActive: boolean;
+      }) => React.ReactNode;
+    }) =>
+      ReactModule.createElement(
+        ReactModule.Fragment,
+        null,
+        data.map((item, index) =>
+          ReactModule.createElement(
+            ReactModule.Fragment,
+            { key: keyExtractor(item, index) },
+            renderItem({ item, index, drag: () => {}, isActive: false }),
+          ),
+        ),
+      ),
+  };
+});
+
+vi.mock("@/components/rename-modal", () => ({
+  AdaptiveRenameModal: () => null,
+}));
+
+vi.mock("@/components/workspace-hover-card", () => ({
+  WorkspaceHoverCard: ({ children }: { children: React.ReactNode }) => children,
+}));
+
+vi.mock("@/components/synced-loader", () => ({
+  SyncedLoader: () => null,
+}));
+
+vi.mock("@/components/ui/context-menu", () => ({
+  ContextMenu: ({ children }: { children: React.ReactNode }) => children,
+  ContextMenuContent: () => null,
+  ContextMenuItem: () => null,
+  ContextMenuTrigger: ({ children }: { children: React.ReactNode }) => children,
+}));
+
+vi.mock("@/components/ui/dropdown-menu", () => ({
+  DropdownMenu: ({ children }: { children: React.ReactNode }) => children,
+  DropdownMenuContent: () => null,
+  DropdownMenuItem: () => null,
+  DropdownMenuTrigger: ({
+    children,
+  }: {
+    children:
+      | React.ReactNode
+      | ((state: { hovered: boolean; pressed: boolean }) => React.ReactNode);
+  }) => (typeof children === "function" ? children({ hovered: false, pressed: false }) : children),
+}));
+
+vi.mock("@/components/ui/tooltip", () => ({
+  Tooltip: ({ children }: { children: React.ReactNode }) => children,
+  TooltipContent: () => null,
+  TooltipTrigger: ({ children }: { children: React.ReactNode }) => children,
+}));
+
+vi.mock("@/components/sidebar/sidebar-workspace-menu", () => ({
+  SidebarWorkspaceContextMenuContent: () => null,
+  SidebarWorkspaceMenu: () => null,
+}));
+
+vi.mock("@/components/ui/button", () => ({
+  Button: () => null,
+}));
+
+vi.mock("@/workspace/open-in-file-manager/menu-item", () => ({
+  OpenInFileManagerMenuItem: () => null,
+}));
+
 import {
   createSidebarWorkspaceEntry,
   type SidebarProjectEntry,
 } from "@/hooks/use-sidebar-workspaces-list";
 import { useSidebarWorkspacesList } from "@/hooks/use-sidebar-workspaces-list";
+import { useSidebarWorkspaceEntries } from "@/hooks/use-sidebar-workspace-entries";
+import { SidebarWorkspaceList } from "@/components/sidebar-workspace-list";
 import { patchWorkspaceScripts } from "@/contexts/session-workspace-scripts";
 import {
   getHostRuntimeStore,
@@ -48,6 +154,17 @@ vi.mock("@react-native-async-storage/async-storage", () => ({
     setItem: vi.fn().mockResolvedValue(undefined),
     removeItem: vi.fn().mockResolvedValue(undefined),
   },
+}));
+
+vi.mock("expo-clipboard", () => ({
+  setStringAsync: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("@/contexts/toast-context", () => ({
+  useToast: () => ({
+    copied: vi.fn(),
+    error: vi.fn(),
+  }),
 }));
 
 const SERVER_ID = "sidebar-render-count";
@@ -79,6 +196,7 @@ function workspace(input: {
   name: string;
   status?: WorkspaceDescriptor["status"];
   scripts?: WorkspaceDescriptor["scripts"];
+  diffStat?: WorkspaceDescriptor["diffStat"];
 }): WorkspaceDescriptor {
   return {
     id: input.id,
@@ -92,7 +210,7 @@ function workspace(input: {
     status: input.status ?? "done",
     statusEnteredAt: null,
     archivingAt: null,
-    diffStat: null,
+    diffStat: input.diffStat ?? null,
     scripts: input.scripts ?? [],
   };
 }
@@ -324,6 +442,34 @@ function renderSidebarFrame(root: Root, counts: RenderCounts) {
   root.render(<SidebarFrameProbe counts={counts} />);
 }
 
+function SidebarWorkspaceListProbe(): ReactElement {
+  const { projects, projectNamesByKey } = useSidebarWorkspacesList({ hostFilters: [SERVER_ID] });
+  const placements = React.useMemo(
+    () => projects.flatMap((project) => project.workspaces),
+    [projects],
+  );
+  const workspaceEntriesByKey = useSidebarWorkspaceEntries(placements);
+  const pinnedGroups = React.useMemo(
+    () => ({ pinnedChats: [], unpinnedProjects: projects }),
+    [projects],
+  );
+  const handleToggleProjectCollapsed = React.useCallback(() => undefined, []);
+
+  return (
+    <SidebarWorkspaceList
+      statusGroups={[]}
+      pinnedGroups={pinnedGroups}
+      projects={projects}
+      workspaceEntriesByKey={workspaceEntriesByKey}
+      projectNamesByKey={projectNamesByKey}
+      collapsedProjectKeys={new Set()}
+      onToggleProjectCollapsed={handleToggleProjectCollapsed}
+      shortcutIndexByWorkspaceKey={new Map()}
+      groupMode="project"
+    />
+  );
+}
+
 describe("sidebar workspace render isolation", () => {
   let root: Root | null = null;
   let container: HTMLElement | null = null;
@@ -429,6 +575,30 @@ describe("sidebar workspace render isolation", () => {
       projectSelection: {},
       rowSelection: {},
     });
+  });
+
+  it("does not show checkout diff stats in workspace rows", async () => {
+    const workspaces = createWorkspaces();
+    workspaces[0] = { ...workspaces[0], diffStat: { additions: 17, deletions: 9 } };
+    initializeSidebarState(workspaces);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(
+        <QueryClientProvider client={queryClient}>
+          <SidebarWorkspaceListProbe />
+        </QueryClientProvider>,
+      );
+    });
+
+    expect(container.textContent).toContain("main");
+    expect(container.textContent).not.toContain("+17");
+    expect(container.textContent).not.toContain("-9");
   });
 
   it("updates active selection probes from the active workspace route", async () => {

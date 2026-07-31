@@ -10,6 +10,13 @@ const testTheme = {
     surface1: "#fafafa",
     surface2: "#f4f4f5",
     border: "#e4e4e7",
+    palette: {
+      amber: { 500: "#f59e0b", 700: "#b45309" },
+      blue: { 500: "#3b82f6" },
+      green: { 500: "#22c55e" },
+      purple: { 500: "#a855f7" },
+      red: { 500: "#ef4444" },
+    },
   },
   spacing: [0, 4, 8, 12, 16, 20, 24, 28, 32],
   fontSize: {
@@ -23,6 +30,13 @@ const testTheme = {
   borderRadius: {
     base: 4,
     md: 6,
+  },
+  iconSize: {
+    sm: 12,
+    md: 16,
+  },
+  shadow: {
+    md: {},
   },
 };
 

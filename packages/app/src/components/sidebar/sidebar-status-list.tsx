@@ -18,7 +18,6 @@ import {
   CircleDot,
   CircleX,
 } from "lucide-react-native";
-import { DiffStat } from "@/components/diff-stat";
 import { useToast } from "@/contexts/toast-context";
 import { useMutation } from "@tanstack/react-query";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
@@ -36,7 +35,6 @@ import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import {
   SidebarWorkspaceRowFrame,
   SidebarWorkspaceRowContent,
-  SidebarWorkspaceTrailingActionBase,
   SidebarWorkspaceTrailingActionOverlay,
   SidebarWorkspaceTrailingActionSlot,
 } from "@/components/sidebar/sidebar-workspace-row-content";
@@ -667,7 +665,7 @@ function StatusWorkspaceRowInner({
         const showShortcut = showShortcutBadge && shortcutNumber !== null;
         const showKebab = Boolean(onArchive && (isHovered || isTouchPlatform));
         const showKebabInSlot = showKebab && !showShortcut;
-        const shouldRenderActionSlot = Boolean(onArchive || workspace.diffStat);
+        const shouldRenderActionSlot = Boolean(onArchive);
         const workspaceRowStyle = getStatusWorkspaceRowStyle({ selected, isHovered });
         return (
           <View style={styles.workspaceRowContainer} {...hoverHandlers}>
@@ -693,7 +691,6 @@ function StatusWorkspaceRowInner({
                 {shouldRenderActionSlot ? (
                   <StatusWorkspaceActionSlot
                     workspace={workspace}
-                    showBase={Boolean(workspace.diffStat && !showKebabInSlot && !showShortcut)}
                     showKebab={showKebabInSlot}
                     isPinned={isPinned}
                     onTogglePin={onTogglePin}
@@ -719,7 +716,6 @@ function StatusWorkspaceRowInner({
 
 function StatusWorkspaceActionSlot({
   workspace,
-  showBase,
   showKebab,
   isPinned,
   onTogglePin,
@@ -734,7 +730,6 @@ function StatusWorkspaceActionSlot({
   archiveShortcutKeys,
 }: {
   workspace: SidebarWorkspaceEntry;
-  showBase: boolean;
   showKebab: boolean;
   isPinned?: boolean;
   onTogglePin?: () => void;
@@ -750,14 +745,6 @@ function StatusWorkspaceActionSlot({
 }) {
   return (
     <SidebarWorkspaceTrailingActionSlot>
-      <SidebarWorkspaceTrailingActionBase visible={showBase}>
-        {workspace.diffStat ? (
-          <DiffStat
-            additions={workspace.diffStat.additions}
-            deletions={workspace.diffStat.deletions}
-          />
-        ) : null}
-      </SidebarWorkspaceTrailingActionBase>
       <SidebarWorkspaceTrailingActionOverlay visible={showKebab}>
         {showKebab && onArchive ? (
           <SidebarWorkspaceMenu

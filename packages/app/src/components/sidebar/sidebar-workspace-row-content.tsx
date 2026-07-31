@@ -439,7 +439,6 @@ export const sidebarWorkspaceRowStyles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.medium,
     lineHeight: Math.round(theme.fontSize.xs * 1.25),
   },
-  hidden: { opacity: 0 },
   trailingActionSlot: {
     position: "relative",
     minWidth: 18,
@@ -465,17 +464,6 @@ export function SidebarWorkspaceShortcutBadge({ number }: { number: number }) {
 
 export function SidebarWorkspaceTrailingActionSlot({ children }: { children: ReactNode }) {
   return <View style={sidebarWorkspaceRowStyles.trailingActionSlot}>{children}</View>;
-}
-
-export function SidebarWorkspaceTrailingActionBase({
-  visible,
-  children,
-}: {
-  visible: boolean;
-  children: ReactNode;
-}) {
-  if (!children) return null;
-  return <View style={visible ? undefined : sidebarWorkspaceRowStyles.hidden}>{children}</View>;
 }
 
 export function SidebarWorkspaceTrailingActionOverlay({
