@@ -3,7 +3,7 @@ import { resolveSyntaxColors, type SyntaxThemeId } from "@getpaseo/highlight";
 import {
   DEFAULT_UI_FONT_STACK,
   DEFAULT_MONO_FONT_STACK,
-  FONT_SIZE,
+  WORKSPACE_FONT_SIZE,
   type Theme,
 } from "@/styles/theme";
 import { applyRootUiFont } from "./apply-root-font";
@@ -20,8 +20,8 @@ const ALL_THEME_KEYS = [
   "darkGhostty",
 ] as const;
 
-// The UI font size at which the FONT_SIZE ramp is authored (1.0 scale factor).
-const BASE_UI_REFERENCE = FONT_SIZE.base; // 16
+// The workspace font size at which the ramp is authored (1.0 scale factor).
+const BASE_WORKSPACE_REFERENCE = WORKSPACE_FONT_SIZE.base; // 16
 
 export interface AppearanceInput {
   uiFontFamily: string; // "" -> default stack
@@ -33,26 +33,31 @@ export interface AppearanceInput {
   syntaxTheme: SyntaxThemeId;
 }
 
-/**
- * Build the font-size ramp from the canonical `FONT_SIZE` ramp, scaled
- * proportionally by `uiSize / 16` so the type hierarchy is preserved at non-default
- * sizes. Deriving from the authored ramp — NOT the live (possibly already-scaled)
- * theme — makes `applyAppearance` idempotent: repeated applies never compound, and a
- * code-size change (uiSize unchanged) leaves the UI ramp at its authored values.
- * `code` is set absolutely to `codeSize`, never scaled by the UI factor — a separate
- * control on a separate semantic axis (mono/diff text).
- */
-function scaleFontSize(size: number): Theme["workspaceFontSize"] {
-  const r = size / BASE_UI_REFERENCE;
+function createInterfaceFontSize(size: number): Omit<Theme["fontSize"], "code"> {
   return {
-    xs: Math.round(FONT_SIZE.xs * r),
-    sm: Math.round(FONT_SIZE.sm * r),
-    base: Math.round(FONT_SIZE.base * r),
-    lg: Math.round(FONT_SIZE.lg * r),
-    xl: Math.round(FONT_SIZE.xl * r),
-    "2xl": Math.round(FONT_SIZE["2xl"] * r),
-    "3xl": Math.round(FONT_SIZE["3xl"] * r),
-    "4xl": Math.round(FONT_SIZE["4xl"] * r),
+    xs: size,
+    sm: size,
+    base: size,
+    lg: size,
+    xl: size,
+    "2xl": size,
+    "3xl": size,
+    "4xl": size,
+  };
+}
+
+/** Build the workspace hierarchy from the canonical ramp without compounding. */
+function scaleWorkspaceFontSize(size: number): Theme["workspaceFontSize"] {
+  const r = size / BASE_WORKSPACE_REFERENCE;
+  return {
+    xs: Math.round(WORKSPACE_FONT_SIZE.xs * r),
+    sm: Math.round(WORKSPACE_FONT_SIZE.sm * r),
+    base: Math.round(WORKSPACE_FONT_SIZE.base * r),
+    lg: Math.round(WORKSPACE_FONT_SIZE.lg * r),
+    xl: Math.round(WORKSPACE_FONT_SIZE.xl * r),
+    "2xl": Math.round(WORKSPACE_FONT_SIZE["2xl"] * r),
+    "3xl": Math.round(WORKSPACE_FONT_SIZE["3xl"] * r),
+    "4xl": Math.round(WORKSPACE_FONT_SIZE["4xl"] * r),
   };
 }
 
@@ -80,8 +85,11 @@ export function applyAppearance(input: AppearanceInput): void {
     // a single narrowed theme type.
     UnistylesRuntime.updateTheme(key, (t) => {
       const fontFamily = { ui, workspace, mono };
-      const fontSize = { ...scaleFontSize(input.uiFontSize), code: input.codeFontSize };
-      const workspaceFontSize = scaleFontSize(input.workspaceFontSize);
+      const fontSize = {
+        ...createInterfaceFontSize(input.uiFontSize),
+        code: input.codeFontSize,
+      };
+      const workspaceFontSize = scaleWorkspaceFontSize(input.workspaceFontSize);
       const lineHeight = { ...t.lineHeight, diff: diffLineHeight };
       if (t.colorScheme === "light") {
         return {

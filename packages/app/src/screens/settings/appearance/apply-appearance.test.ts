@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { darkHighlightColors, resolveSyntaxColors } from "@getpaseo/highlight";
-import { DEFAULT_UI_FONT_STACK } from "@/styles/theme";
+import { darkTheme, DEFAULT_UI_FONT_STACK } from "@/styles/theme";
 import { applyAppearance, type AppearanceInput } from "./apply-appearance";
 
 // Override the global react-native-unistyles mock (vitest.setup.ts) so that
@@ -61,15 +61,15 @@ function makeFakeTheme(): FakeTheme {
       mono: "seed-mono-stack",
     },
     fontSize: {
-      xs: 12,
+      xs: 16,
       code: 12,
-      sm: 14,
+      sm: 16,
       base: 16,
-      lg: 18,
-      xl: 20,
-      "2xl": 22,
-      "3xl": 26,
-      "4xl": 34,
+      lg: 16,
+      xl: 16,
+      "2xl": 16,
+      "3xl": 16,
+      "4xl": 16,
     },
     workspaceFontSize: {
       xs: 12,
@@ -108,6 +108,20 @@ function runCapturedUpdater(call = 0): FakeTheme {
 describe("applyAppearance", () => {
   beforeEach(() => {
     updateTheme.mockClear();
+  });
+
+  it("starts with one default interface font size", () => {
+    expect(darkTheme.fontSize).toEqual({
+      xs: 16,
+      code: 12,
+      sm: 16,
+      base: 16,
+      lg: 16,
+      xl: 16,
+      "2xl": 16,
+      "3xl": 16,
+      "4xl": 16,
+    });
   });
 
   it("patches every registered Unistyles theme exactly once", () => {
@@ -152,22 +166,26 @@ describe("applyAppearance", () => {
     expect(patched.fontSize.code).toBe(10);
   });
 
-  it("scales the whole UI ramp proportionally while preserving ratios", () => {
-    applyAppearance(makeInput({ uiFontSize: 14 }));
+  it("sets every interface font-size token to the configured size", () => {
+    applyAppearance(makeInput({ uiFontSize: 20 }));
 
-    const { fontSize } = runCapturedUpdater();
-    // r = 14 / 16 = 0.875
-    expect(fontSize.base).toBe(14); // round(16 * 0.875)
-    expect(fontSize.lg).toBe(16); // round(18 * 0.875) = round(15.75)
-    expect(fontSize.xs).toBe(11); // round(12 * 0.875) = round(10.5)
-    expect(fontSize["4xl"]).toBe(30); // round(34 * 0.875) = round(29.75)
+    expect(runCapturedUpdater().fontSize).toEqual({
+      xs: 20,
+      code: 12,
+      sm: 20,
+      base: 20,
+      lg: 20,
+      xl: 20,
+      "2xl": 20,
+      "3xl": 20,
+      "4xl": 20,
+    });
   });
 
-  it("derives the UI ramp from the canonical sizes, not the live theme (no compounding)", () => {
+  it("derives the interface size from the setting, not the live theme", () => {
     applyAppearance(makeInput({ uiFontSize: 14 }));
 
-    // Simulate a theme whose fontSize was already scaled by a prior apply; the
-    // updater must ignore it and rebuild from the authored FONT_SIZE ramp.
+    // Simulate a theme already patched by a prior apply. The updater must ignore it.
     const updater = updateTheme.mock.calls[0]?.[1] as unknown as ThemeUpdater;
     const alreadyScaled = makeFakeTheme();
     alreadyScaled.fontSize = {
@@ -183,8 +201,8 @@ describe("applyAppearance", () => {
     };
 
     const { fontSize } = updater(alreadyScaled);
-    expect(fontSize.base).toBe(14); // not 4 * 0.875 — rebuilt from FONT_SIZE
-    expect(fontSize.lg).toBe(16);
+    expect(fontSize.base).toBe(14);
+    expect(fontSize.lg).toBe(14);
   });
 
   it("derives the workspace ramp from canonical sizes without compounding", () => {
@@ -208,12 +226,12 @@ describe("applyAppearance", () => {
     expect(workspaceFontSize.lg).toBe(20);
   });
 
-  it("leaves the UI ramp at authored sizes when only the code size changes", () => {
+  it("leaves the interface size unchanged when only the code size changes", () => {
     applyAppearance(makeInput({ uiFontSize: 16, codeFontSize: 10 }));
 
     const { fontSize } = runCapturedUpdater();
     expect(fontSize.base).toBe(16);
-    expect(fontSize.sm).toBe(14);
+    expect(fontSize.sm).toBe(16);
     expect(fontSize.code).toBe(10);
   });
 

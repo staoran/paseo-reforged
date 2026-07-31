@@ -3,6 +3,7 @@ import { test, expect, type Page } from "./fixtures";
 import { openSettings } from "./helpers/app";
 import { expectComposerVisible } from "./helpers/composer";
 import { openAgentRoute, seedMockAgentWorkspace } from "./helpers/mock-agent";
+import { getServerId } from "./helpers/server-id";
 import { daemonWsRoutePattern } from "./helpers/daemon-port";
 import {
   clickSettingsBackToWorkspace,
@@ -181,14 +182,18 @@ async function readWorkspaceTypography(page: Page, prompt: string) {
   };
 }
 
-async function setStoredWorkspaceFontSize(page: Page, workspaceFontSize: number): Promise<void> {
+async function setStoredFontSize(
+  page: Page,
+  field: "uiFontSize" | "workspaceFontSize",
+  fontSize: number,
+): Promise<void> {
   await page.evaluate(
-    ({ key, size }) => {
+    ({ key, setting, size }) => {
       const raw = localStorage.getItem(key);
       const settings = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
-      localStorage.setItem(key, JSON.stringify({ ...settings, workspaceFontSize: size }));
+      localStorage.setItem(key, JSON.stringify({ ...settings, [setting]: size }));
     },
-    { key: APP_SETTINGS_KEY, size: workspaceFontSize },
+    { key: APP_SETTINGS_KEY, setting: field, size: fontSize },
   );
   await page.reload();
   await expectComposerVisible(page);
@@ -199,15 +204,21 @@ async function expectTextFits(locator: Locator): Promise<void> {
   await expect(locator).toBeVisible();
   const metrics = await locator.evaluate((element) => {
     const style = getComputedStyle(element);
+    const fontSize = Number.parseFloat(style.fontSize);
     const lineHeight = Number.parseFloat(style.lineHeight);
     const rect = element.getBoundingClientRect();
     return {
       height: rect.height,
+      fontSize,
       lineHeight,
       horizontalOverflow: element.scrollWidth > element.clientWidth + 1,
     };
   });
   expect(metrics.horizontalOverflow).toBe(false);
+  expect(metrics.height).toBeGreaterThanOrEqual(metrics.fontSize);
+  if (Number.isFinite(metrics.lineHeight)) {
+    expect(metrics.lineHeight).toBeGreaterThanOrEqual(metrics.fontSize);
+  }
   expect(metrics.height).toBeGreaterThanOrEqual(metrics.lineHeight);
 }
 
@@ -286,6 +297,24 @@ test("renders final answer Markdown with distinct line and block rhythm", async 
     await agent.cleanup();
   }
 });
+
+async function expectInterfaceFontSize(locator: Locator, expected: number): Promise<void> {
+  await locator.scrollIntoViewIfNeeded();
+  await expect(locator).toBeVisible();
+  const metrics = await locator.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      fontSize: Number.parseFloat(style.fontSize),
+      lineHeight: Number.parseFloat(style.lineHeight),
+      height: element.getBoundingClientRect().height,
+    };
+  });
+  expect(metrics.fontSize).toBe(expected);
+  expect(metrics.height).toBeGreaterThanOrEqual(expected);
+  if (Number.isFinite(metrics.lineHeight)) {
+    expect(metrics.lineHeight).toBeGreaterThanOrEqual(expected);
+  }
+}
 
 test("keeps interface, workspace, and code typography independent", async ({ page }, testInfo) => {
   test.setTimeout(180_000);
@@ -367,7 +396,7 @@ test("keeps interface, workspace, and code typography independent", async ({ pag
 
     await page.setViewportSize({ width: 390, height: 844 });
     for (const size of [24, 11]) {
-      await setStoredWorkspaceFontSize(page, size);
+      await setStoredFontSize(page, "workspaceFontSize", size);
       const locators = workspaceTypographyLocators(page, prompt);
       expect((await readTypography(locators.user)).fontSize).toBe(size);
       expect((await readTypography(locators.assistant)).fontSize).toBe(size);
@@ -379,6 +408,54 @@ test("keeps interface, workspace, and code typography independent", async ({ pag
         body: await page.screenshot(),
         contentType: "image/png",
       });
+    }
+  } finally {
+    await agent.cleanup();
+  }
+});
+
+test("uses one configured size across interface surfaces", async ({ page }, testInfo) => {
+  test.setTimeout(120_000);
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "interface-typography-",
+    title: "Interface typography",
+  });
+
+  try {
+    await openAgentRoute(page, agent);
+    await expectComposerVisible(page);
+
+    for (const size of [20, 24, 11]) {
+      await setStoredFontSize(page, "uiFontSize", size);
+      const sidebarLabel = page
+        .getByTestId(`sidebar-workspace-row-${getServerId()}:${agent.workspaceId}`)
+        .filter({ visible: true })
+        .first()
+        .getByText(agent.workspaceName, { exact: true });
+      const tabLabel = page
+        .getByTestId(`workspace-tab-agent_${agent.agentId}`)
+        .filter({ visible: true })
+        .first()
+        .getByText("Interface typography", { exact: true });
+      await expectInterfaceFontSize(sidebarLabel, size);
+      await expectInterfaceFontSize(tabLabel, size);
+
+      const settingsHeader = await openAppearanceSettings(page);
+      for (const locator of [
+        settingsHeader,
+        page.getByRole("textbox", { name: "Interface font size", exact: true }),
+        page.getByText(
+          "Used for navigation, controls, and labels. Leave empty for the system default",
+          { exact: true },
+        ),
+      ]) {
+        await expectInterfaceFontSize(locator, size);
+      }
+      await testInfo.attach(`interface-font-${size}-desktop`, {
+        body: await page.screenshot(),
+        contentType: "image/png",
+      });
+      await returnToWorkspace(page);
     }
   } finally {
     await agent.cleanup();

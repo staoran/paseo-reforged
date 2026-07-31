@@ -99,18 +99,24 @@ export function resolveControlInteractionStyles(
 }
 
 export function createControlGeometry(theme: Theme) {
+  const xsLineHeight = fieldLineHeight(theme.fontSize.xs);
   const fieldTextSmLineHeight = fieldLineHeight(theme.fontSize.sm);
   const fieldTextMdLineHeight = fieldLineHeight(theme.fontSize.base);
+  const resolvedControlHeights = {
+    tight: Math.max(controlHeights.tight, xsLineHeight),
+    compact: Math.max(controlHeights.compact, fieldTextSmLineHeight),
+    field: Math.max(controlHeights.field, fieldTextMdLineHeight),
+  };
   const fieldControlSm = {
-    minHeight: controlHeights.compact,
+    minHeight: resolvedControlHeights.compact,
     paddingHorizontal: theme.spacing[3],
-    paddingVertical: fieldVerticalPadding(controlHeights.compact, fieldTextSmLineHeight),
+    paddingVertical: fieldVerticalPadding(resolvedControlHeights.compact, fieldTextSmLineHeight),
     borderRadius: theme.borderRadius.md,
   };
   const fieldControlMd = {
-    minHeight: controlHeights.field,
+    minHeight: resolvedControlHeights.field,
     paddingHorizontal: theme.spacing[4],
-    paddingVertical: fieldVerticalPadding(controlHeights.field, fieldTextMdLineHeight),
+    paddingVertical: fieldVerticalPadding(resolvedControlHeights.field, fieldTextMdLineHeight),
     borderRadius: theme.borderRadius.lg,
   };
   const fieldTextSm = {
@@ -122,28 +128,28 @@ export function createControlGeometry(theme: Theme) {
     lineHeight: fieldTextMdLineHeight,
   };
   const switchControl = {
-    minHeight: controlHeights.compact,
+    minHeight: resolvedControlHeights.compact,
     justifyContent: CONTROL_CENTER_JUSTIFY_CONTENT,
   } satisfies { minHeight: number; justifyContent: "center" };
 
   return {
     buttonXs: {
-      minHeight: controlHeights.tight,
+      minHeight: resolvedControlHeights.tight,
       paddingHorizontal: theme.spacing[3],
       borderRadius: theme.borderRadius.md,
     },
     buttonSm: {
-      minHeight: controlHeights.compact,
+      minHeight: resolvedControlHeights.compact,
       paddingHorizontal: theme.spacing[3],
       borderRadius: theme.borderRadius.md,
     },
     buttonMd: {
-      minHeight: controlHeights.field,
+      minHeight: resolvedControlHeights.field,
       paddingHorizontal: theme.spacing[4],
       borderRadius: theme.borderRadius.lg,
     },
     buttonLg: {
-      minHeight: controlHeights.field,
+      minHeight: resolvedControlHeights.field,
       paddingHorizontal: theme.spacing[6],
       borderRadius: theme.borderRadius.xl,
     },
@@ -193,29 +199,29 @@ export function createControlGeometry(theme: Theme) {
     },
     switchControl,
     segmentedContainerXs: {
-      minHeight: controlHeights.tight,
+      minHeight: resolvedControlHeights.tight,
       padding: 0,
     },
     segmentedContainerSm: {
-      minHeight: controlHeights.compact,
+      minHeight: resolvedControlHeights.compact,
       padding: 0,
     },
     segmentedContainerMd: {
-      minHeight: controlHeights.field,
+      minHeight: resolvedControlHeights.field,
       padding: 0,
     },
     segmentedSegmentXs: {
-      minHeight: controlHeights.tight - SEGMENTED_TIGHT_INSET * 2,
+      minHeight: resolvedControlHeights.tight - SEGMENTED_TIGHT_INSET * 2,
       paddingHorizontal: theme.spacing[3],
       borderRadius: theme.borderRadius.full,
     },
     segmentedSegmentSm: {
-      minHeight: controlHeights.compact - SEGMENTED_COMPACT_INSET * 2,
+      minHeight: resolvedControlHeights.compact - SEGMENTED_COMPACT_INSET * 2,
       paddingHorizontal: theme.spacing[3],
       borderRadius: theme.borderRadius.full,
     },
     segmentedSegmentMd: {
-      minHeight: controlHeights.field - SEGMENTED_FIELD_INSET * 2,
+      minHeight: resolvedControlHeights.field - SEGMENTED_FIELD_INSET * 2,
       paddingHorizontal: theme.spacing[4],
       borderRadius: theme.borderRadius.full,
     },

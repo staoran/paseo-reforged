@@ -40,7 +40,7 @@ The rule, condensed: text that _names_ a surface or a group is `medium`. Text th
 
 Typography has three independently configurable roles:
 
-- **Interface** uses `theme.fontFamily.ui` and `theme.fontSize.*` for navigation, controls, labels, metadata, and workspace chrome.
+- **Interface** uses `theme.fontFamily.ui` and `theme.fontSize.*` for navigation, controls, labels, metadata, and workspace chrome. Every non-code `fontSize` token is a compatibility alias for the exact configured Interface size; do not use `xs/sm/lg/...` to create Interface hierarchy.
 - **Workspace** uses `theme.fontFamily.workspace` and `theme.workspaceFontSize.*` for messages, Markdown prose, prompts, questions, plans, and other user or agent-authored natural language.
 - **Code** uses `theme.fontFamily.mono`, `theme.fontSize.code`, and `theme.lineHeight.diff` for code, diffs, terminal output, shell output, and structured payloads.
 
@@ -72,7 +72,7 @@ The button is `<Button>` (`packages/app/src/components/ui/button.tsx`). It has f
 
 Sizes: `xs` for ultra-tight inline triggers. `sm` for any button sitting in a row. `md` is the page default. `lg` is reserved for large standalone CTAs.
 
-Sizes are a shared contract across control kinds, defined once in `control-geometry.ts`: `xs` = 28px tall with `fontSize.xs` labels, `sm` = 32px with `fontSize.sm`, `md`/`lg` = 44px with `fontSize.sm`. `<SegmentedControl>` (`packages/app/src/components/ui/segmented-control.tsx`) takes the same `xs`/`sm`/`md` sizes — a segmented control next to a `<Button>` of the same size always matches in height, label size, and horizontal padding. Thin chrome such as the file toolbar uses `xs`; settings rows use `sm`. Never shrink a control's font or padding locally to fit a context — if the context needs a smaller control, the size tier is missing or the wrong one is in use.
+Sizes are a shared contract across control kinds, defined once in `control-geometry.ts`: `xs` starts at 28px tall, `sm` at 32px, and `md`/`lg` at 44px. These minimums grow when the configured Interface size needs more vertical room. `<SegmentedControl>` (`packages/app/src/components/ui/segmented-control.tsx`) takes the same `xs`/`sm`/`md` sizes — a segmented control next to a `<Button>` of the same size always matches in height, label size, and horizontal padding. Thin chrome such as the file toolbar uses `xs`; settings rows use `sm`. Never shrink a control's font or padding locally to fit a context — if the context needs a smaller control, the size tier is missing or the wrong one is in use.
 
 A `<Pressable>` wrapping a `<Text>` is a sixth variant. It is wrong. `<Button>` accepts `style`, `textStyle`, `leftIcon`, `disabled`, `size`, and `variant`.
 

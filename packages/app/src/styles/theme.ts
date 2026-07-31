@@ -449,9 +449,22 @@ export const SPACING = {
   32: 128,
 } as const;
 
+// Interface token names remain as compatibility aliases; they all use the user's exact size.
 export const FONT_SIZE = {
-  xs: 12,
+  xs: 16,
   code: 12,
+  sm: 16,
+  base: 16,
+  lg: 16,
+  xl: 16,
+  "2xl": 16,
+  "3xl": 16,
+  "4xl": 16,
+} as const;
+
+// Workspace-authored content keeps semantic size hierarchy independently of interface chrome.
+export const WORKSPACE_FONT_SIZE = {
+  xs: 12,
   sm: 14,
   base: 16,
   lg: 18,
@@ -524,7 +537,7 @@ export const DEFAULT_MONO_FONT_STACK: string = Platform.select({
 interface CommonTheme {
   spacing: typeof SPACING;
   fontSize: Record<keyof typeof FONT_SIZE, number>;
-  workspaceFontSize: Omit<Record<keyof typeof FONT_SIZE, number>, "code">;
+  workspaceFontSize: Record<keyof typeof WORKSPACE_FONT_SIZE, number>;
   fontFamily: { ui: string; workspace: string; mono: string };
   lineHeight: Record<keyof typeof LINE_HEIGHT, number>;
   iconSize: typeof ICON_SIZE;
@@ -537,16 +550,7 @@ interface CommonTheme {
 const commonTheme: CommonTheme = {
   spacing: SPACING,
   fontSize: FONT_SIZE,
-  workspaceFontSize: {
-    xs: FONT_SIZE.xs,
-    sm: FONT_SIZE.sm,
-    base: FONT_SIZE.base,
-    lg: FONT_SIZE.lg,
-    xl: FONT_SIZE.xl,
-    "2xl": FONT_SIZE["2xl"],
-    "3xl": FONT_SIZE["3xl"],
-    "4xl": FONT_SIZE["4xl"],
-  },
+  workspaceFontSize: WORKSPACE_FONT_SIZE,
   fontFamily: {
     ui: DEFAULT_UI_FONT_STACK,
     workspace: DEFAULT_UI_FONT_STACK,

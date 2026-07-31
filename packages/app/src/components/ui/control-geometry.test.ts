@@ -103,6 +103,24 @@ describe("control geometry", () => {
     expect(geometry.formTextInputMd.paddingVertical).toBe(11);
   });
 
+  it("grows controls when the interface text exceeds their minimum height", () => {
+    const largeTheme = {
+      ...theme,
+      fontSize: { ...theme.fontSize, xs: 24, sm: 24, base: 24 },
+    };
+    const geometry = createControlGeometry(largeTheme);
+
+    expect(geometry.buttonXs.minHeight).toBe(34);
+    expect(geometry.buttonSm.minHeight).toBe(34);
+    expect(geometry.fieldControlSm).toMatchObject({
+      minHeight: 34,
+      paddingVertical: 0,
+    });
+    expect(geometry.buttonMd.minHeight).toBe(44);
+    expect(geometry.segmentedContainerXs.minHeight).toBe(geometry.buttonXs.minHeight);
+    expect(geometry.segmentedContainerSm.minHeight).toBe(geometry.buttonSm.minHeight);
+  });
+
   it("keeps segmented controls ghost with fully rounded segments in a button-sized track", () => {
     const geometry = createControlGeometry(theme);
 
