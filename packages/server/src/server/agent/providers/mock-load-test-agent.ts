@@ -1196,6 +1196,7 @@ export class MockLoadTestAgentSession implements AgentSession {
           type: "assistant_message",
           text: event.text,
           messageId: turn.assistantMessageId,
+          phase: "commentary",
         });
         return;
       }
@@ -1238,12 +1239,14 @@ export class MockLoadTestAgentSession implements AgentSession {
   }
 
   private finishTurn(turn: ActiveTurn): void {
+    const finalText = "Synthetic load test complete";
     this.emitTimeline(turn.turnId, {
       type: "assistant_message",
-      text: "\n\n_(end of synthetic stream)_\n",
-      messageId: turn.assistantMessageId,
+      text: finalText,
+      messageId: `${turn.assistantMessageId}:final`,
+      phase: "final_answer",
     });
-    this.finishTurnWithText(turn, "Synthetic load test complete");
+    this.finishTurnWithText(turn, finalText);
   }
 
   private finishTurnWithText(turn: ActiveTurn, finalText: string): void {

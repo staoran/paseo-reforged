@@ -298,6 +298,8 @@ export const ja: TranslationResources = {
     },
     activity: {
       details: "詳細",
+      completed: "処理済み",
+      completedWithDuration: "{{duration}} で処理済み",
     },
     dictation: {
       start: "音声入力を開始",
@@ -1683,9 +1685,13 @@ export const ja: TranslationResources = {
         description: "組み込みターミナルバッファに保持する行数",
         accessibilityLabel: "ターミナルスクロールバック行数",
       },
+      autoExpandActivity: {
+        label: "完了した処理を展開したままにする",
+        description: "ターン完了時にエージェントの処理を自動的に折りたたみません",
+      },
       autoExpandReasoning: {
-        label: "常に思考プロセスを展開",
-        description: "デフォルトでAIのエージェント思考・推論ブロックを完全に展開して表示します",
+        label: "推論の詳細を展開",
+        description: "個々の推論ブロックをデフォルトで展開します",
       },
       toolCallDetail: {
         label: "ツール呼び出しの表示",

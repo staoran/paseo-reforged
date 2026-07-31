@@ -247,24 +247,28 @@ function ThemeRow({ value, onChange }: ThemeRowProps) {
   );
 }
 
-interface AutoExpandReasoningRowProps {
+interface ExpansionSwitchRowProps {
+  label: string;
+  description: string;
   value: boolean;
+  withBorder?: boolean;
   onChange: (value: boolean) => void;
 }
 
-function AutoExpandReasoningRow({ value, onChange }: AutoExpandReasoningRowProps) {
-  const { t } = useTranslation();
+function ExpansionSwitchRow({
+  label,
+  description,
+  value,
+  withBorder = false,
+  onChange,
+}: ExpansionSwitchRowProps) {
   return (
-    <View style={settingsStyles.row}>
+    <View style={withBorder ? [settingsStyles.row, settingsStyles.rowBorder] : settingsStyles.row}>
       <View style={settingsStyles.rowContent}>
-        <Text style={settingsStyles.rowTitle}>
-          {t("settings.general.autoExpandReasoning.label")}
-        </Text>
-        <Text style={settingsStyles.rowHint}>
-          {t("settings.general.autoExpandReasoning.description")}
-        </Text>
+        <Text style={settingsStyles.rowTitle}>{label}</Text>
+        <Text style={settingsStyles.rowHint}>{description}</Text>
       </View>
-      <Switch value={value} onValueChange={onChange} />
+      <Switch value={value} onValueChange={onChange} accessibilityLabel={label} />
     </View>
   );
 }
@@ -577,6 +581,13 @@ export function AppearanceSection() {
     [updateSettings],
   );
 
+  const handleAutoExpandActivityChange = useCallback(
+    (autoExpandActivity: boolean) => {
+      void updateSettings({ autoExpandActivity });
+    },
+    [updateSettings],
+  );
+
   const handleToolCallDetailLevelChange = useCallback(
     (toolCallDetailLevel: AppSettings["toolCallDetailLevel"]) => {
       void updateSettings({ toolCallDetailLevel });
@@ -604,8 +615,17 @@ export function AppearanceSection() {
       </SettingsSection>
       <SettingsSection title={t("settings.appearance.detailLevel.title")}>
         <View style={settingsStyles.card}>
-          <AutoExpandReasoningRow
+          <ExpansionSwitchRow
+            label={t("settings.general.autoExpandActivity.label")}
+            description={t("settings.general.autoExpandActivity.description")}
+            value={settings.autoExpandActivity}
+            onChange={handleAutoExpandActivityChange}
+          />
+          <ExpansionSwitchRow
+            label={t("settings.general.autoExpandReasoning.label")}
+            description={t("settings.general.autoExpandReasoning.description")}
             value={settings.autoExpandReasoning}
+            withBorder
             onChange={handleAutoExpandReasoningChange}
           />
           <ToolCallDetailRow

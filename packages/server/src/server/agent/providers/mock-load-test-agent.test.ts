@@ -165,6 +165,12 @@ describe("MockLoadTestAgentClient", () => {
     expect(assistantTokens[0]).toMatchObject({
       type: "assistant_message",
       text: expect.stringContaining("##"),
+      phase: "commentary",
+    });
+    expect(assistantTokens.at(-1)).toMatchObject({
+      type: "assistant_message",
+      text: "Synthetic load test complete",
+      phase: "final_answer",
     });
 
     // Sequential tool calls fire: read, grep, edit, bash.

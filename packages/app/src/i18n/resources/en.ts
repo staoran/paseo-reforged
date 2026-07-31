@@ -294,6 +294,8 @@ export const en = {
     },
     activity: {
       details: "Details",
+      completed: "Worked",
+      completedWithDuration: "Worked for {{duration}}",
     },
     dictation: {
       start: "Start voice dictation",
@@ -1678,9 +1680,13 @@ export const en = {
         description: "Lines kept in the built-in terminal buffer",
         accessibilityLabel: "Terminal scrollback lines",
       },
+      autoExpandActivity: {
+        label: "Keep completed activity expanded",
+        description: "Do not automatically collapse the agent's work when a turn finishes",
+      },
       autoExpandReasoning: {
-        label: "Always expand reasoning",
-        description: "Show agent thinking and chain-of-thought blocks fully expanded by default",
+        label: "Expand reasoning details",
+        description: "Show individual reasoning blocks fully expanded by default",
       },
       toolCallDetail: {
         label: "Tool call display",

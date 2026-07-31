@@ -22,6 +22,7 @@ import {
   type AgentRuntimeInfo,
   type AgentSession,
   type AgentSessionConfig,
+  type AgentMessagePhase,
   type AgentSlashCommand,
   type AgentStreamEvent,
   type AgentTimelineItem,
@@ -1762,6 +1763,23 @@ function mapCodexThreadImageItem(
   );
 }
 
+function parseAgentMessagePhase(value: unknown): AgentMessagePhase | undefined {
+  return value === "commentary" || value === "final_answer" ? value : undefined;
+}
+
+function createAssistantTimelineMessage(
+  text: string,
+  messageId?: string,
+  phase?: AgentMessagePhase,
+): Extract<AgentTimelineItem, { type: "assistant_message" }> {
+  return {
+    type: "assistant_message",
+    text,
+    ...(messageId ? { messageId } : {}),
+    ...(phase ? { phase } : {}),
+  };
+}
+
 export function threadItemToTimeline(
   item: unknown,
   options?: { includeUserMessage?: boolean; cwd?: string | null },
@@ -1788,14 +1806,12 @@ export function threadItemToTimeline(
   switch (normalizedType) {
     case "userMessage":
       return mapCodexThreadUserMessageItem(normalizedItem, includeUserMessage);
-    case "agentMessage": {
-      const messageId = nonEmptyString(normalizedItem.id);
-      return {
-        type: "assistant_message",
-        text: typeof normalizedItem.text === "string" ? normalizedItem.text : "",
-        ...(messageId ? { messageId } : {}),
-      };
-    }
+    case "agentMessage":
+      return createAssistantTimelineMessage(
+        typeof normalizedItem.text === "string" ? normalizedItem.text : "",
+        nonEmptyString(normalizedItem.id),
+        parseAgentMessagePhase(normalizedItem.phase),
+      );
     case "plan":
       return mapCodexThreadPlanItem(normalizedItem);
     case "reasoning":
@@ -3185,6 +3201,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   >();
   private resolvedPermissionRequests = new Set<string>();
   private pendingAgentMessages = new Map<string, string>();
+  private pendingAgentMessagePhases = new Map<string, AgentMessagePhase>();
   private pendingReasoning = new Map<string, string[]>();
   private pendingCommandOutputDeltas = new Map<string, string[]>();
   private pendingFileChangeOutputDeltas = new Map<string, string[]>();
@@ -5291,6 +5308,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (itemId) {
       this.upsertSubAgentChildItem(callId, itemId, timelineItem);
       this.pendingAgentMessages.delete(itemId);
+      this.pendingAgentMessagePhases.delete(itemId);
       this.pendingReasoning.delete(itemId);
       this.pendingCommandOutputDeltas.delete(itemId);
       this.pendingFileChangeOutputDeltas.delete(itemId);
@@ -5333,21 +5351,21 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (parsed.kind === "agent_message_delta") {
       const prev = this.pendingAgentMessages.get(parsed.itemId) ?? "";
       const text = prev + parsed.delta;
+      const phase = this.pendingAgentMessagePhases.get(parsed.itemId);
       this.pendingAgentMessages.set(parsed.itemId, text);
       const subAgentCallId = this.getSubAgentCallIdForThread(parsed.threadId);
       if (subAgentCallId) {
         if (parsed.threadId) {
-          this.emitProviderSubagentTimeline(parsed.threadId, {
-            type: "assistant_message",
-            messageId: parsed.itemId,
-            text: parsed.delta,
-          });
+          this.emitProviderSubagentTimeline(
+            parsed.threadId,
+            createAssistantTimelineMessage(parsed.delta, parsed.itemId, phase),
+          );
         }
-        this.upsertSubAgentChildItem(subAgentCallId, parsed.itemId, {
-          type: "assistant_message",
-          messageId: parsed.itemId,
-          text,
-        });
+        this.upsertSubAgentChildItem(
+          subAgentCallId,
+          parsed.itemId,
+          createAssistantTimelineMessage(text, parsed.itemId, phase),
+        );
         this.emitSubAgentActivityUpdate(subAgentCallId, "running");
         return;
       }
@@ -5355,14 +5373,13 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.emitEvent({
         type: "timeline",
         provider: CODEX_PROVIDER,
-        item: {
-          type: "assistant_message",
-          messageId: parsed.itemId,
-          text:
-            isFirstDeltaForItem && this.pendingAssistantMessageBoundary
-              ? `${ASSISTANT_MESSAGE_BOUNDARY_MARKDOWN}${parsed.delta}`
-              : parsed.delta,
-        },
+        item: createAssistantTimelineMessage(
+          isFirstDeltaForItem && this.pendingAssistantMessageBoundary
+            ? `${ASSISTANT_MESSAGE_BOUNDARY_MARKDOWN}${parsed.delta}`
+            : parsed.delta,
+          parsed.itemId,
+          phase,
+        ),
       });
       if (isFirstDeltaForItem) {
         this.pendingAssistantMessageBoundary = false;
@@ -5493,6 +5510,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.emittedExecCommandStartedCallIds.clear();
     this.emittedExecCommandCompletedCallIds.clear();
     this.pendingAgentMessages.clear();
+    this.pendingAgentMessagePhases.clear();
     this.pendingReasoning.clear();
     this.pendingCommandOutputDeltas.clear();
     this.pendingFileChangeOutputDeltas.clear();
@@ -5801,6 +5819,9 @@ export class CodexAppServerAgentSession implements AgentSession {
     );
     const itemId = parsed.item.id;
     if (this.shouldSkipCompletedThreadItem(timelineItem, normalizedItemType, itemId)) {
+      if (itemId) {
+        this.pendingAgentMessagePhases.delete(itemId);
+      }
       this.replayPendingSubAgentNotifications(registeredChildThreadIds);
       return;
     }
@@ -5838,6 +5859,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (itemId) {
       this.emittedItemCompletedIds.add(itemId);
       this.emittedItemStartedIds.delete(itemId);
+      this.pendingAgentMessagePhases.delete(itemId);
       this.pendingCommandOutputDeltas.delete(itemId);
       this.pendingFileChangeOutputDeltas.delete(itemId);
     }
@@ -5853,8 +5875,14 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
     if (timelineItem.type === "assistant_message" && this.pendingAgentMessages.has(itemId)) {
       const streamedText = this.pendingAgentMessages.get(itemId) ?? "";
+      const streamedPhase = this.pendingAgentMessagePhases.get(itemId);
       this.pendingAgentMessages.delete(itemId);
-      this.emitMissingFinalTextSuffix(timelineItem, streamedText);
+      this.pendingAgentMessagePhases.delete(itemId);
+      this.emitMissingFinalTextSuffix(
+        timelineItem,
+        streamedText,
+        timelineItem.phase !== streamedPhase,
+      );
       return true;
     }
     if (timelineItem.type === "reasoning" && this.pendingReasoning.has(itemId)) {
@@ -5869,23 +5897,35 @@ export class CodexAppServerAgentSession implements AgentSession {
   private emitMissingFinalTextSuffix(
     timelineItem: Extract<AgentTimelineItem, { type: "assistant_message" | "reasoning" }>,
     streamedText: string,
+    includeMetadataOnly = false,
   ): void {
-    const item = this.buildMissingFinalTextSuffix(timelineItem, streamedText);
+    const item = this.buildMissingFinalTextSuffix(timelineItem, streamedText, includeMetadataOnly);
     if (item) this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item });
   }
 
   private buildMissingFinalTextSuffix(
     timelineItem: Extract<AgentTimelineItem, { type: "assistant_message" | "reasoning" }>,
     streamedText: string,
+    includeMetadataOnly = false,
   ): AgentTimelineItem | null {
     if (!timelineItem.text.startsWith(streamedText)) return timelineItem;
     const suffix = timelineItem.text.slice(streamedText.length);
-    if (!suffix) return null;
+    if (!suffix) {
+      return timelineItem.type === "assistant_message" && includeMetadataOnly && timelineItem.phase
+        ? {
+            type: timelineItem.type,
+            text: "",
+            ...(timelineItem.messageId ? { messageId: timelineItem.messageId } : {}),
+            phase: timelineItem.phase,
+          }
+        : null;
+    }
     return timelineItem.type === "assistant_message"
       ? {
           type: timelineItem.type,
           text: suffix,
           ...(timelineItem.messageId ? { messageId: timelineItem.messageId } : {}),
+          ...(timelineItem.phase ? { phase: timelineItem.phase } : {}),
         }
       : { type: timelineItem.type, text: suffix };
   }
@@ -5910,6 +5950,15 @@ export class CodexAppServerAgentSession implements AgentSession {
         const streamedText = buffered.join("");
         if (!timelineItem.text.startsWith(streamedText)) timelineItem.text = streamedText;
       }
+    }
+  }
+
+  private rememberStartedAgentMessagePhase(
+    itemId: string | undefined,
+    timelineItem: AgentTimelineItem | null,
+  ): void {
+    if (itemId && timelineItem?.type === "assistant_message" && timelineItem.phase) {
+      this.pendingAgentMessagePhases.set(itemId, timelineItem.phase);
     }
   }
 
@@ -5945,6 +5994,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       includeUserMessage: false,
       cwd: this.config.cwd ?? null,
     });
+    this.rememberStartedAgentMessagePhase(parsed.item.id, timelineItem);
     if (!timelineItem || timelineItem.type !== "tool_call") {
       return;
     }

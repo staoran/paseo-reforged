@@ -78,7 +78,9 @@ function isSameTextStream(previous: PendingTextEntry, next: PendingTextEntry): b
     return false;
   }
   if (previous.item.type === "assistant_message" && next.item.type === "assistant_message") {
-    return previous.item.messageId === next.item.messageId;
+    return (
+      previous.item.messageId === next.item.messageId && previous.item.phase === next.item.phase
+    );
   }
   return true;
 }
@@ -100,7 +102,11 @@ export class AgentStreamCoalescer {
       return false;
     }
 
-    if (isTextTimelineItem(event.item) && event.item.text === "") {
+    if (
+      isTextTimelineItem(event.item) &&
+      event.item.text === "" &&
+      !(event.item.type === "assistant_message" && event.item.phase)
+    ) {
       return true;
     }
 

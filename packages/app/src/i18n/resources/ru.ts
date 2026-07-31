@@ -297,6 +297,8 @@ export const ru: TranslationResources = {
     },
     activity: {
       details: "Подробности",
+      completed: "Обработано",
+      completedWithDuration: "Обработано за {{duration}}",
     },
     dictation: {
       start: "Начать голосовой диктовку",
@@ -1702,10 +1704,13 @@ export const ru: TranslationResources = {
         description: "Строки, хранящиеся во встроенном буфере терминала.",
         accessibilityLabel: "Линии прокрутки Terminal",
       },
+      autoExpandActivity: {
+        label: "Оставлять завершённый процесс развёрнутым",
+        description: "Не сворачивать работу агента автоматически после завершения хода",
+      },
       autoExpandReasoning: {
-        label: "Всегда разворачивать размышления",
-        description:
-          "По умолчанию показывать блоки размышлений и логики агента полностью развернутыми",
+        label: "Разворачивать детали рассуждений",
+        description: "По умолчанию показывать отдельные блоки рассуждений развёрнутыми",
       },
       toolCallDetail: {
         label: "Отображение вызовов инструментов",

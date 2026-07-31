@@ -26,6 +26,7 @@ function assistantMessage(
   id: string,
   seed: number,
   block?: { groupId: string; index: number },
+  phase?: Extract<StreamItem, { kind: "assistant_message" }>["phase"],
 ): Extract<StreamItem, { kind: "assistant_message" }> {
   return {
     kind: "assistant_message",
@@ -33,6 +34,7 @@ function assistantMessage(
     text: id,
     timestamp: timestamp(seed),
     ...(block ? { blockGroupId: block.groupId, blockIndex: block.index } : {}),
+    ...(phase ? { phase } : {}),
   };
 }
 
@@ -143,6 +145,141 @@ function findLayoutItem(layout: StreamLayout, id: string): StreamLayoutItem {
 }
 
 describe("layoutStream", () => {
+  it.each(["web", "android"] as const)(
+    "folds mixed activity before the final answer across history and live head on %s",
+    (platform) => {
+      const reasoning = thought("thought-1", 2);
+      const commentary = assistantMessage("commentary-1", 3, undefined, "commentary");
+      const tool = toolCall("tool-1", 4);
+      const todo: Extract<StreamItem, { kind: "todo_list" }> = {
+        kind: "todo_list",
+        id: "todo-1",
+        timestamp: timestamp(5),
+        provider: "codex",
+        items: [{ text: "Verify", completed: false }],
+      };
+      const finalAnswer = assistantMessage("final-1", 6, undefined, "final_answer");
+      const trailingTool = toolCall("tool-after-final", 7);
+      const layout = layoutFor({
+        platform,
+        agentStatus: "idle",
+        tail: [userMessage("u1", 1), reasoning, commentary],
+        head: [tool, todo, finalAnswer, trailingTool],
+        timingIds: [finalAnswer.id],
+      });
+
+      for (const item of [reasoning, commentary, tool, todo]) {
+        expect(findLayoutItem(layout, item.id).activityFold).toEqual({
+          id: "activity:u1",
+          completed: true,
+          hostItemId: reasoning.id,
+          durationMs: 8000,
+        });
+      }
+      expect(findLayoutItem(layout, reasoning.id).isActivityFoldHost).toBe(true);
+      expect(findLayoutItem(layout, commentary.id).isActivityFoldHost).toBe(false);
+      expect(findLayoutItem(layout, finalAnswer.id).activityFold).toBeNull();
+      expect(findLayoutItem(layout, trailingTool.id).activityFold).toBeNull();
+    },
+  );
+
+  it.each(["web", "android"] as const)(
+    "keeps a final-answer fold active while the turn is running on %s",
+    (platform) => {
+      const reasoning = thought("thought-1", 2);
+      const commentary = assistantMessage("commentary-1", 3, undefined, "commentary");
+      const finalAnswer = assistantMessage("final-1", 4, undefined, "final_answer");
+      const layout = layoutFor({
+        platform,
+        agentStatus: "running",
+        tail: [userMessage("u1", 1)],
+        head: [reasoning, commentary, finalAnswer],
+      });
+
+      expect(findLayoutItem(layout, reasoning.id).activityFold).toMatchObject({
+        id: "activity:u1",
+        completed: false,
+      });
+      expect(findLayoutItem(layout, finalAnswer.id).activityFold).toBeNull();
+    },
+  );
+
+  it.each(["web", "android"] as const)(
+    "keeps failed activity open without a final answer on %s",
+    (platform) => {
+      const reasoning = thought("thought-1", 2);
+      const commentary = assistantMessage("commentary-1", 3, undefined, "commentary");
+      const systemError: Extract<StreamItem, { kind: "activity_log" }> = {
+        kind: "activity_log",
+        id: "error-1",
+        timestamp: timestamp(4),
+        activityType: "error",
+        message: "provider failed",
+      };
+      const layout = layoutFor({
+        platform,
+        agentStatus: "error",
+        tail: [userMessage("u1", 1)],
+        head: [reasoning, commentary, systemError],
+      });
+
+      for (const item of [reasoning, commentary, systemError]) {
+        expect(findLayoutItem(layout, item.id).activityFold).toMatchObject({
+          id: "activity:u1",
+          completed: false,
+        });
+      }
+    },
+  );
+
+  it.each(["web", "android"] as const)(
+    "does not infer an activity fold for legacy messages without phase on %s",
+    (platform) => {
+      const reasoning = thought("thought-1", 2);
+      const assistant = assistantMessage("assistant-1", 3);
+      const tool = toolCall("tool-1", 4);
+      const layout = layoutFor({
+        platform,
+        tail: [userMessage("u1", 1), reasoning, assistant, tool],
+      });
+
+      for (const item of [reasoning, assistant, tool]) {
+        expect(findLayoutItem(layout, item.id).activityFold).toBeNull();
+      }
+    },
+  );
+
+  it.each(["web", "android"] as const)(
+    "completes a historical fold while keeping the latest activity fold open on %s",
+    (platform) => {
+      const historicalActivity = thought("thought-history", 2);
+      const historicalCommentary = assistantMessage(
+        "commentary-history",
+        3,
+        undefined,
+        "commentary",
+      );
+      const historicalFinal = assistantMessage("final-history", 4, undefined, "final_answer");
+      const liveActivity = thought("thought-live", 6);
+      const liveCommentary = assistantMessage("commentary-live", 7, undefined, "commentary");
+      const layout = layoutFor({
+        platform,
+        agentStatus: "running",
+        tail: [userMessage("u1", 1), historicalActivity, historicalCommentary, historicalFinal],
+        head: [userMessage("u2", 5), liveActivity, liveCommentary],
+      });
+
+      expect(findLayoutItem(layout, historicalActivity.id).activityFold).toMatchObject({
+        id: "activity:u1",
+        completed: true,
+      });
+      expect(findLayoutItem(layout, liveActivity.id).activityFold).toMatchObject({
+        id: "activity:u2",
+        completed: false,
+      });
+    },
+  );
+
   it.each(["web", "android"] as const)(
     "keeps split assistant block spacing identical to unsplit history on %s",
     (platform) => {

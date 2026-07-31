@@ -112,3 +112,18 @@ export function formatDuration(durationMs: number): string {
   const remMinutes = totalMinutes % 60;
   return remMinutes === 0 ? `${hours}h` : `${hours}h ${remMinutes}m`;
 }
+
+/** Format activity duration without dropping remaining seconds after the hour mark. */
+export function formatDurationWithSeconds(durationMs: number): string {
+  if (!Number.isFinite(durationMs) || durationMs < 3_600_000) {
+    return formatDuration(durationMs);
+  }
+
+  const totalSeconds = Math.floor(durationMs / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return [`${hours}h`, minutes > 0 ? `${minutes}m` : null, seconds > 0 ? `${seconds}s` : null]
+    .filter((part): part is string => part !== null)
+    .join(" ");
+}

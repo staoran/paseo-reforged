@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  AgentTimelineItemPayloadSchema,
   AgentStreamMessageSchema,
   FetchAgentTimelineResponseMessageSchema,
   SessionInboundMessageSchema,
@@ -9,6 +10,32 @@ import {
 } from "./messages.js";
 
 describe("shared messages stream parsing", () => {
+  it("preserves optional assistant message phase without requiring it", () => {
+    expect(
+      AgentTimelineItemPayloadSchema.parse({
+        type: "assistant_message",
+        text: "Checking the workspace.",
+        messageId: "assistant-commentary-1",
+        phase: "commentary",
+      }),
+    ).toEqual({
+      type: "assistant_message",
+      text: "Checking the workspace.",
+      messageId: "assistant-commentary-1",
+      phase: "commentary",
+    });
+
+    expect(
+      AgentTimelineItemPayloadSchema.parse({
+        type: "assistant_message",
+        text: "Legacy daemon response.",
+      }),
+    ).toEqual({
+      type: "assistant_message",
+      text: "Legacy daemon response.",
+    });
+  });
+
   it("parses representative fetch_agent_timeline_response payload", () => {
     const parsed = FetchAgentTimelineResponseMessageSchema.parse({
       type: "fetch_agent_timeline_response",

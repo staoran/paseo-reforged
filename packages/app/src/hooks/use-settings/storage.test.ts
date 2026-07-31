@@ -371,7 +371,26 @@ describe("appearance settings", () => {
     expect(result.workspaceFontSize).toBe(DEFAULT_UI_FONT_SIZE);
     expect(result.codeFontSize).toBe(DEFAULT_CODE_FONT_SIZE);
     expect(result.syntaxTheme).toBe("one");
+    expect(result.autoExpandActivity).toBe(false);
     expect(result.toolCallDetailLevel).toBe("detailed");
+  });
+
+  it("loads activity and reasoning expansion preferences independently", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          autoExpandActivity: true,
+          autoExpandReasoning: false,
+        }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result).toMatchObject({
+      autoExpandActivity: true,
+      autoExpandReasoning: false,
+    });
   });
 
   it("migrates the enabled compact tool call preference to overview", async () => {

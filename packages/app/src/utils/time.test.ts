@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { formatDuration, formatMessageTimestamp, formatTimeAgo } from "./time";
+import {
+  formatDuration,
+  formatDurationWithSeconds,
+  formatMessageTimestamp,
+  formatTimeAgo,
+} from "./time";
 
 describe("formatTimeAgo", () => {
   const now = new Date("2026-07-16T12:00:00.000Z");
@@ -40,6 +45,13 @@ describe("formatDuration", () => {
   it("guards against negative and NaN", () => {
     expect(formatDuration(-1)).toBe("0s");
     expect(formatDuration(Number.NaN)).toBe("0s");
+  });
+});
+
+describe("formatDurationWithSeconds", () => {
+  it("keeps second precision for multi-hour activity", () => {
+    expect(formatDurationWithSeconds(18_384_000)).toBe("5h 6m 24s");
+    expect(formatDurationWithSeconds(3_600_000)).toBe("1h");
   });
 });
 

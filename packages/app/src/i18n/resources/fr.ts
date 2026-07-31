@@ -299,6 +299,8 @@ export const fr: TranslationResources = {
     },
     activity: {
       details: "Détails",
+      completed: "Traité",
+      completedWithDuration: "Traité en {{duration}}",
     },
     dictation: {
       start: "Démarrer la dictée vocale",
@@ -1716,9 +1718,13 @@ export const fr: TranslationResources = {
         description: "Lignes conservées dans le tampon du terminal intégré",
         accessibilityLabel: "Lignes de défilementTerminal",
       },
+      autoExpandActivity: {
+        label: "Garder l’activité terminée développée",
+        description: "Ne pas réduire automatiquement le travail de l’agent à la fin d’un tour",
+      },
       autoExpandReasoning: {
-        label: "Toujours afficher le raisonnement",
-        description: "Afficher le raisonnement de l'agent entièrement développé par défaut",
+        label: "Développer les détails du raisonnement",
+        description: "Afficher les blocs de raisonnement individuels développés par défaut",
       },
       toolCallDetail: {
         label: "Affichage des appels d’outils",

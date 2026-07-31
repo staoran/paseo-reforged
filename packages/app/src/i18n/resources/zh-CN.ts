@@ -295,6 +295,8 @@ export const zhCN: TranslationResources = {
     },
     activity: {
       details: "详情",
+      completed: "已处理",
+      completedWithDuration: "已处理 {{duration}}",
     },
     dictation: {
       start: "开始语音听写",
@@ -1648,9 +1650,13 @@ export const zhCN: TranslationResources = {
         description: "内置终端缓冲区保留的行数",
         accessibilityLabel: "终端回滚行数",
       },
+      autoExpandActivity: {
+        label: "完成后保持推理过程展开",
+        description: "每轮对话结束时不自动折叠文本、工具调用和计划等处理过程",
+      },
       autoExpandReasoning: {
-        label: "始终展开推理过程",
-        description: "默认情况下完全展开 AI 的思考和推理过程",
+        label: "默认展开推理详情",
+        description: "默认展开单独的 AI 思考与推理内容",
       },
       toolCallDetail: {
         label: "工具调用显示",

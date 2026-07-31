@@ -105,15 +105,21 @@ export interface UseSettingsReturn {
 
 type SettingsSelector<TSelected> = (settings: Settings) => TSelected;
 
-function pickWorkspaceTypographyUpdates(updates: Partial<Settings>): Partial<AppSettings> {
-  const workspaceUpdates: Partial<AppSettings> = {};
+function pickWorkspaceAndExpansionUpdates(updates: Partial<Settings>): Partial<AppSettings> {
+  const appUpdates: Partial<AppSettings> = {};
   if (updates.workspaceFontFamily !== undefined) {
-    workspaceUpdates.workspaceFontFamily = updates.workspaceFontFamily;
+    appUpdates.workspaceFontFamily = updates.workspaceFontFamily;
   }
   if (updates.workspaceFontSize !== undefined) {
-    workspaceUpdates.workspaceFontSize = updates.workspaceFontSize;
+    appUpdates.workspaceFontSize = updates.workspaceFontSize;
   }
-  return workspaceUpdates;
+  if (updates.autoExpandReasoning !== undefined) {
+    appUpdates.autoExpandReasoning = updates.autoExpandReasoning;
+  }
+  if (updates.autoExpandActivity !== undefined) {
+    appUpdates.autoExpandActivity = updates.autoExpandActivity;
+  }
+  return appUpdates;
 }
 
 export function useAppSettings(): UseAppSettingsReturn {
@@ -168,7 +174,7 @@ export function useSettings<TSelected>(
 
   const updateSettings = useCallback(
     async (updates: Partial<Settings>) => {
-      const appUpdates = pickWorkspaceTypographyUpdates(updates);
+      const appUpdates = pickWorkspaceAndExpansionUpdates(updates);
       if (updates.theme !== undefined) {
         appUpdates.theme = updates.theme;
       }
@@ -201,9 +207,6 @@ export function useSettings<TSelected>(
       }
       if (updates.workspaceTitleSource !== undefined) {
         appUpdates.workspaceTitleSource = updates.workspaceTitleSource;
-      }
-      if (updates.autoExpandReasoning !== undefined) {
-        appUpdates.autoExpandReasoning = updates.autoExpandReasoning;
       }
       if (updates.toolCallDetailLevel !== undefined) {
         appUpdates.toolCallDetailLevel = updates.toolCallDetailLevel;

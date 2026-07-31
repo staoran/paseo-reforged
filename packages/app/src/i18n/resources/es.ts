@@ -298,6 +298,8 @@ export const es: TranslationResources = {
     },
     activity: {
       details: "Detalles",
+      completed: "Procesado",
+      completedWithDuration: "Procesado durante {{duration}}",
     },
     dictation: {
       start: "Iniciar dictado de voz",
@@ -1714,10 +1716,14 @@ export const es: TranslationResources = {
         description: "Líneas mantenidas en el búfer de terminal incorporado",
         accessibilityLabel: "Líneas del historial de terminal",
       },
+      autoExpandActivity: {
+        label: "Mantener expandida la actividad completada",
+        description: "No contraer automáticamente el trabajo del agente al finalizar un turno",
+      },
       autoExpandReasoning: {
-        label: "Siempre expandir razonamiento",
+        label: "Expandir detalles del razonamiento",
         description:
-          "Mostrar los bloques de pensamiento y razonamiento del agente totalmente expandidos de forma predeterminada",
+          "Mostrar los bloques de razonamiento individuales expandidos de forma predeterminada",
       },
       toolCallDetail: {
         label: "Visualización de llamadas a herramientas",

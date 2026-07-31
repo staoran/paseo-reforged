@@ -24,6 +24,7 @@ import {
   mapCodexPatchNotificationToToolCall,
   mapCodexPlanToToolCall,
   normalizeCodexOutputSchema,
+  threadItemToTimeline,
   toAgentUsage,
 } from "./codex-app-server-agent.js";
 import { CodexAppServerClient } from "./codex/app-server-transport.js";
@@ -326,6 +327,47 @@ process.stdin.on("data", (chunk) => {
 }
 
 describe("Codex app-server provider", () => {
+  test("preserves supported agent message phases", () => {
+    expect(
+      threadItemToTimeline({
+        type: "agentMessage",
+        id: "commentary-1",
+        text: "Checking the workspace.",
+        phase: "commentary",
+      }),
+    ).toEqual({
+      type: "assistant_message",
+      messageId: "commentary-1",
+      text: "Checking the workspace.",
+      phase: "commentary",
+    });
+    expect(
+      threadItemToTimeline({
+        type: "agentMessage",
+        id: "final-1",
+        text: "Done.",
+        phase: "final_answer",
+      }),
+    ).toEqual({
+      type: "assistant_message",
+      messageId: "final-1",
+      text: "Done.",
+      phase: "final_answer",
+    });
+    expect(
+      threadItemToTimeline({
+        type: "agentMessage",
+        id: "legacy-1",
+        text: "Legacy response.",
+        phase: "unsupported",
+      }),
+    ).toEqual({
+      type: "assistant_message",
+      messageId: "legacy-1",
+      text: "Legacy response.",
+    });
+  });
+
   test("getAvailableModes includes auto-review when the Codex version supports it", async () => {
     const session = createSession({}, { autoReviewEnabled: true });
 
@@ -4539,6 +4581,84 @@ describe("Codex app-server provider", () => {
         provider: "codex",
         turnId: "test-turn",
         item: { type: "assistant_message", text: "lo", messageId: "assistant-item-1" },
+      },
+    ]);
+  });
+
+  test("preserves assistant phase across streamed lifecycle events", () => {
+    const startedSession = createSession();
+    const startedEvents: AgentStreamEvent[] = [];
+    startedSession.subscribe((event) => startedEvents.push(event));
+
+    asInternals(startedSession).handleNotification("item/started", {
+      item: {
+        id: "assistant-commentary",
+        type: "agentMessage",
+        text: "",
+        phase: "commentary",
+      },
+    });
+    asInternals(startedSession).handleNotification("item/agentMessage/delta", {
+      itemId: "assistant-commentary",
+      delta: "Checking.",
+    });
+    asInternals(startedSession).handleNotification("item/completed", {
+      item: {
+        id: "assistant-commentary",
+        type: "agentMessage",
+        text: "Checking.",
+        phase: "commentary",
+      },
+    });
+
+    const completedSession = createSession();
+    const completedEvents: AgentStreamEvent[] = [];
+    completedSession.subscribe((event) => completedEvents.push(event));
+    asInternals(completedSession).handleNotification("item/agentMessage/delta", {
+      itemId: "assistant-final",
+      delta: "Done.",
+    });
+    asInternals(completedSession).handleNotification("item/completed", {
+      item: {
+        id: "assistant-final",
+        type: "agentMessage",
+        text: "Done.",
+        phase: "final_answer",
+      },
+    });
+
+    expect([...startedEvents, ...completedEvents]).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        item: {
+          type: "assistant_message",
+          messageId: "assistant-commentary",
+          text: "Checking.",
+          phase: "commentary",
+        },
+      },
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        item: {
+          type: "assistant_message",
+          messageId: "assistant-final",
+          text: "Done.",
+        },
+      },
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        item: {
+          type: "assistant_message",
+          messageId: "assistant-final",
+          text: "",
+          phase: "final_answer",
+        },
       },
     ]);
   });

@@ -295,6 +295,8 @@ export const ar: TranslationResources = {
     },
     activity: {
       details: "تفاصيل",
+      completed: "تمت المعالجة",
+      completedWithDuration: "تمت المعالجة خلال {{duration}}",
     },
     dictation: {
       start: "بدء الإملاء الصوتي",
@@ -1668,9 +1670,13 @@ export const ar: TranslationResources = {
         description: "يتم الاحتفاظ بالخطوط في المخزن المؤقت الطرفي المدمج",
         accessibilityLabel: "خطوط التمرير Terminal",
       },
+      autoExpandActivity: {
+        label: "إبقاء النشاط المكتمل موسعًا",
+        description: "عدم طي عمل الوكيل تلقائيًا عند انتهاء الجولة",
+      },
       autoExpandReasoning: {
-        label: "عرض التفكير دائماً",
-        description: "إظهار تفكير الوكيل وخطوات الاستدلال بشكل كامل بشكل افتراضي",
+        label: "توسيع تفاصيل الاستدلال",
+        description: "عرض كتل الاستدلال الفردية موسعة افتراضيًا",
       },
       toolCallDetail: {
         label: "عرض استدعاءات الأدوات",

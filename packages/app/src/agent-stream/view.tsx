@@ -26,13 +26,14 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { MAX_CONTENT_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
 import { useMutation } from "@tanstack/react-query";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
-import { Check, ChevronDown, X } from "lucide-react-native";
+import { Brain, Check, ChevronDown, ChevronRight, X } from "lucide-react-native";
 import { usePanelStore } from "@/stores/panel-store";
 import {
   AssistantMessage,
   SpeakMessage,
   UserMessage,
   ActivityLog,
+  ExpandableBadge,
   ToolCall,
   TodoListCard,
   CompactionMarker,
@@ -72,7 +73,7 @@ import {
   type AssistantTurnForkHandler,
   type TurnContentStrategy,
 } from "./turn-footer";
-import { layoutStream, type StreamLayoutItem } from "./layout";
+import { layoutStream, type ActivityFold, type StreamLayoutItem } from "./layout";
 import {
   type BottomAnchorLocalRequest,
   type BottomAnchorRouteRequest,
@@ -91,6 +92,7 @@ import {
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { buildNewWorkspaceRoute } from "@/utils/host-routes";
 import { useStableEvent } from "@/hooks/use-stable-event";
+import { formatDurationWithSeconds } from "@/utils/time";
 import { isWeb } from "@/constants/platform";
 import type { Theme } from "@/styles/theme";
 import { WORKSPACE_SURFACE_DATASET } from "@/styles/workspace-surface";
@@ -138,6 +140,69 @@ function renderPendingPermissionsNode(input: {
         <PermissionRequestCard key={permission.key} permission={permission} client={input.client} />
       ))}
     </View>
+  );
+}
+
+function isActivityFoldExpanded(
+  fold: ActivityFold,
+  overrides: ReadonlyMap<string, boolean>,
+  autoExpandActivity: boolean,
+): boolean {
+  return !fold.completed || (overrides.get(fold.id) ?? autoExpandActivity);
+}
+
+const activityFoldHeaderStyle = ({ pressed }: PressableStateCallbackType) => [
+  stylesheet.activityFoldHeader,
+  pressed ? stylesheet.activityFoldHeaderPressed : null,
+];
+
+function ActivityFoldHeader({
+  fold,
+  expanded,
+  onToggle,
+}: {
+  fold: ActivityFold;
+  expanded: boolean;
+  onToggle: (foldId: string, expanded: boolean) => void;
+}) {
+  const { t } = useTranslation();
+  const handleToggle = useCallback(
+    () => onToggle(fold.id, expanded),
+    [expanded, fold.id, onToggle],
+  );
+  const accessibilityState = useMemo(() => ({ expanded }), [expanded]);
+  if (fold.completed) {
+    const label =
+      fold.durationMs === undefined
+        ? t("message.activity.completed")
+        : t("message.activity.completedWithDuration", {
+            duration: formatDurationWithSeconds(fold.durationMs),
+          });
+    const Chevron = expanded ? ChevronDown : ChevronRight;
+    return (
+      <Pressable
+        testID={`activity-fold-${fold.id}`}
+        accessibilityRole="button"
+        accessibilityState={accessibilityState}
+        onPress={handleToggle}
+        style={activityFoldHeaderStyle}
+      >
+        <Text style={stylesheet.activityFoldHeaderText} numberOfLines={1}>
+          {label}
+        </Text>
+        <Chevron size={14} color={stylesheet.activityFoldHeaderIcon.color} />
+      </Pressable>
+    );
+  }
+  return (
+    <ExpandableBadge
+      testID={`activity-fold-${fold.id}`}
+      label={t("agentControls.thinking.title")}
+      icon={Brain}
+      isExpanded={expanded}
+      isLoading
+      borderlessWhenExpanded
+    />
   );
 }
 
@@ -344,6 +409,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
   ) {
     const { t } = useTranslation();
     const router = useRouter();
+    const autoExpandActivity = useSettings((settings) => settings.autoExpandActivity);
     const autoExpandReasoning = useSettings((settings) => settings.autoExpandReasoning);
     const toolCallDetailLevel = useSettings((settings) => settings.toolCallDetailLevel);
     const viewportRef = useRef<StreamViewportHandle | null>(null);
@@ -366,6 +432,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     );
     const [expandedToolCallGroupIds, setExpandedToolCallGroupIds] = useState<Set<string>>(
       new Set(),
+    );
+    const [activityFoldOverrides, setActivityFoldOverrides] = useState<Map<string, boolean>>(
+      new Map(),
     );
     const openFileExplorerForCheckout = usePanelStore((state) => state.openFileExplorerForCheckout);
     const setExplorerTabForCheckout = usePanelStore((state) => state.setExplorerTabForCheckout);
@@ -421,6 +490,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       setIsNearBottom(true);
       setExpandedInlineToolCallIds(new Set());
       setExpandedToolCallGroupIds(new Set());
+      setActivityFoldOverrides(new Map());
     }, [agentId]);
 
     const handleInlinePathPress = useStableEvent(
@@ -559,6 +629,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     // When isActive flips back to true, the context change triggers a re-render and
     // the component reads the current (fresh) streamItems/streamHead from props.
     const isActive = useRetainedPanelActive();
+    useEffect(() => {
+      if (!isActive) {
+        setActivityFoldOverrides(new Map());
+      }
+    }, [isActive]);
     const frozenStreamItemsRef = useRef(streamItems);
     const frozenStreamHeadRef = useRef(streamHead);
     if (isActive) {
@@ -659,6 +734,14 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         } else {
           next.delete(groupId);
         }
+        return next;
+      });
+    }, []);
+
+    const toggleActivityFold = useCallback((foldId: string, expanded: boolean) => {
+      setActivityFoldOverrides((previous) => {
+        const next = new Map(previous);
+        next.set(foldId, !expanded);
         return next;
       });
     }, []);
@@ -873,7 +956,23 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
     const renderStreamItem = useCallback(
       (layoutItem: StreamLayoutItem) => {
-        const content = renderStreamItemContent(layoutItem);
+        const fold = layoutItem.activityFold;
+        const expanded = fold
+          ? isActivityFoldExpanded(fold, activityFoldOverrides, autoExpandActivity)
+          : true;
+        if (fold && !expanded && !layoutItem.isActivityFoldHost) {
+          return null;
+        }
+        const itemContent = expanded ? renderStreamItemContent(layoutItem) : null;
+        const content =
+          fold && layoutItem.isActivityFoldHost ? (
+            <>
+              <ActivityFoldHeader fold={fold} expanded={expanded} onToggle={toggleActivityFold} />
+              {itemContent}
+            </>
+          ) : (
+            itemContent
+          );
         return renderStreamItemWithTurnFooter({
           content,
           layoutItem,
@@ -883,11 +982,14 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         });
       },
       [
+        activityFoldOverrides,
+        autoExpandActivity,
         handleForkAssistantTurn,
         readOnly,
         renderStreamItemContent,
         streamRenderStrategy,
         supportsAgentForkContextCursor,
+        toggleActivityFold,
       ],
     );
 
@@ -1024,13 +1126,31 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const streamScrollEnabled =
       !streamRenderStrategy.shouldDisableParentScrollOnInlineDetailsExpansion() ||
       expandedInlineToolCallIds.size === 0;
+    const streamDisplayStateById = useMemo(() => {
+      const itemIds = new Set(expandedToolCallGroupIds);
+      for (const layoutItem of [...streamLayout.history, ...streamLayout.liveHead]) {
+        if (
+          layoutItem.activityFold &&
+          isActivityFoldExpanded(layoutItem.activityFold, activityFoldOverrides, autoExpandActivity)
+        ) {
+          itemIds.add(layoutItem.item.id);
+        }
+      }
+      return itemIds;
+    }, [
+      activityFoldOverrides,
+      autoExpandActivity,
+      expandedToolCallGroupIds,
+      streamLayout.history,
+      streamLayout.liveHead,
+    ]);
     const historyRowRevision = useMemo(
       () => ({
         contentById: projectedToolCalls.historyGroupUpdatesByHostId,
-        displayStateById: expandedToolCallGroupIds,
+        displayStateById: streamDisplayStateById,
         globalDisplayState: isMobile,
       }),
-      [expandedToolCallGroupIds, isMobile, projectedToolCalls.historyGroupUpdatesByHostId],
+      [isMobile, projectedToolCalls.historyGroupUpdatesByHostId, streamDisplayStateById],
     );
 
     return (
@@ -1041,7 +1161,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               agentId,
               segments: renderModel.segments,
               historyRowRevision,
-              liveHeadRowRevision: expandedToolCallGroupIds,
+              liveHeadRowRevision: streamDisplayStateById,
               boundary,
               renderers,
               listEmptyComponent,
@@ -1552,6 +1672,29 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   listHeaderContent: {
     gap: theme.spacing[3],
+  },
+  activityFoldHeader: {
+    minHeight: 28,
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "stretch",
+    gap: theme.spacing[1],
+    paddingVertical: theme.spacing[1],
+    borderBottomWidth: theme.borderWidth[1],
+    borderBottomColor: theme.colors.border,
+  },
+  activityFoldHeaderPressed: {
+    opacity: 0.65,
+  },
+  activityFoldHeaderText: {
+    flexShrink: 1,
+    color: theme.colors.foregroundMuted,
+    fontFamily: theme.fontFamily.workspace,
+    fontSize: theme.workspaceFontSize.sm,
+    lineHeight: Math.round(theme.workspaceFontSize.sm * 1.4),
+  },
+  activityFoldHeaderIcon: {
+    color: theme.colors.foregroundMuted,
   },
   syncingIndicator: {
     flexDirection: "row",

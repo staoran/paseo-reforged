@@ -1,4 +1,8 @@
-import type { AgentProvider, ToolCallDetail } from "@getpaseo/protocol/agent-types";
+import type {
+  AgentMessagePhase,
+  AgentProvider,
+  ToolCallDetail,
+} from "@getpaseo/protocol/agent-types";
 import type { AgentAttachment, AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { extractTaskEntriesFromToolCall } from "../utils/tool-call-parsers";
@@ -442,7 +446,13 @@ function preserveReplacementHead(
 
   const head = [
     ...unreconciledHead.slice(0, liveAssistantIndex),
-    { ...liveAssistant, text: tailAssistant.text },
+    {
+      ...liveAssistant,
+      text: tailAssistant.text,
+      ...((liveAssistant.phase ?? tailAssistant.phase)
+        ? { phase: liveAssistant.phase ?? tailAssistant.phase }
+        : {}),
+    },
     ...unreconciledHead.slice(liveAssistantIndex + 1),
   ];
   return { tail: tail.slice(0, -1), head, acknowledgedClientMessageIds: [] };
@@ -526,6 +536,7 @@ export interface AssistantMessageItem {
   kind: "assistant_message";
   id: string;
   messageId?: string;
+  phase?: AgentMessagePhase;
   timelineCursor?: TimelinePosition;
   text: string;
   timestamp: Date;
@@ -692,19 +703,37 @@ function appendUserMessage(
   return upsertUserMessage(state, nextItem);
 }
 
+function hasAssistantMessageUpdate(
+  item: AssistantMessageItem,
+  chunk: string,
+  phase?: AgentMessagePhase,
+): boolean {
+  return chunk.length > 0 || (phase !== undefined && item.phase !== phase);
+}
+
+function applyAssistantMessageMetadata(
+  item: AssistantMessageItem,
+  phase?: AgentMessagePhase,
+  timelineCursor?: TimelinePosition,
+): AssistantMessageItem {
+  return {
+    ...item,
+    ...(phase ? { phase } : {}),
+    ...(timelineCursor ? { timelineCursor } : {}),
+  };
+}
+
 function appendAssistantMessage(
   state: StreamItem[],
   text: string,
   timestamp: Date,
   source: StreamUpdateSource,
   messageId?: string,
+  phase?: AgentMessagePhase,
   reservedItemIds?: ReadonlySet<string>,
   timelineCursor?: TimelinePosition,
 ): StreamItem[] {
   const { chunk, hasContent } = normalizeChunk(text);
-  if (!chunk) {
-    return state;
-  }
 
   const last = state[state.length - 1];
   const shouldAppendToLast =
@@ -712,12 +741,14 @@ function appendAssistantMessage(
     last.kind === "assistant_message" &&
     (messageId === undefined || last.messageId === messageId);
   if (shouldAppendToLast) {
-    const updated: AssistantMessageItem = {
-      ...last,
-      text: `${last.text}${chunk}`,
-      timestamp,
-      ...(timelineCursor ? { timelineCursor } : {}),
-    };
+    if (!hasAssistantMessageUpdate(last, chunk, phase)) {
+      return state;
+    }
+    const updated = applyAssistantMessageMetadata(
+      { ...last, text: `${last.text}${chunk}`, timestamp },
+      phase,
+      timelineCursor,
+    );
     return [...state.slice(0, -1), updated];
   }
 
@@ -730,12 +761,14 @@ function appendAssistantMessage(
     secondLast?.kind === "assistant_message" &&
     (messageId === undefined || secondLast.messageId === messageId)
   ) {
-    const updated: AssistantMessageItem = {
-      ...secondLast,
-      text: `${secondLast.text}${chunk}`,
-      timestamp,
-      ...(timelineCursor ? { timelineCursor } : {}),
-    };
+    if (!hasAssistantMessageUpdate(secondLast, chunk, phase)) {
+      return state;
+    }
+    const updated = applyAssistantMessageMetadata(
+      { ...secondLast, text: `${secondLast.text}${chunk}`, timestamp },
+      phase,
+      timelineCursor,
+    );
     return [...state.slice(0, -2), updated, last];
   }
 
@@ -745,14 +778,17 @@ function appendAssistantMessage(
 
   const idSeed = chunk.trim() || chunk;
   const entryId = createAssistantItemId(state, messageId, idSeed, timestamp, reservedItemIds);
-  const item: AssistantMessageItem = {
-    kind: "assistant_message",
-    id: entryId,
-    ...(messageId ? { messageId } : {}),
-    ...(timelineCursor ? { timelineCursor } : {}),
-    text: chunk,
-    timestamp,
-  };
+  const item = applyAssistantMessageMetadata(
+    {
+      kind: "assistant_message",
+      id: entryId,
+      ...(messageId ? { messageId } : {}),
+      text: chunk,
+      timestamp,
+    },
+    phase,
+    timelineCursor,
+  );
   return [...state, item];
 }
 
@@ -1158,6 +1194,7 @@ function reduceTimelineEvent(
           timestamp,
           source,
           item.messageId,
+          item.phase,
           reservedItemIds,
           timelineCursor,
         ),
@@ -1401,6 +1438,7 @@ function promoteCompletedAssistantBlocks(params: { tail: StreamItem[]; head: Str
       blockIndex: firstBlockIndex + offset,
     }),
     ...(activeItem.messageId ? { messageId: activeItem.messageId } : {}),
+    ...(activeItem.phase ? { phase: activeItem.phase } : {}),
     blockGroupId,
     blockIndex: firstBlockIndex + offset,
     text: block,

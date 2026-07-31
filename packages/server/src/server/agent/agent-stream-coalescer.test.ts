@@ -46,6 +46,7 @@ function assistant(
     provider?: AgentProvider;
     turnId?: string;
     messageId?: string;
+    phase?: "commentary" | "final_answer";
   },
 ): Extract<AgentStreamEvent, { type: "timeline" }> {
   return timeline(
@@ -53,6 +54,7 @@ function assistant(
       type: "assistant_message",
       text,
       ...(options?.messageId !== undefined ? { messageId: options.messageId } : {}),
+      ...(options?.phase !== undefined ? { phase: options.phase } : {}),
     },
     options,
   );
@@ -317,6 +319,24 @@ describe("AgentStreamCoalescer", () => {
 
     await vi.advanceTimersByTimeAsync(60);
     expect(flushes).toEqual([]);
+  });
+
+  test("preserves metadata-only assistant phase changes", async () => {
+    const { coalescer, flushes } = createHarness();
+
+    coalescer.handle("agent-1", assistant("Done.", { messageId: "message-1" }));
+    coalescer.handle("agent-1", assistant("", { messageId: "message-1", phase: "final_answer" }));
+
+    await vi.advanceTimersByTimeAsync(60);
+    expect(flushes.map((flush) => flush.item)).toEqual([
+      { type: "assistant_message", messageId: "message-1", text: "Done." },
+      {
+        type: "assistant_message",
+        messageId: "message-1",
+        text: "",
+        phase: "final_answer",
+      },
+    ]);
   });
 
   test("preserves whitespace byte-exactly", async () => {

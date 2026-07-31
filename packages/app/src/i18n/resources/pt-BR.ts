@@ -298,6 +298,8 @@ export const ptBR: TranslationResources = {
     },
     activity: {
       details: "Detalhes",
+      completed: "Processado",
+      completedWithDuration: "Processado em {{duration}}",
     },
     dictation: {
       start: "Iniciar ditado por voz",
@@ -1698,10 +1700,13 @@ export const ptBR: TranslationResources = {
         description: "Linhas mantidas no buffer do terminal integrado",
         accessibilityLabel: "Linhas do scrollback do terminal",
       },
+      autoExpandActivity: {
+        label: "Manter atividade concluída expandida",
+        description: "Não recolher automaticamente o trabalho do agente ao concluir um turno",
+      },
       autoExpandReasoning: {
-        label: "Sempre expandir raciocínio",
-        description:
-          "Mostrar os blocos de pensamento e raciocínio do agente totalmente expandidos por padrão",
+        label: "Expandir detalhes do raciocínio",
+        description: "Mostrar blocos de raciocínio individuais expandidos por padrão",
       },
       toolCallDetail: {
         label: "Exibição de chamadas de ferramentas",

@@ -480,6 +480,64 @@ describe("stream reducer canonical tool calls", () => {
     assert.strictEqual(first.messageId, "msg-same");
   });
 
+  it("preserves assistant phase without materializing metadata-only messages", () => {
+    const metadataOnly: AgentStreamEventPayload = {
+      type: "timeline",
+      provider: "codex",
+      item: {
+        type: "assistant_message",
+        messageId: "msg-phase",
+        text: "",
+        phase: "final_answer",
+      },
+    };
+    const timestamp = new Date("2025-01-01T10:02:10Z");
+
+    expect(reduceStreamUpdate([], metadataOnly, timestamp)).toEqual([]);
+
+    const initial = reduceStreamUpdate(
+      [],
+      assistantTimeline("Done.", "codex", "msg-phase"),
+      timestamp,
+    );
+    expect(reduceStreamUpdate(initial, metadataOnly, timestamp)).toEqual([
+      expect.objectContaining({
+        kind: "assistant_message",
+        messageId: "msg-phase",
+        text: "Done.",
+        phase: "final_answer",
+      }),
+    ]);
+
+    const promoted = applyStreamEvent({
+      tail: [],
+      head: [],
+      event: {
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "assistant_message",
+          messageId: "msg-commentary",
+          text: "First block.\n\nSecond block.",
+          phase: "commentary",
+        },
+      },
+      timestamp,
+    });
+    expect([...promoted.tail, ...promoted.head]).toEqual([
+      expect.objectContaining({
+        kind: "assistant_message",
+        text: "First block.",
+        phase: "commentary",
+      }),
+      expect.objectContaining({
+        kind: "assistant_message",
+        text: "Second block.",
+        phase: "commentary",
+      }),
+    ]);
+  });
+
   it("keeps row identities unique when an assistant message resumes after a tool", () => {
     const messageId = "msg-resumed";
     const state = hydrateStreamState([
