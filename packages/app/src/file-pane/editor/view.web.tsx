@@ -6,7 +6,12 @@ import { getCM, vim } from "@replit/codemirror-vim";
 import { isRenderedMarkdownFile } from "@/components/file-pane-render-mode";
 import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import type { FileEditorModel } from "./model";
-import { editorBaseExtensions, editorTheme, type EditorVisualTheme } from "./extensions.web";
+import {
+  editorBaseExtensions,
+  editorTheme,
+  setNavigationHighlight,
+  type EditorVisualTheme,
+} from "./extensions.web";
 
 interface FileEditorViewProps {
   model: FileEditorModel;
@@ -98,14 +103,28 @@ export function FileEditorView({
 
   useEffect(() => {
     const view = viewRef.current;
-    if (!view || !location.lineStart) return;
+    if (!view) return;
+    if (!location.lineStart) {
+      view.dispatch({ effects: setNavigationHighlight.of([]) });
+      return;
+    }
     const lineStart = Math.min(location.lineStart, view.state.doc.lines);
-    const lineEnd = Math.min(location.lineEnd ?? lineStart, view.state.doc.lines);
+    const lineEnd = Math.max(
+      lineStart,
+      Math.min(location.lineEnd ?? lineStart, view.state.doc.lines),
+    );
     const from = view.state.doc.line(lineStart).from;
-    const to = view.state.doc.line(Math.max(lineStart, lineEnd)).to;
+    const to = view.state.doc.line(lineEnd).to;
+    const highlightedLines = Array.from(
+      { length: lineEnd - lineStart + 1 },
+      (_, index) => view.state.doc.line(lineStart + index).from,
+    );
     view.dispatch({
       selection: { anchor: from, head: lineEnd > lineStart ? to : from },
-      effects: EditorView.scrollIntoView(from, { y: "center" }),
+      effects: [
+        setNavigationHighlight.of(highlightedLines),
+        EditorView.scrollIntoView(from, { y: "center" }),
+      ],
     });
   }, [location.lineEnd, location.lineStart, navigationRevision]);
 

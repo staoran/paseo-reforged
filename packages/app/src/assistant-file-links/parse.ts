@@ -222,6 +222,13 @@ export function parseFileProtocolUrl(value: string): InlinePathTarget | null {
     return null;
   }
 
+  if (!parsedUrl.hash && /^[A-Za-z]:\//.test(normalizedPath)) {
+    const inlinePathTarget = parseInlinePathToken(normalizedPath);
+    if (inlinePathTarget) {
+      return { ...inlinePathTarget, raw: value };
+    }
+  }
+
   const lines = parseLineFragment(parsedUrl.hash);
   if (!lines) {
     return null;

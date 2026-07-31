@@ -28,6 +28,10 @@ function fitsViewportWidth(element: HTMLElement): boolean {
   return element.scrollWidth === element.clientWidth;
 }
 
+function backgroundColor(element: HTMLElement): string {
+  return getComputedStyle(element).backgroundColor;
+}
+
 async function replaceEditorText(page: Page, content: string): Promise<void> {
   const contentElement = editor(page);
   await contentElement.click();
@@ -42,7 +46,7 @@ async function openWorkspaceFile(page: Page, filename: string): Promise<void> {
   await expectFileTabOpen(page, filename);
 }
 
-async function seedAgentWithFileLink(target: string) {
+async function seedAgentWithFileLink(target: string, filename = "target.ts") {
   const session = await seedMockAgentWorkspace({
     repoPrefix: "file-editing-chat-link-",
     title: "Chat file link e2e",
@@ -56,10 +60,12 @@ async function seedAgentWithFileLink(target: string) {
     ].join("\n"),
   });
   await writeFile(
-    path.join(session.cwd, "target.ts"),
-    Array.from({ length: 80 }, (_, index) => `export const line${index + 1} = ${index + 1};`).join(
-      "\n",
-    ),
+    path.join(session.cwd, filename),
+    Array.from({ length: 80 }, (_, index) =>
+      index === 0 && filename.endsWith(".md")
+        ? "# Preview heading"
+        : `export const line${index + 1} = ${index + 1};`,
+    ).join("\n"),
     "utf8",
   );
   return session;
@@ -74,9 +80,11 @@ async function openToolCallFile(page: Page, filePathText: string): Promise<void>
 }
 
 test.describe("CodeMirror workspace file editing", () => {
-  test("opens an assistant file link at its referenced line", async ({ page }) => {
-    const target = "target.ts:42";
-    const session = await seedAgentWithFileLink(target);
+  test("keeps Markdown preview and highlights an assistant link target in Source", async ({
+    page,
+  }) => {
+    const target = "target.md:42";
+    const session = await seedAgentWithFileLink(target, "target.md");
 
     try {
       await openAgentRoute(page, session);
@@ -85,12 +93,21 @@ test.describe("CodeMirror workspace file editing", () => {
       await expect(fileLink).toBeVisible({ timeout: 15_000 });
       await fileLink.click();
 
-      await expectFileTabOpen(page, "target.ts");
-      await expect(page.getByTestId("file-source-editor")).toBeVisible();
+      await expectFileTabOpen(page, "target.md");
+      const filePane = page.getByTestId("workspace-file-pane").filter({ visible: true });
+      await expect(page.getByTestId("file-mode-preview")).toBeVisible();
+      await expect(filePane.locator("[data-pmono]")).not.toBeVisible();
+      await page.getByTestId("file-mode-source").click();
+
+      const editorHost = page.getByTestId("file-source-editor");
+      await expect(editorHost).toBeVisible();
       await expect(page.getByLabel("Line 42, column 1")).toBeVisible();
-      await expect(
-        page.getByTestId("file-source-editor").locator(".cm-line", { hasText: "line42 = 42" }),
-      ).toBeVisible();
+      const targetLine = editorHost.locator(".cm-line", { hasText: "line42 = 42" });
+      const adjacentLine = editorHost.locator(".cm-line", { hasText: "line41 = 41" });
+      await expect(targetLine).toBeVisible();
+      await expect(adjacentLine).toBeVisible();
+      const adjacentBackground = await adjacentLine.evaluate(backgroundColor);
+      await expect.poll(() => targetLine.evaluate(backgroundColor)).not.toBe(adjacentBackground);
 
       const sourceEditor = editor(page);
       await sourceEditor.click();

@@ -101,6 +101,20 @@ describe("parseFileProtocolUrl", () => {
     });
   });
 
+  it("parses windows file URLs with line suffixes", () => {
+    for (const url of [
+      "file:///E:/repo/EasyLink.Entity.csproj:31",
+      "file:///E:/repo/EasyLink.Entity.csproj%3A31",
+    ]) {
+      expect(parseFileProtocolUrl(url)).toEqual({
+        raw: url,
+        path: "E:/repo/EasyLink.Entity.csproj",
+        lineStart: 31,
+        lineEnd: undefined,
+      });
+    }
+  });
+
   it("rejects non-file URLs and invalid ranges", () => {
     expect(parseFileProtocolUrl("https://example.com/test.ts#L10")).toBeNull();
     expect(parseFileProtocolUrl("file:///Users/test/project/src/app.tsx#L20-L12")).toBeNull();

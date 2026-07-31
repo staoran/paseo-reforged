@@ -215,8 +215,7 @@ function FilePreviewBody({
   const theme = UnistylesRuntime.getTheme();
   const { t } = useTranslation();
   const filePath = location.path;
-  const isMarkdownFile =
-    preview?.kind === "text" && isRenderedMarkdownFile(filePath) && !location.lineStart;
+  const isMarkdownFile = preview?.kind === "text" && isRenderedMarkdownFile(filePath);
 
   const previewScrollRef = useRef<RNScrollView>(null);
 
