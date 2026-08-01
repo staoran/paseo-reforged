@@ -107,6 +107,7 @@ import type { WorkspaceComposerAttachment } from "@/attachments/types";
 import type { WorkspaceDraftTabSetup, WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { toErrorMessage } from "@/utils/error-messages";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
+import { useTurnChanges } from "./use-turn-changes";
 
 function renderLiveAuxiliaryNode(input: {
   pendingPermissions: ReactNode;
@@ -312,6 +313,7 @@ export interface AgentStreamViewProps {
   isAuthoritativeHistoryReady?: boolean;
   toast?: ToastApi | null;
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
+  onOpenWorkingDiffFile?: (path: string, disposition: OpenFileDisposition) => void;
   readOnly?: boolean;
   historyPagination?: {
     hasOlder: boolean;
@@ -402,6 +404,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       isAuthoritativeHistoryReady = true,
       toast,
       onOpenWorkspaceFile,
+      onOpenWorkingDiffFile,
       readOnly = false,
       historyPagination,
     },
@@ -953,6 +956,17 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     );
 
     const bottomTurnFooterHost = streamLayout.auxiliaryTurnFooter;
+    const showRunningTurnFooter =
+      context.status === "running" || pendingMessageSubmissions.length > 0;
+    const turnChanges = useTurnChanges({
+      active: isActive,
+      enabled: Boolean(onOpenWorkingDiffFile),
+      serverId,
+      workspaceRoot: context.cwd,
+      host: bottomTurnFooterHost,
+      isTurnRunning: showRunningTurnFooter,
+      strategy: streamRenderStrategy,
+    });
 
     const renderStreamItem = useCallback(
       (layoutItem: StreamLayoutItem) => {
@@ -998,8 +1012,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [pendingPermissions, agentId],
     );
 
-    const showRunningTurnFooter =
-      context.status === "running" || pendingMessageSubmissions.length > 0;
     const pendingPermissionsNode = useMemo(
       () =>
         renderPendingPermissionsNode({
@@ -1019,6 +1031,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             strategy={streamRenderStrategy}
             supportsTimelineCursor={supportsAgentForkContextCursor}
             onForkAssistantTurn={readOnly ? undefined : handleForkAssistantTurn}
+            turnChanges={turnChanges}
+            onTurnChangeFilePress={onOpenWorkingDiffFile}
           />
         ) : null,
       [
@@ -1030,6 +1044,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         bottomTurnFooterHost,
         streamRenderStrategy,
         supportsAgentForkContextCursor,
+        turnChanges,
+        onOpenWorkingDiffFile,
       ],
     );
     const renderModel = useMemo<AgentStreamRenderModel>(() => {
@@ -1314,6 +1330,9 @@ function agentStreamViewPropsEqual(
   }
   if (left.toast !== right.toast) reasons.push("toast");
   if (left.onOpenWorkspaceFile !== right.onOpenWorkspaceFile) reasons.push("onOpenWorkspaceFile");
+  if (left.onOpenWorkingDiffFile !== right.onOpenWorkingDiffFile) {
+    reasons.push("onOpenWorkingDiffFile");
+  }
   if (left.readOnly !== right.readOnly) reasons.push("readOnly");
   if (!historyPaginationPropsEqual(left.historyPagination, right.historyPagination)) {
     reasons.push("historyPagination");

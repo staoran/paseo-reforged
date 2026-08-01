@@ -197,6 +197,7 @@ import { getProviderIcon } from "@/components/provider-icons";
 import {
   createWorkspaceFileTabTarget,
   normalizeWorkspaceFileLocation,
+  type OpenFileDisposition,
   type WorkspaceFileLocation,
   type WorkspaceFileOpenRequest,
 } from "@/workspace/file-open";
@@ -2462,6 +2463,48 @@ function WorkspaceScreenContent({
     handleOpenFileFromChat(request.location, { parentTabId });
   });
 
+  const handleOpenWorkspaceTabFromPane = useStableEvent(function handleOpenWorkspaceTabFromPane({
+    target,
+    disposition,
+    paneId,
+    parentTabId,
+    focusPaneBeforeOpen,
+  }: {
+    target: WorkspaceTabTarget;
+    disposition: OpenFileDisposition;
+    paneId?: string | null;
+    parentTabId: string;
+    focusPaneBeforeOpen?: boolean;
+  }) {
+    if (!persistenceKey) {
+      return;
+    }
+    if (focusPaneBeforeOpen && paneId) {
+      focusWorkspacePane(persistenceKey, paneId);
+    }
+    if (disposition === "side" && !isMobile && paneId) {
+      const placement = resolveSideFileOpenPlacement({
+        layout: workspaceLayout,
+        sourcePaneId: paneId,
+        tabs: uiTabs,
+        target,
+      });
+      if (placement.kind === "focus-side-pane") {
+        focusWorkspacePane(persistenceKey, placement.paneId);
+      } else if (placement.kind === "split-side-pane") {
+        splitWorkspacePaneEmpty(persistenceKey, {
+          targetPaneId: placement.paneId,
+          position: "right",
+        });
+      }
+    }
+
+    const tabId = openWorkspaceChildTabFocused(persistenceKey, target, parentTabId);
+    if (tabId) {
+      navigateToTabId(tabId);
+    }
+  });
+
   const [hoveredCloseTabKey, setHoveredCloseTabKey] = useState<string | null>(null);
   const { handleRenameTab, renamingTab, handleRenameModalSubmit, handleRenameModalClose } =
     useWorkspaceTabRename({
@@ -3265,17 +3308,14 @@ function WorkspaceScreenContent({
         normalizedServerId,
         normalizedWorkspaceId,
         fileNavigationRevision: fileNavigationRevisionByTabId[input.tab.tabId] ?? 0,
-        onOpenTab: (target) => {
-          if (!persistenceKey) {
-            return;
-          }
-          if (input.focusPaneBeforeOpen && input.paneId) {
-            focusWorkspacePane(persistenceKey, input.paneId);
-          }
-          const tabId = openWorkspaceChildTabFocused(persistenceKey, target, input.tab.tabId);
-          if (tabId) {
-            navigateToTabId(tabId);
-          }
+        onOpenTab: (target, disposition = "main") => {
+          handleOpenWorkspaceTabFromPane({
+            target,
+            disposition,
+            paneId: input.paneId,
+            parentTabId: input.tab.tabId,
+            focusPaneBeforeOpen: input.focusPaneBeforeOpen,
+          });
         },
         onCloseCurrentTab: () => {
           void handleCloseTabById(input.tab.tabId);
@@ -3298,14 +3338,12 @@ function WorkspaceScreenContent({
       }),
     [
       handleCloseTabById,
-      focusWorkspacePane,
       fileNavigationRevisionByTabId,
       handleOpenWorkspaceFileFromPane,
-      navigateToTabId,
+      handleOpenWorkspaceTabFromPane,
       normalizedServerId,
       normalizedWorkspaceId,
       openImportSheet,
-      openWorkspaceChildTabFocused,
       persistenceKey,
       retargetWorkspaceTab,
     ],

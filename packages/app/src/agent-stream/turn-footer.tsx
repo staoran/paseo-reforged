@@ -19,6 +19,9 @@ import {
 import type { TurnFooterHost } from "./layout";
 import { SyncedLoader } from "@/components/synced-loader";
 import { useRetainedPanelActive } from "@/components/retained-panel";
+import type { OpenFileDisposition } from "@/workspace/file-open";
+import { TurnChangesCard } from "./turn-changes-card";
+import type { TurnChangesModel } from "./turn-changes";
 
 const ThemedSyncedLoader = withUnistyles(SyncedLoader);
 const workingIndicatorColorMapping = (theme: Theme) => ({
@@ -42,6 +45,8 @@ export const TurnFooter = memo(function TurnFooter({
   strategy,
   supportsTimelineCursor,
   onForkAssistantTurn,
+  turnChanges,
+  onTurnChangeFilePress,
 }: {
   isRunning: boolean;
   providerRetryMessage: string | null;
@@ -50,6 +55,8 @@ export const TurnFooter = memo(function TurnFooter({
   strategy: TurnContentStrategy;
   supportsTimelineCursor: boolean;
   onForkAssistantTurn?: AssistantTurnForkHandler;
+  turnChanges: TurnChangesModel | null;
+  onTurnChangeFilePress?: (path: string, disposition: OpenFileDisposition) => void;
 }) {
   if (isRunning) {
     return (
@@ -65,14 +72,22 @@ export const TurnFooter = memo(function TurnFooter({
     return null;
   }
   return (
-    <CompletedTurnFooterRow
-      strategy={strategy}
-      items={host.items}
-      timing={host.timing}
-      startIndex={host.startIndex}
-      supportsTimelineCursor={supportsTimelineCursor}
-      onForkAssistantTurn={onForkAssistantTurn}
-    />
+    <TurnFooterRow>
+      <CompletedTurnFooter
+        strategy={strategy}
+        items={host.items}
+        timing={host.timing}
+        startIndex={host.startIndex}
+        supportsTimelineCursor={supportsTimelineCursor}
+        onForkAssistantTurn={onForkAssistantTurn}
+        hasFollowingContent={Boolean(turnChanges && onTurnChangeFilePress)}
+      />
+      {turnChanges && onTurnChangeFilePress ? (
+        <View style={stylesheet.turnChangesSlot}>
+          <TurnChangesCard model={turnChanges} onFilePress={onTurnChangeFilePress} />
+        </View>
+      ) : null}
+    </TurnFooterRow>
   );
 });
 
@@ -164,6 +179,7 @@ function CompletedTurnFooter({
   startIndex,
   supportsTimelineCursor,
   onForkAssistantTurn,
+  hasFollowingContent = false,
 }: {
   strategy: TurnContentStrategy;
   items: StreamItem[];
@@ -171,6 +187,7 @@ function CompletedTurnFooter({
   startIndex: number;
   supportsTimelineCursor: boolean;
   onForkAssistantTurn?: AssistantTurnForkHandler;
+  hasFollowingContent?: boolean;
 }) {
   const getContent = useCallback(
     () =>
@@ -196,7 +213,13 @@ function CompletedTurnFooter({
     [boundary, onForkAssistantTurn],
   );
   return (
-    <View style={stylesheet.turnFooterSlot}>
+    <View
+      style={
+        hasFollowingContent
+          ? [stylesheet.turnFooterSlot, stylesheet.turnFooterSlotWithFollowingContent]
+          : stylesheet.turnFooterSlot
+      }
+    >
       <AssistantTurnFooter
         getContent={getContent}
         completedAt={timing?.completedAt}
@@ -227,6 +250,13 @@ const stylesheet = StyleSheet.create((theme) => ({
     alignItems: "center",
     alignSelf: "flex-start",
     minHeight: 24,
+    paddingBottom: theme.spacing[6],
+  },
+  turnFooterSlotWithFollowingContent: {
+    paddingBottom: theme.spacing[3],
+  },
+  turnChangesSlot: {
+    width: "100%",
     paddingBottom: theme.spacing[6],
   },
   turnFooterContent: {

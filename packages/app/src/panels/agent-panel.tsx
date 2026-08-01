@@ -91,7 +91,7 @@ import type { StreamItem } from "@/types/stream";
 import { getInitDeferred, getInitKey } from "@/utils/agent-initialization";
 import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { applyLegacyDaemonWorkspaceOwnership } from "@/workspace/legacy-daemon-workspaces";
-import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
+import type { OpenFileDisposition, WorkspaceFileOpenRequest } from "@/workspace/file-open";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { buildDraftAgentSetup, type ClientSlashCommand } from "@/client-slash-commands";
@@ -1344,6 +1344,16 @@ const AgentStreamSection = memo(function AgentStreamSection({
   toast: ReturnType<typeof useToastHost>["api"];
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
 }) {
+  const { openTab } = usePaneContext();
+  const workingDiffFocusRequestRef = useRef(0);
+  const handleOpenWorkingDiffFile = useCallback(
+    (path: string, disposition: OpenFileDisposition) => {
+      const focusRequestId = Math.max(Date.now(), workingDiffFocusRequestRef.current + 1);
+      workingDiffFocusRequestRef.current = focusRequestId;
+      openTab({ kind: "working_diff", focusPath: path, focusRequestId }, disposition);
+    },
+    [openTab],
+  );
   const streamItemsRaw = useSessionStore((state) =>
     agentId ? state.sessions[serverId]?.agentStreamTail?.get(agentId) : undefined,
   );
@@ -1393,6 +1403,7 @@ const AgentStreamSection = memo(function AgentStreamSection({
       toast={toast}
       pendingMessageSubmissions={pendingMessageSubmissions}
       onOpenWorkspaceFile={onOpenWorkspaceFile}
+      onOpenWorkingDiffFile={handleOpenWorkingDiffFile}
     />
   );
 });

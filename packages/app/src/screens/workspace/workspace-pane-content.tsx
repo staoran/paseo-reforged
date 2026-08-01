@@ -11,7 +11,7 @@ import { getPanelRegistration } from "@/panels/panel-registry";
 import { ensurePanelsRegistered } from "@/panels/register-panels";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import { RenderProfile } from "@/utils/render-profiler";
-import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
+import type { OpenFileDisposition, WorkspaceFileOpenRequest } from "@/workspace/file-open";
 
 export interface WorkspacePaneContentModel {
   key: string;
@@ -24,7 +24,7 @@ export interface BuildWorkspacePaneContentModelInput {
   normalizedServerId: string;
   normalizedWorkspaceId: string;
   fileNavigationRevision?: number;
-  onOpenTab: (target: WorkspaceTabDescriptor["target"]) => void;
+  onOpenTab: (target: WorkspaceTabDescriptor["target"], disposition?: OpenFileDisposition) => void;
   onCloseCurrentTab: () => void;
   onRetargetCurrentTab: (target: WorkspaceTabDescriptor["target"]) => void;
   onOpenWorkspaceFile: (request: WorkspaceFileOpenRequest) => void;

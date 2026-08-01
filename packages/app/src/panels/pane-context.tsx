@@ -1,7 +1,7 @@
 import React, { createContext, useContext, type ReactNode } from "react";
 import invariant from "tiny-invariant";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
-import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
+import type { OpenFileDisposition, WorkspaceFileOpenRequest } from "@/workspace/file-open";
 
 export interface PaneContextValue {
   serverId: string;
@@ -9,7 +9,7 @@ export interface PaneContextValue {
   tabId: string;
   target: WorkspaceTabTarget;
   fileNavigationRevision?: number;
-  openTab: (target: WorkspaceTabTarget) => void;
+  openTab: (target: WorkspaceTabTarget, disposition?: OpenFileDisposition) => void;
   closeCurrentTab: () => void;
   retargetCurrentTab: (target: WorkspaceTabTarget) => void;
   openFileInWorkspace: (request: WorkspaceFileOpenRequest) => void;
