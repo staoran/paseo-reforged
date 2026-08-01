@@ -12,23 +12,21 @@ import {
   parseMermaidWebViewMessage,
   reduceMermaidBridgeState,
   type MermaidBridgeState,
+  type MermaidWebViewInboundMessage,
+  type MermaidWebViewRenderMessage,
 } from "@/components/mermaid/mermaid-webview-bridge";
-import type { MermaidSurfaceProps } from "@/components/mermaid/mermaid-surface-types";
+import type {
+  MermaidSurfaceProps,
+  MermaidViewportConfig,
+} from "@/components/mermaid/mermaid-surface-types";
 import { useStableMermaidRenderTheme } from "@/components/mermaid/use-stable-mermaid-render-theme";
-
-interface RenderMessage {
-  type: "render";
-  requestId: number;
-  source: string;
-  theme: MermaidSurfaceProps["theme"];
-}
 
 const MERMAID_WEBVIEW_ASSET_MODULE = require("../../mermaid/webview/mermaid-webview.html");
 const WEBVIEW_ORIGIN_WHITELIST = ["*"];
 const RENDER_TIMEOUT_MS = 5_000;
 let nextRequestId = 1;
 
-function serializeForInjectedJavaScript(message: RenderMessage): string {
+function serializeForInjectedJavaScript(message: MermaidWebViewInboundMessage): string {
   return JSON.stringify(message).replace(/<\/script/gi, "<\\/script");
 }
 
@@ -36,15 +34,31 @@ function isAllowedNavigation(request: WebViewNavigation, documentUri: string): b
   return request.url === documentUri || request.url.startsWith(`${documentUri}#`);
 }
 
-export function MermaidSurface({ source, theme, onStatusChange, style }: MermaidSurfaceProps) {
+export function MermaidSurface({
+  source,
+  theme,
+  onStatusChange,
+  style,
+  viewport,
+}: MermaidSurfaceProps) {
   const stableTheme = useStableMermaidRenderTheme(theme);
+  const viewportCommand = viewport?.command;
+  const viewportMode = viewport?.mode;
+  const viewportConfig = useMemo<MermaidViewportConfig | null>(
+    () =>
+      viewportMode === undefined ? null : { command: viewportCommand ?? null, mode: viewportMode },
+    [viewportCommand, viewportMode],
+  );
   const webViewRef = useRef<WebView>(null);
   const bridgeReadyRef = useRef(false);
-  const pendingRenderRef = useRef<RenderMessage>({
+  const viewportRef = useRef(viewportConfig);
+  viewportRef.current = viewportConfig;
+  const pendingRenderRef = useRef<MermaidWebViewRenderMessage>({
     type: "render",
     requestId: nextRequestId++,
     source,
     theme: stableTheme,
+    viewport: viewportConfig,
   });
   const [bridgeState, setBridgeState] = useState<MermaidBridgeState>(() =>
     createMermaidBridgeState(pendingRenderRef.current.requestId),
@@ -84,13 +98,17 @@ export function MermaidSurface({ source, theme, onStatusChange, style }: Mermaid
     }, RENDER_TIMEOUT_MS);
   }, [clearWatchdog]);
 
-  const injectPendingRender = useCallback(() => {
+  const injectMessage = useCallback((message: MermaidWebViewInboundMessage) => {
     if (!bridgeReadyRef.current) return;
-    const serialized = serializeForInjectedJavaScript(pendingRenderRef.current);
+    const serialized = serializeForInjectedJavaScript(message);
     webViewRef.current?.injectJavaScript(
       `window.__PASEO_MERMAID_WEBVIEW_RECEIVE__?.(${serialized}); true;`,
     );
   }, []);
+
+  const injectPendingRender = useCallback(() => {
+    injectMessage(pendingRenderRef.current);
+  }, [injectMessage]);
 
   const retryOrFail = useCallback(() => {
     clearWatchdog();
@@ -139,7 +157,13 @@ export function MermaidSurface({ source, theme, onStatusChange, style }: Mermaid
 
   useEffect(() => {
     const requestId = nextRequestId++;
-    pendingRenderRef.current = { type: "render", requestId, source, theme: stableTheme };
+    pendingRenderRef.current = {
+      type: "render",
+      requestId,
+      source,
+      theme: stableTheme,
+      viewport: viewportRef.current ?? null,
+    };
     retryCountRef.current = 0;
     const next = {
       ...createMermaidBridgeState(requestId),
@@ -158,6 +182,19 @@ export function MermaidSurface({ source, theme, onStatusChange, style }: Mermaid
     stableTheme,
     webViewDocumentUri,
   ]);
+
+  useEffect(() => {
+    pendingRenderRef.current = {
+      ...pendingRenderRef.current,
+      viewport: viewportConfig,
+    };
+    if (!viewportConfig) return;
+    injectMessage({
+      type: "viewport",
+      requestId: pendingRenderRef.current.requestId,
+      viewport: viewportConfig,
+    });
+  }, [injectMessage, viewportConfig]);
 
   useEffect(
     () => () => {
@@ -207,13 +244,14 @@ export function MermaidSurface({ source, theme, onStatusChange, style }: Mermaid
     [webViewDocumentUri],
   );
 
+  const viewportEnabled = viewportConfig !== null;
   const rootStyle = useMemo<StyleProp<ViewStyle>>(
-    () => [styles.root, style, { height: bridgeState.height }],
-    [bridgeState.height, style],
+    () => [styles.root, style, viewportEnabled ? styles.viewport : { height: bridgeState.height }],
+    [bridgeState.height, style, viewportEnabled],
   );
   const webViewStyle = useMemo<StyleProp<ViewStyle>>(
-    () => [styles.webView, { height: bridgeState.height }],
-    [bridgeState.height],
+    () => [styles.webView, viewportEnabled ? styles.viewport : { height: bridgeState.height }],
+    [bridgeState.height, viewportEnabled],
   );
   const webViewSource = useMemo(
     () => (webViewDocumentUri ? { uri: webViewDocumentUri } : null),
@@ -249,13 +287,13 @@ export function MermaidSurface({ source, theme, onStatusChange, style }: Mermaid
           setSupportMultipleWindows={false}
           allowsLinkPreview={false}
           textInteractionEnabled
-          scrollEnabled
-          nestedScrollEnabled
+          scrollEnabled={!viewportEnabled}
+          nestedScrollEnabled={!viewportEnabled}
           bounces={false}
           overScrollMode="never"
           automaticallyAdjustContentInsets={false}
           contentInsetAdjustmentBehavior="never"
-          showsHorizontalScrollIndicator
+          showsHorizontalScrollIndicator={!viewportEnabled}
           showsVerticalScrollIndicator={false}
           setBuiltInZoomControls={false}
           setDisplayZoomControls={false}
@@ -276,5 +314,9 @@ const styles = StyleSheet.create({
   webView: {
     width: "100%",
     backgroundColor: "transparent",
+  },
+  viewport: {
+    flex: 1,
+    minHeight: 1,
   },
 });

@@ -1,13 +1,29 @@
-import React, { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Modal, Pressable, Text, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
-import { Check, Copy, FileText, Maximize2, X, type LucideIcon } from "lucide-react-native";
+import {
+  Check,
+  Copy,
+  FileText,
+  Hand,
+  Maximize2,
+  MousePointer2,
+  RotateCcw,
+  X,
+  ZoomIn,
+  ZoomOut,
+  type LucideIcon,
+} from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { createMermaidRenderTheme } from "@/components/mermaid/mermaid-render-theme";
 import { MermaidSurface } from "@/components/mermaid/mermaid-surface";
-import type { MermaidRenderStatus } from "@/components/mermaid/mermaid-surface-types";
+import type {
+  MermaidRenderStatus,
+  MermaidViewportCommand,
+  MermaidViewportMode,
+} from "@/components/mermaid/mermaid-surface-types";
 
 interface MermaidDiagramProps {
   source: string;
@@ -98,20 +114,29 @@ function DiagramAction({
   icon: Icon,
   label,
   onPress,
+  selected,
 }: {
   icon: LucideIcon;
   label: string;
   onPress: () => void | Promise<void>;
+  selected?: boolean;
 }) {
+  const accessibilityState = useMemo(
+    () => (selected === undefined ? undefined : { selected }),
+    [selected],
+  );
+
   return (
     <Tooltip delayDuration={250} enabledOnDesktop enabledOnMobile={false}>
       <TooltipTrigger asChild>
         <Pressable
           accessibilityLabel={label}
           accessibilityRole="button"
+          accessibilityState={accessibilityState}
+          aria-selected={selected}
           hitSlop={6}
           onPress={onPress}
-          style={styles.action}
+          style={[styles.action, selected && styles.actionSelected]}
         >
           <ThemedDiagramActionIcon icon={Icon} />
         </Pressable>
@@ -134,6 +159,28 @@ function ExpandedDiagram({
 }) {
   const { t } = useTranslation();
   const [status, setStatus] = useState<MermaidRenderStatus>("loading");
+  const [mode, setMode] = useState<MermaidViewportMode>("pan");
+  const [command, setCommand] = useState<MermaidViewportCommand | null>(null);
+  const commandIdRef = useRef(0);
+
+  const issueCommand = useCallback((type: MermaidViewportCommand["type"]) => {
+    commandIdRef.current += 1;
+    setCommand({ id: commandIdRef.current, type });
+  }, []);
+  const handleZoomOut = useCallback(() => issueCommand("zoom-out"), [issueCommand]);
+  const handleZoomIn = useCallback(() => issueCommand("zoom-in"), [issueCommand]);
+  const handleFit = useCallback(() => issueCommand("fit"), [issueCommand]);
+  const handleReset = useCallback(() => issueCommand("reset"), [issueCommand]);
+  const handlePanMode = useCallback(() => setMode("pan"), []);
+  const handleSelectMode = useCallback(() => setMode("select"), []);
+  const viewport = useMemo(() => ({ command, mode }), [command, mode]);
+
+  useEffect(() => {
+    if (visible) return;
+    setStatus("loading");
+    setMode("pan");
+    setCommand(null);
+  }, [visible]);
 
   return (
     <Modal
@@ -151,14 +198,49 @@ function ExpandedDiagram({
         />
         <View style={styles.modalContent}>
           <View style={styles.modalToolbar}>
+            <DiagramAction
+              icon={ZoomOut}
+              label={t("message.actions.zoomOutMermaidDiagram")}
+              onPress={handleZoomOut}
+            />
+            <DiagramAction
+              icon={ZoomIn}
+              label={t("message.actions.zoomInMermaidDiagram")}
+              onPress={handleZoomIn}
+            />
+            <DiagramAction
+              icon={Maximize2}
+              label={t("message.actions.fitMermaidDiagram")}
+              onPress={handleFit}
+            />
+            <DiagramAction
+              icon={RotateCcw}
+              label={t("message.actions.resetMermaidDiagram")}
+              onPress={handleReset}
+            />
+            <View style={styles.modeGroup}>
+              <DiagramAction
+                icon={Hand}
+                label={t("message.actions.panMermaidDiagram")}
+                onPress={handlePanMode}
+                selected={mode === "pan"}
+              />
+              <DiagramAction
+                icon={MousePointer2}
+                label={t("message.actions.selectMermaidText")}
+                onPress={handleSelectMode}
+                selected={mode === "select"}
+              />
+            </View>
             <DiagramAction icon={X} label={t("common.actions.close")} onPress={onClose} />
           </View>
-          <View style={styles.expandedSurface}>
+          <View testID="mermaid-expanded-surface" style={styles.expandedSurface}>
             {visible ? (
               <ThemedMermaidSurface
                 source={source}
                 onStatusChange={setStatus}
-                style={styles.surfaceHost}
+                style={styles.expandedSurfaceHost}
+                viewport={viewport}
               />
             ) : null}
             {status === "error" ? <Text style={styles.expandedError}>{source}</Text> : null}
@@ -197,6 +279,9 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     borderRadius: theme.borderRadius.base,
   },
+  actionSelected: {
+    backgroundColor: theme.colors.surface2,
+  },
   tooltipText: {
     color: theme.colors.foreground,
     fontFamily: theme.fontFamily.ui,
@@ -208,6 +293,11 @@ const styles = StyleSheet.create((theme) => ({
     overflow: "hidden",
   },
   surfaceHost: {
+    width: "100%",
+    minHeight: 1,
+  },
+  expandedSurfaceHost: {
+    flex: 1,
     width: "100%",
     minHeight: 1,
   },
@@ -227,7 +317,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   modalContent: {
     width: "100%",
-    maxWidth: 1400,
     height: "90%",
     overflow: "hidden",
     borderWidth: 1,
@@ -243,6 +332,13 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "flex-end",
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
+  },
+  modeGroup: {
+    flexDirection: "row",
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.base,
   },
   expandedSurface: {
     flex: 1,

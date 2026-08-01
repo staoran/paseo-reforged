@@ -8,6 +8,10 @@ import {
 } from "@/components/mermaid/mermaid-render-theme";
 import type { MermaidSurfaceProps } from "@/components/mermaid/mermaid-surface-types";
 import { useStableMermaidRenderTheme } from "@/components/mermaid/use-stable-mermaid-render-theme";
+import {
+  createMermaidPanZoom,
+  type MermaidPanZoomController,
+} from "@/mermaid/panzoom/mermaid-pan-zoom";
 
 let nextDiagramId = 1;
 let renderQueue = Promise.resolve();
@@ -39,9 +43,20 @@ function renderMermaid(source: string, theme: MermaidRenderTheme): Promise<SVGSV
   return result;
 }
 
-export function MermaidSurface({ source, theme, onStatusChange, style }: MermaidSurfaceProps) {
+export function MermaidSurface({
+  source,
+  theme,
+  onStatusChange,
+  style,
+  viewport,
+}: MermaidSurfaceProps) {
   const hostRef = useRef<View>(null);
+  const panZoomRef = useRef<MermaidPanZoomController | null>(null);
+  const viewportRef = useRef(viewport);
   const stableTheme = useStableMermaidRenderTheme(theme);
+  const viewportCommand = viewport?.command;
+  const viewportMode = viewport?.mode;
+  viewportRef.current = viewport;
 
   useEffect(() => {
     let active = true;
@@ -56,6 +71,19 @@ export function MermaidSurface({ source, theme, onStatusChange, style }: Mermaid
       (svg) => {
         if (!active) return undefined;
         host.replaceChildren(svg);
+        if (viewportRef.current) {
+          try {
+            panZoomRef.current = createMermaidPanZoom(host, svg);
+          } catch {
+            host.replaceChildren();
+            onStatusChange("error");
+            return undefined;
+          }
+          panZoomRef.current.setMode(viewportRef.current.mode);
+          if (viewportRef.current.command) {
+            panZoomRef.current.execute(viewportRef.current.command);
+          }
+        }
         onStatusChange("ready");
         return undefined;
       },
@@ -69,9 +97,16 @@ export function MermaidSurface({ source, theme, onStatusChange, style }: Mermaid
 
     return () => {
       active = false;
+      panZoomRef.current?.destroy();
+      panZoomRef.current = null;
       host.replaceChildren();
     };
   }, [onStatusChange, source, stableTheme]);
+
+  useEffect(() => {
+    if (viewportMode) panZoomRef.current?.setMode(viewportMode);
+    if (viewportCommand) panZoomRef.current?.execute(viewportCommand);
+  }, [viewportCommand, viewportMode]);
 
   return <View ref={hostRef} style={style} />;
 }

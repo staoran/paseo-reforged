@@ -1,17 +1,16 @@
 import mermaid from "mermaid";
-import {
-  createMermaidConfig,
-  type MermaidRenderTheme,
-} from "@/components/mermaid/mermaid-render-theme";
+import { createMermaidConfig } from "@/components/mermaid/mermaid-render-theme";
 import { prepareMermaidSource } from "@/components/mermaid/mermaid-source";
 import { parseAndValidateMermaidSvg } from "@/components/mermaid/mermaid-svg";
-
-interface RenderMessage {
-  type: "render";
-  requestId: number;
-  source: string;
-  theme: MermaidRenderTheme;
-}
+import {
+  parseMermaidWebViewInboundMessage,
+  type MermaidWebViewRenderMessage,
+} from "@/components/mermaid/mermaid-webview-bridge";
+import type { MermaidViewportConfig } from "@/components/mermaid/mermaid-surface-types";
+import {
+  createMermaidPanZoom,
+  type MermaidPanZoomController,
+} from "@/mermaid/panzoom/mermaid-pan-zoom";
 
 type OutboundMessage =
   | { type: "ready" }
@@ -26,28 +25,6 @@ declare global {
     };
     __PASEO_MERMAID_WEBVIEW_RECEIVE__?: (message: unknown) => void;
   }
-}
-
-const THEME_KEYS: readonly (keyof MermaidRenderTheme)[] = [
-  "background",
-  "border",
-  "foreground",
-  "foregroundMuted",
-  "fontFamily",
-  "surface",
-  "surfaceRaised",
-];
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function isRenderMessage(value: unknown): value is RenderMessage {
-  if (!isRecord(value) || value.type !== "render") return false;
-  if (!Number.isInteger(value.requestId) || (value.requestId as number) < 0) return false;
-  const theme = value.theme;
-  if (typeof value.source !== "string" || !isRecord(theme)) return false;
-  return THEME_KEYS.every((key) => typeof theme[key] === "string");
 }
 
 function sendToNative(message: OutboundMessage): void {
@@ -78,6 +55,12 @@ body {
   -webkit-user-select: text;
   user-select: text;
 }
+.mermaid-viewport,
+.mermaid-viewport body,
+.mermaid-viewport #mermaid-root {
+  height: 100%;
+  overflow: hidden;
+}
 #mermaid-root svg {
   display: block;
   max-width: 100%;
@@ -100,6 +83,27 @@ const root = installDocument();
 let activeRequestId = -1;
 let renderedRequestId = -1;
 let renderQueue = Promise.resolve();
+let activeViewport: MermaidViewportConfig | null = null;
+let panZoomController: MermaidPanZoomController | null = null;
+let lastViewportCommandId = -1;
+
+function setViewportLayout(enabled: boolean): void {
+  document.documentElement.classList.toggle("mermaid-viewport", enabled);
+}
+
+function destroyPanZoomController(): void {
+  panZoomController?.destroy();
+  panZoomController = null;
+}
+
+function applyActiveViewport(): void {
+  if (!activeViewport || !panZoomController) return;
+  panZoomController.setMode(activeViewport.mode);
+  const command = activeViewport.command;
+  if (!command || command.id <= lastViewportCommandId) return;
+  lastViewportCommandId = command.id;
+  panZoomController.execute(command);
+}
 
 function measureHeight(): number {
   const bounds = root.getBoundingClientRect();
@@ -110,7 +114,7 @@ function reportHeight(type: "height" | "rendered", requestId: number): void {
   sendToNative({ type, requestId, height: measureHeight() });
 }
 
-async function renderMessage(message: RenderMessage): Promise<void> {
+async function renderMessage(message: MermaidWebViewRenderMessage): Promise<void> {
   const prepared = prepareMermaidSource(message.source);
   if (!prepared.ok) {
     throw new Error(`source-${prepared.reason}`);
@@ -126,9 +130,14 @@ async function renderMessage(message: RenderMessage): Promise<void> {
   const svgNode = parseAndValidateMermaidSvg(svg);
   svgNode.style.display = "block";
   svgNode.style.height = "auto";
-  svgNode.style.maxWidth = "100%";
   svgNode.style.userSelect = "text";
+  if (!activeViewport) svgNode.style.maxWidth = "100%";
   root.replaceChildren(svgNode);
+  if (activeViewport) {
+    setViewportLayout(true);
+    panZoomController = createMermaidPanZoom(root, svgNode);
+    applyActiveViewport();
+  }
   renderedRequestId = message.requestId;
   await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
   if (message.requestId === activeRequestId) {
@@ -137,21 +146,36 @@ async function renderMessage(message: RenderMessage): Promise<void> {
 }
 
 window.__PASEO_MERMAID_WEBVIEW_RECEIVE__ = (value: unknown) => {
-  if (!isRenderMessage(value)) return;
-  activeRequestId = value.requestId;
+  const message = parseMermaidWebViewInboundMessage(value);
+  if (!message) return;
+
+  if (message.type === "viewport") {
+    if (message.requestId !== activeRequestId) return;
+    activeViewport = message.viewport;
+    setViewportLayout(true);
+    applyActiveViewport();
+    return;
+  }
+
+  activeRequestId = message.requestId;
   renderedRequestId = -1;
+  activeViewport = message.viewport;
+  lastViewportCommandId = -1;
+  destroyPanZoomController();
+  setViewportLayout(activeViewport !== null);
   root.replaceChildren();
 
-  const run = () => renderMessage(value);
+  const run = () => renderMessage(message);
   const result = renderQueue.then(run, run);
   renderQueue = result.then(
     () => undefined,
     () => undefined,
   );
   void result.catch(() => {
-    if (value.requestId !== activeRequestId) return;
+    if (message.requestId !== activeRequestId) return;
+    destroyPanZoomController();
     root.replaceChildren();
-    sendToNative({ type: "error", requestId: value.requestId, code: "render-failed" });
+    sendToNative({ type: "error", requestId: message.requestId, code: "render-failed" });
   });
 };
 

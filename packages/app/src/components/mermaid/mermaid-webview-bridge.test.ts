@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createMermaidBridgeState,
+  parseMermaidWebViewInboundMessage,
   parseMermaidWebViewMessage,
   reduceMermaidBridgeState,
 } from "./mermaid-webview-bridge";
@@ -80,5 +81,68 @@ describe("Mermaid WebView bridge", () => {
 
     expect(resized.height).toBe(261);
     expect(failed.status).toBe("error");
+  });
+
+  it("accepts only complete render and viewport messages", () => {
+    const theme = {
+      background: "#ffffff",
+      border: "#dddddd",
+      foreground: "#111111",
+      foregroundMuted: "#666666",
+      fontFamily: "Arial, sans-serif",
+      surface: "#fafafa",
+      surfaceRaised: "#f4f4f5",
+    };
+
+    expect(
+      parseMermaidWebViewInboundMessage({
+        type: "render",
+        requestId: 12,
+        source: "flowchart LR\nA --> B",
+        theme,
+        viewport: { command: null, mode: "pan" },
+      }),
+    ).toEqual({
+      type: "render",
+      requestId: 12,
+      source: "flowchart LR\nA --> B",
+      theme,
+      viewport: { command: null, mode: "pan" },
+    });
+    expect(
+      parseMermaidWebViewInboundMessage({
+        type: "viewport",
+        requestId: 12,
+        viewport: { command: { id: 3, type: "fit" }, mode: "select" },
+      }),
+    ).toEqual({
+      type: "viewport",
+      requestId: 12,
+      viewport: { command: { id: 3, type: "fit" }, mode: "select" },
+    });
+
+    expect(
+      parseMermaidWebViewInboundMessage({
+        type: "viewport",
+        requestId: 12,
+        viewport: { command: { id: 3, type: "unknown" }, mode: "select" },
+      }),
+    ).toBe(null);
+    expect(
+      parseMermaidWebViewInboundMessage({
+        type: "viewport",
+        requestId: 12,
+        viewport: { command: null, mode: "unknown" },
+      }),
+    ).toBe(null);
+    expect(
+      parseMermaidWebViewInboundMessage({
+        type: "render",
+        requestId: 12,
+        source: "flowchart LR\nA --> B",
+        theme: { ...theme, foreground: 42 },
+        viewport: null,
+      }),
+    ).toBe(null);
   });
 });
