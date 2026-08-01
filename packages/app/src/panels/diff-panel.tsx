@@ -1,4 +1,11 @@
-import { useCallback, useMemo, useState, type ComponentProps, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
 import { Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { FileDiff, GitCommitHorizontal } from "lucide-react-native";
@@ -26,7 +33,7 @@ import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
-import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
+import type { WorkspaceTabTarget, WorkspaceWorkingDiffTabTarget } from "@/workspace-tabs/model";
 
 const ThemedFileDiff = withUnistyles(FileDiff);
 const ThemedGitCommitHorizontal = withUnistyles(GitCommitHorizontal);
@@ -143,15 +150,25 @@ function WorkingDiffBody({
   );
 }
 
-function WorkingDiffPanel() {
+interface WorkingDiffPanelProps {
+  target: WorkspaceWorkingDiffTabTarget;
+  cwd: string | null;
+  isConnected: boolean;
+  panelPreferences: ReturnType<typeof useDiffPanelPreferences>;
+  workingDiff: ReturnType<typeof useWorkingDiff>;
+  refreshSupported: boolean;
+  isRefreshing: boolean;
+  onRefresh: () => void;
+}
+
+function ConnectedWorkingDiffPanel() {
   const { t } = useTranslation();
   const toast = useToast();
-  const { serverId, workspaceId, tabId, target } = usePaneContext();
+  const { serverId, workspaceId, target } = usePaneContext();
   const cwd = useWorkspaceDirectory(serverId, workspaceId);
   const isConnected = useHostRuntimeIsConnected(serverId);
   const isActive = useRetainedPanelActive();
   const panelPreferences = useDiffPanelPreferences();
-  const [expandedPaths, setExpandedPaths] = useState<string[] | null>(null);
   invariant(target.kind === "working_diff", "WorkingDiffPanel requires working_diff target");
 
   const workingDiff = useWorkingDiff({
@@ -160,7 +177,6 @@ function WorkingDiffPanel() {
     cwd: cwd ?? "",
     ignoreWhitespace: panelPreferences.preferences.hideWhitespace,
     enabled: Boolean(cwd) && isActive,
-    queryScope: `working-diff-tab:${tabId}`,
   });
   usePublishWorkingDiffAttachment({
     serverId,
@@ -186,6 +202,44 @@ function WorkingDiffPanel() {
       toast.error(error instanceof Error ? error.message : t("workspace.git.diff.failedRefresh"));
     });
   }, [cwd, isRefreshing, runRefresh, serverId, t, toast]);
+
+  return (
+    <WorkingDiffPanel
+      target={target}
+      cwd={cwd}
+      isConnected={isConnected}
+      panelPreferences={panelPreferences}
+      workingDiff={workingDiff}
+      refreshSupported={refreshSupported}
+      isRefreshing={isRefreshing}
+      onRefresh={refresh}
+    />
+  );
+}
+
+export function WorkingDiffPanel({
+  target,
+  cwd,
+  isConnected,
+  panelPreferences,
+  workingDiff,
+  refreshSupported,
+  isRefreshing,
+  onRefresh,
+}: WorkingDiffPanelProps) {
+  const [expandedPaths, setExpandedPaths] = useState<string[] | null>(() =>
+    target.focusPath ? [target.focusPath] : [],
+  );
+
+  useEffect(() => {
+    const focusPath = target.focusPath;
+    if (!focusPath) {
+      return;
+    }
+    setExpandedPaths((currentPaths) =>
+      currentPaths?.length === 1 && currentPaths[0] === focusPath ? currentPaths : [focusPath],
+    );
+  }, [target.focusPath, target.focusRequestId]);
 
   const expandedPathSet = useMemo(
     () => (expandedPaths === null ? null : new Set(expandedPaths)),
@@ -244,7 +298,7 @@ function WorkingDiffPanel() {
             refreshSupported={refreshSupported}
             testIDPrefix="working-diff"
             wrapLines={panelPreferences.preferences.wrapLines}
-            onRefresh={refresh}
+            onRefresh={onRefresh}
             onToggleHideWhitespace={panelPreferences.toggleHideWhitespace}
             onToggleWrapLines={panelPreferences.toggleWrapLines}
           />
@@ -353,7 +407,7 @@ function useCommitDiffPanelDescriptor(
 
 export const workingDiffPanelRegistration: PanelRegistration<"working_diff"> = {
   kind: "working_diff",
-  component: WorkingDiffPanel,
+  component: ConnectedWorkingDiffPanel,
   useDescriptor: useWorkingDiffPanelDescriptor,
 };
 

@@ -1867,15 +1867,13 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
     };
   }, [codeFontSize, diffBodyLineHeight, monoFontFamily]);
   const viewMode = mode.kind === "working_tree" ? mode.viewMode : "flat";
+  const configuredExpandedPaths = mode.kind === "commit" ? null : mode.expandedPaths;
   const expandedPathsArray = useMemo(() => {
-    if (mode.kind === "working_tree") {
-      return mode.expandedPaths;
-    }
-    if (mode.kind === "working_tab" && mode.expandedPaths !== null) {
-      return mode.expandedPaths;
+    if (configuredExpandedPaths !== null) {
+      return configuredExpandedPaths;
     }
     return files.map((file) => file.path);
-  }, [files, mode]);
+  }, [configuredExpandedPaths, files]);
   const expandedPaths = useMemo(() => new Set(expandedPathsArray), [expandedPathsArray]);
   const collapsedFoldersArray =
     mode.kind === "working_tree" ? mode.collapsedFolders : EMPTY_PATH_LIST;
@@ -1892,6 +1890,9 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
     mode.kind === "working_tree" ? mode.workspaceFileDragScope : undefined;
   const onCopyPath = mode.kind === "working_tree" ? mode.onCopyPath : undefined;
   const onDownload = mode.kind === "working_tree" ? mode.onDownload : undefined;
+  const onExpandedPathsChange = mode.kind === "commit" ? undefined : mode.onExpandedPathsChange;
+  const onCollapsedFoldersChange =
+    mode.kind === "working_tree" ? mode.onCollapsedFoldersChange : undefined;
   const compressedTree = useMemo(() => compressSingleChildChains(buildDiffTree(files)), [files]);
   const allFolderPaths = useMemo(() => collectDirPaths(compressedTree), [compressedTree]);
   const allFolderPathSet = useMemo(() => new Set(allFolderPaths), [allFolderPaths]);
@@ -2114,7 +2115,7 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
 
   const handleToggleExpanded = useCallback(
     (path: string) => {
-      if (mode.kind === "commit") {
+      if (!onExpandedPathsChange) {
         return;
       }
       const isCurrentlyExpanded = expandedPaths.has(path);
@@ -2138,18 +2139,18 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
         });
       }
 
-      mode.onExpandedPathsChange(
+      onExpandedPathsChange(
         nextExpanded
           ? [...expandedPaths, path]
           : Array.from(expandedPaths).filter((expandedPath) => expandedPath !== path),
       );
     },
-    [computeHeaderOffset, expandedPaths, mode],
+    [computeHeaderOffset, expandedPaths, onExpandedPathsChange],
   );
 
   const handleToggleFolder = useCallback(
     (dirPath: string) => {
-      if (mode.kind !== "working_tree") {
+      if (!onCollapsedFoldersChange) {
         return;
       }
       const isCurrentlyCollapsed = effectiveCollapsedFolders.has(dirPath);
@@ -2171,13 +2172,13 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
         }
       }
 
-      mode.onCollapsedFoldersChange(
+      onCollapsedFoldersChange(
         isCurrentlyCollapsed
           ? Array.from(effectiveCollapsedFolders).filter((path) => path !== dirPath)
           : [...effectiveCollapsedFolders, dirPath],
       );
     },
-    [computeItemOffset, effectiveCollapsedFolders, mode],
+    [computeItemOffset, effectiveCollapsedFolders, onCollapsedFoldersChange],
   );
 
   const renderFlatItem = useCallback(

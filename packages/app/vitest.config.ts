@@ -119,8 +119,8 @@ export default defineConfig({
       // react alias below (the CJS build uses require('react') which bypasses
       // Vite alias resolution).
       {
-        find: "react-native",
-        replacement: path.resolve(rootNodeModules, "react-native-web/dist/index.js"),
+        find: /^react-native$/,
+        replacement: path.resolve(__dirname, "test-stubs/react-native.ts"),
       },
       { find: "react", replacement: resolvePackageEntry("react") },
       {
@@ -138,6 +138,10 @@ export default defineConfig({
       {
         find: /^react-native-unistyles$/,
         replacement: path.resolve(__dirname, "test-stubs/react-native-unistyles.ts"),
+      },
+      {
+        find: /^react-native-reanimated$/,
+        replacement: path.resolve(__dirname, "test-stubs/react-native-reanimated.ts"),
       },
       {
         find: /^react-native-svg$/,
