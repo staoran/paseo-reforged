@@ -44,6 +44,7 @@ export const EyeOff = StubIcon;
 export const File = StubIcon;
 export const FileDiff = StubIcon;
 export const FileText = StubIcon;
+export const FileWarning = StubIcon;
 export const Folder = StubIcon;
 export const FolderPlus = StubIcon;
 export const FolderTree = StubIcon;

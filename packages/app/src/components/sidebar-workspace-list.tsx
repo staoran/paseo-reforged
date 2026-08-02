@@ -121,6 +121,7 @@ import type { PrHint } from "@/git/use-pr-status-query";
 import {
   buildSidebarProjectRowModel,
   resolveSidebarProjectIconTarget,
+  resolveSidebarProjectLocalPath,
   type SidebarProjectHostTarget,
 } from "@/utils/sidebar-project-row-model";
 import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
@@ -510,6 +511,9 @@ function ProjectRowTrailingActions({
   removeProjectStatus: "idle" | "pending" | "success";
 }) {
   const actionsVisible = isHovered || platformIsNative || isMobileBreakpoint;
+  const localDaemonServerId = useLocalDaemonServerId();
+  const localProjectPath = resolveSidebarProjectLocalPath(project, localDaemonServerId);
+  const settingsTarget = project.hosts[0] ?? null;
   return (
     <View style={styles.projectTrailingActions}>
       {worktreeTarget ? (
@@ -528,7 +532,8 @@ function ProjectRowTrailingActions({
         >
           <ProjectKebabMenu
             projectKey={project.projectKey}
-            projectPath={project.iconWorkingDir}
+            settingsTarget={settingsTarget}
+            projectPath={localProjectPath}
             projectHosts={project.hosts}
             onRemoveProject={onRemoveProject}
             removeProjectStatus={removeProjectStatus}
@@ -556,6 +561,7 @@ function renderKebabTriggerIcon({ hovered }: { hovered?: boolean }) {
 
 interface ProjectMenuProps {
   projectKey: string;
+  settingsTarget: { serverId: string; projectId: string } | null;
   projectPath: string;
   projectHosts: SidebarProjectEntry["hosts"];
   onRemoveProject: () => void;
@@ -565,6 +571,7 @@ interface ProjectMenuProps {
 function ProjectMenuItems({
   variant,
   projectKey,
+  settingsTarget,
   projectPath,
   projectHosts,
   onRemoveProject,
@@ -575,10 +582,10 @@ function ProjectMenuItems({
   const localDaemonServerId = useLocalDaemonServerId();
   const localProjectHost = projectHosts.find((host) => host.serverId === localDaemonServerId);
   const handleOpenProjectSettings = useCallback(() => {
-    if (projectKey.trim().length === 0) return;
-    router.navigate(buildProjectSettingsRoute(projectKey));
-  }, [projectKey]);
-  const canOpenProjectSettings = projectKey.trim().length > 0;
+    if (!settingsTarget) return;
+    router.navigate(buildProjectSettingsRoute(settingsTarget.serverId, settingsTarget.projectId));
+  }, [settingsTarget]);
+  const canOpenProjectSettings = settingsTarget !== null;
   // Desktop-only: open a second window that lands on this project via the same
   // open-project flow as a CLI launch. The project stays visible here too — no
   // ownership, no move.
@@ -938,10 +945,10 @@ function NewWorkspaceGhostRow({
         serverId: worktreeTarget.serverId,
         sourceDirectory: worktreeTarget.iconWorkingDir,
         displayName,
-        projectId: project.projectKey,
+        projectId: worktreeTarget.projectId,
       }) as Href,
     );
-  }, [displayName, onWorkspacePress, project.projectKey, worktreeTarget]);
+  }, [displayName, onWorkspacePress, worktreeTarget]);
   const rowStyle = useCallback(
     ({ hovered = false, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.newWorkspaceGhostRow,
@@ -1017,10 +1024,10 @@ function ProjectHeaderRow({
         serverId: worktreeTarget.serverId,
         sourceDirectory: worktreeTarget.iconWorkingDir,
         displayName,
-        projectId: project.projectKey,
+        projectId: worktreeTarget.projectId,
       }) as Href,
     );
-  }, [displayName, onWorkspacePress, project.projectKey, worktreeTarget]);
+  }, [displayName, onWorkspacePress, worktreeTarget]);
   const interaction = useLongPressDragInteraction({
     drag,
     menuController: null,
@@ -1660,6 +1667,7 @@ function ProjectBlock({
     canToggle: canToggleWorkspaces,
     toggleExpanded: toggleWorkspacesExpanded,
   } = useLimitedSidebarGroup(project.workspaces);
+  const localDaemonServerId = useLocalDaemonServerId();
   const rowModel = useMemo(
     () =>
       buildSidebarProjectRowModel({
@@ -1779,7 +1787,6 @@ function ProjectBlock({
       }
 
       void removeProjectFromHosts({
-        projectKey: project.projectKey,
         targets: readiness.targets,
         getClient: (serverId) => getHostRuntimeStore().getClient(serverId),
       })
@@ -1848,7 +1855,7 @@ function ProjectBlock({
   }
 
   return (
-    <View style={styles.projectBlock}>
+    <View role="group" accessibilityLabel={displayName} style={styles.projectBlock}>
       <ContextMenu>
         <ProjectHeaderRow
           project={project}
@@ -1873,7 +1880,8 @@ function ProjectBlock({
         />
         <ProjectContextMenuContent
           projectKey={project.projectKey}
-          projectPath={project.iconWorkingDir}
+          settingsTarget={project.hosts[0] ?? null}
+          projectPath={resolveSidebarProjectLocalPath(project, localDaemonServerId)}
           projectHosts={project.hosts}
           onRemoveProject={handleRemoveProject}
           removeProjectStatus={isRemovingProject ? "pending" : "idle"}

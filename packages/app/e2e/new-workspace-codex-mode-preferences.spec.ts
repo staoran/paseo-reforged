@@ -194,7 +194,7 @@ test.describe("New workspace Codex mode preferences", () => {
       await waitForSidebarHydration(page);
       await openGlobalNewWorkspaceComposer(page);
       await selectNewWorkspaceProject(page, {
-        projectKey: seeded.projectId,
+        projectKey: seeded.projectKey,
         projectDisplayName: seeded.projectDisplayName,
       });
 
@@ -255,7 +255,7 @@ test.describe("New workspace Codex mode preferences", () => {
 
       await openGlobalNewWorkspaceComposer(page);
       await selectNewWorkspaceProject(page, {
-        projectKey: seeded.projectId,
+        projectKey: seeded.projectKey,
         projectDisplayName: seeded.projectDisplayName,
       });
 

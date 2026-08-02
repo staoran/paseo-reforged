@@ -5,7 +5,7 @@ import {
   getOpenProjectFailureReason,
   openProjectDirectly,
 } from "@/hooks/open-project";
-import type { EmptyProjectDescriptor as ProjectWithoutWorkspacesDescriptor } from "@/stores/session-store";
+import type { ProjectDescriptor } from "@/stores/session-store";
 
 const SERVER_ID = "server-1";
 const PROJECT_PATH = "/repo/project";
@@ -21,7 +21,7 @@ function buildProjectPayload() {
 
 interface RecordedProject {
   serverId: string;
-  project: ProjectWithoutWorkspacesDescriptor;
+  project: ProjectDescriptor;
 }
 
 interface RecordedHydrated {
@@ -41,7 +41,7 @@ function createFakeSession() {
   return {
     projects,
     hydrated,
-    addEmptyProject: (serverId: string, project: ProjectWithoutWorkspacesDescriptor) => {
+    upsertProject: (serverId: string, project: ProjectDescriptor) => {
       projects.push({ serverId, project });
     },
     setHasHydratedWorkspaces: (serverId: string, value: boolean) => {
@@ -84,7 +84,7 @@ describe("openProjectDirectly", () => {
           project: projectPayload,
         }),
       },
-      addEmptyProject: session.addEmptyProject,
+      upsertProject: session.upsertProject,
       setHasHydratedWorkspaces: session.setHasHydratedWorkspaces,
     });
 
@@ -94,6 +94,7 @@ describe("openProjectDirectly", () => {
         serverId: SERVER_ID,
         project: {
           projectId: "project-1",
+          projectKey: null,
           projectDisplayName: "project",
           projectCustomName: null,
           projectKind: "git",
@@ -118,7 +119,7 @@ describe("openProjectDirectly", () => {
           project: buildProjectPayload(),
         }),
       },
-      addEmptyProject: session.addEmptyProject,
+      upsertProject: session.upsertProject,
       setHasHydratedWorkspaces: session.setHasHydratedWorkspaces,
     });
 
@@ -147,7 +148,7 @@ describe("openProjectDirectly", () => {
           project: null,
         }),
       },
-      addEmptyProject: session.addEmptyProject,
+      upsertProject: session.upsertProject,
       setHasHydratedWorkspaces: session.setHasHydratedWorkspaces,
     });
 
@@ -174,7 +175,7 @@ describe("cloneGithubProjectDirectly", () => {
       cloneProtocol: "https",
       isConnected: true,
       client: github,
-      addEmptyProject: session.addEmptyProject,
+      upsertProject: session.upsertProject,
       setHasHydratedWorkspaces: session.setHasHydratedWorkspaces,
     });
 
@@ -192,6 +193,7 @@ describe("cloneGithubProjectDirectly", () => {
         project: {
           ...projectPayload,
           projectCustomName: null,
+          projectKey: null,
         },
       },
     ]);
@@ -209,7 +211,7 @@ describe("cloneGithubProjectDirectly", () => {
       cloneProtocol: "https",
       isConnected: true,
       client: github,
-      addEmptyProject: session.addEmptyProject,
+      upsertProject: session.upsertProject,
       setHasHydratedWorkspaces: session.setHasHydratedWorkspaces,
     });
 
