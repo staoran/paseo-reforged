@@ -5,8 +5,9 @@ All workspaces share one version and release together.
 ## Current fork policy
 
 - Releases target `https://github.com/staoran/paseo-reforged.git`; `release:push` refuses any other exact `origin` URL.
-- During the initial fork phase, the base SemVer tracks the adopted upstream Paseo version. Reforged validation releases increment only `-beta.N` on that base.
-- The first Reforged-owned feature increments the base version, defaulting to a patch (`X.Y.Z` to `X.Y.(Z+1)`), and may then start its own beta line.
+- The three-number SemVer base always tracks the adopted upstream Paseo version; Reforged does not claim the next upstream patch or minor number.
+- Reforged validation releases use `X.Y.Z-beta.N`. `N` is the public beta release ordinal on that upstream base, not a Git commit count, and resets to `1` when the adopted upstream base changes.
+- The future Reforged formal channel uses `X.Y.Z-reforged.N`, with the same reset rule. This is technically a SemVer prerelease, so the parser, updater ordering, and stable workflows must gain explicit Reforged-channel support before this naming policy can be published as a formal release.
 - npm and GHCR publishing are disabled. `release:check` still performs npm pack dry runs, and `docker.yml` remains a non-publishing build check.
 - Beta GitHub releases may include explicitly unsigned/non-notarized macOS artifacts. Stable releases are blocked locally and in CI until macOS signing and notarization credentials are configured; enabling stable requires intentionally removing both gates.
 - App Store, Play Store, and Cloudflare deployment are independent credential gates and are not part of the first GitHub beta completion contract.
@@ -52,29 +53,29 @@ The beta flow is the only currently enabled publishing path. Stable is a documen
 
 ## Release version decision
 
-During the initial fork phase, first determine the base SemVer of the upstream
-revision being adopted. Keep that base unchanged and increment only the beta
-ordinal. For example, if upstream and the current fork are both
-`0.2.0-beta.1`, the next Reforged validation release is `0.2.0-beta.2`.
+First determine the exact three-number SemVer of the adopted upstream revision.
+That `X.Y.Z` remains the base for every Reforged release until a newer upstream
+version is adopted.
 
-Once the fork includes its first independently owned feature, increment the base
-version. The default first increment is patch. After that point, classify the
-full previous-stable-to-`HEAD` diff; the highest-impact change determines the
-version:
+For beta releases, use `X.Y.Z-beta.N`:
 
-- **Minor** — a user would experience the release as a significant upgrade. This
-  includes substantial new workflows, providers, forges, platforms, integrations,
-  or meaningful expansions of existing capabilities. Foundational internal work
-  also qualifies when it materially changes reliability, performance,
-  compatibility, deployment, or operation; diff size alone does not.
-- **Patch** — fixes, polish, small enhancements, and reliability or performance
-  improvements within existing capabilities. Follow-up corrections to a minor
-  release are patches.
+- From a stable upstream base `X.Y.Z`, `release:beta:next` starts `X.Y.Z-beta.1`.
+- From `X.Y.Z-beta.N`, the same command produces `X.Y.Z-beta.(N+1)`.
+- `N` counts public beta releases on that base. It does not count Git commits.
+- Adopting a new upstream base resets the next beta to `beta.1`.
 
-The release agent presents the upstream comparison, target version, and
-rationale for approval. Agents never select a major version autonomously. A
-major release requires an explicit user instruction and approval; Paseo
-Reforged remains on major version zero until that deliberate decision.
+The reserved formal-channel format is `X.Y.Z-reforged.N`. `N` counts public
+Reforged formal releases on the same upstream base and resets when the upstream
+base changes. For example, the first formal release on upstream `0.2.5` is
+`0.2.5-reforged.1`; after adopting upstream `0.2.6`, it is
+`0.2.6-reforged.1`.
+
+`reforged.N` is syntactically a SemVer prerelease and sorts below bare `X.Y.Z`.
+The current release parser, promotion command, GitHub stable gate, and Electron
+stable updater do not yet implement the product-level formal-channel semantics.
+Do not publish this format until all of those paths are updated and verified.
+The fork does not independently increment the upstream patch, minor, or major
+components.
 
 Version bumps are never used to retry a failed build. Retry the existing version
 as described in **Fixing a failed release build**.
@@ -86,19 +87,25 @@ until macOS signing/notarization is configured and the stable gate in
 `.github/workflows/desktop-release.yml` is intentionally removed or replaced by
 credential-backed signing.
 
+The adopted stable-channel target is `X.Y.Z-reforged.N`, but no current stable
+release command produces or fully supports that format. Before enabling stable,
+add explicit parser, tag metadata, changelog sync, GitHub release, Electron
+updater, and version-command support for the Reforged formal channel. The
+existing `release:patch`, `release:minor`, and `release:promote` commands remain
+blocked and must not be used as substitutes.
+
 Before running any stable release command:
 
 - Make sure the intended release commit is already committed to `main` and the working tree is clean.
 - **Run `npm run format`, `npm run lint`, and `npm run typecheck` and commit any resulting changes BEFORE you start any `release:*` command.** `release:check` runs `npm install --workspaces --include-workspace-root` as part of `release:prepare`, which can mutate `package-lock.json` (e.g. churning `"dev": true` markers on optional deps). The next step, `version:all:*`, runs `npm version` which aborts when the working tree is dirty. If this happens mid-flight you have to commit the lockfile churn before retrying — and the pre-commit format hook will reject a lockfile-only commit because oxfmt internally skips `package-lock.json` while lefthook's glob still matches it. Avoid the whole mess by running format/lint/typecheck first, then `release:prepare` once on its own to absorb any lockfile churn into a normal commit, then start the release.
 - Do not use a release command as a substitute for checking whether the current commit is actually ready.
 
-```bash
-# Run exactly one, matching the approved decision:
-npm run release:patch
-npm run release:minor
-```
-
-After the stable gates are intentionally removed, this bumps the version across all workspaces, runs checks, and atomically pushes the branch + tag to `staoran/paseo-reforged`. The tag push triggers `Desktop Release`, `Android APK Release`, and `Release Notes Sync` on GitHub Actions. npm and Docker publishing are disabled; EAS store submission remains separately gated.
+After both the Reforged formal-channel support and stable gates are intentionally
+completed, the future stable command must update all workspaces and atomically
+push the branch plus immutable tag to `staoran/paseo-reforged`. The tag push is
+expected to trigger `Desktop Release`, `Android APK Release`, and
+`Release Notes Sync`. npm and Docker publishing remain disabled; EAS store
+submission remains separately gated.
 
 The Docker workflow only performs non-publishing source-build checks on pull requests, `main`, or manual dispatch. Release tags never publish Docker images.
 
@@ -106,34 +113,27 @@ The production relay is the Elixir service in [getpaseo/paseo-relay](https://git
 
 **Stable means stable.** If the user says "stable" or "ship stable", do not ask whether they want a beta first. They picked stable; treat it as a direct stable release. Only run the beta flow when the user explicitly says "beta".
 
-## Manual step-by-step
+## Manual stable release
 
-```bash
-npm run typecheck            # Verify the exact commit you intend to release
-npm run release:check        # Typecheck, build, dry-run pack
-# Run exactly one approved version command:
-npm run version:all:patch
-npm run version:all:minor
-npm run release:push         # Push HEAD + tag (triggers CI workflows)
-```
+There is no supported manual stable sequence yet. Do not compose one from the
+blocked legacy version modes; add and verify a dedicated Reforged formal-channel
+flow when the stable prerequisites are implemented.
 
 ## Beta flow
 
 ```bash
-npm run release:beta:next        # Initial fork: increment beta on the adopted upstream base
-npm run release:beta:patch       # First owned feature: start the next patch beta line
-npm run release:beta:minor       # Later significant feature line, only after explicit approval
+npm run release:beta:next        # Stable X.Y.Z -> X.Y.Z-beta.1
 # ... test desktop and APK prerelease assets from GitHub Releases ...
-npm run release:beta:next        # Optional: cut X.Y.Z-beta.2, beta.3, ...
-npm run release:promote          # Promote X.Y.Z-beta.N to stable X.Y.Z
+npm run release:beta:next        # X.Y.Z-beta.N -> X.Y.Z-beta.(N+1)
 ```
 
 - Beta tags are published GitHub prereleases like `v0.1.41-beta.1`
 - Betas publish desktop assets and APKs for testing, but they do not trigger the production web/mobile release flows
-- `release:promote` creates a fresh stable tag like `v0.1.41`; the final release never reuses the beta tag
+- A future formal release uses a fresh tag like `v0.2.5-reforged.1`; it never reuses the beta tag
 - Desktop assets now come from the Electron package at `packages/desktop`
 - Beta releases use Electron's `beta` update channel. Users on the stable channel only receive stable releases; users on the beta channel receive beta releases and the final stable release when it is published.
-- **Betas carry a changelog entry.** Beta users read release notes, so each beta updates an in-place `CHANGELOG.md` entry (`## X.Y.Z-beta.N`) that `Release Notes Sync` mirrors into the prerelease body on the tag push. The entry is intermediary: promotion overwrites it in place with the final stable entry, so no `-beta.N` heading is ever left behind. See the Changelog policy section.
+- Same-base beta versions sort below bare `X.Y.Z`. A client already running `X.Y.Z` will not automatically downgrade to `X.Y.Z-beta.1`; install that first beta manually. Once on the beta line, later `beta.N` ordinals update in increasing order.
+- **Betas carry a changelog entry.** Beta users read release notes, so each beta updates an in-place `CHANGELOG.md` entry (`## X.Y.Z-beta.N`) that `Release Notes Sync` mirrors into the prerelease body on the tag push. Once the formal-channel tooling exists, that release overwrites the entry in place with `## X.Y.Z-reforged.N`, so no `-beta.N` heading is left behind. See the Changelog policy section.
 
 Use the beta path when you need to:
 
@@ -146,6 +146,10 @@ Use the beta path when you need to:
 
 Stable desktop releases go out via a linear time-based rollout for automatic update checks: 0% admitted when the updater manifests appear, 100% admitted 36 hours later, linear ramp in between. Manual checks bypass the rollout so a user can install immediately when they click **Check**. Beta releases bypass the rollout entirely — beta users always receive updates immediately.
 
+This section records the required rollout behavior for the future Reforged formal
+channel. It is not currently executable; the examples assume the dedicated
+`X.Y.Z-reforged.N` release flow and updater support have been implemented.
+
 The rollout is driven by a `rolloutHours` field stamped into the GitHub Release manifests (`latest-mac.yml`, `latest-linux.yml`, `latest.yml`) by the `finalize-rollout` job in `desktop-release.yml`.
 
 Desktop release builds now publish in two phases:
@@ -157,7 +161,8 @@ Updater clients only discover a release through those `.yml` manifests, so there
 
 ### Default behavior
 
-`npm run release:patch` or `npm run release:minor` → tag push → 36h ramp. No extra action needed.
+Future Reforged formal release command -> tag push -> 36h ramp. No extra action
+is expected after the dedicated command exists.
 
 The `rollout_hours` input on `desktop-release.yml` is **only read on `workflow_dispatch`** — tag-push runs always default to 36. To get any other rollout duration on a fresh release, use the post-publish flip below.
 
@@ -166,18 +171,15 @@ The `rollout_hours` input on `desktop-release.yml` is **only read on `workflow_d
 For a fresh release that should admit everyone immediately (low-risk change, doc-only, hotfix, or just a release you want out fast), cut the release normally and queue the rollout flip immediately after:
 
 ```bash
-# 1. Cut and publish (default 36h ramp from tag push).
-npm run release:patch
-
-# 2. Immediately queue the flip — runs as soon as finalize-rollout completes.
+# After the future formal release command pushes the tag, immediately queue the flip.
 gh workflow run desktop-rollout.yml \
-  -f tag=v0.1.64 \
+  -f tag=v0.2.5-reforged.1 \
   -f rollout_hours=0
 ```
 
 **Why this is gap-free:** `desktop-release.yml`'s `finalize-rollout` job and `desktop-rollout.yml` share the concurrency group `desktop-rollout-<tag>`. Dispatching `desktop-rollout.yml` while the tag-push pipeline is still running queues it safely behind `finalize-rollout`. The first public manifests already carry `rolloutHours=36`, then `desktop-rollout.yml` flips them to `rolloutHours=0` shortly afterward. The renderer polls every 30 minutes, so active stable users pick up the new manifest on their next check.
 
-Run the dispatch right after `release:patch` or `release:minor` returns. Don't wait for the tag-push CI to finish.
+Run the dispatch right after the future dedicated formal release command returns. Don't wait for the tag-push CI to finish.
 
 ### Adjusting an already-published release
 
@@ -187,7 +189,7 @@ To change the rollout duration on a release that's already shipped — e.g. flip
 
 ```bash
 gh workflow run desktop-rollout.yml \
-  -f tag=v0.1.42 \
+  -f tag=v0.2.5-reforged.1 \
   -f rollout_hours=0
 ```
 
@@ -197,7 +199,7 @@ gh workflow run desktop-rollout.yml \
 
 ```bash
 gh workflow run desktop-rollout.yml \
-  -f tag=v0.1.42 \
+  -f tag=v0.2.5-reforged.1 \
   -f rollout_hours=72
 ```
 
@@ -211,21 +213,24 @@ The dispatch is idempotent and shares the `desktop-rollout-<tag>` concurrency gr
 
 ```bash
 gh workflow run desktop-release.yml \
-  -f tag=v0.1.43 \
+  -f tag=v0.2.5-reforged.1 \
   -f rollout_hours=6
 ```
 
-This does **not** apply to fresh releases cut via `npm run release:patch` or `npm run release:minor` — those paths always tag-push and stamp 36. For a fresh release with a custom ramp, cut normally and then dispatch `desktop-rollout.yml` (same pattern as the instant-admit flow above, with your chosen `rollout_hours`).
+This does **not** apply to a fresh formal release tag push, which must stamp 36
+hours by default once the dedicated flow exists. For a fresh release with a
+custom ramp, cut normally and then dispatch `desktop-rollout.yml` using the same
+pattern as the instant-admit flow above, with the chosen `rollout_hours`.
 
 ### Releasing during an active rollout
 
 If you ship N+1 while N is still ramping, N+1 starts a fresh rollout from its own publish timestamp. N's rollout effectively ends — the newer manifest supersedes it. Rollout-aware clients revalidate the manifest for up to five seconds before installing a downloaded update on quit. If N+1 has replaced N but the client is not admitted to N+1 yet, it skips the downloaded N and waits rather than installing two updates in succession. If revalidation times out, the app exits without installing the cached update.
 
-If N+1 is a hotfix for a bug in N, dispatch `desktop-rollout.yml -f tag=v0.1.<N+1> -f rollout_hours=0` after N+1 publishes so the users who already got N reach the fix fast.
+If `reforged.(N+1)` fixes a bug in `reforged.N`, dispatch `desktop-rollout.yml -f tag=vX.Y.Z-reforged.<N+1> -f rollout_hours=0` after it publishes so users who already got `reforged.N` reach the fix quickly.
 
 ### Limitations
 
-- **No pause / kill switch.** To stop new admissions, ship a superseding release. Clients revalidate on quit and will not install the superseded download, but a client that already completed installation cannot be recalled; ship a hotfix `+1` patch.
+- **No pause / kill switch.** To stop new admissions, ship a superseding release. Clients revalidate on quit and will not install the superseded download, but a client that already completed installation cannot be recalled; ship the next Reforged formal ordinal.
 - **No rollback.** `allowDowngrade = false`. Bad release = ship a hotfix.
 - **Bootstrap caveat.** Clients running a build older than the rollout feature ignore `rolloutHours` and admit immediately. Rollout protection only applies to clients running the rollout-aware version or later.
 - **Up to ~30 min automatic admission latency.** Renderer polls every 30 minutes, so a stable user may take up to that long to be evaluated against the rollout window. Clicking **Check** is manual and bypasses rollout admission.
@@ -292,15 +297,17 @@ ground truth.
 
 The GitHub Release body is populated automatically by the `Release Notes Sync` workflow (`.github/workflows/release-notes-sync.yml`). It triggers on every `v*` tag push and on any push to `main` that touches `CHANGELOG.md`, then runs `scripts/sync-release-notes-from-changelog.mjs` to mirror the matching changelog entry into the release body. You don't need to write release notes on GitHub manually — keep `CHANGELOG.md` correct and the workflow will sync it. To force a re-sync, dispatch the workflow with the tag input.
 
-For tag pushes, the current fork workflow accepts beta tags only. A stable
-`vX.Y.Z` tag intentionally fails before release creation until the stable
-signing and deployment gates are approved.
+For tag pushes, the current fork workflow accepts beta tags only. Bare
+`vX.Y.Z` tags are blocked, and `vX.Y.Z-reforged.N` is not yet accepted by the
+release parser. The Reforged formal channel remains unavailable until its
+version/update semantics and the stable signing and deployment gates are all
+implemented.
 
 ## Website behavior
 
 - The website download page points to GitHub's latest published **stable** release.
 - Published beta prereleases are public on GitHub Releases, but they do **not** become the website download target.
-- The download target only moves when you publish the final stable release tag like `v0.1.41`.
+- The download target only moves when a future `vX.Y.Z-reforged.N` release is published as a non-prerelease after formal-channel support is implemented.
 - The public `/changelog` page renders `CHANGELOG.md` as-is, so the in-flight `-beta.N` entry shows there once it lands on `main` — that's intended, it's where beta users check what's coming. Only the **download target** stays pinned to the latest stable; the download links read GitHub's releases API, not the changelog, so a `-beta.N` heading on top never affects them.
 - The source website reads releases from `staoran/paseo-reforged`. Cloudflare deployment is not part of the release contract until fork-owned account/project credentials are configured.
 
@@ -308,8 +315,8 @@ signing and deployment gates are approved.
 
 Release tags are immutable. A transient CI or infrastructure failure may be
 retried for the same tag without changing source. If source, configuration, or
-packaging code must change, commit the fix and cut the next beta ordinal (or a
-new patch after stable); never move the existing tag or overwrite it with
+packaging code must change, commit the fix and cut the next beta ordinal (or the
+next Reforged formal ordinal after that channel is enabled); never move the existing tag or overwrite it with
 `--force`.
 
 `workflow_dispatch` is appropriate for a workflow-only fix or a transient
@@ -352,23 +359,24 @@ Release notes depend on the changelog heading format. The heading **must** be st
 ```
 ## X.Y.Z - YYYY-MM-DD
 ## X.Y.Z-beta.N - YYYY-MM-DD
+## X.Y.Z-reforged.N - YYYY-MM-DD
 ```
 
-No prefix (`v`), no extra text. `Release Notes Sync` matches the `## X.Y.Z` (or `## X.Y.Z-beta.N`) line for the pushed tag to extract the version. A malformed heading breaks the release-notes sync for that tag.
+No prefix (`v`), no extra text. `Release Notes Sync` matches the heading for the pushed tag to extract the version. `X.Y.Z-reforged.N` is reserved for the future formal channel and is not accepted by the current parser yet. A malformed or unsupported heading breaks the release-notes sync for that tag.
 
 ## Changelog policy
 
 - `CHANGELOG.md` includes stable releases and the current beta line.
 - The first beta of a version inserts a top entry like `## 0.1.60-beta.1 - YYYY-MM-DD`.
 - Each subsequent beta updates that same top entry in place — bump the heading (`0.1.60-beta.1` → `0.1.60-beta.2`) and fold in whatever else landed.
-- Stable promotion updates that same entry in place one last time: heading to `0.1.60`, date to the promotion day.
+- A future formal release updates that same entry in place one last time: heading from `X.Y.Z-beta.N` to `X.Y.Z-reforged.N`, date to the formal release day.
 - One entry per version line. The `-beta.N` heading is intermediary — overwrite it, never append. Don't leave stale `-beta.N` entries behind and don't create a duplicate entry per beta.
 - It always covers the full diff from the previous stable tag, regardless of how many betas were cut in between.
 
 ## Changelog ownership
 
 - **The agent running the release writes the changelog entry — beta or stable.** Do not hand the changelog to another model or agent. The release agent has the release context and owns the final wording.
-- Draft the entry from the previous-stable-to-`HEAD` diff, review it against the changelog policy below, show it to the user, and wait for approval before committing it. Each beta refreshes the same entry; promotion refreshes it one last time from the full previous-stable-to-`HEAD` diff.
+- Draft the entry from the previous-stable-to-`HEAD` diff, review it against the changelog policy below, show it to the user, and wait for approval before committing it. Each beta refreshes the same entry; a future formal release refreshes it one last time from the full previous-stable-to-`HEAD` diff.
 
 ## Changelog voice
 
@@ -462,7 +470,7 @@ Use `git diff <latest-release-tag>..HEAD` as the review input. This is a deep sa
 The changelog always covers **previous-stable-to-`HEAD`**, beta and stable alike:
 
 - **Beta release**: the entry covers `previous stable tag → HEAD`. Update the current in-place beta entry; don't start a fresh one per beta.
-- **Stable promotion**: the same entry is promoted in place. It still captures the full delta from the previous stable release, not just what changed since the last beta.
+- **Formal release**: the same entry is updated in place to `X.Y.Z-reforged.N`. It still captures the full delta from the previous formal release, not just what changed since the last beta.
 
 Betas are checkpoints along the way; the entry is the single record for the jump from one stable version to the next, and beta users read it in the meantime.
 
@@ -474,7 +482,7 @@ Betas are checkpoints along the way; the entry is the single record for the jump
 - [ ] `origin` is exactly `https://github.com/staoran/paseo-reforged.git`
 - [ ] Update the in-place beta entry in `CHANGELOG.md` (heading `## X.Y.Z-beta.N - YYYY-MM-DD`), review it against the changelog policy, get approval, and commit it before cutting the release
 - [ ] The adopted upstream base version is re-checked; the target follows the current fork policy and is approved
-- [ ] `npm run release:beta:patch`, `npm run release:beta:minor`, or `npm run release:beta:next` completes successfully
+- [ ] `npm run release:beta:next` completes successfully
 - [ ] GitHub `Desktop Release` workflow for the `v*-beta.N` tag is green
 - [ ] GitHub `Android APK Release` workflow for the same tag is green
 - [ ] GitHub `Release Notes Sync` mirrored the beta entry into the prerelease body
@@ -483,14 +491,15 @@ Betas are checkpoints along the way; the entry is the single record for the jump
 
 ### Stable release (or promotion)
 
+- [ ] Dedicated `X.Y.Z-reforged.N` parser, version command, GitHub release, Electron updater, and changelog-sync support is implemented and verified
 - [ ] macOS signing and notarization credentials are configured and the stable workflow gate has been intentionally replaced by credential-backed signing
 - [ ] Run the pre-release sanity check (see above) and address any findings
-- [ ] The previous-stable-to-`HEAD` diff is classified as patch or minor, with the target version and rationale approved
+- [ ] The adopted upstream base and next Reforged formal ordinal are re-checked, with the target version and rationale approved
 - [ ] Ensure the intended release commit is already committed and the git worktree is clean before running any release command
 - [ ] Ensure local `npm run typecheck` passes on that exact commit before running any release command
-- [ ] Update `CHANGELOG.md` with user-facing release notes (features, fixes — not refactors). When promoting from beta, overwrite the existing `## X.Y.Z-beta.N` heading in place (heading → `X.Y.Z`, date → promotion day) — do not add a new entry on top of the beta one
-- [ ] Verify the changelog heading follows strict `## X.Y.Z - YYYY-MM-DD` format
-- [ ] `npm run release:patch`, `npm run release:minor`, or `npm run release:promote` completes successfully
+- [ ] Update `CHANGELOG.md` with user-facing release notes (features, fixes — not refactors). Overwrite the existing `## X.Y.Z-beta.N` heading in place with `## X.Y.Z-reforged.N` and the formal release date; do not add a duplicate entry
+- [ ] Verify the changelog heading follows strict `## X.Y.Z-reforged.N - YYYY-MM-DD` format
+- [ ] The future dedicated Reforged formal release command completes successfully
 - [ ] GitHub `Desktop Release` workflow for the `v*` tag is green
 - [ ] GitHub `Android APK Release` workflow for the same tag is green
 - [ ] npm and Docker publishing remained disabled

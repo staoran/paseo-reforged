@@ -10,6 +10,10 @@ test("computes the next beta patch from a stable version", () => {
   assert.equal(computeNextReleaseVersion("0.1.59", "beta-patch"), "0.1.60-beta.1");
 });
 
+test("starts a beta line on the adopted stable upstream version", () => {
+  assert.equal(computeNextReleaseVersion("0.2.5", "beta-next"), "0.2.5-beta.1");
+});
+
 test("advances beta versions", () => {
   assert.equal(computeNextReleaseVersion("0.1.60-beta.1", "beta-next"), "0.1.60-beta.2");
 });

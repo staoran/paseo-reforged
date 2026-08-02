@@ -8,6 +8,8 @@ user-invocable: true
 
 Read `docs/release.md` and follow the **Beta flow** section end-to-end. Run the **Beta release** completion checklist at the bottom of that doc.
 
-During preparation, classify the previous-stable-to-`HEAD` diff as patch or minor and show the target version and rationale to the user. Agents never select a major version autonomously.
+During preparation, re-check the adopted upstream `X.Y.Z` base and show the target version and rationale to the user. Reforged beta releases keep that three-number base and use `X.Y.Z-beta.N`; `N` is the public beta ordinal on the base, not a Git commit count, and resets when a newer upstream base is adopted.
 
-During the initial fork phase, re-check the upstream base SemVer and use `release:beta:next` to increment only `-beta.N`. The first Paseo Reforged-owned feature defaults to a patch-base increment. Each beta updates the in-place `CHANGELOG.md` entry, and release tags are immutable.
+Use `release:beta:next` both to start `X.Y.Z-beta.1` from stable `X.Y.Z` and to increment an existing `X.Y.Z-beta.N`. Do not claim the next upstream patch or minor version. Each beta updates the in-place `CHANGELOG.md` entry, and release tags are immutable.
+
+Call out the same-base ordering constraint before release: `X.Y.Z-beta.1` sorts below bare `X.Y.Z`, so clients already on `X.Y.Z` need a manual first-beta install. Later beta ordinals can update normally from that beta line.

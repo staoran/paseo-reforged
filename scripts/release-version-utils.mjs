@@ -148,6 +148,14 @@ export function computeNextReleaseVersion(currentVersion, mode) {
   }
 
   if (mode === "beta-next") {
+    if (!parsed.isPrerelease) {
+      return formatReleaseVersion({
+        major: parsed.major,
+        minor: parsed.minor,
+        patch: parsed.patch,
+        prerelease: "beta.1",
+      });
+    }
     if (!parsed.isBeta || parsed.betaNumber === null) {
       throw new Error(
         `Cannot advance beta number from ${currentVersion}. Expected a version like 0.1.41-beta.1.`,
