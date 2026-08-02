@@ -4,10 +4,7 @@ import type {
   ProjectAddResponse,
   WorkspaceProjectDescriptorPayload,
 } from "@getpaseo/protocol/messages";
-import {
-  normalizeEmptyProjectDescriptor as normalizeProjectWithoutWorkspacesDescriptor,
-  type EmptyProjectDescriptor as ProjectWithoutWorkspacesDescriptor,
-} from "@/stores/session-store";
+import { normalizeProjectDescriptor, type ProjectDescriptor } from "@/stores/session-store";
 
 type OpenProjectPayload = ProjectAddResponse["payload"];
 type OpenProjectErrorCode = NonNullable<OpenProjectPayload["errorCode"]>;
@@ -63,28 +60,28 @@ export interface OpenProjectDirectlyInput {
   isConnected: boolean;
   canAddProject: boolean;
   client: Pick<DaemonClient, "addProject"> | null;
-  addEmptyProject: (serverId: string, project: ProjectWithoutWorkspacesDescriptor) => void;
+  upsertProject: (serverId: string, project: ProjectDescriptor) => void;
   setHasHydratedWorkspaces: (serverId: string, hydrated: boolean) => void;
 }
 
 interface ProjectRegistrationCallbacks {
   serverId: string;
   isConnected: boolean;
-  addEmptyProject: (serverId: string, project: ProjectWithoutWorkspacesDescriptor) => void;
+  upsertProject: (serverId: string, project: ProjectDescriptor) => void;
   setHasHydratedWorkspaces: (serverId: string, hydrated: boolean) => void;
 }
 
 export interface RegisterProjectDescriptorInput {
   serverId: string;
   project: WorkspaceProjectDescriptorPayload;
-  addEmptyProject: (serverId: string, project: ProjectWithoutWorkspacesDescriptor) => void;
+  upsertProject: (serverId: string, project: ProjectDescriptor) => void;
   setHasHydratedWorkspaces: (serverId: string, hydrated: boolean) => void;
 }
 
 export function registerProjectDescriptor(input: RegisterProjectDescriptorInput): boolean {
   const serverId = input.serverId.trim();
   if (!serverId) return false;
-  input.addEmptyProject(serverId, normalizeProjectWithoutWorkspacesDescriptor(input.project));
+  input.upsertProject(serverId, normalizeProjectDescriptor(input.project));
   input.setHasHydratedWorkspaces(serverId, true);
   return true;
 }
@@ -125,7 +122,7 @@ export async function openProjectDirectly(
   const registered = registerProjectDescriptor({
     serverId: normalizedServerId,
     project: payload.project,
-    addEmptyProject: input.addEmptyProject,
+    upsertProject: input.upsertProject,
     setHasHydratedWorkspaces: input.setHasHydratedWorkspaces,
   });
   return registered
@@ -161,7 +158,7 @@ export async function cloneGithubProjectDirectly(
   const registered = registerProjectDescriptor({
     serverId: normalizedServerId,
     project: payload.project,
-    addEmptyProject: input.addEmptyProject,
+    upsertProject: input.upsertProject,
     setHasHydratedWorkspaces: input.setHasHydratedWorkspaces,
   });
   return registered

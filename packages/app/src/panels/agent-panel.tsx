@@ -28,7 +28,6 @@ import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { SidebarCallout } from "@/components/sidebar-callout";
 import { Composer } from "@/composer";
-import { getActiveMessageSubmissions } from "@/composer/submission/model";
 import { RewindComposerRestoreProvider } from "@/components/rewind/composer-restore";
 import { getProviderIcon } from "@/components/provider-icons";
 import {
@@ -451,7 +450,6 @@ export function useDraftPanelDescriptor(
 }
 
 const EMPTY_STREAM_ITEMS: StreamItem[] = [];
-const EMPTY_MESSAGE_SUBMISSIONS = [] as const;
 const EMPTY_PENDING_PERMISSIONS = new Map<string, PendingPermission>();
 const EMPTY_PENDING_PERMISSION_LIST: PendingPermission[] = [];
 
@@ -1357,11 +1355,6 @@ const AgentStreamSection = memo(function AgentStreamSection({
   const streamItemsRaw = useSessionStore((state) =>
     agentId ? state.sessions[serverId]?.agentStreamTail?.get(agentId) : undefined,
   );
-  const pendingMessageSubmissions = useSessionStore((state) =>
-    agentId
-      ? getActiveMessageSubmissions(state.sessions[serverId]?.messageSubmissions.get(agentId))
-      : EMPTY_MESSAGE_SUBMISSIONS,
-  );
   const streamItems = streamItemsRaw ?? EMPTY_STREAM_ITEMS;
   const pendingPermissionList = useStoreWithEqualityFn(
     useSessionStore,
@@ -1401,7 +1394,6 @@ const AgentStreamSection = memo(function AgentStreamSection({
       routeBottomAnchorRequest={routeBottomAnchorRequest}
       isAuthoritativeHistoryReady={hasAppliedAuthoritativeHistory}
       toast={toast}
-      pendingMessageSubmissions={pendingMessageSubmissions}
       onOpenWorkspaceFile={onOpenWorkspaceFile}
       onOpenWorkingDiffFile={handleOpenWorkingDiffFile}
     />

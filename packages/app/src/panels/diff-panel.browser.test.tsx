@@ -63,6 +63,7 @@ function createPanelProps(
       files,
       diffPayloadError: null,
       isDiffLoading: false,
+      diffTooLarge: false,
       reviewActions: {
         commentsByTarget: new Map(),
         editor: null,
