@@ -288,6 +288,7 @@ test("Changes switches between inline and full-tab navigation", async ({ page })
   await expect(visiblePanel).toBeVisible();
   await expect(visiblePanel.getByText("use-mounted-tab-set.ts", { exact: true })).toBeVisible();
   await expect(visiblePanel).toContainText("zz-deleted.ts");
+  await visiblePanel.getByTestId("diff-file-0-toggle").click();
   await expect(visiblePanel.getByTestId("diff-file-0-body")).toBeVisible();
   await expect(page.getByTestId("workspace-file-pane")).toHaveCount(0);
   await visiblePanel.getByTestId("diff-file-0-toggle").click();
@@ -308,9 +309,15 @@ test("Changes switches between inline and full-tab navigation", async ({ page })
     "Scroll long lines",
   );
   await page.keyboard.press("Escape");
-  await visiblePanel.getByTestId("working-diff-toggle-expand-all").click();
-  await expect(visiblePanel.getByTestId(/^diff-file-\d+-body$/)).toHaveCount(0);
-  await visiblePanel.getByTestId("working-diff-toggle-expand-all").click();
+  const expandAllToggle = visiblePanel.getByTestId("working-diff-toggle-expand-all");
+  const diffBodies = visiblePanel.getByTestId(/^diff-file-\d+-body$/);
+  await expect(expandAllToggle).toHaveAccessibleName("Expand all files");
+  await expandAllToggle.click();
+  await expect(diffBodies).toHaveCount(2);
+  await expect(expandAllToggle).toHaveAccessibleName("Collapse all files");
+  await expandAllToggle.click();
+  await expect(diffBodies).toHaveCount(0);
+  await expandAllToggle.click();
   await expect(visiblePanel.getByTestId("diff-file-0-body")).toBeVisible();
 
   await page.getByTestId("explorer-content-area").getByTestId("diff-file-0-toggle").click();

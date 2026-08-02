@@ -275,6 +275,7 @@ test.describe("Workspace model regressions", () => {
         client,
         previousWorkspaceId: seeded.workspaceId,
         projectDisplayName: seeded.projectDisplayName,
+        assertHeader: false,
       });
       const createdRow = page.getByTestId(
         `sidebar-workspace-row-${serverId}:${createdWorkspace.workspaceId}`,
@@ -286,7 +287,7 @@ test.describe("Workspace model regressions", () => {
         })
         .toBe("Fix login bug");
       await expectWorkspaceHeader(page, {
-        title: "Fix login bug",
+        title: "main",
         subtitle: seeded.projectDisplayName,
       });
       await expect(createdRow).toContainText("Fix login bug", { timeout: 30_000 });

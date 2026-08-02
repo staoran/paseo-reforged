@@ -69,7 +69,7 @@
 | 0029 | 已收口 | micro-spec | 已同步        | [更改页差异渲染卡顿修复](micro_specs/0029_更改页差异渲染卡顿修复.md)                 | 2026-08-01 00:18 | 默认折叠、定向单文件、canonical query 与 Electron 性能验证通过 |
 | 0030 | 已收口 | micro-spec | 已同步        | [Mermaid 展开视图缩放与拖动](micro_specs/0030_Mermaid展开视图缩放与拖动.md)          | 2026-08-01 20:06 | 自动验证、用户验收与提交 hook 通过；Native 真机风险已接受      |
 | 0031 | 已收口 | micro-spec | 已同步        | [上游 v0.2.5 差异与冲突复检](micro_specs/0031_上游v0.2.5差异与冲突复检.md)           | 2026-08-02       | 19 个冲突已解析并通过 Windows 验证；Nix 风险已接受，获准提交   |
-| 0032 | 执行中 | micro-spec | 已同步        | [发布 0.2.6-beta.1 测试版](micro_specs/0032_发布0.2.6-beta.1测试版.md)               | 2026-08-02       | main 已推送；准备检查与 changelog 审批进行中                   |
+| 0032 | 执行中 | micro-spec | 已同步        | [发布 0.2.6-beta.1 测试版](micro_specs/0032_发布0.2.6-beta.1测试版.md)               | 2026-08-02       | 本地修复与发布检查通过；待提交推送、CI 与 changelog 审批       |
 
 ## 候选待办
 

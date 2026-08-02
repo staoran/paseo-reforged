@@ -1,6 +1,7 @@
 import type { Locator } from "@playwright/test";
 import { test, expect, type Page } from "./fixtures";
 import { openSettings } from "./helpers/app";
+import { expandCompletedActivity } from "./helpers/agent-stream";
 import { expectComposerVisible } from "./helpers/composer";
 import { openAgentRoute, seedMockAgentWorkspace } from "./helpers/mock-agent";
 import { getServerId } from "./helpers/server-id";
@@ -180,6 +181,7 @@ function workspaceTypographyLocators(page: Page, prompt: string) {
 
 async function readWorkspaceTypography(page: Page, prompt: string) {
   const locators = workspaceTypographyLocators(page, prompt);
+  await expandCompletedActivity(page, locators.assistant);
   return {
     user: await readTypography(locators.user),
     assistant: await readTypography(locators.assistant),
@@ -428,6 +430,7 @@ test("keeps interface, workspace, and code typography independent", async ({ pag
     for (const size of [24, 11]) {
       await setStoredFontSize(page, "workspaceFontSize", size);
       const locators = workspaceTypographyLocators(page, prompt);
+      await expandCompletedActivity(page, locators.assistant);
       expect((await readTypography(locators.user)).fontSize).toBe(size);
       expect((await readTypography(locators.assistant)).fontSize).toBe(size);
       expect((await readTypography(locators.composer)).fontSize).toBe(size);

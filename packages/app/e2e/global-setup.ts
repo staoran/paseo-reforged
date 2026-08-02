@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { execSync, spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, execSync, spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -327,11 +327,31 @@ interface PairingDaemonClient {
   }>;
 }
 
+async function writeNodeCommandShim(
+  binDir: string,
+  command: string,
+  source: string,
+  windowsLauncher?: string,
+): Promise<void> {
+  const scriptPath = path.join(binDir, command);
+  await writeFile(scriptPath, source);
+  if (process.platform === "win32") {
+    await writeFile(
+      `${scriptPath}.cmd`,
+      windowsLauncher ?? `@echo off\r\nnode "%~dp0${command}" %*\r\n`,
+    );
+    return;
+  }
+  await chmod(scriptPath, 0o755);
+}
+
 async function createFakeEditorBin(): Promise<string> {
   const binDir = await mkdtemp(path.join(tmpdir(), "paseo-e2e-editor-bin-"));
   let realGhPath = "";
   try {
-    realGhPath = execSync("which gh").toString().trim();
+    const locator = process.platform === "win32" ? "where.exe" : "which";
+    realGhPath =
+      execFileSync(locator, ["gh"], { encoding: "utf8" }).split(/\r?\n/, 1)[0]?.trim() ?? "";
   } catch {
     // The local PR fixture below remains usable without a system gh binary.
   }
@@ -351,12 +371,9 @@ if (recordPath) {
 }
 `;
   for (const editorCommand of ["cursor", "code"]) {
-    const editorPath = path.join(binDir, editorCommand);
-    await writeFile(editorPath, fakeEditorSource);
-    await chmod(editorPath, 0o755);
+    await writeNodeCommandShim(binDir, editorCommand, fakeEditorSource);
   }
 
-  const fakeGhPath = path.join(binDir, "gh");
   const fakeGhSource = `#!/usr/bin/env node
 const { spawnSync } = require("child_process");
 const args = process.argv.slice(2);
@@ -417,8 +434,10 @@ if (!realGhPath) process.exit(127);
 const result = spawnSync(realGhPath, args, { stdio: "inherit" });
 process.exit(result.status ?? 1);
 `;
-  await writeFile(fakeGhPath, fakeGhSource);
-  await chmod(fakeGhPath, 0o755);
+  // Batch shims truncate the multiline GraphQL argument, so preserve the supported query marker.
+  const fakeGhWindowsLauncher =
+    '@echo off\r\nif "%~1"=="api" if "%~2"=="graphql" goto graphql\r\nnode "%~dp0gh" %*\r\nexit /b\r\n:graphql\r\nnode "%~dp0gh" api graphql PullRequestCheckoutTarget\r\n';
+  await writeNodeCommandShim(binDir, "gh", fakeGhSource, fakeGhWindowsLauncher);
 
   return binDir;
 }

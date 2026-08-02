@@ -44,7 +44,7 @@ test.describe("Sidebar context menus", () => {
     try {
       await gotoAppShell(page);
       const workspaceRow = page.getByTestId(`sidebar-workspace-row-${workspaceKey}`);
-      const projectRow = page.getByTestId(`sidebar-project-row-${workspace.projectId}`);
+      const projectRow = page.getByTestId(`sidebar-project-row-${workspace.projectKey}`);
       await expect(workspaceRow).toBeVisible({ timeout: 30_000 });
       await expect(projectRow).toBeVisible();
 
@@ -60,7 +60,7 @@ test.describe("Sidebar context menus", () => {
       });
 
       await expect(
-        page.getByTestId(`sidebar-project-context-${workspace.projectId}`),
+        page.getByTestId(`sidebar-project-context-${workspace.projectKey}`),
       ).toBeVisible();
       await expect(workspaceMenu).not.toBeVisible();
     } finally {
@@ -129,20 +129,20 @@ test.describe("Sidebar context menus", () => {
 
     try {
       await gotoAppShell(page);
-      const row = page.getByTestId(`sidebar-project-row-${workspace.projectId}`);
+      const row = page.getByTestId(`sidebar-project-row-${workspace.projectKey}`);
       await expect(row).toBeVisible({ timeout: 30_000 });
 
       await row.click({ button: "right" });
 
       await expect(
-        page.getByTestId(`sidebar-project-context-${workspace.projectId}`),
+        page.getByTestId(`sidebar-project-context-${workspace.projectKey}`),
       ).toBeVisible();
       const openSettingsItem = page.getByTestId(
-        `sidebar-project-menu-open-settings-${workspace.projectId}`,
+        `sidebar-project-menu-open-settings-${workspace.projectKey}`,
       );
       await expect(openSettingsItem).toBeVisible();
       await expect(
-        page.getByTestId(`sidebar-project-menu-remove-${workspace.projectId}`),
+        page.getByTestId(`sidebar-project-menu-remove-${workspace.projectKey}`),
       ).toBeVisible();
       await openSettingsItem.click();
       await expectProjectSettingsFormVisible(page);

@@ -115,7 +115,7 @@ test.describe("New workspace entry points", () => {
       await gotoAppShell(page);
       await waitForSidebarHydration(page);
       await openNewWorkspaceComposer(page, {
-        projectKey: seeded.projectId,
+        projectKey: seeded.projectKey,
         projectDisplayName: seeded.projectDisplayName,
       });
       await expectNewWorkspaceProjectSelected(page, seeded.projectDisplayName);
@@ -152,7 +152,7 @@ test.describe("New workspace entry points", () => {
       await gotoAppShell(page);
       await waitForSidebarHydration(page);
       await openNewWorkspaceComposer(page, {
-        projectKey: seeded.projectId,
+        projectKey: seeded.projectKey,
         projectDisplayName: seeded.projectDisplayName,
       });
       await expectNewWorkspaceProjectSelected(page, seeded.projectDisplayName);

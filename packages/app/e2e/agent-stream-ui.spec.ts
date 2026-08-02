@@ -1,6 +1,7 @@
 import { test, expect } from "./fixtures";
 import {
   awaitAssistantMessage,
+  expandCompletedActivity,
   expectAgentIdle,
   expectInlineWorkingIndicator,
   expectTurnCopyButton,
@@ -297,6 +298,7 @@ test.describe("Agent stream UI", () => {
         workspaceId: agent.workspaceId,
         agentId: agent.agentId,
       });
+      await expandCompletedActivity(page);
       await waitForScrollableChat(page, {
         minScrollableDistance: SCROLL_AWAY_MIN_SCROLLABLE_DISTANCE,
         timeout: 30_000,

@@ -448,6 +448,22 @@ describe("layoutStream", () => {
   });
 
   it.each(["web", "android"] as const)(
+    "keeps the completed turn footer available after an agent error on %s",
+    (platform) => {
+      const assistant = assistantMessage("system-error", 2);
+      const layout = layoutFor({
+        platform,
+        agentStatus: "error",
+        tail: [userMessage("u1", 1), assistant],
+        timingIds: [assistant.id],
+      });
+
+      expect(layout.auxiliaryTurnFooter?.itemId).toBe(assistant.id);
+      expect(footerOwners(layout)).toEqual([assistant.id]);
+    },
+  );
+
+  it.each(["web", "android"] as const)(
     "places inline footer after trailing visible tool rows before the next user on %s",
     (platform) => {
       const assistant = assistantMessage("a1", 2);

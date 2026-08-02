@@ -1,5 +1,6 @@
 import { execFileSync, execSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 export function hasGithubAuth(): boolean {
@@ -138,7 +139,7 @@ async function seedPr(args: {
     gh(["pr", "close", String(prNumber)], { cwd: basePath });
   }
 
-  const localPath = await mkdtemp(path.join("/tmp", `${repoName}-ws-${index}-`));
+  const localPath = await mkdtemp(path.join(tmpdir(), `${repoName}-ws-${index}-`));
   git(["clone", authedUrl, localPath, "--quiet", "-b", branch], basePath);
   // Clean remote URL (no embedded token) so gh can parse owner/repo
   git(["remote", "set-url", "origin", `https://github.com/${fullName}.git`], localPath);
@@ -182,7 +183,7 @@ export async function createTempGithubRepo(options: {
   const defaultBranch = "main";
 
   // Bootstrap local git repo
-  const basePath = await mkdtemp(path.join("/tmp", `${repoName}-base-`));
+  const basePath = await mkdtemp(path.join(tmpdir(), `${repoName}-base-`));
   git(["init", "-b", defaultBranch], basePath);
   git(["config", "user.email", "e2e@paseo.test"], basePath);
   git(["config", "user.name", "Paseo E2E"], basePath);
@@ -269,7 +270,7 @@ export async function cloneGithubRepoDefaultBranchOnly(
 ): Promise<GhDefaultBranchClone> {
   const token = gh(["auth", "token"]);
   const authedUrl = `https://x-access-token:${token}@github.com/${repo.fullName}.git`;
-  const clonePath = await mkdtemp(path.join("/tmp", `${repo.name}-${repo.defaultBranch}-only-`));
+  const clonePath = await mkdtemp(path.join(tmpdir(), `${repo.name}-${repo.defaultBranch}-only-`));
 
   execFileSync(
     "git",
@@ -289,7 +290,7 @@ export async function cloneGithubRepoDefaultBranchOnly(
 }
 
 export async function createLocalGithubPrFixture(): Promise<LocalGhPrFixture> {
-  const fixtureRoot = await mkdtemp(path.join("/tmp", "paseo-e2e-local-github-pr-"));
+  const fixtureRoot = await mkdtemp(path.join(tmpdir(), "paseo-e2e-local-github-pr-"));
   const basePath = path.join(fixtureRoot, "base");
   const remotePath = path.join(fixtureRoot, "remote.git");
   const checkoutPath = path.join(fixtureRoot, "main-only");

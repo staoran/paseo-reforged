@@ -92,7 +92,7 @@ test.describe("Viewed agent timelines", () => {
       await expect(
         page.getByText("Committed after the first chat unsubscribed.", { exact: true }),
       ).toBeVisible();
-      await expect(page.getByText("(end of synthetic stream)", { exact: true })).toBeVisible();
+      await expect(page.getByText("Synthetic load test complete", { exact: true })).toBeVisible();
     } finally {
       await scenario.cleanup();
     }
@@ -118,7 +118,7 @@ test.describe("Viewed agent timelines", () => {
       await expect(
         page.getByText("Committed while the first chat is hidden.", { exact: true }),
       ).toBeVisible();
-      await expect(page.getByText("(end of synthetic stream)", { exact: true })).toBeVisible();
+      await expect(page.getByText("Synthetic load test complete", { exact: true })).toBeVisible();
     } finally {
       await scenario.cleanup();
     }

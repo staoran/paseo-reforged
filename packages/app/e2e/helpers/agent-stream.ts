@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 import { readScrollMetrics, waitForContentGrowth, expectNearBottom } from "./agent-bottom-anchor";
 
 export async function awaitAssistantMessage(page: Page, hasText?: string | RegExp): Promise<void> {
@@ -11,6 +11,19 @@ export async function awaitToolCall(page: Page, toolName: string | RegExp): Prom
   await expect(
     page.getByTestId("tool-call-badge").filter({ hasText: toolName }).first(),
   ).toBeVisible({ timeout: 30_000 });
+}
+
+export async function expandCompletedActivity(
+  page: Page,
+  content: Locator = page.getByTestId("tool-call-badge").first(),
+): Promise<void> {
+  if (await content.isVisible().catch(() => false)) {
+    return;
+  }
+  const fold = page.locator('[data-testid^="activity-fold-"]:visible').first();
+  await expect(fold).toBeVisible({ timeout: 30_000 });
+  await fold.click();
+  await expect(content).toBeVisible({ timeout: 30_000 });
 }
 
 export async function expectAgentIdle(page: Page, timeout = 30_000): Promise<void> {

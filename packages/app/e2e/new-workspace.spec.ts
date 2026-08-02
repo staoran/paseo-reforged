@@ -462,7 +462,7 @@ test.describe("New workspace flow", () => {
       await expect(createdWorkspaceRow).toBeVisible({ timeout: 30_000 });
 
       await expectWorkspaceHeader(page, {
-        title: createdWorkspace.workspaceName,
+        title: "main",
         subtitle: openedProject.projectDisplayName,
       });
 
@@ -867,8 +867,14 @@ test.describe("New workspace flow", () => {
       client,
       previousWorkspaceId: openedProject.workspaceId,
       projectDisplayName: openedProject.projectDisplayName,
+      assertHeader: false,
     });
     createdWorktreeDirectories.add(worktree.workspaceDirectory);
+
+    await expectWorkspaceHeader(page, {
+      title: pr.branch,
+      subtitle: openedProject.projectDisplayName,
+    });
 
     const branchInfo = await readWorktreeBranchInfo({
       worktreePath: worktree.workspaceDirectory,
@@ -915,8 +921,17 @@ test.describe("New workspace flow", () => {
       client,
       previousWorkspaceId: openedProject.workspaceId,
       projectDisplayName: openedProject.projectDisplayName,
+      assertHeader: false,
     });
     createdWorktreeDirectories.add(worktree.workspaceDirectory);
+
+    const branchInfo = await readWorktreeBranchInfo({
+      worktreePath: worktree.workspaceDirectory,
+    });
+    await expectWorkspaceHeader(page, {
+      title: branchInfo.currentBranch,
+      subtitle: openedProject.projectDisplayName,
+    });
 
     expect(existsSync(path.join(worktree.workspaceDirectory, "pr-1.txt"))).toBe(false);
   });

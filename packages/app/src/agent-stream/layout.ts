@@ -128,7 +128,7 @@ function findLatestAssistantInTurn(input: {
 }
 
 function resolveAuxiliaryTurnFooter(input: StreamLayoutInput): TurnFooterHost | null {
-  if (input.agentStatus === "running" || input.agentStatus === "error") {
+  if (input.agentStatus === "running") {
     return null;
   }
 

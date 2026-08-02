@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, test, type Page } from "./fixtures";
-import { expectAgentIdle } from "./helpers/agent-stream";
+import { expandCompletedActivity, expectAgentIdle } from "./helpers/agent-stream";
 import { openFileExplorer, openFileFromExplorer, expectFileTabOpen } from "./helpers/file-explorer";
 import { submitMessage } from "./helpers/composer";
 import { installDaemonWebSocketGate } from "./helpers/daemon-websocket-gate";
@@ -72,9 +72,10 @@ async function seedAgentWithFileLink(target: string, filename = "target.ts") {
 }
 
 async function openToolCallFile(page: Page, filePathText: string): Promise<void> {
-  const toolCall = page.getByTestId("tool-call-badge").filter({ hasText: filePathText }).first();
-  await expect(toolCall).toBeVisible({ timeout: 30_000 });
   await expectAgentIdle(page);
+  const toolCall = page.getByTestId("tool-call-badge").filter({ hasText: filePathText }).first();
+  await expandCompletedActivity(page, toolCall);
+  await expect(toolCall).toBeVisible({ timeout: 30_000 });
   await toolCall.hover();
   await toolCall.getByTestId("tool-call-open-file").click();
 }

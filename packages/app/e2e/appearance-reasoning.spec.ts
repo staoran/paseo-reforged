@@ -110,15 +110,15 @@ test("keeps activity, reasoning, and tool expansion independent", async ({ page 
     await expect(toolBadge(page, /Read/i)).toBeVisible();
     await expect(toolBadge(page, /Search/i)).toBeVisible();
 
-    await thinkingTool(page).click();
+    await thinkingTool(page).getByRole("button").click();
     await expect(reasoningDetails(page)).toBeVisible();
-    await thinkingTool(page).click();
+    await thinkingTool(page).getByRole("button").click();
     await expect(reasoningDetails(page)).toHaveCount(0);
 
     await expect(page.getByText(/export function ConversationList/)).toHaveCount(0);
-    await readTool(page).click();
+    await readTool(page).getByRole("button").click();
     await expect(page.getByText(/export function ConversationList/)).toBeVisible();
-    await readTool(page).click();
+    await readTool(page).getByRole("button").click();
     await expect(page.getByText(/export function ConversationList/)).toHaveCount(0);
     await expect(page.getByText(FINAL_TEXT, { exact: true })).toBeVisible();
 
