@@ -83,6 +83,7 @@ import type {
   DaemonGetStatusResponse,
   DaemonGetPairingOfferResponse,
   DiagnosticsResponse,
+  AgentEditLastUserMessageResponseMessage,
   AgentRewindResponseMessage,
   ListTerminalsResponse,
   CreateTerminalResponse,
@@ -2916,6 +2917,34 @@ export class DaemonClient {
 
   async sendMessage(agentId: string, text: string, options?: SendMessageOptions): Promise<void> {
     await this.sendAgentMessage(agentId, text, options);
+  }
+
+  async editLastUserMessage(input: {
+    agentId: string;
+    messageId: string;
+    replacementText: string;
+    replacementMessageId: string;
+  }): Promise<AgentEditLastUserMessageResponseMessage["payload"]> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "agent.edit_last_user_message.request",
+      requestId,
+      ...input,
+    });
+    return await this.sendRequest({
+      requestId,
+      message,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "agent.edit_last_user_message.response") {
+          return null;
+        }
+        if (msg.payload.requestId !== requestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
   }
 
   async rewindAgent(

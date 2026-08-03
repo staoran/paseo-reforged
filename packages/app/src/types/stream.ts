@@ -93,6 +93,7 @@ export interface UserMessageItem {
   clientMessageId?: string;
   text: string;
   timestamp: Date;
+  replayKind?: "text_only";
   optimistic?: true;
   images?: UserMessageImageAttachment[];
   attachments?: AgentAttachment[];
@@ -247,6 +248,7 @@ function buildUserMessageItem(input: {
   clientMessageId?: string;
   text: string;
   timestamp: Date;
+  replayKind?: UserMessageItem["replayKind"];
   optimistic?: UserMessageItem | null;
 }): UserMessageItem {
   if (input.optimistic) {
@@ -256,6 +258,7 @@ function buildUserMessageItem(input: {
       ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
       text: input.optimistic.text,
       timestamp: input.optimistic.timestamp,
+      ...(input.replayKind ? { replayKind: input.replayKind } : {}),
       ...(input.optimistic.images && input.optimistic.images.length > 0
         ? { images: input.optimistic.images }
         : {}),
@@ -271,6 +274,7 @@ function buildUserMessageItem(input: {
     ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
     text: input.text,
     timestamp: input.timestamp,
+    ...(input.replayKind ? { replayKind: input.replayKind } : {}),
   };
 }
 
@@ -342,6 +346,7 @@ export function handoffCreatedAgentUserMessageToStream(params: {
     id: userMessage.id,
     text: message.text,
     timestamp: message.timestamp,
+    replayKind: userMessage.replayKind,
     optimistic: message,
   });
   if (userIndex < tail.length) {
@@ -362,6 +367,7 @@ function appendUserMessage(
   source: StreamUpdateSource,
   messageId?: string,
   clientMessageId?: string,
+  replayKind?: UserMessageItem["replayKind"],
 ): StreamItem[] {
   const { chunk, hasContent } = normalizeChunk(text);
   if (!hasContent) {
@@ -385,6 +391,7 @@ function appendUserMessage(
     clientMessageId,
     text: chunk,
     timestamp,
+    replayKind,
     optimistic,
   });
 
@@ -883,6 +890,7 @@ function reduceTimelineEvent(
           source,
           item.messageId,
           item.clientMessageId,
+          item.replayKind,
         ),
       );
     case "assistant_message":

@@ -266,6 +266,16 @@ export const ja: TranslationResources = {
     },
   },
   message: {
+    editLastUserMessage: {
+      action: "メッセージを編集",
+      input: "メッセージを編集",
+      cancel: "編集をキャンセル",
+      submit: "編集を送信",
+      unchanged: "会話は変更されませんでした。編集内容は保持されています。",
+      rewound: "会話は巻き戻されましたが、編集したメッセージは送信されていません。",
+      unknown: "会話の状態を確認できませんでした。履歴の更新中、編集内容は復元されています。",
+      resyncFailed: "会話履歴を更新できませんでした。送信は引き続き無効です。",
+    },
     actions: {
       copyCode: "コードをコピー",
       copyMermaidSource: "Mermaid ソースをコピー",

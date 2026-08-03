@@ -1,8 +1,29 @@
+import { existsSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import { describe, expect, test } from "vitest";
 
 import type { PaseoToolCatalog } from "../../tools/types.js";
 import type { OmpNoTurnScheduler, OmpProviderIdleScheduler } from "./agent.js";
 import { OmpHarness } from "./test-utils/omp-harness.js";
+
+interface PaseoOmpExtensionCommand {
+  handler: (args: string, context: unknown) => unknown;
+}
+
+async function loadPaseoOmpExtension(
+  extensionPath: string,
+): Promise<Map<string, PaseoOmpExtensionCommand>> {
+  const commands = new Map<string, PaseoOmpExtensionCommand>();
+  const extension = (await import(pathToFileURL(extensionPath).href)) as {
+    default: (api: {
+      registerCommand: (name: string, command: PaseoOmpExtensionCommand) => void;
+    }) => void;
+  };
+  extension.default({
+    registerCommand: (name, command) => commands.set(name, command),
+  });
+  return commands;
+}
 
 class ManualIdleScheduler implements OmpProviderIdleScheduler {
   private readonly retries: Array<() => void> = [];
@@ -83,6 +104,152 @@ function createToolCatalog(): PaseoToolCatalog {
 }
 
 describe("OMP agent client and session", () => {
+  test("injects a same-session latest-message navigation bridge", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const argv = omp.launchConfiguration().argv;
+    const extensionFlagIndex = argv.indexOf("--extension");
+    const extensionPath = argv[extensionFlagIndex + 1];
+
+    expect(extensionFlagIndex).toBeGreaterThan(-1);
+    expect(extensionPath).toBeDefined();
+    expect(existsSync(extensionPath!)).toBe(true);
+
+    const commands = await loadPaseoOmpExtension(extensionPath!);
+    const navigateTreeRequests: Array<{ targetId: string; summarize: boolean }> = [];
+    const notifications: string[] = [];
+    const context = {
+      navigateTree: async (targetId: string, options: { summarize: boolean }) => {
+        navigateTreeRequests.push({ targetId, summarize: options.summarize });
+        return { cancelled: false };
+      },
+      sessionManager: {
+        getBranch: () => [
+          {
+            type: "message",
+            id: "entry-root",
+            parentId: "session-root",
+            message: { role: "user", content: "root prompt" },
+          },
+          {
+            type: "message",
+            id: "entry-latest",
+            parentId: "entry-assistant",
+            message: { role: "user", content: "latest prompt" },
+          },
+        ],
+      },
+      ui: { notify: (message: string) => notifications.push(message) },
+    };
+    const payload = Buffer.from(
+      JSON.stringify({ requestId: "edit-latest", targetId: "entry-latest" }),
+    ).toString("base64url");
+
+    await commands.get("paseo_edit_last_user_message")?.handler(payload, context);
+
+    expect(navigateTreeRequests).toEqual([{ targetId: "entry-latest", summarize: false }]);
+    expect(notifications).toEqual([
+      'PASEO_OMP_EDIT_RESULT {"requestId":"edit-latest","ok":true,"activeEntryId":"entry-assistant"}',
+    ]);
+
+    await omp.close();
+    expect(existsSync(extensionPath!)).toBe(false);
+  });
+
+  test("rejects an older entry inside the injected OMP bridge", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const argv = omp.launchConfiguration().argv;
+    const extensionPath = argv[argv.indexOf("--extension") + 1]!;
+    const commands = await loadPaseoOmpExtension(extensionPath);
+    const navigateTreeRequests: string[] = [];
+    const notifications: string[] = [];
+    const context = {
+      navigateTree: async (targetId: string) => {
+        navigateTreeRequests.push(targetId);
+        return { cancelled: false };
+      },
+      sessionManager: {
+        getBranch: () => [
+          {
+            type: "message",
+            id: "entry-old",
+            parentId: "session-root",
+            message: { role: "user", content: "old prompt" },
+          },
+          {
+            type: "message",
+            id: "entry-latest",
+            parentId: "entry-assistant",
+            message: { role: "user", content: "latest prompt" },
+          },
+        ],
+      },
+      ui: { notify: (message: string) => notifications.push(message) },
+    };
+    const payload = Buffer.from(
+      JSON.stringify({ requestId: "edit-old", targetId: "entry-old" }),
+    ).toString("base64url");
+
+    await expect(
+      commands.get("paseo_edit_last_user_message")?.handler(payload, context),
+    ).rejects.toThrow("OMP user message entry-old is not the latest entry on the current branch");
+    expect(navigateTreeRequests).toEqual([]);
+    expect(notifications).toEqual([
+      'PASEO_OMP_EDIT_RESULT {"requestId":"edit-old","ok":false,"error":"OMP user message entry-old is not the latest entry on the current branch"}',
+    ]);
+
+    await omp.close();
+  });
+
+  test("navigates from a root user entry inside the injected OMP bridge", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const argv = omp.launchConfiguration().argv;
+    const extensionPath = argv[argv.indexOf("--extension") + 1]!;
+    const commands = await loadPaseoOmpExtension(extensionPath);
+    const navigateTreeRequests: Array<{ targetId: string; summarize: boolean }> = [];
+    const notifications: string[] = [];
+    const context = {
+      navigateTree: async (targetId: string, options: { summarize: boolean }) => {
+        navigateTreeRequests.push({ targetId, summarize: options.summarize });
+        return { cancelled: false };
+      },
+      sessionManager: {
+        getBranch: () => [
+          {
+            type: "message",
+            id: "entry-root",
+            parentId: "session-root",
+            message: { role: "user", content: "root prompt" },
+          },
+        ],
+      },
+      ui: { notify: (message: string) => notifications.push(message) },
+    };
+    const payload = Buffer.from(
+      JSON.stringify({ requestId: "edit-root", targetId: "entry-root" }),
+    ).toString("base64url");
+
+    await commands.get("paseo_edit_last_user_message")?.handler(payload, context);
+
+    expect(navigateTreeRequests).toEqual([{ targetId: "entry-root", summarize: false }]);
+    expect(notifications).toEqual([
+      'PASEO_OMP_EDIT_RESULT {"requestId":"edit-root","ok":true,"activeEntryId":"session-root"}',
+    ]);
+
+    await omp.close();
+  });
+
+  test("rejects startup when OMP does not load the injected edit bridge", async () => {
+    const omp = new OmpHarness({ loadPaseoEditExtension: false });
+
+    await expect(omp.start()).rejects.toThrow(
+      "OMP did not load the Paseo latest-message edit extension",
+    );
+    expect(omp.launchCount()).toBe(1);
+  });
+
   test("owns launch configuration and registers native host tools", async () => {
     const omp = new OmpHarness();
     await omp.start({ modeId: "ask" }, createToolCatalog());
@@ -91,7 +258,15 @@ describe("OMP agent client and session", () => {
       cwd: "/tmp/paseo-omp-agent-test",
       protocolMode: "rpc-ui",
       modeId: "ask",
-      argv: ["omp", "--mode", "rpc-ui", "--approval-mode", "always-ask"],
+      argv: [
+        "omp",
+        "--mode",
+        "rpc-ui",
+        "--approval-mode",
+        "always-ask",
+        "--extension",
+        expect.any(String),
+      ],
     });
     expect(omp.registeredHostTools()).toEqual([
       [expect.objectContaining({ name: "create_agent" })],
@@ -117,7 +292,15 @@ describe("OMP agent client and session", () => {
       cwd: "/tmp/paseo-omp-agent-test",
       protocolMode: "rpc-ui",
       modeId: "write",
-      argv: ["omp", "--mode", "rpc-ui", "--approval-mode", "write"],
+      argv: [
+        "omp",
+        "--mode",
+        "rpc-ui",
+        "--approval-mode",
+        "write",
+        "--extension",
+        expect.any(String),
+      ],
     });
   });
 
@@ -131,6 +314,8 @@ describe("OMP agent client and session", () => {
       "rpc-ui",
       "--approval-mode",
       "always-ask",
+      "--extension",
+      expect.any(String),
       "--thinking",
       "xhigh",
     ]);
@@ -427,6 +612,8 @@ describe("OMP agent client and session", () => {
         "rpc-ui",
         "--approval-mode",
         "always-ask",
+        "--extension",
+        expect.any(String),
         "--thinking",
         "high",
         "--session",
@@ -493,6 +680,70 @@ describe("OMP agent client and session", () => {
 
     await omp.close();
     expect(omp.isClosed()).toBe(true);
+  });
+
+  test("edits the latest user message on the same OMP session", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.setEditBridgeActiveEntryId("entry-assistant");
+    const persistenceBefore = omp.persistence();
+
+    await omp.editLastUserMessage("entry-latest");
+
+    expect(omp.capabilities().supportsInPlaceEditLastUserMessage).toBe(true);
+    expect(omp.editTreeNavigationRequests()).toEqual(["entry-latest"]);
+    expect(omp.branchRequests()).toEqual([]);
+    expect(omp.persistence()).toEqual(persistenceBefore);
+    expect(omp.launchCount()).toBe(1);
+
+    await omp.close();
+  });
+
+  test("does not fall back to OMP branch when the edit bridge fails", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.failEditBridge("extension navigation failed");
+
+    await expect(omp.editLastUserMessage("entry-latest")).rejects.toThrow(
+      "extension navigation failed",
+    );
+    expect(omp.editTreeNavigationRequests()).toEqual([]);
+    expect(omp.branchRequests()).toEqual([]);
+
+    await omp.close();
+  });
+
+  test("rejects an OMP edit that changes provider session identity", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.setEditBridgeActiveEntryId("entry-assistant");
+    omp.changeIdentityOnEdit({ sessionId: "omp-session-2" });
+
+    await expect(omp.editLastUserMessage("entry-latest")).rejects.toThrow(
+      "OMP tree navigation changed the provider session identity",
+    );
+    expect(omp.branchRequests()).toEqual([]);
+    expect(omp.launchCount()).toBe(1);
+
+    await omp.close();
+  });
+
+  test("hydrates only the active OMP branch after editing the root user message", async () => {
+    const omp = new OmpHarness();
+    await omp.resume({
+      user: { id: "user-history", text: "continue the audit" },
+      assistant: { id: "assistant-history", text: "audit context restored" },
+    });
+    omp.setEditBridgeActiveEntryId("session-root");
+    const persistenceBefore = omp.persistence();
+
+    await omp.editLastUserMessage("user-history");
+
+    await expect(omp.history()).resolves.toEqual([]);
+    expect(omp.persistence()).toEqual(persistenceBefore);
+    expect(omp.branchRequests()).toEqual([]);
+
+    await omp.close();
   });
 
   test("interrupt terminalizes in-flight tool calls and running subagents", async () => {

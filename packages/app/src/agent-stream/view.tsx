@@ -107,6 +107,11 @@ import type { WorkspaceDraftTabSetup, WorkspaceTabTarget } from "@/workspace-tab
 import { toErrorMessage } from "@/utils/error-messages";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
 import { useTurnChanges } from "./use-turn-changes";
+import {
+  getEditableLastUserMessageId,
+  type LastUserMessageEditController,
+  type LastUserMessageEditEffect,
+} from "./edit-last-user-message-model";
 
 function renderLiveAuxiliaryNode(input: {
   pendingPermissions: ReactNode;
@@ -125,6 +130,13 @@ function renderLiveAuxiliaryNode(input: {
       ) : null}
     </>
   );
+}
+
+function getActiveLastUserMessageEditTargetId(
+  controller: LastUserMessageEditController | undefined,
+): string | undefined {
+  const state = controller?.getState();
+  return state && state.phase !== "closed" ? state.messageId : undefined;
 }
 
 function renderPendingPermissionsNode(input: {
@@ -313,6 +325,8 @@ export interface AgentStreamViewProps {
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
   onOpenWorkingDiffFile?: (path: string, disposition: OpenFileDisposition) => void;
   readOnly?: boolean;
+  editLastUserMessageController?: LastUserMessageEditController;
+  onEditLastUserMessageEffect?: (effect: LastUserMessageEditEffect) => Promise<void> | void;
   historyPagination?: {
     hasOlder: boolean;
     isLoadingOlder: boolean;
@@ -331,6 +345,7 @@ const AGENT_CAPABILITY_FLAG_KEYS: (keyof AgentCapabilityFlags)[] = [
   "supportsRewindConversation",
   "supportsRewindFiles",
   "supportsRewindBoth",
+  "supportsInPlaceEditLastUserMessage",
 ];
 
 const EMPTY_STREAM_HEAD: StreamItem[] = [];
@@ -402,6 +417,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       onOpenWorkspaceFile,
       onOpenWorkingDiffFile,
       readOnly = false,
+      editLastUserMessageController,
+      onEditLastUserMessageEffect,
       historyPagination,
     },
     ref,
@@ -450,6 +467,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const supportsAgentForkContextCursor = useSessionStore(
       (state) =>
         state.sessions[resolvedServerId]?.serverInfo?.features?.agentForkContextCursor === true,
+    );
+    const supportsInPlaceEditLastUserMessage = useSessionStore(
+      (state) =>
+        state.sessions[resolvedServerId]?.serverInfo?.features?.inPlaceEditLastUserMessage === true,
     );
 
     const workspaceRoot = context.cwd?.trim() || "";
@@ -637,6 +658,28 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     }
     const effectiveStreamItems = isActive ? streamItems : frozenStreamItemsRef.current;
     const effectiveStreamHead = isActive ? streamHead : frozenStreamHeadRef.current;
+    const editableLastUserMessageId = useMemo(
+      () =>
+        getEditableLastUserMessageId({
+          tail: effectiveStreamItems,
+          head: effectiveStreamHead ?? EMPTY_STREAM_HEAD,
+          featureEnabled: supportsInPlaceEditLastUserMessage,
+          capabilityEnabled: context.capabilities?.supportsInPlaceEditLastUserMessage === true,
+          isAgentIdle: context.status === "idle",
+          readOnly,
+        }),
+      [
+        context.capabilities?.supportsInPlaceEditLastUserMessage,
+        context.status,
+        effectiveStreamHead,
+        effectiveStreamItems,
+        readOnly,
+        supportsInPlaceEditLastUserMessage,
+      ],
+    );
+    const activeLastUserMessageEditTargetId = getActiveLastUserMessageEditTargetId(
+      editLastUserMessageController,
+    );
     // Keep retained history outside the 48ms live-head flush path.
     const preparedToolCallHistory = useMemo(
       () => prepareToolCallHistory(toolCallDetailLevel, effectiveStreamItems),
@@ -743,6 +786,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
     const renderUserMessageItem = useCallback(
       (layoutItem: StreamLayoutItem, item: Extract<StreamItem, { kind: "user_message" }>) => {
+        const editController =
+          item.id === editableLastUserMessageId || item.id === activeLastUserMessageEditTargetId
+            ? editLastUserMessageController
+            : undefined;
         return (
           <UserMessage
             serverId={resolvedServerId}
@@ -756,10 +803,24 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             client={client}
             isFirstInGroup={layoutItem.isFirstInUserGroup}
             isLastInGroup={layoutItem.isLastInUserGroup}
+            editLastUserMessageController={editController}
+            isLastUserMessageEditEligible={item.id === editableLastUserMessageId}
+            isAgentIdle={context.status === "idle"}
+            onEditLastUserMessageEffect={onEditLastUserMessageEffect}
           />
         );
       },
-      [context.capabilities, agentId, client, resolvedServerId],
+      [
+        activeLastUserMessageEditTargetId,
+        context.capabilities,
+        context.status,
+        editableLastUserMessageId,
+        editLastUserMessageController,
+        agentId,
+        client,
+        onEditLastUserMessageEffect,
+        resolvedServerId,
+      ],
     );
 
     const renderAssistantMessageItem = useCallback(
@@ -1318,6 +1379,12 @@ function agentStreamViewPropsEqual(
     reasons.push("onOpenWorkingDiffFile");
   }
   if (left.readOnly !== right.readOnly) reasons.push("readOnly");
+  if (left.editLastUserMessageController !== right.editLastUserMessageController) {
+    reasons.push("editLastUserMessageController");
+  }
+  if (left.onEditLastUserMessageEffect !== right.onEditLastUserMessageEffect) {
+    reasons.push("onEditLastUserMessageEffect");
+  }
   if (!historyPaginationPropsEqual(left.historyPagination, right.historyPagination)) {
     reasons.push("historyPagination");
   }

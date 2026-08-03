@@ -51,6 +51,7 @@ const CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: true,
   supportsRewindFiles: true,
   supportsRewindBoth: true,
+  supportsInPlaceEditLastUserMessage: true,
 };
 
 const MODELS: AgentModelDefinition[] = [
@@ -596,6 +597,7 @@ export class MockLoadTestAgentSession implements AgentSession {
   private modeId: string | null;
   private modelId: string | null;
   private readonly rewindError: string | null;
+  private readonly editLastUserMessageDelayMs: number;
 
   constructor(options: { config: AgentSessionConfig; sessionId: string; logger?: Logger }) {
     this.id = options.sessionId;
@@ -606,6 +608,11 @@ export class MockLoadTestAgentSession implements AgentSession {
       typeof options.config.featureValues?.mockRewindError === "string"
         ? options.config.featureValues.mockRewindError
         : null;
+    const editDelay = options.config.featureValues?.mockEditLastUserMessageDelayMs;
+    this.editLastUserMessageDelayMs =
+      typeof editDelay === "number" && Number.isFinite(editDelay)
+        ? Math.max(0, Math.min(5_000, Math.trunc(editDelay)))
+        : 0;
   }
 
   async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
@@ -808,6 +815,28 @@ export class MockLoadTestAgentSession implements AgentSession {
   async revertBoth(_input: { messageId: string }): Promise<void> {
     this.failConfiguredRewind();
     this.keepFirstUserMessageHistory();
+  }
+
+  /** Truncates only the current mock session history so App E2E exercises the real edit RPC. */
+  async rewindLastUserMessageInPlace(input: { messageId: string }): Promise<void> {
+    if (this.editLastUserMessageDelayMs > 0) {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, this.editLastUserMessageDelayMs);
+      });
+    }
+    this.failConfiguredRewind();
+    const latestUserMessageIndex = this.history.findLastIndex(
+      (event) => event.type === "timeline" && event.item.type === "user_message",
+    );
+    const latestUserMessage = this.history[latestUserMessageIndex];
+    if (
+      latestUserMessage?.type !== "timeline" ||
+      latestUserMessage.item.type !== "user_message" ||
+      latestUserMessage.item.messageId !== input.messageId
+    ) {
+      throw new Error(`Mock user message ${input.messageId} is not the latest history entry`);
+    }
+    this.history.splice(latestUserMessageIndex);
   }
 
   async setModel(modelId: string | null): Promise<void> {

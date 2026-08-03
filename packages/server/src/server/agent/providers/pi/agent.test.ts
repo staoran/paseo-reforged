@@ -58,22 +58,33 @@ function readUtf8File(pathname: string): string {
 }
 
 type PaseoExtensionListener = (event: unknown, context?: unknown) => unknown;
+interface PaseoExtensionCommand {
+  handler: (args: string, context: unknown) => unknown;
+}
 
-async function loadPaseoExtensionListeners(
-  extensionPath: string,
-): Promise<Map<string, PaseoExtensionListener>> {
+async function loadPaseoExtension(extensionPath: string): Promise<{
+  listeners: Map<string, PaseoExtensionListener>;
+  commands: Map<string, PaseoExtensionCommand>;
+}> {
   const listeners = new Map<string, PaseoExtensionListener>();
+  const commands = new Map<string, PaseoExtensionCommand>();
   const extension = (await import(pathToFileURL(extensionPath).href)) as {
     default: (piApi: {
       on: (event: string, listener: PaseoExtensionListener) => void;
-      registerCommand: () => void;
+      registerCommand: (name: string, command: PaseoExtensionCommand) => void;
     }) => void;
   };
   extension.default({
     on: (event, listener) => listeners.set(event, listener),
-    registerCommand: () => undefined,
+    registerCommand: (name, command) => commands.set(name, command),
   });
-  return listeners;
+  return { listeners, commands };
+}
+
+async function loadPaseoExtensionListeners(
+  extensionPath: string,
+): Promise<Map<string, PaseoExtensionListener>> {
+  return (await loadPaseoExtension(extensionPath)).listeners;
 }
 
 async function applyPaseoExtensionSystemPrompt(
@@ -877,6 +888,92 @@ describe("PiRpcAgentSession", () => {
     await session.close();
   });
 
+  test("captures only user entries on the active Pi branch", async () => {
+    const pi = new FakePi();
+    const session = await createClient(pi).createSession(createConfig());
+    const extensionPath = pi.recordedLaunches[0]?.extensionPaths[0];
+    expect(extensionPath).toBeDefined();
+    const { commands } = await loadPaseoExtension(extensionPath!);
+    const notifications: string[] = [];
+    const activeBranch = [
+      {
+        type: "message",
+        id: "entry-root",
+        parentId: null,
+        message: { role: "user", content: "root prompt" },
+      },
+      {
+        type: "message",
+        id: "entry-active",
+        parentId: "entry-assistant",
+        message: { role: "user", content: "active prompt" },
+      },
+    ];
+    const hiddenBranchEntry = {
+      type: "message",
+      id: "entry-hidden",
+      parentId: "entry-root",
+      message: { role: "user", content: "hidden prompt" },
+    };
+    const context = {
+      sessionManager: {
+        getBranch: () => activeBranch,
+        getEntries: () => [...activeBranch, hiddenBranchEntry],
+      },
+      ui: { notify: (message: string) => notifications.push(message) },
+    };
+    const payload = Buffer.from(JSON.stringify({ requestId: "capture-active" })).toString(
+      "base64url",
+    );
+
+    await commands.get("paseo_capture_entries")?.handler(payload, context);
+
+    expect(notifications).toEqual([
+      'PASEO_ENTRY_CAPTURE {"reason":"command","requestId":"capture-active","entries":[{"id":"entry-root","parentId":null,"text":"root prompt"},{"id":"entry-active","parentId":"entry-assistant","text":"active prompt"}]}',
+    ]);
+
+    await session.close();
+  });
+
+  test("navigates to a root user entry through the same-session Pi bridge", async () => {
+    const pi = new FakePi();
+    const session = await createClient(pi).createSession(createConfig());
+    const extensionPath = pi.recordedLaunches[0]?.extensionPaths[0];
+    expect(extensionPath).toBeDefined();
+    const { commands } = await loadPaseoExtension(extensionPath!);
+    const navigateTreeRequests: Array<{ targetId: string; summarize: boolean }> = [];
+    const notifications: string[] = [];
+    const context = {
+      navigateTree: async (targetId: string, options: { summarize: boolean }) => {
+        navigateTreeRequests.push({ targetId, summarize: options.summarize });
+        return { cancelled: false };
+      },
+      sessionManager: {
+        getBranch: () => [
+          {
+            type: "message",
+            id: "entry-root",
+            parentId: null,
+            message: { role: "user", content: "root prompt" },
+          },
+        ],
+      },
+      ui: { notify: (message: string) => notifications.push(message) },
+    };
+    const payload = Buffer.from(
+      JSON.stringify({ requestId: "navigate-root", targetId: "entry-root" }),
+    ).toString("base64url");
+
+    await commands.get("paseo_tree")?.handler(payload, context);
+
+    expect(navigateTreeRequests).toEqual([{ targetId: "entry-root", summarize: false }]);
+    expect(notifications).toContain(
+      'PASEO_COMMAND_RESULT {"requestId":"navigate-root","ok":true,"result":{"cancelled":false}}',
+    );
+
+    await session.close();
+  });
+
   test("appends agent and daemon prompts after Pi's discovered system prompt", async () => {
     const pi = new FakePi();
     const client = createClient(pi);
@@ -1657,6 +1754,38 @@ describe("PiRpcAgentClient", () => {
       supportsRewindBoth: false,
     });
     expect(pi.latestSession().treeNavigationRequests).toEqual(["entry-1"]);
+  });
+
+  test("edits the latest user message on the same Pi session", async () => {
+    const { pi, session } = await createSession();
+    pi.latestSession().capturedUserEntries = [
+      { id: "entry-1", parentId: null, text: "first prompt" },
+      { id: "entry-3", parentId: "entry-2", text: "second prompt" },
+    ];
+    const persistenceBefore = session.describePersistence();
+
+    if (!session.rewindLastUserMessageInPlace) {
+      throw new Error("Pi did not expose in-place latest-message editing");
+    }
+    await session.rewindLastUserMessageInPlace({ messageId: "entry-3" });
+
+    expect(session.capabilities.supportsInPlaceEditLastUserMessage).toBe(true);
+    expect(pi.latestSession().treeNavigationRequests).toEqual(["entry-3"]);
+    expect(session.describePersistence()).toEqual(persistenceBefore);
+    expect(pi.recordedLaunches).toHaveLength(1);
+  });
+
+  test("rejects editing an older user message without navigating the Pi tree", async () => {
+    const { pi, session } = await createSession();
+    pi.latestSession().capturedUserEntries = [
+      { id: "entry-1", parentId: null, text: "first prompt" },
+      { id: "entry-3", parentId: "entry-2", text: "second prompt" },
+    ];
+
+    await expect(session.rewindLastUserMessageInPlace?.({ messageId: "entry-1" })).rejects.toThrow(
+      "Pi user message entry-1 is not the latest entry on the current branch",
+    );
+    expect(pi.latestSession().treeNavigationRequests).toEqual([]);
   });
 
   test("injects MCP servers without replacing the Pi global MCP config", async () => {

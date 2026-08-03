@@ -10,6 +10,22 @@ import {
 } from "./messages.js";
 
 describe("shared messages stream parsing", () => {
+  it("preserves the optional text-only replay marker on user messages", () => {
+    expect(
+      AgentTimelineItemPayloadSchema.parse({
+        type: "user_message",
+        text: "Fix the failing test",
+        messageId: "user-1",
+        replayKind: "text_only",
+      }),
+    ).toEqual({
+      type: "user_message",
+      text: "Fix the failing test",
+      messageId: "user-1",
+      replayKind: "text_only",
+    });
+  });
+
   it("preserves optional assistant message phase without requiring it", () => {
     expect(
       AgentTimelineItemPayloadSchema.parse({

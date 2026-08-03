@@ -263,6 +263,16 @@ export const ar: TranslationResources = {
     },
   },
   message: {
+    editLastUserMessage: {
+      action: "تحرير الرسالة",
+      input: "تحرير الرسالة",
+      cancel: "إلغاء التحرير",
+      submit: "إرسال التعديل",
+      unchanged: "لم تتغير المحادثة. لا تزال مسودة التعديل موجودة.",
+      rewound: "تم التراجع عن المحادثة، لكن الرسالة المعدلة لم تُرسل.",
+      unknown: "تعذر تأكيد حالة المحادثة. تمت استعادة التعديل أثناء تحديث السجل.",
+      resyncFailed: "تعذر تحديث سجل المحادثة. لا يزال الإرسال معطلاً.",
+    },
     actions: {
       copyCode: "نسخ الرمز",
       copyMermaidSource: "نسخ مصدر Mermaid",

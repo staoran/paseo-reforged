@@ -229,6 +229,56 @@ describe("MockLoadTestAgentClient", () => {
     expect(events).toHaveLength(eventCountAfterInterrupt);
   });
 
+  test("rewinds the latest user message without changing the mock session identity", async () => {
+    vi.useFakeTimers();
+    const client = new MockLoadTestAgentClient();
+    const session = await client.createSession({
+      provider: "mock",
+      cwd: process.cwd(),
+      model: "ten-second-stream",
+    });
+    const persistenceBefore = session.describePersistence();
+
+    const firstRun = session.run("emit 1 coalesced agent stream updates for the first turn");
+    await vi.advanceTimersByTimeAsync(0);
+    await firstRun;
+    const secondRun = session.run("emit 1 coalesced agent stream updates for the second turn");
+    await vi.advanceTimersByTimeAsync(0);
+    await secondRun;
+
+    const historyBefore: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      historyBefore.push(event);
+    }
+    const userMessagesBefore = historyBefore.filter(
+      (event) => event.type === "timeline" && event.item.type === "user_message",
+    );
+    const latestUserMessage = userMessagesBefore.at(-1);
+    if (latestUserMessage?.type !== "timeline" || latestUserMessage.item.type !== "user_message") {
+      throw new Error("Mock provider did not emit a latest user message");
+    }
+    if (!session.rewindLastUserMessageInPlace) {
+      throw new Error("Mock provider did not expose in-place latest-message editing");
+    }
+
+    await session.rewindLastUserMessageInPlace({
+      messageId: latestUserMessage.item.messageId ?? "",
+    });
+
+    const historyAfter: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      historyAfter.push(event);
+    }
+    const remainingUserMessages = historyAfter.filter(
+      (event) => event.type === "timeline" && event.item.type === "user_message",
+    );
+
+    expect(session.capabilities.supportsInPlaceEditLastUserMessage).toBe(true);
+    expect(userMessagesBefore).toHaveLength(2);
+    expect(remainingUserMessages).toEqual([userMessagesBefore[0]]);
+    expect(session.describePersistence()).toEqual(persistenceBefore);
+  });
+
   test("emits a terminal failure without an assistant provider message", async () => {
     vi.useFakeTimers();
     const client = new MockLoadTestAgentClient();

@@ -161,6 +161,7 @@ const PI_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: true,
   supportsRewindFiles: false,
   supportsRewindBoth: false,
+  supportsInPlaceEditLastUserMessage: true,
 };
 
 const PI_THINKING_OPTIONS: ReadonlyArray<{
@@ -646,7 +647,7 @@ function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
 
 	function getCapturedUserEntries(ctx) {
 	  return ctx.sessionManager
-	    .getEntries()
+	    .getBranch()
 	    .filter((entry) => entry.type === "message" && entry.message?.role === "user")
 	    .map(toCapturedUserEntry);
 	}
@@ -1509,6 +1510,31 @@ export class PiRpcAgentSession implements AgentSession {
         navigateTree: (treeEntryId) => this.runPiTreeExtensionCommand(treeEntryId),
       },
     });
+    this.currentLeafOverrideId = targetEntry.parentId;
+    this.activeToolCalls.clear();
+  }
+
+  async rewindLastUserMessageInPlace(input: { messageId: string }): Promise<void> {
+    if (this.activeTurnId) {
+      throw new Error("Cannot edit the latest Pi message while a turn is active");
+    }
+    await this.refreshState();
+    const sessionId = this.state.sessionId;
+    const sessionFile = this.state.sessionFile;
+    await this.requestEntryCapture("edit_last_user_message");
+    const targetEntry = this.capturedUserEntriesById.get(input.messageId);
+    const latestUserEntry = this.capturedUserEntries.at(-1);
+    if (!targetEntry || latestUserEntry?.id !== targetEntry.id) {
+      throw new Error(
+        `Pi user message ${input.messageId} is not the latest entry on the current branch`,
+      );
+    }
+
+    await this.runPiTreeExtensionCommand(targetEntry.id);
+    await this.refreshState();
+    if (this.state.sessionId !== sessionId || this.state.sessionFile !== sessionFile) {
+      throw new Error("Pi tree navigation changed the provider session identity");
+    }
     this.currentLeafOverrideId = targetEntry.parentId;
     this.activeToolCalls.clear();
   }

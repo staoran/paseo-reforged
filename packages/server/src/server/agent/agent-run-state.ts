@@ -13,6 +13,8 @@ export interface ForegroundTurnWaiter {
 export interface PendingForegroundRun {
   token: string;
   kind: "foreground";
+  purpose: "turn" | "edit_last_user_message";
+  replayKind?: "text_only";
   turnId: string | null;
   started: boolean;
   settled: boolean;
@@ -40,8 +42,17 @@ export interface ForegroundRunAgentState {
 export class AgentRunState {
   private readonly runs = new Map<string, TrackedAgentRun>();
 
-  createPendingRun(agentId: string): PendingForegroundRun {
-    const pendingRun = createPendingForegroundRun();
+  createPendingRun(
+    agentId: string,
+    options?: {
+      purpose?: PendingForegroundRun["purpose"];
+      replayKind?: PendingForegroundRun["replayKind"];
+    },
+  ): PendingForegroundRun {
+    if (this.runs.has(agentId)) {
+      throw new Error(`Agent ${agentId} already has an active run or operation`);
+    }
+    const pendingRun = createPendingForegroundRun(options);
     this.runs.set(agentId, pendingRun);
     return pendingRun;
   }
@@ -258,12 +269,23 @@ export class ForegroundTurnStream {
   }
 }
 
-function createPendingForegroundRun(): PendingForegroundRun {
-  return createTrackedRun({ kind: "foreground", turnId: null, started: false });
+function createPendingForegroundRun(options?: {
+  purpose?: PendingForegroundRun["purpose"];
+  replayKind?: PendingForegroundRun["replayKind"];
+}): PendingForegroundRun {
+  return createTrackedRun({
+    kind: "foreground",
+    purpose: options?.purpose ?? "turn",
+    ...(options?.replayKind ? { replayKind: options.replayKind } : {}),
+    turnId: null,
+    started: false,
+  });
 }
 
 function createTrackedRun(input: {
   kind: "foreground";
+  purpose: PendingForegroundRun["purpose"];
+  replayKind?: PendingForegroundRun["replayKind"];
   turnId: null;
   started: false;
 }): PendingForegroundRun;
@@ -274,7 +296,13 @@ function createTrackedRun(input: {
 }): AutonomousAgentRun;
 function createTrackedRun(
   input:
-    | { kind: "foreground"; turnId: null; started: false }
+    | {
+        kind: "foreground";
+        purpose: PendingForegroundRun["purpose"];
+        replayKind?: PendingForegroundRun["replayKind"];
+        turnId: null;
+        started: false;
+      }
     | { kind: "autonomous"; turnId: string | null; started: true },
 ): TrackedAgentRun {
   let resolveSettled!: () => void;

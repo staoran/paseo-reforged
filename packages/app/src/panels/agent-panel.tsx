@@ -20,6 +20,11 @@ import invariant from "tiny-invariant";
 import { shallow, useShallow } from "zustand/shallow";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { AgentStreamView, type AgentStreamViewHandle } from "@/agent-stream/view";
+import {
+  createLastUserMessageEditController,
+  type LastUserMessageEditController,
+  type LastUserMessageEditEffect,
+} from "@/agent-stream/edit-last-user-message-model";
 import { ChatSelectionBubble } from "@/agent-stream/selection/chat-selection-bubble";
 import { openSeededDraftWindow } from "@/agent-stream/selection/open-seeded-draft-window";
 import { useChatTextSelection } from "@/agent-stream/selection/use-chat-text-selection";
@@ -60,12 +65,14 @@ import { RenderProfile } from "@/utils/render-profiler";
 import { buildDraftPanelDescriptor } from "@/panels/draft-panel-descriptor";
 import {
   type HostRuntimeConnectionStatus,
+  getHostRuntimeStore,
   useHostRuntimeClient,
   useHostRuntimeConnectionStatus,
   useHostRuntimeIsConnected,
   useHostRuntimeLastError,
   useHosts,
 } from "@/runtime/host-runtime";
+import { planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
 import {
   deriveRouteBottomAnchorIntent,
   deriveRouteBottomAnchorRequest,
@@ -1089,6 +1096,7 @@ function ChatAgentContent({
 
   return (
     <ChatAgentReadyContent
+      key={`${serverId}:${agentId}`}
       serverId={serverId}
       agentId={agentId}
       isPaneFocused={isPaneFocused}
@@ -1200,6 +1208,51 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
       composerState,
     ],
   );
+  const editLastUserMessageController = useMemo(() => createLastUserMessageEditController(), []);
+  const getEditRecoverySnapshot = useCallback(
+    () => editLastUserMessageController.getState().phase === "recovering",
+    [editLastUserMessageController],
+  );
+  const isEditRecoveryPending = useSyncExternalStore(
+    editLastUserMessageController.subscribe,
+    getEditRecoverySnapshot,
+    getEditRecoverySnapshot,
+  );
+  const resyncEditedTimeline = useCallback(
+    () => getHostRuntimeStore().fetchAgentTimeline(serverId, agentId, planTimelineTailFetch()),
+    [agentId, serverId],
+  );
+  const handleEditLastUserMessageEffect = useCallback(
+    async (effect: LastUserMessageEditEffect) => {
+      switch (effect.kind) {
+        case "success":
+          return;
+        case "unchanged":
+          toastApi.error(t("message.editLastUserMessage.unchanged"));
+          return;
+        case "restore_composer":
+          setText(effect.draft);
+          toastApi.error(t("message.editLastUserMessage.rewound"));
+          try {
+            await resyncEditedTimeline();
+          } catch {
+            toastApi.error(t("message.editLastUserMessage.resyncFailed"));
+          }
+          return;
+        case "restore_composer_and_resync":
+          setText(effect.draft);
+          toastApi.error(t("message.editLastUserMessage.unknown"));
+          try {
+            await resyncEditedTimeline();
+            editLastUserMessageController.finishRecovery();
+          } catch {
+            toastApi.error(t("message.editLastUserMessage.resyncFailed"));
+          }
+          return;
+      }
+    },
+    [editLastUserMessageController, resyncEditedTimeline, setText, t, toastApi],
+  );
   const isCompactFormFactor = useIsCompactFormFactor();
   const { workspaceId, tabId } = usePaneContext();
   const selectionOwnerId = `${serverId}:${workspaceId}:${tabId}`;
@@ -1252,6 +1305,8 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
         routeBottomAnchorRequest={routeBottomAnchorRequest}
         hasAppliedAuthoritativeHistory={hasAppliedAuthoritativeHistory}
         toast={toastApi}
+        editLastUserMessageController={editLastUserMessageController}
+        onEditLastUserMessageEffect={handleEditLastUserMessageEffect}
         onOpenWorkspaceFile={onOpenWorkspaceFile}
       />
     </RenderProfile>
@@ -1265,7 +1320,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
         isArchivingCurrentAgent={isArchivingCurrentAgent}
         archivedAt={agentState.archivedAt}
         cwd={cwd}
-        isSubmitLoading={false}
+        isSubmitLoading={isEditRecoveryPending}
         agentInputDraft={agentInputDraft}
         onAttentionInputFocus={onAttentionInputFocus}
         onAttentionPromptSend={onAttentionPromptSend}
@@ -1331,6 +1386,8 @@ const AgentStreamSection = memo(function AgentStreamSection({
   routeBottomAnchorRequest,
   hasAppliedAuthoritativeHistory,
   toast,
+  editLastUserMessageController,
+  onEditLastUserMessageEffect,
   onOpenWorkspaceFile,
 }: {
   streamViewRef: React.RefObject<AgentStreamViewHandle | null>;
@@ -1340,6 +1397,8 @@ const AgentStreamSection = memo(function AgentStreamSection({
   routeBottomAnchorRequest: RouteBottomAnchorRequest;
   hasAppliedAuthoritativeHistory: boolean;
   toast: ReturnType<typeof useToastHost>["api"];
+  editLastUserMessageController: LastUserMessageEditController;
+  onEditLastUserMessageEffect: (effect: LastUserMessageEditEffect) => Promise<void> | void;
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
 }) {
   const { openTab } = usePaneContext();
@@ -1394,6 +1453,8 @@ const AgentStreamSection = memo(function AgentStreamSection({
       routeBottomAnchorRequest={routeBottomAnchorRequest}
       isAuthoritativeHistoryReady={hasAppliedAuthoritativeHistory}
       toast={toast}
+      editLastUserMessageController={editLastUserMessageController}
+      onEditLastUserMessageEffect={onEditLastUserMessageEffect}
       onOpenWorkspaceFile={onOpenWorkspaceFile}
       onOpenWorkingDiffFile={handleOpenWorkingDiffFile}
     />

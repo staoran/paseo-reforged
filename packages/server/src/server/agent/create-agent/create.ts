@@ -267,11 +267,16 @@ async function resolveSessionCreateAgent(
   const prompt = buildAgentPrompt(trimmedPrompt ?? "", input.images, input.attachments);
   const hasPromptContent = Array.isArray(prompt) ? prompt.length > 0 : prompt.length > 0;
   const clientMessageId = normalizeClientMessageId(input.clientMessageId);
+  const replayKind =
+    !input.outputSchema && typeof prompt === "string" && prompt.trim().length > 0
+      ? "text_only"
+      : undefined;
   const runOptions: AgentRunOptions | undefined =
-    input.outputSchema || clientMessageId
+    input.outputSchema || clientMessageId || replayKind
       ? {
           ...(input.outputSchema ? { outputSchema: input.outputSchema } : {}),
           ...(clientMessageId ? { clientMessageId } : {}),
+          ...(replayKind ? { replayKind } : {}),
         }
       : undefined;
   const workspaceId = setupContinuation ? createdWorkspaceId : input.workspaceId;

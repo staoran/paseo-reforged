@@ -1856,6 +1856,8 @@ export class Session {
     switch (msg.type) {
       case "agent.rewind.request":
         return this.handleAgentRewindRequest(msg);
+      case "agent.edit_last_user_message.request":
+        return this.handleAgentEditLastUserMessageRequest(msg);
       default:
         return undefined;
     }
@@ -2949,6 +2951,10 @@ export class Session {
 
     const promptText = options?.spokenInput ? wrapSpokenInput(text) : text;
     const prompt = buildAgentPrompt(promptText, images, attachments);
+    const canonicalRunOptions =
+      !options?.spokenInput && typeof prompt === "string" && prompt.trim().length > 0
+        ? { ...runOptions, replayKind: "text_only" as const }
+        : runOptions;
 
     try {
       await sendPromptToAgent({
@@ -2957,7 +2963,7 @@ export class Session {
         agentId,
         prompt,
         messageId,
-        runOptions,
+        runOptions: canonicalRunOptions,
         logger: this.sessionLogger,
       });
       return { ok: true };
@@ -3464,6 +3470,39 @@ export class Session {
           agentId: msg.agentId,
           ok: false,
           error: error instanceof Error ? error.message : "Failed to rewind agent",
+        },
+      });
+    }
+  }
+
+  private async handleAgentEditLastUserMessageRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.edit_last_user_message.request" }>,
+  ): Promise<void> {
+    try {
+      const result = await this.agentManager.editLastUserMessage(msg.agentId, {
+        messageId: msg.messageId,
+        replacementText: msg.replacementText,
+        replacementMessageId: msg.replacementMessageId,
+      });
+      this.emit({
+        type: "agent.edit_last_user_message.response",
+        payload: {
+          requestId: msg.requestId,
+          agentId: msg.agentId,
+          ...result,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "agent.edit_last_user_message.response",
+        payload: {
+          requestId: msg.requestId,
+          agentId: msg.agentId,
+          ok: false,
+          historyState: "unknown",
+          replacementStarted: false,
+          failureStage: "rewind",
+          error: error instanceof Error ? error.message : "Failed to edit latest user message",
         },
       });
     }
@@ -6349,6 +6388,10 @@ export class Session {
           agentId,
           prompt,
           messageId: msg.messageId,
+          runOptions:
+            typeof prompt === "string" && prompt.trim().length > 0
+              ? { replayKind: "text_only" }
+              : undefined,
           logger: this.sessionLogger,
         });
       } catch (error) {

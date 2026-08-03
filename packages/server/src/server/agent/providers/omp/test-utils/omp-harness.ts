@@ -60,7 +60,7 @@ async function writeOmpHistory(history: OmpResumeHistory): Promise<string> {
 }
 
 export class OmpHarness {
-  private readonly omp = new FakeOmp();
+  private readonly omp: FakeOmp;
   private readonly client: OmpAgentClient;
   private readonly events: AgentStreamEvent[] = [];
   private session: OmpAgentSession | null = null;
@@ -69,8 +69,10 @@ export class OmpHarness {
     options: {
       providerIdleScheduler?: OmpProviderIdleScheduler;
       noTurnScheduler?: OmpNoTurnScheduler;
+      loadPaseoEditExtension?: boolean;
     } = {},
   ) {
+    this.omp = new FakeOmp(["omp"], options.loadPaseoEditExtension ?? true);
     this.client = new OmpAgentClient({
       logger: pino({ level: "silent" }),
       runtime: this.omp,
@@ -442,6 +444,38 @@ export class OmpHarness {
 
   branchRequests(): string[] {
     return this.omp.latestSession().branchRequests;
+  }
+
+  async editLastUserMessage(messageId: string): Promise<void> {
+    const session = this.requireSession();
+    if (!session.rewindLastUserMessageInPlace) {
+      throw new Error("OMP did not expose in-place latest-message editing");
+    }
+    await session.rewindLastUserMessageInPlace({ messageId });
+  }
+
+  editTreeNavigationRequests(): string[] {
+    return this.omp.latestSession().treeNavigationRequests;
+  }
+
+  setEditBridgeActiveEntryId(entryId: string | null): void {
+    this.omp.latestSession().editBridgeActiveEntryId = entryId;
+  }
+
+  failEditBridge(error: string): void {
+    this.omp.latestSession().editBridgeError = error;
+  }
+
+  changeIdentityOnEdit(identity: { sessionId?: string; sessionFile?: string }): void {
+    this.omp.latestSession().editBridgeStateAfter = identity;
+  }
+
+  persistence(): AgentPersistenceHandle | null {
+    return this.requireSession().describePersistence();
+  }
+
+  launchCount(): number {
+    return this.omp.recordedLaunches.length;
   }
 
   async interruptActiveTurn(message: string): Promise<void> {

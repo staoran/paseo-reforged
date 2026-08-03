@@ -292,7 +292,7 @@ function stripExtension(filePath: string): string {
 
 export async function readActiveOmpEntryChain(
   sessionFile: string,
-  activeEntryId?: string,
+  activeEntryId?: string | null,
 ): Promise<OmpSessionEntry[]> {
   const content = await readFile(sessionFile, "utf8");
   const entries = content.split("\n").flatMap((line) => {
@@ -305,6 +305,7 @@ export async function readActiveOmpEntryChain(
     }
   });
   if (entries.length === 0) return [];
+  if (activeEntryId === null) return [];
   const byId = new Map(entries.map((entry) => [entry.id!, entry]));
   const parentIds = new Set(entries.flatMap((entry) => (entry.parentId ? [entry.parentId] : [])));
   const leaves = entries.filter((entry) => !parentIds.has(entry.id!));

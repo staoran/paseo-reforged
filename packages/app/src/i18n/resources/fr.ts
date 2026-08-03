@@ -267,6 +267,18 @@ export const fr: TranslationResources = {
     },
   },
   message: {
+    editLastUserMessage: {
+      action: "Modifier le message",
+      input: "Modifier le message",
+      cancel: "Annuler la modification",
+      submit: "Envoyer la modification",
+      unchanged: "La conversation n'a pas changé. Votre modification est toujours présente.",
+      rewound: "La conversation a été annulée, mais le message modifié n'a pas été envoyé.",
+      unknown:
+        "L'état de la conversation n'a pas pu être confirmé. La modification a été restaurée pendant l'actualisation de l'historique.",
+      resyncFailed:
+        "L'historique de la conversation n'a pas pu être actualisé. L'envoi reste désactivé.",
+    },
     actions: {
       copyCode: "Copier le code",
       copyMermaidSource: "Copier la source Mermaid",

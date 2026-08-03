@@ -178,6 +178,7 @@ export interface AgentCapabilityFlags {
   supportsRewindConversation?: boolean;
   supportsRewindFiles?: boolean;
   supportsRewindBoth?: boolean;
+  supportsInPlaceEditLastUserMessage?: boolean;
 }
 
 export interface AgentPersistenceHandle {
@@ -200,6 +201,7 @@ export interface AgentRunOptions {
   resumeFrom?: AgentPersistenceHandle;
   maxThinkingTokens?: number;
   clientMessageId?: string;
+  replayKind?: "text_only";
 }
 
 export interface AgentUsage {
@@ -368,7 +370,13 @@ export interface CompactionTimelineItem {
 }
 
 export type AgentTimelineItem =
-  | { type: "user_message"; text: string; messageId?: string; clientMessageId?: string }
+  | {
+      type: "user_message";
+      text: string;
+      messageId?: string;
+      clientMessageId?: string;
+      replayKind?: "text_only";
+    }
   | {
       type: "assistant_message";
       text: string;
@@ -651,6 +659,7 @@ export interface AgentSession {
   revertConversation?(input: { messageId: string }): Promise<void>;
   revertFiles?(input: { messageId: string }): Promise<void>;
   revertBoth?(input: { messageId: string }): Promise<void>;
+  rewindLastUserMessageInPlace?(input: { messageId: string }): Promise<void>;
   /**
    * Out-of-band prompt handler. When non-null, the manager runs the returned
    * handler instead of allocating a turn. The handler emits stream events

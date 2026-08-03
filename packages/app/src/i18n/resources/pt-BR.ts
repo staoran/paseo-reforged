@@ -266,6 +266,18 @@ export const ptBR: TranslationResources = {
     },
   },
   message: {
+    editLastUserMessage: {
+      action: "Editar mensagem",
+      input: "Editar mensagem",
+      cancel: "Cancelar edição",
+      submit: "Enviar edição",
+      unchanged: "A conversa não mudou. Sua edição continua aqui.",
+      rewound: "A conversa foi revertida, mas a mensagem editada não foi enviada.",
+      unknown:
+        "Não foi possível confirmar o estado da conversa. A edição foi restaurada enquanto o histórico é atualizado.",
+      resyncFailed:
+        "Não foi possível atualizar o histórico da conversa. O envio continua desativado.",
+    },
     actions: {
       copyCode: "Copiar código",
       copyMermaidSource: "Copiar fonte Mermaid",

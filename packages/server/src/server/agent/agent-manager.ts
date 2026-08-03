@@ -61,7 +61,11 @@ import {
   AgentStreamCoalescer,
 } from "./agent-stream-coalescer.js";
 import { limitAgentTimelineItemContent } from "./agent-timeline-content.js";
-import { AgentRunState, type ForegroundTurnWaiter } from "./agent-run-state.js";
+import {
+  AgentRunState,
+  type ForegroundTurnWaiter,
+  type PendingForegroundRun,
+} from "./agent-run-state.js";
 import { getAgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { isSystemInjectedEnvelope } from "./agent-prompt.js";
@@ -110,6 +114,22 @@ export type AgentRunCancellationResult =
   | { status: "not_running" }
   | { status: "settled" }
   | { status: "refused" };
+
+export type EditLastUserMessageFailureStage = "validation" | "rewind" | "hydrate" | "start_turn";
+
+export interface EditLastUserMessageResult {
+  ok: boolean;
+  historyState: "unchanged" | "rewound" | "unknown";
+  replacementStarted: boolean;
+  failureStage: EditLastUserMessageFailureStage | null;
+  error: string | null;
+}
+
+export interface EditLastUserMessageInput {
+  messageId: string;
+  replacementText: string;
+  replacementMessageId: string;
+}
 
 interface PreparedSessionConfig {
   storedConfig: AgentSessionConfig;
@@ -429,6 +449,45 @@ function attachPersistenceCwd(
       ...handle.metadata,
       cwd,
     },
+  };
+}
+
+function hasSamePersistenceIdentity(
+  before: AgentPersistenceHandle,
+  after: AgentPersistenceHandle | null,
+): boolean {
+  return (
+    after !== null &&
+    after.provider === before.provider &&
+    after.sessionId === before.sessionId &&
+    after.nativeHandle === before.nativeHandle
+  );
+}
+
+function editLastUserMessageError(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
+function normalizeReplayableTimelineEvent(
+  event: AgentStreamEvent,
+  pendingRun: PendingForegroundRun | null | undefined,
+  fromHistory: boolean | undefined,
+): AgentStreamEvent {
+  if (event.type !== "timeline") {
+    return event;
+  }
+  const shouldMarkReplayableUserMessage =
+    !fromHistory &&
+    event.item.type === "user_message" &&
+    pendingRun?.replayKind === "text_only" &&
+    (pendingRun.turnId === null || pendingRun.turnId === event.turnId);
+  const item =
+    shouldMarkReplayableUserMessage && event.item.type === "user_message"
+      ? { ...event.item, replayKind: "text_only" as const }
+      : event.item;
+  return {
+    ...event,
+    item: limitAgentTimelineItemContent(item),
   };
 }
 
@@ -1987,47 +2046,21 @@ export class AgentManager {
     const isReplacement = agent.pendingReplacement;
     agent.lastError = undefined;
 
-    const pendingRun = this.runs.createPendingRun(agentId);
+    const pendingRun = this.runs.createPendingRun(agentId, {
+      purpose: "turn",
+      replayKind: options?.replayKind,
+    });
 
     const streamForwarder = async function* streamForwarder(this: AgentManager) {
       let turnId: string;
       let turnStream: ReturnType<AgentRunState["createTurnStream"]> | null = null;
-      try {
-        const result = await agent.session.startTurn(prompt, options);
-        turnId = result.turnId;
-      } catch (error) {
-        agent.pendingReplacement = false;
-        const errorMsg = error instanceof Error ? error.message : "Failed to start turn";
-        await this.handleStreamEvent(agent, {
-          type: "turn_failed",
-          provider: agent.provider,
-          error: errorMsg,
-        });
-        this.finalizeForegroundTurn(agent);
-        this.runs.settleForegroundRun(agentId, pendingRun.token);
-        throw error;
-      }
-
-      pendingRun.started = true;
-      pendingRun.turnId = turnId;
-      if (isReplacement) {
-        agent.pendingReplacement = false;
-      }
-      agent.activeForegroundTurnId = turnId;
-      agent.lifecycle = "running";
-      this.touchUpdatedAt(agent);
-      this.emitState(agent);
-      this.logger.trace(
-        {
-          agentId,
-          provider: agent.provider,
-          sessionId: agent.persistence?.sessionId ?? undefined,
-          turnId,
-          lifecycle: agent.lifecycle,
-          activeForegroundTurnId: agent.activeForegroundTurnId,
-        },
-        "agent.manager.stream.start",
-      );
+      turnId = await this.startForegroundTurn({
+        agent,
+        prompt,
+        options,
+        pendingRun,
+        isReplacement,
+      });
 
       turnStream = this.runs.createTurnStream(turnId);
       this.runs.addWaiter(agent, turnStream.waiter);
@@ -2048,6 +2081,55 @@ export class AgentManager {
     }.call(this);
 
     return streamForwarder;
+  }
+
+  private async startForegroundTurn(params: {
+    agent: ActiveManagedAgent;
+    prompt: AgentPromptInput;
+    options?: AgentRunOptions;
+    pendingRun: PendingForegroundRun;
+    isReplacement: boolean;
+  }): Promise<string> {
+    const { agent, prompt, options, pendingRun, isReplacement } = params;
+    let turnId: string;
+    try {
+      const result = await agent.session.startTurn(prompt, options);
+      turnId = result.turnId;
+    } catch (error) {
+      agent.pendingReplacement = false;
+      const errorMsg = error instanceof Error ? error.message : "Failed to start turn";
+      await this.handleStreamEvent(agent, {
+        type: "turn_failed",
+        provider: agent.provider,
+        error: errorMsg,
+      });
+      this.finalizeForegroundTurn(agent);
+      this.runs.settleForegroundRun(agent.id, pendingRun.token);
+      throw error;
+    }
+
+    pendingRun.started = true;
+    pendingRun.turnId = turnId;
+    pendingRun.purpose = "turn";
+    if (isReplacement) {
+      agent.pendingReplacement = false;
+    }
+    agent.activeForegroundTurnId = turnId;
+    agent.lifecycle = "running";
+    this.touchUpdatedAt(agent);
+    this.emitState(agent);
+    this.logger.trace(
+      {
+        agentId: agent.id,
+        provider: agent.provider,
+        sessionId: agent.persistence?.sessionId ?? undefined,
+        turnId,
+        lifecycle: agent.lifecycle,
+        activeForegroundTurnId: agent.activeForegroundTurnId,
+      },
+      "agent.manager.stream.start",
+    );
+    return turnId;
   }
 
   private finalizeForegroundTurn(agent: ActiveManagedAgent, turnId?: string): void {
@@ -2098,6 +2180,10 @@ export class AgentManager {
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
   ): Promise<AsyncGenerator<AgentStreamEvent>> {
+    const pendingRun = this.runs.getPendingRun(agentId);
+    if (pendingRun?.purpose === "edit_last_user_message" && !pendingRun.started) {
+      throw new Error(`Agent ${agentId} is editing its latest user message`);
+    }
     const snapshot = this.requireAgent(agentId);
     if (
       snapshot.lifecycle !== "running" &&
@@ -2271,6 +2357,9 @@ export class AgentManager {
     const run =
       this.runs.getRun(agentId) ??
       (agent.lifecycle === "running" ? this.runs.trackAutonomousRun(agentId, null) : null);
+    if (run?.kind === "foreground" && run.purpose === "edit_last_user_message" && !run.started) {
+      return { status: "not_running" };
+    }
     if (!run) {
       return { status: "not_running" };
     }
@@ -2377,6 +2466,166 @@ export class AgentManager {
   ): Promise<void> {
     const agent = this.requireSessionAgent(agentId);
     await this.hydrateTimelineFromLegacyProviderHistory(agent, options);
+  }
+
+  private requireLastUserMessageEditTarget(
+    agentId: string,
+    input: EditLastUserMessageInput,
+  ): { agent: ActiveManagedAgent; persistence: AgentPersistenceHandle } {
+    const agent = this.requireSessionAgent(agentId);
+    if (
+      agent.capabilities.supportsInPlaceEditLastUserMessage !== true ||
+      !agent.session.rewindLastUserMessageInPlace
+    ) {
+      throw new Error(`Agent ${agentId} does not support in-place message editing`);
+    }
+    if (
+      agent.lifecycle !== "idle" ||
+      agent.activeForegroundTurnId !== null ||
+      agent.pendingReplacement ||
+      this.runs.hasRun(agentId)
+    ) {
+      throw new Error(`Agent ${agentId} must be idle before editing its latest message`);
+    }
+    if (input.replacementText.trim().length === 0) {
+      throw new Error("Replacement text must not be empty");
+    }
+    if (input.replacementMessageId.trim().length === 0) {
+      throw new Error("Replacement message id must not be empty");
+    }
+
+    const latestUserMessage = this.timelineStore
+      .getItems(agentId)
+      .findLast((item) => item.type === "user_message");
+    if (
+      !latestUserMessage ||
+      latestUserMessage.messageId !== input.messageId ||
+      latestUserMessage.replayKind !== "text_only"
+    ) {
+      throw new Error("The edit target is not the latest replayable text user message");
+    }
+    if (latestUserMessage.text === input.replacementText) {
+      throw new Error("Replacement text must differ from the current message");
+    }
+
+    const persistence = agent.session.describePersistence() ?? agent.persistence;
+    if (!persistence) {
+      throw new Error("The provider session has no stable persistence identity");
+    }
+    return { agent, persistence };
+  }
+
+  /** Replaces the latest replayable user message without changing the provider session identity. */
+  async editLastUserMessage(
+    agentId: string,
+    input: EditLastUserMessageInput,
+  ): Promise<EditLastUserMessageResult> {
+    let editTarget: { agent: ActiveManagedAgent; persistence: AgentPersistenceHandle };
+    try {
+      editTarget = this.requireLastUserMessageEditTarget(agentId, input);
+    } catch (error) {
+      return {
+        ok: false,
+        historyState: "unchanged",
+        replacementStarted: false,
+        failureStage: "validation",
+        error: editLastUserMessageError(error, "Message edit validation failed"),
+      };
+    }
+    const { agent, persistence: beforePersistence } = editTarget;
+
+    let reservation: PendingForegroundRun;
+    try {
+      reservation = this.runs.createPendingRun(agentId, {
+        purpose: "edit_last_user_message",
+        replayKind: "text_only",
+      });
+    } catch (error) {
+      return {
+        ok: false,
+        historyState: "unchanged",
+        replacementStarted: false,
+        failureStage: "validation",
+        error: editLastUserMessageError(error, "Agent operation reservation failed"),
+      };
+    }
+
+    try {
+      await agent.session.rewindLastUserMessageInPlace!({ messageId: input.messageId });
+    } catch (error) {
+      this.runs.settleForegroundRun(agentId, reservation.token);
+      return {
+        ok: false,
+        historyState: "unknown",
+        replacementStarted: false,
+        failureStage: "rewind",
+        error: editLastUserMessageError(error, "Provider message rewind failed"),
+      };
+    }
+
+    if (!hasSamePersistenceIdentity(beforePersistence, agent.session.describePersistence())) {
+      this.runs.settleForegroundRun(agentId, reservation.token);
+      return {
+        ok: false,
+        historyState: "unknown",
+        replacementStarted: false,
+        failureStage: "rewind",
+        error: "Provider session identity changed during in-place message rewind",
+      };
+    }
+
+    try {
+      await this.hydrateTimelineFromProvider(agentId, { force: true, broadcast: true });
+    } catch (error) {
+      this.runs.settleForegroundRun(agentId, reservation.token);
+      return {
+        ok: false,
+        historyState: "rewound",
+        replacementStarted: false,
+        failureStage: "hydrate",
+        error: editLastUserMessageError(error, "Timeline hydration failed after message rewind"),
+      };
+    }
+
+    if (!hasSamePersistenceIdentity(beforePersistence, agent.session.describePersistence())) {
+      this.runs.settleForegroundRun(agentId, reservation.token);
+      return {
+        ok: false,
+        historyState: "unknown",
+        replacementStarted: false,
+        failureStage: "hydrate",
+        error: "Provider session identity changed while hydrating the rewound conversation",
+      };
+    }
+
+    try {
+      await this.startForegroundTurn({
+        agent,
+        prompt: input.replacementText,
+        options: {
+          clientMessageId: input.replacementMessageId.trim(),
+          replayKind: "text_only",
+        },
+        pendingRun: reservation,
+        isReplacement: false,
+      });
+    } catch (error) {
+      return {
+        ok: false,
+        historyState: "rewound",
+        replacementStarted: false,
+        failureStage: "start_turn",
+        error: editLastUserMessageError(error, "Replacement turn failed to start"),
+      };
+    }
+
+    return {
+      ok: true,
+      historyState: "rewound",
+      replacementStarted: true,
+      failureStage: null,
+      error: null,
+    };
   }
 
   async rewind(agentId: string, messageId: string, mode: RewindMode): Promise<void> {
@@ -3316,12 +3565,11 @@ export class AgentManager {
     if (this.handleProviderRetryEvent(agent, event, options)) {
       return false;
     }
-    if (event.type === "timeline") {
-      event = {
-        ...event,
-        item: limitAgentTimelineItemContent(event.item),
-      };
-    }
+    event = normalizeReplayableTimelineEvent(
+      event,
+      this.runs.getPendingRun(agent.id),
+      options?.fromHistory,
+    );
     const eventTurnId = getAgentStreamEventTurnId(event);
     const isForegroundEvent = Boolean(eventTurnId && agent.activeForegroundTurnId === eventTurnId);
     this.traceHandleStreamEventStart(agent, event, eventTurnId, isForegroundEvent);

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
 import { setImmediate as waitForImmediate, setTimeout as delay } from "node:timers/promises";
 import type { Logger } from "pino";
 import stripAnsi from "strip-ansi";
@@ -111,6 +112,9 @@ import { DEFAULT_OMP_THINKING_LEVEL, mapOmpModel } from "./map-omp-model.js";
 
 const OMP_PROVIDER = "omp";
 const OMP_CATALOG_REQUEST_TIMEOUT_MS = 120_000;
+const PASEO_OMP_EDIT_EXTENSION_COMMAND = "paseo_edit_last_user_message";
+const PASEO_OMP_EDIT_RESULT_MARKER = "PASEO_OMP_EDIT_RESULT";
+const OMP_EDIT_EXTENSION_TIMEOUT_MS = 30_000;
 const QUESTION_RESPONSE_HEADER = "Response";
 const QUESTION_COMMENT_HEADER = "Comment";
 const OMP_ASK_USER_FREEFORM_SENTINEL = "✏️ Type custom response...";
@@ -127,6 +131,7 @@ const OMP_CORE_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: true,
   supportsRewindFiles: false,
   supportsRewindBoth: false,
+  supportsInPlaceEditLastUserMessage: true,
 };
 
 export interface OmpAgentClientOptions {
@@ -185,12 +190,86 @@ interface OmpAgentSessionOptions {
   providerIdleScheduler?: OmpProviderIdleScheduler;
   noTurnScheduler?: OmpNoTurnScheduler;
   paseoTools?: PaseoToolCatalog;
+  cleanup?: () => void;
   /**
    * When false (resumed sessions), replayed session events are dropped until
    * the first prompt or agent_start so history is not re-emitted as live
    * timeline items.
    */
   live?: boolean;
+}
+
+interface OmpTempFile {
+  path: string;
+  cleanup: () => void;
+}
+
+interface PendingOmpExtensionResult {
+  resolve: (value: unknown) => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+function createOmpPaseoExtensionFile(): OmpTempFile {
+  const dir = mkdtempSync(join(tmpdir(), "paseo-omp-extension-"));
+  const filePath = join(dir, "paseo-integration.mjs");
+  try {
+    writeFileSync(
+      filePath,
+      `
+	function decodePayload(encoded) {
+	  return JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
+	}
+
+	function emitResult(ctx, requestId, result) {
+	  ctx.ui.notify(
+	    "${PASEO_OMP_EDIT_RESULT_MARKER} " + JSON.stringify({ requestId, ...result }),
+	    result.ok ? "info" : "error",
+	  );
+	}
+
+	export default function paseoIntegration(omp) {
+	  omp.registerCommand("${PASEO_OMP_EDIT_EXTENSION_COMMAND}", {
+	    description: "Internal Paseo same-session latest-message edit bridge",
+	    handler: async (args, ctx) => {
+	      const payload = decodePayload(args.trim());
+	      try {
+	        const userEntries = ctx.sessionManager
+	          .getBranch()
+	          .filter((entry) => entry.type === "message" && entry.message?.role === "user");
+	        const latestUserEntry = userEntries.at(-1);
+	        if (!latestUserEntry || latestUserEntry.id !== payload.targetId) {
+	          throw new Error(
+	            "OMP user message " + payload.targetId + " is not the latest entry on the current branch",
+	          );
+	        }
+	        const result = await ctx.navigateTree(payload.targetId, { summarize: false });
+	        if (result?.cancelled === true) {
+	          throw new Error("OMP tree navigation was cancelled");
+	        }
+	        emitResult(ctx, payload.requestId, {
+	          ok: true,
+	          activeEntryId: latestUserEntry.parentId ?? null,
+	        });
+	      } catch (error) {
+	        const message = error instanceof Error ? error.message : String(error);
+	        emitResult(ctx, payload.requestId, { ok: false, error: message });
+	        throw error;
+	      }
+	    },
+	  });
+	}
+`.trimStart(),
+      "utf8",
+    );
+  } catch (error) {
+    rmSync(dir, { recursive: true, force: true });
+    throw error;
+  }
+  return {
+    path: filePath,
+    cleanup: () => rmSync(dir, { recursive: true, force: true }),
+  };
 }
 
 function createOmpProviderIdleScheduler(): OmpProviderIdleScheduler {
@@ -461,6 +540,7 @@ function buildResumeStartInput(input: {
   sessionFile: string;
   launchContext: AgentLaunchContext | undefined;
   launchMode: { modeId: string | null; extraArgs?: string[] };
+  extensionPath: string;
 }): OmpStartSessionInput {
   return {
     cwd: input.resumeConfig.cwd,
@@ -471,6 +551,7 @@ function buildResumeStartInput(input: {
     thinkingOptionId: normalizeOmpThinkingOption(input.resumeConfig.thinkingOptionId) ?? undefined,
     ...(input.launchMode.modeId ? { modeId: input.launchMode.modeId } : {}),
     ...(input.launchMode.extraArgs ? { extraArgs: input.launchMode.extraArgs } : {}),
+    extensionPaths: [input.extensionPath],
     systemPrompt: composeSystemPromptParts(
       input.resumeConfig.config.systemPrompt,
       input.resumeConfig.config.daemonAppendSystemPrompt,
@@ -556,6 +637,19 @@ function latestOmpErrorMessage(messages: OmpAgentMessage[]): string | null {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseOmpExtensionMarker(message: string): Record<string, unknown> | null {
+  const prefix = `${PASEO_OMP_EDIT_RESULT_MARKER} `;
+  if (!message.startsWith(prefix)) {
+    return null;
+  }
+  try {
+    const payload: unknown = JSON.parse(message.slice(prefix.length));
+    return isRecord(payload) ? payload : null;
+  } catch {
+    return null;
+  }
 }
 
 function optionalString(value: unknown): string | undefined {
@@ -901,6 +995,7 @@ export class OmpAgentSession implements AgentSession {
   private closed = false;
   private live: boolean;
   private readonly emittedUserMessageIds = new Set<string>();
+  private readonly pendingExtensionResults = new Map<string, PendingOmpExtensionResult>();
 
   constructor(options: OmpAgentSessionOptions) {
     this.runtimeSession = options.runtimeSession;
@@ -909,6 +1004,7 @@ export class OmpAgentSession implements AgentSession {
     this.currentModeId = options.currentModeId ?? null;
     this.logger = options.logger;
     this.paseoTools = options.paseoTools;
+    this.cleanup = options.cleanup;
     this.live = options.live ?? true;
     this.providerIdleScheduler = options.providerIdleScheduler ?? createOmpProviderIdleScheduler();
     this.noTurnScheduler = options.noTurnScheduler ?? createOmpNoTurnScheduler();
@@ -942,6 +1038,7 @@ export class OmpAgentSession implements AgentSession {
   private readonly config: AgentSessionConfig;
   private readonly logger: Logger;
   private readonly paseoTools?: PaseoToolCatalog;
+  private readonly cleanup?: () => void;
 
   get id(): string | null {
     return this.state.sessionId;
@@ -1164,6 +1261,32 @@ export class OmpAgentSession implements AgentSession {
     this.activeToolCalls.clear();
   }
 
+  async rewindLastUserMessageInPlace(input: { messageId: string }): Promise<void> {
+    if (this.activeTurnId) {
+      throw new Error("Cannot edit the latest OMP message while a turn is active");
+    }
+    const targetId = input.messageId.trim();
+    if (!targetId) {
+      throw new Error("OMP latest-message edit requires a user message id");
+    }
+    await this.refreshState();
+    const sessionId = this.state.sessionId;
+    const sessionFile = this.state.sessionFile;
+    const result = await this.runEditLastUserMessageExtensionCommand(targetId);
+    if (
+      !isRecord(result) ||
+      !(typeof result.activeEntryId === "string" || result.activeEntryId === null)
+    ) {
+      throw new Error("OMP latest-message edit bridge returned an invalid active entry id");
+    }
+    this.runtimeSession.activeBranchEntryId = result.activeEntryId;
+    await this.refreshState();
+    if (this.state.sessionId !== sessionId || this.state.sessionFile !== sessionFile) {
+      throw new Error("OMP tree navigation changed the provider session identity");
+    }
+    this.activeToolCalls.clear();
+  }
+
   async close(): Promise<void> {
     if (this.closed) {
       return;
@@ -1173,7 +1296,9 @@ export class OmpAgentSession implements AgentSession {
     try {
       await this.runtimeSession.close();
     } finally {
+      this.rejectAllExtensionResults(new Error("OMP session closed"));
       this.clearOmpSessionState();
+      this.cleanup?.();
     }
   }
 
@@ -1203,7 +1328,9 @@ export class OmpAgentSession implements AgentSession {
       return this.commandCache;
     }
     const commands = await this.runtimeSession.getCommands();
-    return mapOmpRuntimeSlashCommands(commands);
+    return mapOmpRuntimeSlashCommands(
+      commands.filter((command) => command.name !== PASEO_OMP_EDIT_EXTENSION_COMMAND),
+    );
   }
 
   tryHandleOutOfBand(
@@ -1521,11 +1648,85 @@ export class OmpAgentSession implements AgentSession {
     }
   }
 
+  private async runEditLastUserMessageExtensionCommand(targetId: string): Promise<unknown> {
+    const requestId = randomUUID();
+    const resultPromise = this.waitForExtensionResult(requestId);
+    const payload = Buffer.from(JSON.stringify({ requestId, targetId })).toString("base64url");
+    try {
+      await this.runtimeSession.prompt(`/${PASEO_OMP_EDIT_EXTENSION_COMMAND} ${payload}`);
+    } catch (error) {
+      this.rejectExtensionResult(
+        requestId,
+        error instanceof Error ? error : new Error(String(error)),
+      );
+    }
+    return await resultPromise;
+  }
+
+  private waitForExtensionResult(requestId: string): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pendingExtensionResults.delete(requestId);
+        reject(new Error(`OMP extension result timed out for request ${requestId}`));
+      }, OMP_EDIT_EXTENSION_TIMEOUT_MS);
+      this.pendingExtensionResults.set(requestId, { resolve, reject, timer });
+    });
+  }
+
+  private resolveExtensionResult(requestId: string, result: unknown): void {
+    const pending = this.pendingExtensionResults.get(requestId);
+    if (!pending) {
+      return;
+    }
+    clearTimeout(pending.timer);
+    this.pendingExtensionResults.delete(requestId);
+    pending.resolve(result);
+  }
+
+  private rejectExtensionResult(requestId: string, error: Error): void {
+    const pending = this.pendingExtensionResults.get(requestId);
+    if (!pending) {
+      return;
+    }
+    clearTimeout(pending.timer);
+    this.pendingExtensionResults.delete(requestId);
+    pending.reject(error);
+  }
+
+  private rejectAllExtensionResults(error: Error): void {
+    for (const requestId of this.pendingExtensionResults.keys()) {
+      this.rejectExtensionResult(requestId, error);
+    }
+  }
+
+  private handleEditExtensionResultMarker(message: string): boolean {
+    const payload = parseOmpExtensionMarker(message);
+    if (!payload) {
+      return false;
+    }
+    if (typeof payload.requestId !== "string") {
+      return true;
+    }
+    if (payload.ok === true) {
+      this.resolveExtensionResult(payload.requestId, {
+        activeEntryId: payload.activeEntryId,
+      });
+      return true;
+    }
+    const error =
+      typeof payload.error === "string" ? payload.error : "OMP extension command failed";
+    this.rejectExtensionResult(payload.requestId, new Error(error));
+    return true;
+  }
+
   private handleExtensionUiRequest(
     event: Extract<OmpRuntimeEvent, { type: "extension_ui_request" }>,
   ): void {
     const message = optionalString(event.message);
     if (event.method === "notify" && message) {
+      if (this.handleEditExtensionResultMarker(message)) {
+        return;
+      }
       this.bufferNoTurnOutput(message);
     }
 
@@ -1786,6 +1987,7 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private handleProcessExit(error: string): void {
+    this.rejectAllExtensionResults(new Error(error));
     this.terminalizeActiveWork();
     this.subagentIndex.clear(this.runtimeSession);
     if (!this.activeTurnId) {
@@ -2247,23 +2449,42 @@ export class OmpAgentClient implements AgentClient {
     await setOmpHostTools(runtimeSession, catalog);
   }
 
+  private async assertPaseoEditExtensionLoaded(runtimeSession: OmpRuntimeSession): Promise<void> {
+    const commands = await runtimeSession.getCommands();
+    if (!commands.some((command) => command.name === PASEO_OMP_EDIT_EXTENSION_COMMAND)) {
+      throw new Error("OMP did not load the Paseo latest-message edit extension");
+    }
+  }
+
   async createSession(
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
     const launchMode = this.resolveLaunchMode(config.modeId);
-    const runtimeSession = await this.runtime.startSession({
-      cwd: config.cwd,
-      protocolMode: "rpc-ui",
-      model: config.model,
-      thinkingOptionId: normalizeOmpThinkingOption(config.thinkingOptionId) ?? undefined,
-      noSession: config.internal === true,
-      modeId: launchMode.modeId,
-      extraArgs: launchMode.extraArgs,
-      systemPrompt: composeSystemPromptParts(config.systemPrompt, config.daemonAppendSystemPrompt),
-      env: launchContext?.env,
-    });
+    const paseoExtension = createOmpPaseoExtensionFile();
+    let runtimeSession: OmpRuntimeSession;
     try {
+      runtimeSession = await this.runtime.startSession({
+        cwd: config.cwd,
+        protocolMode: "rpc-ui",
+        model: config.model,
+        thinkingOptionId: normalizeOmpThinkingOption(config.thinkingOptionId) ?? undefined,
+        noSession: config.internal === true,
+        modeId: launchMode.modeId,
+        extraArgs: launchMode.extraArgs,
+        extensionPaths: [paseoExtension.path],
+        systemPrompt: composeSystemPromptParts(
+          config.systemPrompt,
+          config.daemonAppendSystemPrompt,
+        ),
+        env: launchContext?.env,
+      });
+    } catch (error) {
+      paseoExtension.cleanup();
+      throw error;
+    }
+    try {
+      await this.assertPaseoEditExtensionLoaded(runtimeSession);
       await this.configureNativePaseoTools(runtimeSession, launchContext?.paseoTools);
       return new OmpAgentSession({
         runtimeSession,
@@ -2275,9 +2496,11 @@ export class OmpAgentClient implements AgentClient {
         providerIdleScheduler: this.providerIdleScheduler,
         noTurnScheduler: this.noTurnScheduler,
         paseoTools: launchContext?.paseoTools,
+        cleanup: paseoExtension.cleanup,
       });
     } catch (error) {
       await runtimeSession.close().catch(() => undefined);
+      paseoExtension.cleanup();
       throw error;
     }
   }
@@ -2296,15 +2519,24 @@ export class OmpAgentClient implements AgentClient {
     const resumeConfig = buildResumeConfig(persistenceMetadata, overrides, this.provider);
 
     const launchMode = this.resolveLaunchMode(resumeConfig.modeId);
-    const runtimeSession = await this.runtime.startSession(
-      buildResumeStartInput({
-        resumeConfig,
-        sessionFile,
-        launchContext,
-        launchMode,
-      }),
-    );
+    const paseoExtension = createOmpPaseoExtensionFile();
+    let runtimeSession: OmpRuntimeSession;
     try {
+      runtimeSession = await this.runtime.startSession(
+        buildResumeStartInput({
+          resumeConfig,
+          sessionFile,
+          launchContext,
+          launchMode,
+          extensionPath: paseoExtension.path,
+        }),
+      );
+    } catch (error) {
+      paseoExtension.cleanup();
+      throw error;
+    }
+    try {
+      await this.assertPaseoEditExtensionLoaded(runtimeSession);
       await this.configureNativePaseoTools(runtimeSession, launchContext?.paseoTools);
       return new OmpAgentSession({
         runtimeSession,
@@ -2317,9 +2549,11 @@ export class OmpAgentClient implements AgentClient {
         noTurnScheduler: this.noTurnScheduler,
         paseoTools: launchContext?.paseoTools,
         live: false,
+        cleanup: paseoExtension.cleanup,
       });
     } catch (error) {
       await runtimeSession.close().catch(() => undefined);
+      paseoExtension.cleanup();
       throw error;
     }
   }

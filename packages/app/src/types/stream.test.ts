@@ -996,6 +996,28 @@ describe("stream reducer canonical tool calls", () => {
     assert.strictEqual(message.timestamp.getTime(), optimisticTimestamp.getTime());
   });
 
+  it("preserves the canonical text-only replay marker on user messages", () => {
+    const state = reduceStreamUpdate(
+      [],
+      {
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "user_message",
+          text: "Fix the failing test",
+          messageId: "user-1",
+          replayKind: "text_only",
+        },
+      },
+      new Date("2026-08-03T12:00:00.000Z"),
+      { source: "canonical" },
+    );
+
+    const message = state.find((item) => item.kind === "user_message");
+    assert.ok(message);
+    assert.strictEqual(message.replayKind, "text_only");
+  });
+
   it("keeps canonical assistant/user/assistant order during replay", () => {
     const state: StreamItem[] = [
       {

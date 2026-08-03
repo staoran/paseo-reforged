@@ -1152,6 +1152,31 @@ describe("Codex app-server provider", () => {
     await session.close();
   });
 
+  test("edits the latest user message by rolling back one turn on the same Codex thread", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    await session.startTurn("remember first");
+    emitCodexUserMessage(appServer, { id: "codex-first", text: "remember first" });
+    appServer.completeTurn();
+    await session.startTurn("remember second");
+    emitCodexUserMessage(appServer, { id: "codex-second", text: "remember second" });
+    appServer.completeTurn();
+
+    await session.rewindLastUserMessageInPlace?.({ messageId: "codex-second" });
+
+    expect(appServer.recordedForks).toEqual([]);
+    expect(appServer.recordedRollbacks).toEqual([{ threadId: "thread-1", numTurns: 1 }]);
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({ sessionId: "thread-1" });
+    appServer.assertNoErrors();
+    await session.close();
+  });
+
   test("correlates a Codex user message with the submitting client message", async () => {
     const appServer = createFakeCodexAppServer();
     const session = new CodexAppServerAgentSession(

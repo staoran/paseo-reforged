@@ -571,6 +571,7 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknow
     text: z.string(),
     messageId: z.string().optional(),
     clientMessageId: z.string().optional(),
+    replayKind: z.literal("text_only").optional(),
   }),
   z.object({
     type: z.literal("assistant_message"),
@@ -1496,6 +1497,41 @@ export const AgentRewindResponseMessageSchema = z.object({
     requestId: z.string(),
     agentId: z.string(),
     ok: z.boolean(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const AgentEditLastUserMessageHistoryStateSchema = z.enum([
+  "unchanged",
+  "rewound",
+  "unknown",
+]);
+
+export const AgentEditLastUserMessageFailureStageSchema = z.enum([
+  "validation",
+  "rewind",
+  "hydrate",
+  "start_turn",
+]);
+
+export const AgentEditLastUserMessageRequestMessageSchema = z.object({
+  type: z.literal("agent.edit_last_user_message.request"),
+  requestId: z.string(),
+  agentId: z.string(),
+  messageId: z.string(),
+  replacementText: z.string(),
+  replacementMessageId: z.string(),
+});
+
+export const AgentEditLastUserMessageResponseMessageSchema = z.object({
+  type: z.literal("agent.edit_last_user_message.response"),
+  payload: z.object({
+    requestId: z.string(),
+    agentId: z.string(),
+    ok: z.boolean(),
+    historyState: AgentEditLastUserMessageHistoryStateSchema,
+    replacementStarted: z.boolean(),
+    failureStage: AgentEditLastUserMessageFailureStageSchema.nullable(),
     error: z.string().nullable(),
   }),
 });
@@ -2509,6 +2545,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   SetAgentFeatureRequestMessageSchema,
   AgentDetachRequestMessageSchema,
   AgentRewindRequestMessageSchema,
+  AgentEditLastUserMessageRequestMessageSchema,
   AgentPermissionResponseMessageSchema,
   CheckoutStatusRequestSchema,
   SubscribeCheckoutDiffRequestSchema,
@@ -2783,6 +2820,8 @@ export const ServerInfoStatusPayloadSchema = z
         "terminal-restore-modes": z.boolean().optional(),
         // COMPAT(rewind): added in v0.1.X, drop the gate when floor >= v0.1.X.
         rewind: z.boolean().optional(),
+        // COMPAT(inPlaceEditLastUserMessage): added in v0.2.5, remove gate after 2027-02-03.
+        inPlaceEditLastUserMessage: z.boolean().optional(),
         // COMPAT(checkoutRefresh): added in v0.1.86, remove gate after 2026-11-29.
         checkoutRefresh: z.boolean().optional(),
         // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
@@ -5259,6 +5298,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   SetAgentFeatureResponseMessageSchema,
   AgentDetachResponseMessageSchema,
   AgentRewindResponseMessageSchema,
+  AgentEditLastUserMessageResponseMessageSchema,
   UpdateAgentResponseMessageSchema,
   ProjectRenameResponseSchema,
   ProjectRemoveResponseSchema,
@@ -5443,6 +5483,9 @@ export type SetAgentThinkingResponseMessage = z.infer<typeof SetAgentThinkingRes
 export type SetAgentFeatureResponseMessage = z.infer<typeof SetAgentFeatureResponseMessageSchema>;
 export type AgentDetachResponseMessage = z.infer<typeof AgentDetachResponseMessageSchema>;
 export type AgentRewindResponseMessage = z.infer<typeof AgentRewindResponseMessageSchema>;
+export type AgentEditLastUserMessageResponseMessage = z.infer<
+  typeof AgentEditLastUserMessageResponseMessageSchema
+>;
 export type UpdateAgentResponseMessage = z.infer<typeof UpdateAgentResponseMessageSchema>;
 export type ProjectRenameResponse = z.infer<typeof ProjectRenameResponseSchema>;
 export type ProjectRemoveResponse = z.infer<typeof ProjectRemoveResponseSchema>;

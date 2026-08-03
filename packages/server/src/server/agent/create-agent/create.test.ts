@@ -76,6 +76,53 @@ test("session create forwards clientMessageId to the initial prompt run options"
 
   expect(streamAgent).toHaveBeenCalledWith("agent-1", "hello from create", {
     clientMessageId: "msg-create-1",
+    replayKind: "text_only",
+  });
+});
+
+test("session create does not mark output-schema prompts as text-only replayable", async () => {
+  const snapshot = {
+    id: "agent-1",
+    provider: "codex",
+    cwd: "/tmp/paseo-create-test",
+    runtimeInfo: null,
+  } as ManagedAgent;
+  const streamAgent = vi.fn(() => (async function* noop() {})());
+  const dependencies: Parameters<typeof createAgentCommand>[0] = {
+    agentManager: {
+      createAgent: vi.fn(async () => snapshot),
+      getAgent: vi.fn(() => snapshot),
+      tryRunOutOfBand: vi.fn(() => false),
+      hasInFlightRun: vi.fn(() => false),
+      streamAgent,
+      waitForAgentRunStart: vi.fn(async () => undefined),
+    } as unknown as Parameters<typeof createAgentCommand>[0]["agentManager"],
+    agentStorage: {} as Parameters<typeof createAgentCommand>[0]["agentStorage"],
+    logger: createTestLogger(),
+    providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+  };
+  const outputSchema = {
+    type: "object",
+    properties: { answer: { type: "string" } },
+    required: ["answer"],
+  };
+
+  await createAgentCommand(dependencies, {
+    kind: "session",
+    config: { provider: "codex", cwd: "/tmp/paseo-create-test" },
+    workspaceId: "ws-create-test",
+    initialPrompt: "return structured output",
+    clientMessageId: "msg-create-structured",
+    outputSchema,
+    labels: {},
+    provisionalTitle: null,
+    firstAgentContext: { attachments: [] },
+    buildSessionConfig: async (config) => ({ sessionConfig: config }),
+  });
+
+  expect(streamAgent).toHaveBeenCalledWith("agent-1", "return structured output", {
+    clientMessageId: "msg-create-structured",
+    outputSchema,
   });
 });
 

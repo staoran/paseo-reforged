@@ -59,7 +59,10 @@ export class FakeOmp implements OmpRuntime {
     Error
   >();
 
-  constructor(command: [string, ...string[]] = ["omp"]) {
+  constructor(
+    command: [string, ...string[]] = ["omp"],
+    private readonly loadPaseoEditExtension = true,
+  ) {
     this.command = command;
   }
 
@@ -70,7 +73,18 @@ export class FakeOmp implements OmpRuntime {
     });
     this.recordedLaunches.push(launch);
     const session = new FakeOmpSession(launch);
-    session.commands = this.queuedCommands.shift() ?? [];
+    session.commands = [
+      ...(this.loadPaseoEditExtension && launch.extensionPaths?.length
+        ? [
+            {
+              name: "paseo_edit_last_user_message",
+              description: "Internal Paseo same-session latest-message edit bridge",
+              source: "extension" as const,
+            },
+          ]
+        : []),
+      ...(this.queuedCommands.shift() ?? []),
+    ];
     for (const [level, error] of this.queuedSubagentSubscriptionErrors) {
       session.subagentSubscriptionErrors.set(level, error);
     }
@@ -134,7 +148,11 @@ export class FakeOmpSession implements OmpRuntimeSession {
   branchResponse: { text?: string; cancelled?: boolean } = { text: "" };
   branchMessages: Array<{ entryId: string; text: string }> = [];
   readonly branchRequests: string[] = [];
-  activeBranchEntryId?: string;
+  readonly treeNavigationRequests: string[] = [];
+  editBridgeActiveEntryId: string | null = null;
+  editBridgeError: string | null = null;
+  editBridgeStateAfter: Partial<OmpSessionState> | null = null;
+  activeBranchEntryId?: string | null;
   closed = false;
   state: OmpSessionState;
 
@@ -191,7 +209,48 @@ export class FakeOmpSession implements OmpRuntimeSession {
         }
       }
     }
+    this.handleEditLastUserMessageCommand(message);
     return this.promptAck;
+  }
+
+  private handleEditLastUserMessageCommand(message: string): void {
+    const prefix = "/paseo_edit_last_user_message ";
+    if (!message.startsWith(prefix)) {
+      return;
+    }
+    const payload = JSON.parse(
+      Buffer.from(message.slice(prefix.length), "base64url").toString("utf8"),
+    ) as { targetId?: unknown; requestId?: unknown };
+    if (typeof payload.targetId !== "string" || typeof payload.requestId !== "string") {
+      return;
+    }
+    if (this.editBridgeError) {
+      this.emit({
+        type: "extension_ui_request",
+        id: `edit-last-user-message-${payload.requestId}`,
+        method: "notify",
+        message: `PASEO_OMP_EDIT_RESULT ${JSON.stringify({
+          requestId: payload.requestId,
+          ok: false,
+          error: this.editBridgeError,
+        })}`,
+      });
+      return;
+    }
+    this.treeNavigationRequests.push(payload.targetId);
+    if (this.editBridgeStateAfter) {
+      this.state = { ...this.state, ...this.editBridgeStateAfter };
+    }
+    this.emit({
+      type: "extension_ui_request",
+      id: `edit-last-user-message-${payload.requestId}`,
+      method: "notify",
+      message: `PASEO_OMP_EDIT_RESULT ${JSON.stringify({
+        requestId: payload.requestId,
+        ok: true,
+        activeEntryId: this.editBridgeActiveEntryId,
+      })}`,
+    });
   }
 
   nextPrompt(): Promise<void> {

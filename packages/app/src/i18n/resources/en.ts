@@ -262,6 +262,17 @@ export const en = {
     },
   },
   message: {
+    editLastUserMessage: {
+      action: "Edit message",
+      input: "Edit message",
+      cancel: "Cancel edit",
+      submit: "Submit edit",
+      unchanged: "The message was not changed. Your edit is still here.",
+      rewound: "The conversation was rewound, but the edited message was not sent.",
+      unknown:
+        "The conversation state could not be confirmed. Your edit was restored while history refreshes.",
+      resyncFailed: "Conversation history could not be refreshed. Sending remains disabled.",
+    },
     actions: {
       copyCode: "Copy code",
       copyMermaidSource: "Copy Mermaid source",

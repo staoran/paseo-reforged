@@ -149,6 +149,7 @@ export interface AgentCapabilityFlags {
   supportsRewindConversation?: boolean;
   supportsRewindFiles?: boolean;
   supportsRewindBoth?: boolean;
+  supportsInPlaceEditLastUserMessage?: boolean;
 }
 
 export interface AgentPersistenceHandle {
@@ -340,7 +341,13 @@ export interface CompactionTimelineItem {
 export type AgentMessagePhase = "commentary" | "final_answer";
 
 export type AgentTimelineItem =
-  | { type: "user_message"; text: string; messageId?: string; clientMessageId?: string }
+  | {
+      type: "user_message";
+      text: string;
+      messageId?: string;
+      clientMessageId?: string;
+      replayKind?: "text_only";
+    }
   | {
       type: "assistant_message";
       text: string;

@@ -26,6 +26,7 @@ export interface OmpRuntimeLaunch {
   noSession?: boolean;
   systemPrompt?: string;
   extraArgs?: string[];
+  extensionPaths?: string[];
 }
 
 export interface OmpStartSessionInput {
@@ -39,6 +40,7 @@ export interface OmpStartSessionInput {
   noSession?: boolean;
   systemPrompt?: string;
   extraArgs?: string[];
+  extensionPaths?: string[];
 }
 
 export interface OmpRuntimeSession {
@@ -63,7 +65,7 @@ export interface OmpRuntimeSession {
   sendHostToolUpdate(update: OmpRpcHostToolUpdate): void;
   branch(entryId: string): Promise<{ text: string }>;
   getBranchMessages(): Promise<Array<{ entryId: string; text: string }>>;
-  activeBranchEntryId?: string;
+  activeBranchEntryId?: string | null;
   steer(message: string, images?: Array<{ type: "image"; data: string; mimeType: string }>): void;
   followUp(
     message: string,
@@ -96,6 +98,9 @@ export function buildOmpLaunch(input: {
   const protocolMode = input.session.protocolMode ?? "rpc";
   const systemPrompt = input.session.systemPrompt?.trim();
   appendOmpLaunchArgs(argv, input.session, protocolMode, systemPrompt);
+  if (input.session.extensionPaths?.length && hasNoExtensionsFlag(argv)) {
+    throw new Error("OMP extensions cannot be disabled when the Paseo edit bridge is required");
+  }
 
   return {
     cwd: input.session.cwd,
@@ -115,6 +120,7 @@ export function buildOmpLaunch(input: {
     noSession: input.session.noSession,
     systemPrompt,
     extraArgs: input.session.extraArgs,
+    extensionPaths: input.session.extensionPaths,
   };
 }
 
@@ -129,6 +135,9 @@ function appendOmpLaunchArgs(
   }
   if (session.extraArgs?.length) {
     argv.push(...session.extraArgs);
+  }
+  for (const extensionPath of session.extensionPaths ?? []) {
+    argv.push("--extension", extensionPath);
   }
   if (session.model) {
     argv.push("--model", session.model);
@@ -156,4 +165,8 @@ function hasModeFlag(argv: string[]): boolean {
     }
   }
   return false;
+}
+
+function hasNoExtensionsFlag(argv: string[]): boolean {
+  return argv.some((arg) => arg === "--no-extensions" || arg.startsWith("--no-extensions="));
 }

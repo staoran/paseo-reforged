@@ -263,6 +263,16 @@ export const zhCN: TranslationResources = {
     },
   },
   message: {
+    editLastUserMessage: {
+      action: "编辑消息",
+      input: "编辑消息",
+      cancel: "取消编辑",
+      submit: "提交修改",
+      unchanged: "对话未发生变化，编辑草稿仍保留在消息中。",
+      rewound: "对话已回退，但修改后的消息尚未发送。",
+      unknown: "无法确认当前对话状态。编辑草稿已恢复，正在刷新历史记录。",
+      resyncFailed: "无法刷新对话历史。发送仍处于禁用状态。",
+    },
     actions: {
       copyCode: "复制代码",
       copyMermaidSource: "复制 Mermaid 源码",

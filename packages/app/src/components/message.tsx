@@ -123,6 +123,19 @@ import { RewindMenu, type RewindMode } from "@/components/rewind/rewind-menu";
 import { useRewindAgentMutation } from "@/components/rewind/use-rewind-agent-mutation";
 import { AssistantForkMenu, type AssistantForkTarget } from "@/components/assistant-fork-menu";
 import { useRetainedPanelActive } from "@/components/retained-panel";
+import {
+  createLastUserMessageEditController,
+  type LastUserMessageEditController,
+  type LastUserMessageEditEffect,
+} from "@/agent-stream/edit-last-user-message-model";
+import {
+  useEditLastUserMessage,
+  type EditLastUserMessageViewModel,
+} from "@/agent-stream/use-edit-last-user-message";
+import {
+  LastUserMessageEditAction,
+  LastUserMessageEditor,
+} from "@/agent-stream/edit-last-user-message-ui";
 export type { InlinePathTarget } from "@/assistant-file-links";
 export type { AssistantForkTarget };
 
@@ -139,6 +152,100 @@ interface UserMessageProps {
   isFirstInGroup?: boolean;
   isLastInGroup?: boolean;
   disableOuterSpacing?: boolean;
+  editLastUserMessageController?: LastUserMessageEditController;
+  isLastUserMessageEditEligible?: boolean;
+  isAgentIdle?: boolean;
+  onEditLastUserMessageEffect?: (effect: LastUserMessageEditEffect) => Promise<void> | void;
+}
+
+const INACTIVE_LAST_USER_MESSAGE_EDIT_CONTROLLER = createLastUserMessageEditController();
+const ignoreLastUserMessageEditEffect = (_effect: LastUserMessageEditEffect) => {};
+
+interface UserMessageEditLabels {
+  input: string;
+  cancel: string;
+  submit: string;
+}
+
+interface UseUserMessageEditViewModelInput {
+  agentId?: string;
+  messageId?: string;
+  message: string;
+  client?: DaemonClient | null;
+  controller?: LastUserMessageEditController;
+  isEligible: boolean;
+  isAgentIdle: boolean;
+  daemonUnavailableMessage: string;
+  onEffect?: (effect: LastUserMessageEditEffect) => Promise<void> | void;
+}
+
+function useUserMessageEditViewModel(
+  input: UseUserMessageEditViewModelInput,
+): EditLastUserMessageViewModel {
+  const submitRequest = useCallback(
+    async (request: Parameters<DaemonClient["editLastUserMessage"]>[0]) => {
+      if (!input.client) {
+        throw new Error(input.daemonUnavailableMessage);
+      }
+      return await input.client.editLastUserMessage(request);
+    },
+    [input.client, input.daemonUnavailableMessage],
+  );
+  const isEligible =
+    Boolean(input.controller) &&
+    Boolean(input.agentId) &&
+    Boolean(input.messageId) &&
+    Boolean(input.client) &&
+    input.isEligible;
+
+  return useEditLastUserMessage({
+    controller: input.controller ?? INACTIVE_LAST_USER_MESSAGE_EDIT_CONTROLLER,
+    agentId: input.agentId ?? "",
+    messageId: input.messageId ?? "",
+    message: input.message,
+    isEligible,
+    isAgentIdle: input.isAgentIdle,
+    submitRequest,
+    onEffect: input.onEffect ?? ignoreLastUserMessageEditEffect,
+  });
+}
+
+function UserMessageEditContent({
+  viewModel,
+  labels,
+  children,
+}: {
+  viewModel: EditLastUserMessageViewModel;
+  labels: UserMessageEditLabels;
+  children: ReactNode;
+}) {
+  if (viewModel.state.phase !== "editing" && viewModel.state.phase !== "pending") {
+    return children;
+  }
+  return (
+    <LastUserMessageEditor
+      value={viewModel.state.draft}
+      controls={viewModel.controls}
+      isPending={viewModel.state.phase === "pending"}
+      labels={labels}
+      onChangeText={viewModel.setDraft}
+      onCancel={viewModel.cancel}
+      onSubmit={viewModel.submit}
+    />
+  );
+}
+
+function UserMessageEditAction({
+  viewModel,
+  label,
+}: {
+  viewModel: EditLastUserMessageViewModel;
+  label: string;
+}) {
+  if (!viewModel.showAction) {
+    return null;
+  }
+  return <LastUserMessageEditAction label={label} onPress={viewModel.begin} />;
 }
 
 const MessageOuterSpacingContext = createContext(false);
@@ -439,6 +546,10 @@ export const UserMessage = memo(function UserMessage({
   isFirstInGroup = true,
   isLastInGroup = true,
   disableOuterSpacing,
+  editLastUserMessageController,
+  isLastUserMessageEditEligible = false,
+  isAgentIdle = false,
+  onEditLastUserMessageEffect,
 }: UserMessageProps) {
   const isCompact = useIsCompactFormFactor();
   const { t } = useTranslation();
@@ -449,12 +560,32 @@ export const UserMessage = memo(function UserMessage({
   const hasText = message.trim().length > 0;
   const hasImages = images.length > 0;
   const hasAttachments = attachments.length > 0;
-  const showTrailingRow = hasText && (isCompact || isNative || isHovered);
   const formattedTimestamp = useMemo(
     () => formatMessageTimestamp(new Date(timestamp)),
     [timestamp],
   );
   const rewindMutation = useRewindAgentMutation({ serverId, agentId, client, messageId });
+  const lastUserMessageEdit = useUserMessageEditViewModel({
+    controller: editLastUserMessageController,
+    agentId,
+    messageId,
+    message,
+    client,
+    isEligible: isLastUserMessageEditEligible,
+    isAgentIdle,
+    daemonUnavailableMessage: t("common.errors.daemonClientUnavailable"),
+    onEffect: onEditLastUserMessageEffect,
+  });
+  const lastUserMessageEditLabels = useMemo<UserMessageEditLabels>(
+    () => ({
+      input: t("message.editLastUserMessage.input"),
+      cancel: t("message.editLastUserMessage.cancel"),
+      submit: t("message.editLastUserMessage.submit"),
+    }),
+    [t],
+  );
+  const showTrailingRow =
+    hasText && !lastUserMessageEdit.showEditor && (isCompact || isNative || isHovered);
 
   const handlePointerEnter = useCallback(() => setIsHovered(true), []);
   const handlePointerLeave = useCallback(() => setIsHovered(false), []);
@@ -508,46 +639,56 @@ export const UserMessage = memo(function UserMessage({
         onPointerEnter={handlePointerEnter}
         onPointerLeave={handlePointerLeave}
       >
-        <View style={userMessageStylesheet.bubble}>
-          {hasImages ? (
-            <View style={imagePreviewContainerStyle}>
-              {images.map((image) => (
-                <UserMessageImagePill
-                  key={image.id}
-                  image={image}
-                  onOpen={setLightboxMetadata}
-                  accessibilityLabel={t("composer.attachments.openImage")}
-                />
-              ))}
-            </View>
-          ) : null}
-          {hasAttachments ? (
-            <View style={attachmentPreviewContainerStyle}>
-              {attachments.map((attachment, index) => {
-                const content = getAgentAttachmentPillContent(attachment, t);
-                return (
-                  <AttachmentFrame
-                    key={`${attachment.type}:${"number" in attachment ? attachment.number : index}`}
-                  >
-                    <AttachmentLabel
-                      icon={content.icon}
-                      title={content.title}
-                      subtitle={content.subtitle}
-                    />
-                  </AttachmentFrame>
-                );
-              })}
-            </View>
-          ) : null}
-          {hasText ? (
-            <Text selectable style={userMessageStylesheet.text} dataSet={WORKSPACE_SURFACE_DATASET}>
-              {message}
-            </Text>
-          ) : null}
-        </View>
+        <UserMessageEditContent viewModel={lastUserMessageEdit} labels={lastUserMessageEditLabels}>
+          <View style={userMessageStylesheet.bubble}>
+            {hasImages ? (
+              <View style={imagePreviewContainerStyle}>
+                {images.map((image) => (
+                  <UserMessageImagePill
+                    key={image.id}
+                    image={image}
+                    onOpen={setLightboxMetadata}
+                    accessibilityLabel={t("composer.attachments.openImage")}
+                  />
+                ))}
+              </View>
+            ) : null}
+            {hasAttachments ? (
+              <View style={attachmentPreviewContainerStyle}>
+                {attachments.map((attachment, index) => {
+                  const content = getAgentAttachmentPillContent(attachment, t);
+                  return (
+                    <AttachmentFrame
+                      key={`${attachment.type}:${"number" in attachment ? attachment.number : index}`}
+                    >
+                      <AttachmentLabel
+                        icon={content.icon}
+                        title={content.title}
+                        subtitle={content.subtitle}
+                      />
+                    </AttachmentFrame>
+                  );
+                })}
+              </View>
+            ) : null}
+            {hasText ? (
+              <Text
+                selectable
+                style={userMessageStylesheet.text}
+                dataSet={WORKSPACE_SURFACE_DATASET}
+              >
+                {message}
+              </Text>
+            ) : null}
+          </View>
+        </UserMessageEditContent>
         {hasText ? (
           <View style={trailingRowStyle} pointerEvents={showTrailingRow ? "auto" : "none"}>
             <Text style={userMessageStylesheet.timestampText}>{formattedTimestamp}</Text>
+            <UserMessageEditAction
+              viewModel={lastUserMessageEdit}
+              label={t("message.editLastUserMessage.action")}
+            />
             {capabilities ? (
               <RewindMenu
                 capabilities={capabilities}

@@ -210,6 +210,7 @@ const CODEX_APP_SERVER_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: true,
   supportsRewindFiles: false,
   supportsRewindBoth: false,
+  supportsInPlaceEditLastUserMessage: true,
 };
 
 const CODEX_MODES: AgentMode[] = [
@@ -4334,6 +4335,41 @@ export class CodexAppServerAgentSession implements AgentSession {
         await this.loadPersistedHistory();
       },
     });
+  }
+
+  async rewindLastUserMessageInPlace(input: { messageId: string }): Promise<void> {
+    await this.connect();
+    if (!this.client) {
+      throw new Error("Codex client is not initialized");
+    }
+    if (this.currentThreadId) {
+      await this.ensureThreadLoaded();
+    } else {
+      await this.ensureThread();
+    }
+    if (!this.currentThreadId) {
+      throw new Error("Codex thread is not ready for in-place message editing");
+    }
+
+    const targetTurnIndex = this.userMessageTurnIndexes.get(input.messageId);
+    if (targetTurnIndex === undefined) {
+      throw new Error(`Codex could not find user message ${input.messageId} in the current thread`);
+    }
+    if (targetTurnIndex !== this.userMessageTurnIds.length - 1) {
+      throw new Error(`Codex user message ${input.messageId} is not the latest turn`);
+    }
+
+    const threadId = this.currentThreadId;
+    const rolledBack = await rollbackCodexThread(this.client, { threadId, numTurns: 1 });
+    if (rolledBack.thread.id !== threadId) {
+      throw new Error(
+        `Codex in-place rollback changed thread identity from ${threadId} to ${rolledBack.thread.id}`,
+      );
+    }
+
+    this.persistedHistory = [];
+    this.historyPending = false;
+    await this.loadPersistedHistory();
   }
 
   async interrupt(): Promise<void> {
