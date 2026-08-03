@@ -2,6 +2,7 @@ import { test, expect, type Page } from "./fixtures";
 import { openSettings } from "./helpers/app";
 import { expectComposerVisible } from "./helpers/composer";
 import { openAgentRoute, seedMockAgentWorkspace } from "./helpers/mock-agent";
+import { observeTimelineSubscriptions } from "./helpers/timeline-delivery";
 import {
   clickSettingsBackToWorkspace,
   expectSettingsHeader,
@@ -149,5 +150,51 @@ test("keeps activity, reasoning, and tool expansion independent", async ({ page 
     await expect(page.getByText(/export function ConversationList/)).toHaveCount(0);
   } finally {
     await agent.cleanup();
+  }
+});
+
+test("collapses a hidden chat after it completes with a chunked final answer", async ({
+  page,
+}, testInfo) => {
+  testInfo.setTimeout(180_000);
+  const subscriptions = observeTimelineSubscriptions(page);
+  const firstAgent = await seedMockAgentWorkspace({
+    repoPrefix: "background-activity-fold-",
+    title: "Background activity fold",
+    model: "one-minute-stream",
+  });
+  const decoyAgent = await firstAgent.client.createAgent({
+    provider: "mock",
+    cwd: firstAgent.cwd,
+    workspaceId: firstAgent.workspaceId,
+    title: "Background activity decoy",
+    modeId: "load-test",
+    model: "ten-second-stream",
+  });
+
+  try {
+    await openAgentRoute(page, firstAgent);
+    await expectComposerVisible(page);
+    await setExpansionSettings(page, { activity: false, reasoning: true });
+
+    await firstAgent.client.sendAgentMessage(firstAgent.agentId, "Emit a chunked final answer.");
+    await expect(page.getByRole("button", { name: /stop|cancel/i }).first()).toBeVisible({
+      timeout: 30_000,
+    });
+
+    await page.getByRole("button", { name: "Background activity decoy", exact: true }).click();
+    await subscriptions.waitForSubscribedAgents([decoyAgent.id], { timeout: 45_000 });
+    const finish = await firstAgent.client.waitForFinish(firstAgent.agentId, 90_000);
+    expect(finish.status).toBe("idle");
+
+    await page.getByRole("button", { name: "Background activity fold", exact: true }).click();
+    const fold = activityFold(page);
+    await expect(fold).toContainText(/Worked for /);
+    await expect(page.getByText(FINAL_TEXT, { exact: true })).toBeVisible();
+    await expect(reasoningDetails(page)).toHaveCount(0);
+    await expect(commentaryDetails(page)).toHaveCount(0);
+    await expect(readTool(page)).toHaveCount(0);
+  } finally {
+    await firstAgent.cleanup();
   }
 });

@@ -36,6 +36,8 @@ export const MOCK_LOAD_TEST_DEFAULT_MODEL_ID = "five-minute-stream";
 const MOCK_LOAD_TEST_MODE_ID = "load-test";
 const MOCK_LOAD_TEST_DURATION_MS = 5 * 60 * 1000;
 const MOCK_LOAD_TEST_INTERVAL_MS = 40;
+// Keep the final chunks in separate canonical rows so catch-up exercises projected merging.
+const CHUNKED_FINAL_ANSWER_DELAY_MS = 250;
 const DEFAULT_READ_FILE_PATH = "packages/app/src/components/conversation-list.tsx";
 
 const CAPABILITIES: AgentCapabilityFlags = {
@@ -156,6 +158,10 @@ function shouldEmitPlanApprovalPrompt(prompt: AgentPromptInput): boolean {
 
 function shouldEmitTurnFailure(prompt: AgentPromptInput): boolean {
   return /emit\s+(?:a\s+)?synthetic\s+turn\s+failure/i.test(promptToText(prompt));
+}
+
+function shouldEmitChunkedFinalAnswer(prompt: AgentPromptInput): boolean {
+  return /emit\s+(?:a\s+)?chunked\s+final\s+answer/i.test(promptToText(prompt));
 }
 
 function parseMockQuestionPrompt(prompt: AgentPromptInput): MockQuestionPromptRequest | null {
@@ -1228,10 +1234,34 @@ export class MockLoadTestAgentSession implements AgentSession {
 
   private finishTurn(turn: ActiveTurn): void {
     const finalText = "Synthetic load test complete";
+    const finalMessageId = `${turn.assistantMessageId}:final`;
+    if (shouldEmitChunkedFinalAnswer(turn.prompt)) {
+      this.emitTimeline(turn.turnId, {
+        type: "assistant_message",
+        text: "Synthetic load test ",
+        messageId: finalMessageId,
+        phase: "final_answer",
+      });
+      turn.timer = setTimeout(() => {
+        if (this.activeTurn !== turn) {
+          return;
+        }
+        turn.timer = null;
+        this.emitTimeline(turn.turnId, {
+          type: "assistant_message",
+          text: "complete",
+          messageId: finalMessageId,
+          phase: "final_answer",
+        });
+        this.finishTurnWithText(turn, finalText);
+      }, CHUNKED_FINAL_ANSWER_DELAY_MS);
+      return;
+    }
+
     this.emitTimeline(turn.turnId, {
       type: "assistant_message",
       text: finalText,
-      messageId: `${turn.assistantMessageId}:final`,
+      messageId: finalMessageId,
       phase: "final_answer",
     });
     this.finishTurnWithText(turn, finalText);

@@ -221,8 +221,9 @@ function mergeAssistantChunks(entries: readonly WorkingEntry[]): WorkingEntry[] 
     >;
     const entryAssistant = entry.item as Extract<AgentTimelineItem, { type: "assistant_message" }>;
     if (
-      entryAssistant.messageId !== undefined &&
-      previousAssistant.messageId !== entryAssistant.messageId
+      (entryAssistant.messageId !== undefined &&
+        previousAssistant.messageId !== entryAssistant.messageId) ||
+      previousAssistant.phase !== entryAssistant.phase
     ) {
       output.push(entry);
       continue;
@@ -240,6 +241,7 @@ function mergeAssistantChunks(entries: readonly WorkingEntry[]): WorkingEntry[] 
         type: "assistant_message",
         text: `${previousAssistant.text}${entryAssistant.text}`,
         ...(previousAssistant.messageId ? { messageId: previousAssistant.messageId } : {}),
+        ...(previousAssistant.phase ? { phase: previousAssistant.phase } : {}),
       },
       timestamp: entry.timestamp,
       seqEnd: entry.seqEnd,
