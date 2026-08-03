@@ -324,6 +324,22 @@ describe("parseAssistantFileLink", () => {
     });
   });
 
+  it("decodes percent-encoded characters in absolute Windows hrefs", () => {
+    const href =
+      "E:\\Code\\paseo\\mydocs\\specs\\0035_%E5%85%B3%E9%97%AD%E6%9C%80%E5%90%8E%E6%A0%87%E7%AD%BE%E5%B9%B6%E5%9B%9E%E6%94%B6Provider_Runtime.md";
+
+    expect(
+      parseAssistantFileLink(href, {
+        workspaceRoot: "E:\\Code\\paseo",
+      }),
+    ).toEqual({
+      raw: href,
+      path: "E:/Code/paseo/mydocs/specs/0035_关闭最后标签并回收Provider_Runtime.md",
+      lineStart: undefined,
+      lineEnd: undefined,
+    });
+  });
+
   it("parses absolute Windows hrefs with VS Code-style line suffixes inside the active workspace", () => {
     expect(
       parseAssistantFileLink("C:/repo/src/app.tsx:12-20", {

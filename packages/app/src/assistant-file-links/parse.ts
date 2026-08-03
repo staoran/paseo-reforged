@@ -322,7 +322,7 @@ export function parseAssistantFileLink(
 
   const windowsPathMatch = trimmed.match(/^([A-Za-z]:[\\/][^?#]*)(#[^?]+)?$/);
   if (windowsPathMatch) {
-    const normalizedPath = normalizePathToken(windowsPathMatch[1] ?? "");
+    const normalizedPath = normalizePathToken(safeDecodeURIComponent(windowsPathMatch[1] ?? ""));
     if (!normalizedPath) {
       return null;
     }
