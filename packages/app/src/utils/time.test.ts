@@ -3,6 +3,7 @@ import {
   formatDuration,
   formatDurationWithSeconds,
   formatMessageTimestamp,
+  formatRelativeTime,
   formatTimeAgo,
 } from "./time";
 
@@ -18,6 +19,25 @@ describe("formatTimeAgo", () => {
     ["2026-01-15T12:00:00.000Z", "Jan 15"],
   ])("formats %s as %s", (date, expected) => {
     expect(formatTimeAgo(new Date(date), now)).toBe(expected);
+  });
+});
+
+describe("formatRelativeTime", () => {
+  const now = new Date("2026-08-03T07:00:00.000Z");
+
+  it.each([
+    ["2026-08-03T06:59:30.000Z", "刚刚"],
+    ["2026-08-03T06:55:00.000Z", "5分钟前"],
+    ["2026-08-02T07:00:00.000Z", "1天前"],
+    ["2026-07-27T07:00:00.000Z", "1周前"],
+  ])("formats %s as %s in Simplified Chinese", (date, expected) => {
+    expect(
+      formatRelativeTime(new Date(date), {
+        locale: "zh-CN",
+        now,
+        justNowLabel: "刚刚",
+      }),
+    ).toBe(expected);
   });
 });
 
@@ -69,7 +89,8 @@ describe("formatMessageTimestamp", () => {
     const now = new Date(2026, 4, 14, 17, 30);
     const date = new Date(2026, 4, 11, 22, 12);
     const formatted = formatMessageTimestamp(date, now);
-    expect(formatted).toMatch(/Monday/);
+    const weekday = date.toLocaleDateString(undefined, { weekday: "long" });
+    expect(formatted).toContain(weekday);
     expect(formatted).toMatch(/10:12 PM|22:12/);
   });
 
@@ -77,7 +98,11 @@ describe("formatMessageTimestamp", () => {
     const now = new Date(2026, 4, 14, 17, 30);
     const date = new Date(2026, 3, 1, 9, 5);
     const formatted = formatMessageTimestamp(date, now);
-    expect(formatted).toMatch(/Apr|April/);
-    expect(formatted).toMatch(/2026/);
+    const dateLabel = date.toLocaleDateString(undefined, {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
+    expect(formatted).toContain(dateLabel);
   });
 });

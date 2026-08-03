@@ -32,6 +32,7 @@ function workspace(overrides: Partial<SidebarWorkspaceEntry> = {}): SidebarWorks
     statusEnteredAt: null,
     ...overrides,
     archivingAt: overrides.archivingAt ?? null,
+    lastActivityAt: overrides.lastActivityAt ?? null,
   };
 }
 

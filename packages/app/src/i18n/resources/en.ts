@@ -970,6 +970,9 @@ export const en = {
       },
     },
     workspace: {
+      activity: {
+        justNow: "just now",
+      },
       status: {
         scriptsAvailable: "Scripts available",
         creating: "Creating...",

@@ -991,6 +991,9 @@ export const es: TranslationResources = {
       },
     },
     workspace: {
+      activity: {
+        justNow: "ahora mismo",
+      },
       status: {
         scriptsAvailable: "Guiones disponibles",
         creating: "Creando...",

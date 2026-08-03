@@ -950,6 +950,9 @@ export const zhCN: TranslationResources = {
       },
     },
     workspace: {
+      activity: {
+        justNow: "刚刚",
+      },
       status: {
         scriptsAvailable: "有可用 scripts",
         creating: "正在创建...",

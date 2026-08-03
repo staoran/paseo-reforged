@@ -971,6 +971,9 @@ export const ja: TranslationResources = {
       },
     },
     workspace: {
+      activity: {
+        justNow: "たった今",
+      },
       status: {
         scriptsAvailable: "スクリプトが利用可能",
         creating: "作成中...",

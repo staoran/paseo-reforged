@@ -990,6 +990,9 @@ export const fr: TranslationResources = {
       },
     },
     workspace: {
+      activity: {
+        justNow: "à l'instant",
+      },
       status: {
         scriptsAvailable: "Scripts disponibles",
         creating: "Création...",

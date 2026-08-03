@@ -982,6 +982,9 @@ export const ru: TranslationResources = {
       },
     },
     workspace: {
+      activity: {
+        justNow: "только что",
+      },
       status: {
         scriptsAvailable: "Доступны скрипты",
         creating: "Создание...",

@@ -64,6 +64,29 @@ describe("createSidebarWorkspaceEntry forge threading", () => {
   });
 });
 
+describe("createSidebarWorkspaceEntry activity threading", () => {
+  it("exposes the workspace root agent last activity", () => {
+    const lastActivityAt = new Date("2026-08-03T06:55:00.000Z");
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42"),
+      workspaceAgentActivity: new Map([
+        [
+          "ws-1",
+          {
+            agentId: "agent-1",
+            status: "done",
+            enteredAt: new Date("2026-08-03T06:54:00.000Z"),
+            lastActivityAt,
+          },
+        ],
+      ]),
+    });
+
+    expect(entry.lastActivityAt).toBe(lastActivityAt);
+  });
+});
+
 interface OrderedItem {
   key: string;
 }

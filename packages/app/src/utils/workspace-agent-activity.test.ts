@@ -7,6 +7,7 @@ function agent(input: {
   workspaceId?: string;
   status?: Agent["status"];
   updatedAt: string;
+  lastActivityAt?: string;
   attentionTimestamp?: string | null;
   requiresAttention?: boolean;
   attentionReason?: Agent["attentionReason"];
@@ -22,7 +23,7 @@ function agent(input: {
     createdAt: new Date("2026-01-01T00:00:00.000Z"),
     updatedAt: new Date(input.updatedAt),
     lastUserMessageAt: null,
-    lastActivityAt: new Date(input.updatedAt),
+    lastActivityAt: new Date(input.lastActivityAt ?? input.updatedAt),
     capabilities: {
       supportsStreaming: true,
       supportsSessionPersistence: true,
@@ -99,6 +100,7 @@ describe("workspace agent activity index", () => {
             agentId: "permission",
             status: "needs_input",
             enteredAt: new Date("2026-06-01T10:01:00.000Z"),
+            lastActivityAt: new Date("2026-06-01T10:01:00.000Z"),
           },
         ],
         [
@@ -107,6 +109,7 @@ describe("workspace agent activity index", () => {
             agentId: "attention",
             status: "attention",
             enteredAt: new Date("2026-06-01T10:02:00.000Z"),
+            lastActivityAt: new Date("2026-06-01T10:00:00.000Z"),
           },
         ],
       ]),
@@ -153,6 +156,7 @@ describe("workspace agent activity index", () => {
       agentId: "root",
       status: "running",
       enteredAt: new Date("2026-06-01T10:00:00.000Z"),
+      lastActivityAt: new Date("2026-06-01T10:00:00.000Z"),
     });
   });
 
@@ -188,6 +192,7 @@ describe("workspace agent activity index", () => {
             agentId: "parent",
             status: "done",
             enteredAt: new Date("2026-06-01T10:00:00.000Z"),
+            lastActivityAt: new Date("2026-06-01T10:00:00.000Z"),
           },
         ],
         [
@@ -196,6 +201,7 @@ describe("workspace agent activity index", () => {
             agentId: "child",
             status: "running",
             enteredAt: new Date("2026-06-01T10:03:00.000Z"),
+            lastActivityAt: new Date("2026-06-01T10:03:00.000Z"),
           },
         ],
       ]),
@@ -226,6 +232,7 @@ describe("workspace agent activity index", () => {
             workspaceId: "workspace-a",
             status: "running",
             updatedAt: "2026-06-01T10:05:00.000Z",
+            lastActivityAt: "2026-06-01T10:00:00.000Z",
           }),
         ],
       ]),
@@ -272,6 +279,47 @@ describe("workspace agent activity index", () => {
       agentId: "root",
       status: "needs_input",
       enteredAt: new Date("2026-06-01T10:05:00.000Z"),
+      lastActivityAt: new Date("2026-06-01T10:05:00.000Z"),
+    });
+  });
+
+  it("advances last activity without resetting the current status entry time", () => {
+    const previous = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "root",
+          agent({
+            id: "root",
+            workspaceId: "workspace-a",
+            status: "running",
+            updatedAt: "2026-06-01T10:00:00.000Z",
+            lastActivityAt: "2026-06-01T10:02:00.000Z",
+          }),
+        ],
+      ]),
+    );
+
+    const next = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "root",
+          agent({
+            id: "root",
+            workspaceId: "workspace-a",
+            status: "running",
+            updatedAt: "2026-06-01T10:05:00.000Z",
+            lastActivityAt: "2026-06-01T10:05:00.000Z",
+          }),
+        ],
+      ]),
+      previous,
+    );
+
+    expect(next.get("workspace-a")).toEqual({
+      agentId: "root",
+      status: "running",
+      enteredAt: new Date("2026-06-01T10:00:00.000Z"),
+      lastActivityAt: new Date("2026-06-01T10:05:00.000Z"),
     });
   });
 });

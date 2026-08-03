@@ -960,6 +960,9 @@ export const ar: TranslationResources = {
       },
     },
     workspace: {
+      activity: {
+        justNow: "للتو",
+      },
       status: {
         scriptsAvailable: "البرامج النصية المتاحة",
         creating: "جارٍ الإنشاء...",

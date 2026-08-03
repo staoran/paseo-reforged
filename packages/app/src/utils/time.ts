@@ -35,6 +35,44 @@ export function formatTimeAgo(date: Date, now: Date = new Date()): string {
   return `${month} ${day}`;
 }
 
+/** Format elapsed activity time with locale-aware minute, hour, day, and week units. */
+export function formatRelativeTime(
+  date: Date,
+  options: {
+    locale: string;
+    now?: Date;
+    justNowLabel: string;
+  },
+): string {
+  const now = options.now ?? new Date();
+  const elapsedMs = Math.max(0, now.getTime() - date.getTime());
+  const elapsedMinutes = Math.floor(elapsedMs / 60_000);
+
+  if (elapsedMinutes < 1) {
+    return options.justNowLabel;
+  }
+
+  const formatter = new Intl.RelativeTimeFormat(options.locale, {
+    numeric: "always",
+    style: "narrow",
+  });
+  if (elapsedMinutes < 60) {
+    return formatter.format(-elapsedMinutes, "minute");
+  }
+
+  const elapsedHours = Math.floor(elapsedMinutes / 60);
+  if (elapsedHours < 24) {
+    return formatter.format(-elapsedHours, "hour");
+  }
+
+  const elapsedDays = Math.floor(elapsedHours / 24);
+  if (elapsedDays < 7) {
+    return formatter.format(-elapsedDays, "day");
+  }
+
+  return formatter.format(-Math.floor(elapsedDays / 7), "week");
+}
+
 function isSameLocalDay(a: Date, b: Date): boolean {
   return (
     a.getFullYear() === b.getFullYear() &&

@@ -982,6 +982,9 @@ export const ptBR: TranslationResources = {
       },
     },
     workspace: {
+      activity: {
+        justNow: "agora mesmo",
+      },
       status: {
         scriptsAvailable: "Scripts disponíveis",
         creating: "Criando...",

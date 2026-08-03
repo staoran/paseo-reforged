@@ -35,6 +35,7 @@ function workspace(input: {
     statusBucket: input.statusBucket ?? "done",
     archivingAt: null,
     statusEnteredAt: input.statusEnteredAt ?? null,
+    lastActivityAt: null,
     diffStat: null,
     prHint: null,
     archiveHasUncommittedChanges: null,
