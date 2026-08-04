@@ -29,6 +29,10 @@ const escapedAppSrcRoot = appSrcRoot
   .split(path.sep)
   .map((segment) => segment.replace(/[|\\{}()[\]^$+*?.]/g, "\\$&"))
   .join("[\\\\/]");
+const escapedProjectRoot = projectRoot
+  .split(path.sep)
+  .map((segment) => segment.replace(/[|\\{}()[\]^$+*?.]/g, "\\$&"))
+  .join("[\\\\/]");
 const pathSeparatorPattern = "[\\\\/]";
 
 config.resolver.extraNodeModules = {
@@ -39,7 +43,7 @@ config.resolver.extraNodeModules = {
   "react/jsx-dev-runtime": path.join(appNodeModulesRoot, "react/jsx-dev-runtime"),
 };
 config.resolver.blockList = new RegExp(
-  `(^${escapedAppSrcRoot}${pathSeparatorPattern}.*\\.(test|spec)\\.(ts|tsx)$|${pathSeparatorPattern}__tests__${pathSeparatorPattern}.*)$`,
+  `(^${escapedAppSrcRoot}${pathSeparatorPattern}.*\\.(test|spec)\\.(ts|tsx)$|^${escapedProjectRoot}${pathSeparatorPattern}test-results(?:${pathSeparatorPattern}.*)?$|${pathSeparatorPattern}__tests__${pathSeparatorPattern}.*)$`,
 );
 
 function isLocalModuleImport(moduleName) {

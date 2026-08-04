@@ -575,6 +575,9 @@ export const zhCN: TranslationResources = {
         reloadingAgent: "正在重新加载 Agent...",
         reloadedAgent: "已重新加载 Agent",
         failedToReloadAgent: "重新加载 Agent 失败",
+        agentRuntimeCloseFailed: "无法停止 Agent runtime：{{message}}",
+        agentRuntimeCleanupWarning: "Agent 标签页已关闭，但 runtime 清理返回警告：{{message}}",
+        updateHostToCloseAgentRuntime: "请更新主机后再通过关闭标签页停止 Agent runtime。",
       },
       confirmations: {
         unsavedTitle: "未保存的更改",
@@ -584,25 +587,26 @@ export const zhCN: TranslationResources = {
         bulkUnsaved: "{{count}} 个标签页有未保存的更改。关闭将丢弃这些草稿。",
         close: "关闭",
         cancel: "取消",
-        archive: "归档",
+        stopAgent: "停止并关闭",
         closeTerminalTitle: "关闭 Terminal？",
         closeTerminalMessage: "此 Terminal 中任何正在运行的进程都会立即停止。",
-        archiveRunningAgentTitle: "归档正在运行的 Agent？",
-        archiveRunningAgentMessage: "此 Agent 仍在运行。归档会停止该 Agent 并关闭标签。",
+        stopRunningAgentTitle: "停止正在运行的 Agent？",
+        stopRunningAgentMessage: "此 Agent 仍在运行。停止 runtime 会关闭标签页，但会话仍会保留。",
         closeTabsLeftTitle: "关闭左侧标签？",
         closeTabsRightTitle: "关闭右侧标签？",
         closeOtherTabsTitle: "关闭其他标签？",
         bulk: {
-          all: "这会归档 {{agents}} 个 Agent，关闭 {{terminals}} 个 Terminal，并关闭 {{tabs}} 个标签。已关闭 Terminal 中任何正在运行的进程都会立即停止。",
+          all: "这会停止 {{agents}} 个 Agent runtime 并关闭其标签页，关闭 {{terminals}} 个 Terminal 和 {{tabs}} 个其他标签页。Agent 会话仍会保留。已关闭 Terminal 中任何正在运行的进程都会立即停止。",
           agentsAndTerminals:
-            "这会归档 {{agents}} 个 Agent，并关闭 {{terminals}} 个 Terminal。已关闭 Terminal 中任何正在运行的进程都会立即停止。",
+            "这会停止 {{agents}} 个 Agent runtime 并关闭其标签页，同时关闭 {{terminals}} 个 Terminal。Agent 会话仍会保留。已关闭 Terminal 中任何正在运行的进程都会立即停止。",
           terminalsAndTabs:
             "这会关闭 {{terminals}} 个 Terminal，并关闭 {{tabs}} 个标签。已关闭 Terminal 中任何正在运行的进程都会立即停止。",
-          agentsAndTabs: "这会归档 {{agents}} 个 Agent，并关闭 {{tabs}} 个标签。",
+          agentsAndTabs:
+            "这会停止 {{agents}} 个 Agent runtime 并关闭其标签页，同时关闭 {{tabs}} 个其他标签页。Agent 会话仍会保留。",
           terminals:
             "这会关闭 {{terminals}} 个 Terminal。已关闭 Terminal 中任何正在运行的进程都会立即停止。",
           tabs: "这会关闭 {{tabs}} 个标签。",
-          agents: "这会归档 {{agents}} 个 Agent。",
+          agents: "这会停止 {{agents}} 个 Agent runtime 并关闭其标签页。Agent 会话仍会保留。",
         },
       },
     },
@@ -966,6 +970,8 @@ export const zhCN: TranslationResources = {
       status: {
         scriptsAvailable: "有可用 scripts",
         creating: "正在创建...",
+        runtimeResident: "Agent runtime 已驻留",
+        runtimeClosed: "Agent runtime 已停止",
       },
       actions: {
         menu: "Workspace 操作",

@@ -107,7 +107,6 @@ import { useWorkspace } from "@/stores/session-store-hooks";
 import { useWorkspaceTerminalSessionRetention } from "@/terminal/hooks/use-workspace-terminal-session-retention";
 import type { CheckoutStatusPayload } from "@/git/use-status-query";
 import { confirmDialog } from "@/utils/confirm-dialog";
-import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { removeResidentBrowserWebview } from "@/components/browser-webview-resident";
 import { createWorkspaceBrowser, useBrowserStore } from "@/stores/browser-store";
@@ -170,7 +169,11 @@ import {
   classifyBulkClosableTabs,
   closeBulkWorkspaceTabs,
 } from "@/screens/workspace/workspace-bulk-close";
-import { resolveCloseAgentTabPolicy } from "@/subagents";
+import {
+  closeAgentRuntimeAndCommit,
+  type AgentRuntimeCloseOutcome,
+} from "@/screens/workspace/agent-runtime-close-transaction";
+import { useHostFeature } from "@/runtime/host-features";
 import {
   getPanelInstanceAttributes,
   useModifiedPanelTabIds,
@@ -1769,6 +1772,7 @@ function WorkspaceScreenContent({
   });
 
   const client = useHostRuntimeClient(normalizedServerId);
+  const supportsAgentRuntimeClose = useHostFeature(normalizedServerId, "agentRuntimeClose");
   const isConnected = useHostRuntimeIsConnected(normalizedServerId);
   const workspaceDirectory = workspaceDescriptor?.workspaceDirectory || null;
   const isMissingWorkspaceDirectory = Boolean(workspaceDescriptor) && !workspaceDirectory;
@@ -1884,8 +1888,6 @@ function WorkspaceScreenContent({
     onTerminalCreateQueued: handleTerminalCreateQueued,
     onTerminalCreateFailed: handleTerminalCreateFailed,
   });
-  const { archiveAgent } = useArchiveAgent();
-
   const { checkoutQuery, isCheckoutStatusLoading } = useWorkspaceCheckoutStatus({
     client,
     isConnected,
@@ -2256,6 +2258,7 @@ function WorkspaceScreenContent({
         activeAgentCount: workspaceAgentVisibility.activeAgentIds.size,
         terminalCount: terminals.length,
         tabCount: tabs.length,
+        defaultAgentId: workspaceDescriptor?.defaultAgentId ?? null,
       })
     ) {
       emptyWorkspaceSeedRef.current = null;
@@ -2278,6 +2281,7 @@ function WorkspaceScreenContent({
     terminals.length,
     terminalsQuery.isSuccess,
     tabs.length,
+    workspaceDescriptor?.defaultAgentId,
     workspaceDirectory,
     workspaceAgentVisibility.activeAgentIds.size,
   ]);
@@ -2665,6 +2669,35 @@ function WorkspaceScreenContent({
 
   const killTerminalAsync = killTerminalMutation.mutateAsync;
 
+  const handleAgentRuntimeCloseOutcome = useCallback(
+    (outcome: AgentRuntimeCloseOutcome) => {
+      if (outcome.kind === "unsupported") {
+        toast.error(t("workspace.tabs.toasts.updateHostToCloseAgentRuntime"));
+        return;
+      }
+      if (outcome.kind === "client-unavailable") {
+        toast.error(
+          t("workspace.tabs.toasts.agentRuntimeCloseFailed", {
+            message: t("common.errors.daemonClientUnavailable"),
+          }),
+        );
+        return;
+      }
+      if (outcome.kind === "failed") {
+        toast.error(t("workspace.tabs.toasts.agentRuntimeCloseFailed", { message: outcome.error }));
+        return;
+      }
+      if (outcome.warning) {
+        toast.show(
+          t("workspace.tabs.toasts.agentRuntimeCleanupWarning", {
+            message: outcome.warning,
+          }),
+        );
+      }
+    },
+    [t, toast],
+  );
+
   const handleCloseTerminalTab = useCallback(
     async (input: { tabId: string; terminalId: string }) => {
       const { tabId, terminalId } = input;
@@ -2713,14 +2746,13 @@ function WorkspaceScreenContent({
 
         const agent =
           useSessionStore.getState().sessions[normalizedServerId]?.agents?.get(agentId) ?? null;
-        const closePolicy = resolveCloseAgentTabPolicy(agent);
         const isRunning = agent?.status === "running";
 
-        if (isRunning && closePolicy.kind === "archive-on-close") {
+        if (isRunning) {
           const confirmed = await confirmDialog({
-            title: t("workspace.tabs.confirmations.archiveRunningAgentTitle"),
-            message: t("workspace.tabs.confirmations.archiveRunningAgentMessage"),
-            confirmLabel: t("workspace.tabs.confirmations.archive"),
+            title: t("workspace.tabs.confirmations.stopRunningAgentTitle"),
+            message: t("workspace.tabs.confirmations.stopRunningAgentMessage"),
+            confirmLabel: t("workspace.tabs.confirmations.stopAgent"),
             cancelLabel: t("workspace.tabs.confirmations.cancel"),
             destructive: true,
           });
@@ -2729,23 +2761,33 @@ function WorkspaceScreenContent({
           }
         }
 
-        setHoveredCloseTabKey((current) => (current === tabId ? null : current));
-        if (persistenceKey) {
-          closeWorkspaceTabWithCleanup({
-            tabId,
-            target: { kind: "agent", agentId },
-          });
-        }
-
-        if (closePolicy.kind === "layout-only") {
-          return;
-        }
-
-        // Errors (e.g. timeout) are handled by the mutation's onSettled callback
-        void archiveAgent({ serverId: normalizedServerId, agentId }).catch(() => {});
+        const outcome = await closeAgentRuntimeAndCommit({
+          client,
+          supported: supportsAgentRuntimeClose,
+          agentId,
+          commitClose: () => {
+            setHoveredCloseTabKey((current) => (current === tabId ? null : current));
+            if (persistenceKey) {
+              closeWorkspaceTabWithCleanup({
+                tabId,
+                target: { kind: "agent", agentId },
+              });
+            }
+          },
+        });
+        handleAgentRuntimeCloseOutcome(outcome);
       });
     },
-    [archiveAgent, closeTab, closeWorkspaceTabWithCleanup, normalizedServerId, persistenceKey, t],
+    [
+      client,
+      closeTab,
+      closeWorkspaceTabWithCleanup,
+      handleAgentRuntimeCloseOutcome,
+      normalizedServerId,
+      persistenceKey,
+      supportsAgentRuntimeClose,
+      t,
+    ],
   );
 
   const handleClosePassiveTab = useCallback(
@@ -2987,6 +3029,7 @@ function WorkspaceScreenContent({
 
       await closeBulkWorkspaceTabs({
         client,
+        supportsAgentRuntimeClose,
         groups,
         closeTab,
         closeWorkspaceTabWithCleanup: (cleanupInput) => {
@@ -2996,6 +3039,9 @@ function WorkspaceScreenContent({
           closeWorkspaceTabWithCleanup(cleanupInput);
         },
         logLabel,
+        onAgentRuntimeCloseOutcome: (_agentId, outcome) => {
+          handleAgentRuntimeCloseOutcome(outcome);
+        },
         warn: (message, payload) => {
           console.warn(message, payload);
         },
@@ -3009,9 +3055,11 @@ function WorkspaceScreenContent({
       client,
       closeTab,
       closeWorkspaceTabWithCleanup,
+      handleAgentRuntimeCloseOutcome,
       normalizedServerId,
       normalizedWorkspaceId,
       persistenceKey,
+      supportsAgentRuntimeClose,
       t,
     ],
   );

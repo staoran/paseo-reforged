@@ -21,8 +21,12 @@ the agent runs through `ensureAgentLoaded()`, which resumes the durable provider
 same Paseo agent ID. Provider history is not appended again when the canonical timeline is already
 primed.
 
-Idle agents remain resident indefinitely. Runtime closure happens only through an explicit lifecycle
-action such as archive, replacement, reload, workspace teardown, or daemon shutdown.
+Idle agents remain resident until an explicit lifecycle action releases them. Closing a
+Paseo-managed agent tab is one such action: the app sends `agent.runtime.close.request`, waits for an
+authoritative `agent.runtime.close.response`, and removes the tab only after the daemon confirms the
+unarchived durable record is `closed`. The same provider-agnostic path is used for root agents and
+managed subagents. Archive, replacement, reload, workspace teardown, and daemon shutdown can also
+close a runtime.
 
 ### Cancellation
 
@@ -86,20 +90,37 @@ Provider session connection owns every process it spawns until the session is re
 `connect()` must dispose that process before rethrowing; the manager cannot clean up a session it never
 received.
 
-## Tabs vs archive
+## Tabs, runtime closure, and archive
 
-These are two distinct concepts that used to be conflated:
+These are separate concepts:
 
-| Concept                    | Scope      | Triggers                   |
-| -------------------------- | ---------- | -------------------------- |
-| **Tab** (workspace layout) | Per-client | User opens/closes a view   |
-| **Archive** (lifecycle)    | Global     | Explicit lifecycle gesture |
+| Concept                         | Scope      | Triggers                                    |
+| ------------------------------- | ---------- | ------------------------------------------- |
+| **Tab** (workspace layout)      | Per-client | User opens or dismisses a view              |
+| **Runtime residency**           | Global     | Explicit close, resume, or daemon lifecycle |
+| **Archive** (soft-delete state) | Global     | Explicit archive lifecycle gesture          |
 
-Closing a tab on a **root agent** still archives — the tab is the agent's home, so closing it means "I'm done with this agent." A confirm dialog protects against archiving a running agent by accident.
+Closing a root or managed-subagent agent tab uses **close-only** semantics. A running agent still
+requires confirmation, then the daemon closes the provider session and persists `closed` without
+setting `archivedAt`. The app commits the layout dismissal only for `closed: true`; a capability
+miss, transport error, or `closed: false` leaves the tab visible with an actionable error. A cleanup
+warning can accompany durable success without reopening the tab.
 
-Closing a tab on a **subagent** (any agent with `parentAgentId`) is **layout-only**. The agent stays unarchived and stays in its parent's track. The user can re-open the tab from the track at any time. This is implemented in `handleCloseAgentTab` (`packages/app/src/screens/workspace/workspace-screen.tsx`).
+Provider-owned `provider_subagent` timeline tabs remain layout-only because they do not own a
+separate Paseo `AgentSession`. Draft and other passive tabs likewise have no provider runtime to
+close. Archive remains an explicit action and keeps its existing cascade and cross-client semantics.
 
-The asymmetry is intentional: a subagent's persistent relationship lives in the parent's track. Same-workspace subagents are not auto-opened as tabs; the user opens one from that track when needed. A cross-workspace subagent is also auto-opened as a tab in its own workspace so opening that workspace does not appear empty. It remains in the parent's track until it is actually detached.
+When the last managed agent tab closes, the workspace does not create a replacement draft if it has
+a durable default agent. The workspace registry stores that stable `defaultAgentId`: the first
+eligible root agent registered for the workspace. Legacy or invalid references are deterministically
+backfilled from the earliest eligible unarchived root agent by `(createdAt, id)`. Sidebar navigation
+targets that same agent ID when it is still valid, so reopening resumes its persistence handle and
+timeline instead of creating or selecting the last-closed agent.
+
+Sidebar runtime residency is aggregated across all unarchived managed agents in a workspace. Any
+status other than `closed` means `resident`; all agents being `closed` means `closed`. Loading,
+running, needs-input, attention, and completion indicators take priority. The runtime icon appears
+only as the fallback and includes a tooltip and accessibility label, so color is not the only signal.
 
 ## Workspace activity
 
@@ -131,15 +152,15 @@ To keep the agent alive but remove it from the parent's track, use **detach**. T
 
 ## Why this shape
 
-The decision was to **decouple "close tab" from "archive" only for subagents**, rather than universally:
+Tab dismissal, runtime residency, and archive have different persistence and resource consequences,
+so each now has an explicit contract:
 
-- **Closing a tab on a root agent still archives** — preserves the existing UX users are trained on
-- **Closing a tab on a subagent is layout-only** — fixes the lossy "click to read, close to dismiss view, lose the row" flow
-- **Archive button on track rows** — gives subagents an explicit lifecycle gesture in their home surface
-- **Detach button on track rows** — lets a subagent continue independently without killing its work
-- **Cascade archive on parent** — keeps subagents from leaking when the parent is archived
-
-We considered universal decoupling (no tab close ever archives, archive is always explicit) but rejected it: it changes a behavior root-agent users rely on.
+- **Managed agent tab close is close-only** — releases provider resources while preserving the session.
+- **Authoritative daemon result** — prevents the UI from hiding a tab when durable closure failed.
+- **Provider-owned child close is layout-only** — Paseo cannot close a runtime it does not own independently.
+- **Archive remains explicit** — preserves soft-delete, provider archive hooks, and cascade behavior.
+- **Stable workspace default agent** — provides a deterministic way back after every managed tab is closed.
+- **Detach remains explicit** — changes parentage without stopping, archiving, moving, or restarting the agent.
 
 ## Limitations
 
@@ -149,7 +170,9 @@ A parent that spawns many subagents will see the track grow. Managed Paseo subag
 
 ### Cross-client tab dismissal
 
-Closing a subagent's tab on one client doesn't affect other clients' layouts. This is the expected behavior of decoupled tabs and is consistent with how layouts have always worked. Archive remains the global gesture for cross-client cleanup.
+Tab removal remains local to the client that dismissed it, but closing a managed agent tab changes the
+global runtime lifecycle. Other clients can retain their layout tab and observe the agent as `closed`;
+opening or prompting it resumes the same durable agent. Archive remains the global soft-delete gesture.
 
 ## Storage
 

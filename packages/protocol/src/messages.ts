@@ -801,6 +801,12 @@ export const ArchiveAgentRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
+export const AgentRuntimeCloseRequestMessageSchema = z.object({
+  type: z.literal("agent.runtime.close.request"),
+  agentId: z.string(),
+  requestId: z.string(),
+});
+
 export const CloseItemsRequestMessageSchema = z.object({
   type: z.literal("close_items_request"),
   agentIds: z.array(z.string()).default([]),
@@ -2493,6 +2499,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   FetchAgentRequestMessageSchema,
   DeleteAgentRequestMessageSchema,
   ArchiveAgentRequestMessageSchema,
+  AgentRuntimeCloseRequestMessageSchema,
   CloseItemsRequestMessageSchema,
   UpdateAgentRequestMessageSchema,
   ProjectRenameRequestSchema,
@@ -2840,6 +2847,8 @@ export const ServerInfoStatusPayloadSchema = z
         providerUsageList: z.boolean().optional(),
         // COMPAT(agentDetach): added in v0.1.98, remove gate after 2026-12-19 once daemon floor >= v0.1.98.
         agentDetach: z.boolean().optional(),
+        // COMPAT(agentRuntimeClose): added in v0.2.5, remove gate after 2027-02-03.
+        agentRuntimeClose: z.boolean().optional(),
         // COMPAT(agentThinkingUpdate): added in v0.2.4, remove gate after 2027-01-28.
         agentThinkingUpdate: z.boolean().optional(),
         // COMPAT(daemonDiagnostics): added in v0.1.100, remove gate after 2026-12-25 once daemon floor >= v0.1.100.
@@ -3142,6 +3151,8 @@ const WorkspaceGitHubRuntimePayloadSchema = z
 export const WorkspaceDescriptorPayloadSchema = z
   .object({
     id: z.string(),
+    // COMPAT(workspaceDefaultAgent): added in v0.2.5, remove optional after 2027-02-03.
+    defaultAgentId: z.string().nullable().optional(),
     projectId: z.string(),
     projectDisplayName: z.string(),
     // COMPAT(projectCustomName): added in v0.1.76, drop the optional gate when floor >= v0.1.76.
@@ -3965,6 +3976,27 @@ export const AgentArchivedMessageSchema = z.object({
     archivedAt: z.string(),
     requestId: z.string(),
   }),
+});
+
+// zod-aot emits string switch cases for boolean literal discriminators.
+const AgentRuntimeClosePayloadSchema = z.union([
+  z.object({
+    requestId: z.string(),
+    agentId: z.string(),
+    closed: z.literal(true),
+    warning: z.string().nullable(),
+  }),
+  z.object({
+    requestId: z.string(),
+    agentId: z.string(),
+    closed: z.literal(false),
+    error: z.string(),
+  }),
+]);
+
+export const AgentRuntimeCloseResponseMessageSchema = z.object({
+  type: z.literal("agent.runtime.close.response"),
+  payload: AgentRuntimeClosePayloadSchema,
 });
 
 const CloseItemsAgentResultSchema = z.object({
@@ -5311,6 +5343,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentPermissionResolvedMessageSchema,
   AgentDeletedMessageSchema,
   AgentArchivedMessageSchema,
+  AgentRuntimeCloseResponseMessageSchema,
   CloseItemsResponseSchema,
   CheckoutStatusResponseSchema,
   CheckoutStatusUpdateSchema,
@@ -5812,6 +5845,9 @@ export type TerminalCursor = z.infer<typeof TerminalCursorSchema>;
 export type TerminalState = z.infer<typeof TerminalStateSchema>;
 export type CloseItemsRequest = z.infer<typeof CloseItemsRequestMessageSchema>;
 export type CloseItemsResponse = z.infer<typeof CloseItemsResponseSchema>;
+export type AgentRuntimeCloseRequest = z.infer<typeof AgentRuntimeCloseRequestMessageSchema>;
+export type AgentRuntimeCloseResponse = z.infer<typeof AgentRuntimeCloseResponseMessageSchema>;
+export type AgentRuntimeClosePayload = z.infer<typeof AgentRuntimeClosePayloadSchema>;
 export type KillTerminalRequest = z.infer<typeof KillTerminalRequestSchema>;
 export type KillTerminalResponse = z.infer<typeof KillTerminalResponseSchema>;
 export type CaptureTerminalRequest = z.infer<typeof CaptureTerminalRequestSchema>;

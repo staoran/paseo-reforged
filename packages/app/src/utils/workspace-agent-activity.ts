@@ -9,6 +9,35 @@ export interface WorkspaceAgentActivity {
   lastActivityAt: Date;
 }
 
+export type WorkspaceRuntimeResidency = "resident" | "closed";
+
+export function buildWorkspaceRuntimeResidencyIndex(
+  agents: ReadonlyMap<string, Agent>,
+  previous?: ReadonlyMap<string, WorkspaceRuntimeResidency>,
+): Map<string, WorkspaceRuntimeResidency> {
+  const residencyByWorkspaceId = new Map<string, WorkspaceRuntimeResidency>();
+
+  for (const agent of agents.values()) {
+    if (agent.archivedAt || !agent.workspaceId) {
+      continue;
+    }
+
+    const current = residencyByWorkspaceId.get(agent.workspaceId);
+    if (current === "resident") {
+      continue;
+    }
+    residencyByWorkspaceId.set(
+      agent.workspaceId,
+      agent.status === "closed" ? "closed" : "resident",
+    );
+  }
+
+  if (previous && areWorkspaceRuntimeResidencyIndexesEqual(previous, residencyByWorkspaceId)) {
+    return previous instanceof Map ? previous : new Map(previous);
+  }
+  return residencyByWorkspaceId;
+}
+
 export function buildWorkspaceAgentActivityIndex(
   agents: ReadonlyMap<string, Agent>,
   previous?: ReadonlyMap<string, WorkspaceAgentActivity>,
@@ -99,6 +128,21 @@ function areWorkspaceAgentActivityIndexesIdentical(
   }
   for (const [workspaceId, activity] of next) {
     if (previous.get(workspaceId) !== activity) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function areWorkspaceRuntimeResidencyIndexesEqual(
+  previous: ReadonlyMap<string, WorkspaceRuntimeResidency>,
+  next: ReadonlyMap<string, WorkspaceRuntimeResidency>,
+): boolean {
+  if (previous.size !== next.size) {
+    return false;
+  }
+  for (const [workspaceId, residency] of next) {
+    if (previous.get(workspaceId) !== residency) {
       return false;
     }
   }

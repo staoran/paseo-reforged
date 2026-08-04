@@ -11,6 +11,7 @@ const readyEmptyWorkspace = {
   activeAgentCount: 0,
   terminalCount: 0,
   tabCount: 0,
+  defaultAgentId: null,
 };
 
 describe("shouldSeedEmptyWorkspaceDraft", () => {
@@ -52,6 +53,15 @@ describe("shouldSeedEmptyWorkspaceDraft", () => {
       shouldSeedEmptyWorkspaceDraft({
         ...readyEmptyWorkspace,
         tabCount: 1,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not seed a replacement draft when the workspace has a default agent", () => {
+    expect(
+      shouldSeedEmptyWorkspaceDraft({
+        ...readyEmptyWorkspace,
+        defaultAgentId: "agent-default",
       }),
     ).toBe(false);
   });

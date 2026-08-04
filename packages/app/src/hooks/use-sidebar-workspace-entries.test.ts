@@ -17,8 +17,10 @@ function activityMap(): Map<string, WorkspaceAgentActivity> {
 
 function sidebarSession(input?: Partial<Omit<SidebarWorkspaceSession, "serverId">>) {
   return {
+    agents: input?.agents ?? new Map(),
     workspaces: input?.workspaces ?? workspaceMap(),
     workspaceAgentActivity: input?.workspaceAgentActivity ?? activityMap(),
+    workspaceRuntimeResidency: input?.workspaceRuntimeResidency ?? new Map(),
   };
 }
 
@@ -40,13 +42,17 @@ describe("sidebar workspace session selection", () => {
     ).toEqual([
       {
         serverId: "host-b",
+        agents: hostB.agents,
         workspaces: hostB.workspaces,
         workspaceAgentActivity: hostB.workspaceAgentActivity,
+        workspaceRuntimeResidency: hostB.workspaceRuntimeResidency,
       },
       {
         serverId: "host-a",
+        agents: hostA.agents,
         workspaces: hostA.workspaces,
         workspaceAgentActivity: hostA.workspaceAgentActivity,
+        workspaceRuntimeResidency: hostA.workspaceRuntimeResidency,
       },
     ]);
   });

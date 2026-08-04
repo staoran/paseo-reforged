@@ -581,6 +581,11 @@ export const ptBR: TranslationResources = {
         reloadingAgent: "Recarregando agente...",
         reloadedAgent: "Agente recarregado",
         failedToReloadAgent: "Falha ao recarregar agente",
+        agentRuntimeCloseFailed: "Não foi possível parar o runtime do agente: {{message}}",
+        agentRuntimeCleanupWarning:
+          "A aba do agente foi fechada, mas a limpeza do runtime informou: {{message}}",
+        updateHostToCloseAgentRuntime:
+          "Atualize o host para parar runtimes de agentes ao fechar abas.",
       },
       confirmations: {
         unsavedTitle: "Alterações não salvas",
@@ -591,27 +596,29 @@ export const ptBR: TranslationResources = {
           "{{count}} aba(s) têm alterações não salvas. Fechar descartará esses rascunhos.",
         close: "Fechar",
         cancel: "Cancelar",
-        archive: "Arquivar",
+        stopAgent: "Parar e fechar",
         closeTerminalTitle: "Fechar terminal?",
         closeTerminalMessage:
           "Qualquer processo em execução neste terminal será interrompido imediatamente.",
-        archiveRunningAgentTitle: "Arquivar agente em execução?",
-        archiveRunningAgentMessage:
-          "Este agente ainda está em execução. Arquivá-lo interromperá o agente e fechará a aba.",
+        stopRunningAgentTitle: "Parar agente em execução?",
+        stopRunningAgentMessage:
+          "Este agente ainda está em execução. Parar o runtime fechará a aba, mas a sessão continuará disponível.",
         closeTabsLeftTitle: "Fechar abas à esquerda?",
         closeTabsRightTitle: "Fechar abas à direita?",
         closeOtherTabsTitle: "Fechar outras abas?",
         bulk: {
-          all: "Isso vai arquivar {{agents}} agente(s), fechar {{terminals}} terminal(ais) e fechar {{tabs}} aba(s). Qualquer processo em execução em um terminal fechado será interrompido imediatamente.",
+          all: "Isso vai parar {{agents}} runtime(s) de agente e fechar suas abas, fechar {{terminals}} terminal(ais) e {{tabs}} outra(s) aba(s). As sessões dos agentes continuarão disponíveis. Qualquer processo em execução em um terminal fechado será interrompido imediatamente.",
           agentsAndTerminals:
-            "Isso vai arquivar {{agents}} agente(s) e fechar {{terminals}} terminal(ais). Qualquer processo em execução em um terminal fechado será interrompido imediatamente.",
+            "Isso vai parar {{agents}} runtime(s) de agente e fechar suas abas, além de fechar {{terminals}} terminal(ais). As sessões dos agentes continuarão disponíveis. Qualquer processo em execução em um terminal fechado será interrompido imediatamente.",
           terminalsAndTabs:
             "Isso vai fechar {{terminals}} terminal(ais) e fechar {{tabs}} aba(s). Qualquer processo em execução em um terminal fechado será interrompido imediatamente.",
-          agentsAndTabs: "Isso vai arquivar {{agents}} agente(s) e fechar {{tabs}} aba(s).",
+          agentsAndTabs:
+            "Isso vai parar {{agents}} runtime(s) de agente e fechar suas abas, além de fechar {{tabs}} outra(s) aba(s). As sessões dos agentes continuarão disponíveis.",
           terminals:
             "Isso vai fechar {{terminals}} terminal(ais). Qualquer processo em execução em um terminal fechado será interrompido imediatamente.",
           tabs: "Isso vai fechar {{tabs}} aba(s).",
-          agents: "Isso vai arquivar {{agents}} agente(s).",
+          agents:
+            "Isso vai parar {{agents}} runtime(s) de agente e fechar suas abas. As sessões continuarão disponíveis.",
         },
       },
     },
@@ -1000,6 +1007,8 @@ export const ptBR: TranslationResources = {
       status: {
         scriptsAvailable: "Scripts disponíveis",
         creating: "Criando...",
+        runtimeResident: "O runtime do agente está ativo",
+        runtimeClosed: "O runtime do agente está parado",
       },
       actions: {
         menu: "Ações do workspace",

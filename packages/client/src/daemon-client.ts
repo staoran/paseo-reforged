@@ -89,6 +89,7 @@ import type {
   CreateTerminalResponse,
   SubscribeTerminalResponse,
   SubscribeTerminalRequest,
+  AgentRuntimeClosePayload,
   CloseItemsResponse,
   KillTerminalResponse,
   CaptureTerminalResponse,
@@ -2462,6 +2463,16 @@ export class DaemonClient {
       },
     });
     return { archivedAt: result.archivedAt };
+  }
+
+  async closeAgentRuntime(agentId: string, requestId?: string): Promise<AgentRuntimeClosePayload> {
+    return this.sendNamespacedCorrelatedSessionRequest<"agent.runtime.close.response">({
+      requestId,
+      message: {
+        type: "agent.runtime.close.request",
+        agentId,
+      },
+    });
   }
 
   async detachAgent(agentId: string): Promise<void> {

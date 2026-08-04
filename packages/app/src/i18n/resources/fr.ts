@@ -582,6 +582,11 @@ export const fr: TranslationResources = {
         reloadingAgent: "Agent de rechargement...",
         reloadedAgent: "Agent rechargé",
         failedToReloadAgent: "Échec du rechargement de l'agent",
+        agentRuntimeCloseFailed: "Impossible d'arrêter le runtime de l'agent : {{message}}",
+        agentRuntimeCleanupWarning:
+          "L'onglet de l'agent a été fermé, mais le nettoyage du runtime a signalé : {{message}}",
+        updateHostToCloseAgentRuntime:
+          "Mettez à jour l'hôte pour arrêter les runtimes des agents lors de la fermeture des onglets.",
       },
       confirmations: {
         unsavedTitle: "Modifications non enregistrées",
@@ -593,27 +598,29 @@ export const fr: TranslationResources = {
           "{{count}} onglet(s) contiennent des modifications non enregistrées. Les fermer supprimera ces brouillons.",
         close: "Fermer",
         cancel: "Annuler",
-        archive: "Archive",
+        stopAgent: "Arrêter et fermer",
         closeTerminalTitle: "Fermer le terminal?",
         closeTerminalMessage:
           "Tout processus en cours d’exécution dans ce terminal sera immédiatement arrêté.",
-        archiveRunningAgentTitle: "Archiver l'agent en cours d'exécution?",
-        archiveRunningAgentMessage:
-          "Cet agent est toujours en cours d'exécution. L'archiver arrêtera l'agent et fermera l'onglet.",
+        stopRunningAgentTitle: "Arrêter l'agent en cours d'exécution?",
+        stopRunningAgentMessage:
+          "Cet agent est toujours en cours d'exécution. Arrêter son runtime fermera l'onglet, mais sa session restera disponible.",
         closeTabsLeftTitle: "Fermer les onglets à gauche?",
         closeTabsRightTitle: "Fermer les onglets à droite?",
         closeOtherTabsTitle: "Fermer les autres onglets?",
         bulk: {
-          all: "Cela archivera les agents{{agents}}, fermera les terminaux{{terminals}}et fermera les onglets{{tabs}}. Tout processus en cours d’exécution dans un terminal fermé sera immédiatement arrêté.",
+          all: "Cela arrêtera {{agents}} runtime(s) d'agent et fermera leurs onglets, fermera {{terminals}} terminal(aux) et {{tabs}} autre(s) onglet(s). Les sessions des agents resteront disponibles. Tout processus en cours d’exécution dans un terminal fermé sera immédiatement arrêté.",
           agentsAndTerminals:
-            "Cela archivera les agents{{agents}}et fermera les terminaux{{terminals}}. Tout processus en cours d’exécution dans un terminal fermé sera immédiatement arrêté.",
+            "Cela arrêtera {{agents}} runtime(s) d'agent et fermera leurs onglets, puis fermera {{terminals}} terminal(aux). Les sessions des agents resteront disponibles. Tout processus en cours d’exécution dans un terminal fermé sera immédiatement arrêté.",
           terminalsAndTabs:
             "Cela fermera le(s) terminal(s){{terminals}}et fermera le(s) onglet(s){{tabs}}. Tout processus en cours d’exécution dans un terminal fermé sera immédiatement arrêté.",
-          agentsAndTabs: "Cela archivera les agents{{agents}}et fermera les onglets{{tabs}}.",
+          agentsAndTabs:
+            "Cela arrêtera {{agents}} runtime(s) d'agent et fermera leurs onglets, puis fermera {{tabs}} autre(s) onglet(s). Les sessions des agents resteront disponibles.",
           terminals:
             "Cela fermera le(s) terminal(s){{terminals}}. Tout processus en cours d’exécution dans un terminal fermé sera immédiatement arrêté.",
           tabs: "Cela fermera les onglets{{tabs}}.",
-          agents: "Cela archivera les agents{{agents}}.",
+          agents:
+            "Cela arrêtera {{agents}} runtime(s) d'agent et fermera leurs onglets. Les sessions resteront disponibles.",
         },
       },
     },
@@ -1008,6 +1015,8 @@ export const fr: TranslationResources = {
       status: {
         scriptsAvailable: "Scripts disponibles",
         creating: "Création...",
+        runtimeResident: "Le runtime de l'agent est actif",
+        runtimeClosed: "Le runtime de l'agent est arrêté",
       },
       actions: {
         menu: "ActionsWorkspace",

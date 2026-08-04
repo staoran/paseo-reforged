@@ -20,6 +20,7 @@ const baseWorkspace: WorkspaceDescriptor = {
   archivingAt: "2026-04-30T00:00:00.000Z",
   statusEnteredAt: null,
   diffStat: null,
+  defaultAgentId: null,
   scripts: [],
 };
 

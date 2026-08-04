@@ -44,6 +44,7 @@ function workspace(input?: Partial<WorkspaceDescriptor>): WorkspaceDescriptor {
     diffStat: null,
     scripts: [],
     ...input,
+    defaultAgentId: input?.defaultAgentId ?? null,
   };
 }
 

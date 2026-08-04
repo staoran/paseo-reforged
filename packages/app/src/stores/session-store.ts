@@ -39,7 +39,9 @@ import {
 } from "@/runtime/activity";
 import {
   buildWorkspaceAgentActivityIndex,
+  buildWorkspaceRuntimeResidencyIndex,
   type WorkspaceAgentActivity,
+  type WorkspaceRuntimeResidency,
 } from "@/utils/workspace-agent-activity";
 
 // Re-export types that were in session-context
@@ -141,6 +143,7 @@ export interface WorkspaceDescriptor {
   statusEnteredAt: Date | null;
   archivingAt: string | null;
   diffStat: { additions: number; deletions: number } | null;
+  defaultAgentId: string | null;
   scripts: WorkspaceDescriptorPayload["scripts"];
   gitRuntime?: WorkspaceDescriptorPayload["gitRuntime"];
   githubRuntime?: WorkspaceDescriptorPayload["githubRuntime"];
@@ -175,6 +178,7 @@ export function normalizeWorkspaceDescriptor(
     statusEnteredAt,
     archivingAt: payload.archivingAt ?? null,
     diffStat: payload.diffStat ?? null,
+    defaultAgentId: payload.defaultAgentId ?? null,
     scripts: (payload.scripts ?? []).map((s) => Object.assign({}, s)),
     gitRuntime: payload.gitRuntime,
     githubRuntime: payload.githubRuntime,
@@ -371,6 +375,7 @@ export interface SessionState {
   // Agents
   agents: Map<string, Agent>;
   workspaceAgentActivity: Map<string, WorkspaceAgentActivity>;
+  workspaceRuntimeResidency: Map<string, WorkspaceRuntimeResidency>;
   agentDetails: Map<string, Agent>;
   workspaces: Map<string, WorkspaceDescriptor>;
   // All active project descriptors, keyed by host-local projectId.
@@ -586,6 +591,7 @@ function createInitialSessionState(
     initializingAgents: new Map(),
     agents: new Map(),
     workspaceAgentActivity: new Map(),
+    workspaceRuntimeResidency: new Map(),
     agentDetails: new Map(),
     workspaces: new Map(),
     projects: new Map(),
@@ -716,6 +722,7 @@ export const useSessionStore = create<SessionStore>()(
                 ...session,
                 agents: replica.agents,
                 workspaceAgentActivity: buildWorkspaceAgentActivityIndex(replica.agents),
+                workspaceRuntimeResidency: buildWorkspaceRuntimeResidencyIndex(replica.agents),
                 workspaces: replica.workspaces,
                 projects: replica.projects,
                 agentStreamTail,
@@ -1300,6 +1307,10 @@ export const useSessionStore = create<SessionStore>()(
                 workspaceAgentActivity: buildWorkspaceAgentActivityIndex(
                   nextAgents,
                   session.workspaceAgentActivity,
+                ),
+                workspaceRuntimeResidency: buildWorkspaceRuntimeResidencyIndex(
+                  nextAgents,
+                  session.workspaceRuntimeResidency,
                 ),
               },
             },

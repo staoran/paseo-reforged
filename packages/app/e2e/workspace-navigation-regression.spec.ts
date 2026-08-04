@@ -6,6 +6,7 @@ import {
 import { expect, test, type Page } from "./fixtures";
 import { gotoAppShell, openSettings } from "./helpers/app";
 import {
+  closeWorkspaceAgentTab,
   createIdleAgent,
   expectWorkspaceTabHidden,
   expectWorkspaceTabVisible,
@@ -33,7 +34,6 @@ import {
   workspaceDeckEntryLocator,
   expectWorkspaceDeckEntryCount,
 } from "./helpers/workspace-ui";
-import { clickSettingsBackToWorkspace } from "./helpers/settings";
 import { getServerId } from "./helpers/server-id";
 import { injectDesktopBridge, waitForDesktopDaemonStartRequest } from "./helpers/desktop-updates";
 import { expectAppRoute } from "./helpers/route-assertions";
@@ -119,12 +119,25 @@ async function getVisibleDraftTabCount(page: Page): Promise<number> {
   return page.locator('[data-testid^="workspace-tab-draft"]').filter({ visible: true }).count();
 }
 
-async function closeFirstVisibleDraftTab(page: Page): Promise<void> {
-  const closeButton = page.locator('[data-testid^="workspace-draft-close-"]').filter({
-    visible: true,
+async function createIdleMockAgent(
+  workspace: Awaited<ReturnType<typeof seedWorkspace>>,
+  title: string,
+) {
+  const created = await workspace.client.createAgent({
+    provider: "mock",
+    model: "ten-second-stream",
+    modeId: "load-test",
+    cwd: workspace.repoPath,
+    workspaceId: workspace.workspaceId,
+    title,
   });
-  await expect(closeButton.first()).toBeVisible({ timeout: 30_000 });
-  await closeButton.first().click();
+  await workspace.client.waitForAgentUpsert(created.id, (agent) => agent.status === "idle", 30_000);
+  return {
+    id: created.id,
+    title,
+    cwd: workspace.repoPath,
+    workspaceId: workspace.workspaceId,
+  };
 }
 
 async function openWorkspaceThroughApp(
@@ -200,23 +213,56 @@ test.describe("Workspace navigation regression", () => {
     await expect(page.getByText("Add a project", { exact: true })).toHaveCount(0);
   });
 
-  test("keeps one replacement draft after returning from settings and closing the last tab", async ({
+  test("closes all runtimes without a replacement draft and reopens the persisted default agent", async ({
     page,
-    withWorkspace,
   }) => {
-    const workspace = await withWorkspace({ prefix: "workspace-settings-back-tab-" });
+    const workspace = await seedWorkspace({ repoPrefix: "workspace-runtime-reopen-" });
+    const serverId = getServerId();
 
-    await workspace.navigateTo();
-    await expect.poll(() => getVisibleDraftTabCount(page), { timeout: 30_000 }).toBe(1);
+    try {
+      const defaultAgent = await createIdleMockAgent(workspace, `workspace-default-${Date.now()}`);
+      const lastClosedAgent = await createIdleMockAgent(
+        workspace,
+        `workspace-last-closed-${Date.now()}`,
+      );
 
-    await openSettings(page);
-    await clickSettingsBackToWorkspace(page);
-    await expect(page).toHaveURL(/\/workspace\//, { timeout: 30_000 });
-    await expect.poll(() => getVisibleDraftTabCount(page), { timeout: 30_000 }).toBe(1);
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+      await openWorkspaceWithAgents(page, [defaultAgent, lastClosedAgent]);
+      await expectOnlyWorkspaceAgentTabsVisible(page, [defaultAgent.id, lastClosedAgent.id]);
 
-    await closeFirstVisibleDraftTab(page);
+      await page
+        .getByTestId(`workspace-tab-agent_${defaultAgent.id}`)
+        .filter({ visible: true })
+        .click();
+      await closeWorkspaceAgentTab(page, defaultAgent.id);
+      await closeWorkspaceAgentTab(page, lastClosedAgent.id);
 
-    await expect.poll(() => getVisibleDraftTabCount(page), { timeout: 30_000 }).toBe(1);
+      await expect.poll(() => getVisibleDraftTabCount(page), { timeout: 30_000 }).toBe(0);
+      await expectOnlyWorkspaceAgentTabsVisible(page, []);
+
+      const workspaceRow = page
+        .getByTestId(`sidebar-workspace-row-${serverId}:${workspace.workspaceId}`)
+        .filter({ visible: true })
+        .first();
+      await expect(workspaceRow).toBeVisible({ timeout: 30_000 });
+      await expect(
+        workspaceRow.getByTestId("workspace-status-indicator-runtime-closed"),
+      ).toBeVisible({ timeout: 30_000 });
+
+      await workspaceRow.click();
+      await expectWorkspaceTabVisible(page, defaultAgent.id);
+      await expectOnlyWorkspaceAgentTabsVisible(page, [defaultAgent.id]);
+      await expectWorkspaceTabHidden(page, lastClosedAgent.id);
+      await expect(
+        workspaceRow.getByTestId("workspace-status-indicator-runtime-resident"),
+      ).toBeVisible({ timeout: 30_000 });
+      await expect(
+        workspaceRow.getByTestId("workspace-status-indicator-runtime-closed"),
+      ).toHaveCount(0);
+    } finally {
+      await workspace.cleanup();
+    }
   });
 
   test("keeps the workspace rendered while reconnecting to the host", async ({ page }) => {

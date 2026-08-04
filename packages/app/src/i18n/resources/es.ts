@@ -582,6 +582,11 @@ export const es: TranslationResources = {
         reloadingAgent: "Agente de recarga...",
         reloadedAgent: "Agente recargado",
         failedToReloadAgent: "No se pudo recargar el agente",
+        agentRuntimeCloseFailed: "No se pudo detener el runtime del agente: {{message}}",
+        agentRuntimeCleanupWarning:
+          "La pestaña del agente se cerró, pero la limpieza del runtime informó: {{message}}",
+        updateHostToCloseAgentRuntime:
+          "Actualiza el host para detener runtimes de agentes al cerrar pestañas.",
       },
       confirmations: {
         unsavedTitle: "Cambios sin guardar",
@@ -593,27 +598,29 @@ export const es: TranslationResources = {
           "{{count}} pestaña(s) tienen cambios sin guardar. Al cerrar se descartarán esos borradores.",
         close: "Cerca",
         cancel: "Cancelar",
-        archive: "Archivo",
+        stopAgent: "Detener y cerrar",
         closeTerminalTitle: "¿Cerrar terminal?",
         closeTerminalMessage:
           "Cualquier proceso en ejecución en esta terminal se detendrá inmediatamente.",
-        archiveRunningAgentTitle: "¿Agente de ejecución de archivos?",
-        archiveRunningAgentMessage:
-          "Este agente todavía está ejecutándose. Archivarlo detendrá al agente y cerrará la pestaña.",
+        stopRunningAgentTitle: "¿Detener el agente en ejecución?",
+        stopRunningAgentMessage:
+          "Este agente sigue en ejecución. Detener su runtime cerrará la pestaña, pero la sesión seguirá disponible.",
         closeTabsLeftTitle: "¿Cerrar pestañas a la izquierda?",
         closeTabsRightTitle: "¿Cerrar pestañas a la derecha?",
         closeOtherTabsTitle: "¿Cerrar otras pestañas?",
         bulk: {
-          all: "Esto archivará los agentes{{agents}}, cerrará los terminales{{terminals}}y cerrará las pestañas{{tabs}}. Cualquier proceso en ejecución en una terminal cerrada se detendrá inmediatamente.",
+          all: "Esto detendrá {{agents}} runtime(s) de agente y cerrará sus pestañas, cerrará {{terminals}} terminal(es) y {{tabs}} pestaña(s) adicional(es). Las sesiones de los agentes seguirán disponibles. Cualquier proceso en ejecución en una terminal cerrada se detendrá inmediatamente.",
           agentsAndTerminals:
-            "Esto archivará los agentes{{agents}}y cerrará los terminales{{terminals}}. Cualquier proceso en ejecución en una terminal cerrada se detendrá inmediatamente.",
+            "Esto detendrá {{agents}} runtime(s) de agente y cerrará sus pestañas, además de cerrar {{terminals}} terminal(es). Las sesiones de los agentes seguirán disponibles. Cualquier proceso en ejecución en una terminal cerrada se detendrá inmediatamente.",
           terminalsAndTabs:
             "Esto cerrará los terminales{{terminals}}y cerrará las pestañas{{tabs}}. Cualquier proceso en ejecución en una terminal cerrada se detendrá inmediatamente.",
-          agentsAndTabs: "Esto archivará los agentes{{agents}}y cerrará las pestañas{{tabs}}.",
+          agentsAndTabs:
+            "Esto detendrá {{agents}} runtime(s) de agente y cerrará sus pestañas, además de cerrar {{tabs}} pestaña(s) adicional(es). Las sesiones de los agentes seguirán disponibles.",
           terminals:
             "Esto cerrará los terminales{{terminals}}. Cualquier proceso en ejecución en una terminal cerrada se detendrá inmediatamente.",
           tabs: "Esto cerrará las pestañas{{tabs}}.",
-          agents: "Esto archivará los agentes{{agents}}.",
+          agents:
+            "Esto detendrá {{agents}} runtime(s) de agente y cerrará sus pestañas. Las sesiones seguirán disponibles.",
         },
       },
     },
@@ -1009,6 +1016,8 @@ export const es: TranslationResources = {
       status: {
         scriptsAvailable: "Guiones disponibles",
         creating: "Creando...",
+        runtimeResident: "El runtime del agente está activo",
+        runtimeClosed: "El runtime del agente está detenido",
       },
       actions: {
         menu: "AccionesWorkspace",

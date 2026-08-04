@@ -1,6 +1,10 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import { i18n } from "@/i18n/i18next";
+import {
+  closeAgentRuntimeAndCommit,
+  type AgentRuntimeCloseOutcome,
+} from "@/screens/workspace/agent-runtime-close-transaction";
 
 export interface BulkClosableTabGroups {
   agentTabs: Array<{ tabId: string; agentId: string }>;
@@ -20,17 +24,18 @@ export interface BulkCloseConfirmationLabels {
 
 export const DEFAULT_BULK_CLOSE_CONFIRMATION_LABELS: BulkCloseConfirmationLabels = {
   all: ({ agents, terminals, tabs }) =>
-    `This will archive ${agents} agent(s), close ${terminals} terminal(s), and close ${tabs} tab(s). Any running process in a closed terminal will be stopped immediately.`,
+    `This will stop ${agents} agent runtime(s) and close their tabs, close ${terminals} terminal(s), and close ${tabs} other tab(s). Agent sessions will remain available. Any running process in a closed terminal will be stopped immediately.`,
   agentsAndTerminals: ({ agents, terminals }) =>
-    `This will archive ${agents} agent(s) and close ${terminals} terminal(s). Any running process in a closed terminal will be stopped immediately.`,
+    `This will stop ${agents} agent runtime(s) and close their tabs, and close ${terminals} terminal(s). Agent sessions will remain available. Any running process in a closed terminal will be stopped immediately.`,
   terminalsAndTabs: ({ terminals, tabs }) =>
     `This will close ${terminals} terminal(s) and close ${tabs} tab(s). Any running process in a closed terminal will be stopped immediately.`,
   agentsAndTabs: ({ agents, tabs }) =>
-    `This will archive ${agents} agent(s) and close ${tabs} tab(s).`,
+    `This will stop ${agents} agent runtime(s) and close their tabs, and close ${tabs} other tab(s). Agent sessions will remain available.`,
   terminals: ({ terminals }) =>
     `This will close ${terminals} terminal(s). Any running process in a closed terminal will be stopped immediately.`,
   tabs: ({ tabs }) => `This will close ${tabs} tab(s).`,
-  agents: ({ agents }) => `This will archive ${agents} agent(s).`,
+  agents: ({ agents }) =>
+    `This will stop ${agents} agent runtime(s) and close their tabs. Agent sessions will remain available.`,
 };
 
 interface CloseWorkspaceTabWithCleanupInput {
@@ -39,11 +44,13 @@ interface CloseWorkspaceTabWithCleanupInput {
 }
 
 interface CloseBulkWorkspaceTabsInput {
-  client: Pick<DaemonClient, "closeItems"> | null;
+  client: Pick<DaemonClient, "closeAgentRuntime" | "closeItems"> | null;
+  supportsAgentRuntimeClose: boolean;
   groups: BulkClosableTabGroups;
   closeTab: (tabId: string, action: () => Promise<void>) => Promise<void>;
   closeWorkspaceTabWithCleanup: (input: CloseWorkspaceTabWithCleanupInput) => void;
   logLabel: string;
+  onAgentRuntimeCloseOutcome?: (agentId: string, outcome: AgentRuntimeCloseOutcome) => void;
   warn?: (message: string, payload: object) => void;
 }
 
@@ -109,35 +116,51 @@ export function buildBulkCloseConfirmationMessage(
 }
 
 export async function closeBulkWorkspaceTabs(input: CloseBulkWorkspaceTabsInput): Promise<void> {
-  const { client, groups, closeTab, closeWorkspaceTabWithCleanup, logLabel, warn } = input;
-  const hasDestructiveTabs = groups.agentTabs.length > 0 || groups.terminalTabs.length > 0;
+  const {
+    client,
+    supportsAgentRuntimeClose,
+    groups,
+    closeTab,
+    closeWorkspaceTabWithCleanup,
+    logLabel,
+    onAgentRuntimeCloseOutcome,
+    warn,
+  } = input;
 
-  if (hasDestructiveTabs && client) {
+  if (groups.terminalTabs.length > 0 && client) {
     void client
       .closeItems({
-        agentIds: groups.agentTabs.map((tab) => tab.agentId),
+        agentIds: [],
         terminalIds: groups.terminalTabs.map((tab) => tab.terminalId),
       })
       .catch((error) => {
         warn?.(`[WorkspaceScreen] Failed to bulk close tabs ${logLabel}`, { error });
       });
-  } else if (hasDestructiveTabs) {
+  } else if (groups.terminalTabs.length > 0) {
     warn?.(`[WorkspaceScreen] Failed to bulk close tabs ${logLabel}`, {
       error: new Error(i18n.t("common.errors.daemonClientUnavailable")),
     });
   }
 
   for (const { tabId, agentId } of groups.agentTabs) {
-    void closeTab(tabId, async () => {
-      closeWorkspaceTabWithCleanup({
-        tabId,
-        target: { kind: "agent", agentId },
+    await closeTab(tabId, async () => {
+      const outcome = await closeAgentRuntimeAndCommit({
+        client,
+        supported: supportsAgentRuntimeClose,
+        agentId,
+        commitClose: () => {
+          closeWorkspaceTabWithCleanup({
+            tabId,
+            target: { kind: "agent", agentId },
+          });
+        },
       });
+      onAgentRuntimeCloseOutcome?.(agentId, outcome);
     });
   }
 
   for (const { tabId, terminalId } of groups.terminalTabs) {
-    void closeTab(tabId, async () => {
+    await closeTab(tabId, async () => {
       closeWorkspaceTabWithCleanup({
         tabId,
         target: { kind: "terminal", terminalId },
@@ -146,7 +169,7 @@ export async function closeBulkWorkspaceTabs(input: CloseBulkWorkspaceTabsInput)
   }
 
   for (const { tabId, target } of groups.otherTabs) {
-    void closeTab(tabId, async () => {
+    await closeTab(tabId, async () => {
       closeWorkspaceTabWithCleanup({ tabId, target });
     });
   }

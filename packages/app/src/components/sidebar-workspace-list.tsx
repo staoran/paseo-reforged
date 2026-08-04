@@ -1490,8 +1490,14 @@ function WorkspaceRowItem({
       return;
     }
     onWorkspacePress?.();
-    navigateToWorkspace({ serverId: workspace.serverId, workspaceId: workspace.workspaceId });
-  }, [onWorkspacePress, workspace.serverId, workspace.workspaceId]);
+    navigateToWorkspace({
+      serverId: workspace.serverId,
+      workspaceId: workspace.workspaceId,
+      ...(workspaceEntry?.defaultAgentId
+        ? { target: { kind: "agent" as const, agentId: workspaceEntry.defaultAgentId } }
+        : {}),
+    });
+  }, [onWorkspacePress, workspace.serverId, workspace.workspaceId, workspaceEntry?.defaultAgentId]);
 
   return (
     <WorkspaceRow

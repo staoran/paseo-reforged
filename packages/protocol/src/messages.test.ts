@@ -51,6 +51,19 @@ describe("workspace descriptor message compatibility", () => {
       throw new Error("Expected fetch_workspaces_response");
     }
     expect(parsed.payload.entries[0]?.project).toBeUndefined();
+    expect(parsed.payload.entries[0]?.defaultAgentId).toBeUndefined();
+  });
+
+  test("new workspace descriptors carry an optional default agent identity", () => {
+    const parsed = SessionOutboundMessageSchema.parse(
+      fetchWorkspacesResponse(workspaceDescriptor({ defaultAgentId: "agent-default" })),
+    );
+
+    expect(parsed.type).toBe("fetch_workspaces_response");
+    if (parsed.type !== "fetch_workspaces_response") {
+      throw new Error("Expected fetch_workspaces_response");
+    }
+    expect(parsed.payload.entries[0]?.defaultAgentId).toBe("agent-default");
   });
 
   test("new-shaped fetch_workspaces_response with project placement parses", () => {
@@ -450,6 +463,52 @@ describe("daemon update messages", () => {
         phase: "installing",
       },
     });
+  });
+});
+
+describe("agent runtime close messages", () => {
+  test("parses the correlated request and both authoritative response outcomes", () => {
+    const request = SessionInboundMessageSchema.parse({
+      type: "agent.runtime.close.request",
+      agentId: "agent-1",
+      requestId: "runtime-close-1",
+    });
+    const success = SessionOutboundMessageSchema.parse({
+      type: "agent.runtime.close.response",
+      payload: {
+        agentId: "agent-1",
+        requestId: "runtime-close-1",
+        closed: true,
+        warning: null,
+      },
+    });
+    const failure = SessionOutboundMessageSchema.parse({
+      type: "agent.runtime.close.response",
+      payload: {
+        agentId: "agent-1",
+        requestId: "runtime-close-1",
+        closed: false,
+        error: "runtime is still resident",
+      },
+    });
+
+    expect(request).toMatchObject({ agentId: "agent-1", requestId: "runtime-close-1" });
+    expect(success.payload).toMatchObject({ closed: true, warning: null });
+    expect(failure.payload).toMatchObject({ closed: false, error: "runtime is still resident" });
+  });
+
+  test("rejects outcome fields from the wrong discriminated branch", () => {
+    expect(
+      SessionOutboundMessageSchema.safeParse({
+        type: "agent.runtime.close.response",
+        payload: {
+          agentId: "agent-1",
+          requestId: "runtime-close-2",
+          closed: true,
+          error: "not authoritative",
+        },
+      }).success,
+    ).toBe(false);
   });
 });
 

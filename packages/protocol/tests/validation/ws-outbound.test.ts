@@ -197,6 +197,40 @@ const SourceSchema = z.object({
     });
   });
 
+  it.each([
+    {
+      name: "closed runtime",
+      payload: {
+        requestId: "runtime-close-success",
+        agentId: "agent-1",
+        closed: true,
+        warning: null,
+      },
+    },
+    {
+      name: "resident runtime",
+      payload: {
+        requestId: "runtime-close-failure",
+        agentId: "agent-1",
+        closed: false,
+        error: "runtime is still resident",
+      },
+    },
+  ])("accepts an authoritative runtime-close response envelope for a $name", ({ payload }) => {
+    const envelope = {
+      type: "session",
+      message: {
+        type: "agent.runtime.close.response",
+        payload,
+      },
+    };
+
+    expect(GeneratedWSOutboundMessageSchema.safeParse(envelope)).toEqual({
+      success: true,
+      data: envelope,
+    });
+  });
+
   it("emits runtime imports with .js extensions", async () => {
     const generated = await readFile(generatedWSOutboundPath, "utf8");
     expect(generated).toContain('from "../../validation/ws-outbound-schema-metadata.js"');

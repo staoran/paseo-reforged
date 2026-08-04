@@ -36,6 +36,12 @@ const PersistedProjectRecordSchema = z.object({
 
 const PersistedWorkspaceRecordSchema = z.object({
   workspaceId: z.string(),
+  // COMPAT(workspaceDefaultAgent): added in v0.2.5, remove optional after 2027-02-03.
+  defaultAgentId: z
+    .string()
+    .nullable()
+    .optional()
+    .transform((value) => value ?? null),
   projectId: z.string(),
   cwd: z.string(),
   kind: z.enum(["local_checkout", "worktree", "directory"]),
@@ -493,6 +499,7 @@ export function resolveProjectDisplayName(record: PersistedProjectRecord): strin
 
 export function createPersistedWorkspaceRecord(input: {
   workspaceId: string;
+  defaultAgentId?: string | null;
   projectId: string;
   cwd: string;
   kind: PersistedWorkspaceKind;
@@ -510,6 +517,7 @@ export function createPersistedWorkspaceRecord(input: {
 }): PersistedWorkspaceRecord {
   return PersistedWorkspaceRecordSchema.parse({
     ...input,
+    defaultAgentId: input.defaultAgentId ?? null,
     title: input.title ?? null,
     branch: input.branch ?? null,
     worktreeRoot: input.worktreeRoot ?? null,

@@ -12,6 +12,8 @@ import {
   GitPullRequest,
   Globe,
   Monitor,
+  Power,
+  PowerOff,
   SquareTerminal,
 } from "lucide-react-native";
 import { WorkspaceHoverCard } from "@/components/workspace-hover-card";
@@ -28,6 +30,7 @@ import { shouldRenderSyncedStatusLoader } from "@/utils/status-loader";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { resolveSidebarWorkspacePrimaryLabel } from "@/components/sidebar/sidebar-workspace-title";
 import { SidebarWorkspaceActivityTime } from "@/components/sidebar/sidebar-workspace-activity-time";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 const DEFAULT_STATUS_DOT_SIZE = 7;
 const EMPHASIZED_STATUS_DOT_SIZE = 9;
@@ -54,6 +57,8 @@ const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedCircleAlert = withUnistyles(CircleAlert);
 const ThemedSyncedLoader = withUnistyles(SyncedLoader);
 const ThemedMonitor = withUnistyles(Monitor);
+const ThemedPower = withUnistyles(Power);
+const ThemedPowerOff = withUnistyles(PowerOff);
 const ThemedFolder = withUnistyles(Folder);
 const ThemedFolderGit2 = withUnistyles(FolderGit2);
 const ThemedGlobe = withUnistyles(Globe);
@@ -136,6 +141,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
         <WorkspaceStatusIndicator
           bucket={workspace.statusBucket}
           workspaceKind={workspace.workspaceKind}
+          runtimeResidency={workspace.runtimeResidency}
           loading={isLoading}
           reserveIdleSpace={reserveIdleStatusIndicatorSpace}
         />
@@ -195,11 +201,13 @@ function WorkspaceScriptIcon({ kind }: { kind: SidebarWorkspaceScriptIconKind })
 function WorkspaceStatusIndicator({
   bucket,
   workspaceKind,
+  runtimeResidency,
   loading = false,
   reserveIdleSpace = true,
 }: {
   bucket: SidebarWorkspaceEntry["statusBucket"];
   workspaceKind: SidebarWorkspaceEntry["workspaceKind"];
+  runtimeResidency: SidebarWorkspaceEntry["runtimeResidency"];
   loading?: boolean;
   reserveIdleSpace?: boolean;
 }) {
@@ -238,6 +246,9 @@ function WorkspaceStatusIndicator({
   }
 
   if (bucket === "done") {
+    if (runtimeResidency) {
+      return <WorkspaceRuntimeResidencyIndicator residency={runtimeResidency} />;
+    }
     return reserveIdleSpace ? (
       <View style={styles.workspaceStatusDot} testID="workspace-status-indicator-done" />
     ) : null;
@@ -267,6 +278,43 @@ function WorkspaceStatusIndicator({
         />
       ) : null}
     </View>
+  );
+}
+
+function WorkspaceRuntimeResidencyIndicator({
+  residency,
+}: {
+  residency: NonNullable<SidebarWorkspaceEntry["runtimeResidency"]>;
+}) {
+  const { t } = useTranslation();
+  const isResident = residency === "resident";
+  const label = t(
+    isResident
+      ? "sidebar.workspace.status.runtimeResident"
+      : "sidebar.workspace.status.runtimeClosed",
+  );
+
+  return (
+    <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
+      <TooltipTrigger asChild>
+        <View
+          accessible
+          accessibilityRole="image"
+          accessibilityLabel={label}
+          style={styles.workspaceStatusDot}
+          testID={`workspace-status-indicator-runtime-${residency}`}
+        >
+          {isResident ? (
+            <ThemedPower size={14} uniProps={greenColorMapping} />
+          ) : (
+            <ThemedPowerOff size={14} uniProps={foregroundMutedColorMapping} />
+          )}
+        </View>
+      </TooltipTrigger>
+      <TooltipContent side="right" align="center" offset={8}>
+        <Text style={styles.runtimeTooltipText}>{label}</Text>
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -566,6 +614,10 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     lineHeight: Math.round(theme.fontSize.xs * 1.25),
+  },
+  runtimeTooltipText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.xs,
   },
   workspacePrBadgeRow: {
     flexDirection: "row",

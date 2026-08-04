@@ -23,6 +23,7 @@ function workspace(
     archivingAt: input.archivingAt ?? null,
     statusEnteredAt: null,
     diffStat: input.diffStat ?? null,
+    defaultAgentId: input.defaultAgentId ?? null,
     scripts: input.scripts ?? [],
   };
 }

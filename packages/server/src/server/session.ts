@@ -213,6 +213,7 @@ import {
   type WorkspaceUpdatesFilter,
 } from "./workspace-directory.js";
 import { shouldEmitPendingBootstrapUpdate } from "./workspace-bootstrap-dedupe.js";
+import { setWorkspaceDefaultAgentIfAbsent } from "./workspace-default-agent.js";
 import {
   createPaseoWorktree,
   type CreatePaseoWorktreeInput,
@@ -1931,6 +1932,8 @@ export class Session {
         return this.handleDeleteAgentRequest(msg.agentId, msg.requestId);
       case "archive_agent_request":
         return this.handleArchiveAgentRequest(msg.agentId, msg.requestId);
+      case "agent.runtime.close.request":
+        return this.handleAgentRuntimeCloseRequest(msg);
       case "close_items_request":
         return this.handleCloseItemsRequest(msg);
       case "update_agent_request":
@@ -2385,6 +2388,89 @@ export class Session {
         requestId,
       },
     });
+  }
+
+  private async handleAgentRuntimeCloseRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.runtime.close.request" }>,
+  ): Promise<void> {
+    try {
+      let record = await this.agentStorage.get(msg.agentId);
+      if (!record || record.archivedAt) {
+        throw new Error(`Unarchived agent ${msg.agentId} not found`);
+      }
+
+      if (record.lastStatus !== "closed" && !this.agentManager.getAgent(msg.agentId)) {
+        // A concurrent close removes the live entry before provider cleanup and persistence finish.
+        // Join it and reread durable state before treating the agent as stored-only.
+        await this.agentManager.waitForAgentClose(msg.agentId);
+        const settledRecord = await this.agentStorage.get(msg.agentId);
+        if (!settledRecord || settledRecord.archivedAt) {
+          throw new Error(`Unarchived agent ${msg.agentId} not found`);
+        }
+        record = settledRecord;
+      }
+
+      if (record.lastStatus !== "closed" && !this.agentManager.getAgent(msg.agentId)) {
+        await ensureUnarchivedAgentLoaded(msg.agentId, {
+          agentManager: this.agentManager,
+          agentStorage: this.agentStorage,
+          logger: this.sessionLogger,
+        });
+      }
+      if (this.agentManager.getAgent(msg.agentId)) {
+        await this.agentManager.closeAgent(msg.agentId);
+      }
+
+      const closedRecord = await this.agentStorage.get(msg.agentId);
+      if (!closedRecord || closedRecord.archivedAt || closedRecord.lastStatus !== "closed") {
+        throw new Error(`Agent ${msg.agentId} did not reach durable closed state`);
+      }
+
+      this.emit({
+        type: "agent.runtime.close.response",
+        payload: {
+          requestId: msg.requestId,
+          agentId: msg.agentId,
+          closed: true,
+          warning: null,
+        },
+      });
+    } catch (error) {
+      let closedRecord: StoredAgentRecord | null = null;
+      try {
+        closedRecord = await this.agentStorage.get(msg.agentId);
+      } catch (readError) {
+        this.sessionLogger.warn(
+          { err: readError, agentId: msg.agentId },
+          "Failed to verify agent runtime state after close error",
+        );
+      }
+      if (closedRecord && !closedRecord.archivedAt && closedRecord.lastStatus === "closed") {
+        this.emit({
+          type: "agent.runtime.close.response",
+          payload: {
+            requestId: msg.requestId,
+            agentId: msg.agentId,
+            closed: true,
+            warning: getErrorMessageOr(error, "Agent runtime cleanup reported an error"),
+          },
+        });
+        return;
+      }
+
+      this.emit({
+        type: "agent.runtime.close.response",
+        payload: {
+          requestId: msg.requestId,
+          agentId: msg.agentId,
+          closed: false,
+          error:
+            closedRecord && !closedRecord.archivedAt
+              ? `Agent ${msg.agentId} did not reach durable closed state: ${getErrorMessageOr(error, "Failed to close agent runtime")}`
+              : getErrorMessageOr(error, "Failed to close agent runtime"),
+        },
+      });
+    }
   }
 
   private async archiveAgentForClose(
@@ -3067,6 +3153,14 @@ export class Session {
         },
       );
       createdAgentId = snapshot.id;
+      const storedAgent = await this.agentStorage.get(snapshot.id);
+      if (storedAgent) {
+        await setWorkspaceDefaultAgentIfAbsent({
+          workspaceRegistry: this.workspaceRegistry,
+          workspaceId: resolvedIntent.intent.workspaceId,
+          agent: storedAgent,
+        });
+      }
       await this.agentUpdates.forwardLiveAgent(snapshot);
       if (resolvedIntent.createdDirectoryWorkspace && trimmedPrompt) {
         this.workspaceAutoName.scheduleForDirectory(
@@ -3289,6 +3383,14 @@ export class Session {
         agentStorage: this.agentStorage,
         logger: this.sessionLogger,
       });
+      const storedAgent = await this.agentStorage.get(snapshot.id);
+      if (storedAgent?.workspaceId) {
+        await setWorkspaceDefaultAgentIfAbsent({
+          workspaceRegistry: this.workspaceRegistry,
+          workspaceId: storedAgent.workspaceId,
+          agent: storedAgent,
+        });
+      }
       if (createdWorkspace) {
         await this.registerWorkspaceForImportedAgent(createdWorkspace);
       }
@@ -4245,6 +4347,7 @@ export class Session {
 
     return {
       id: workspace.workspaceId,
+      defaultAgentId: workspace.defaultAgentId,
       projectId: workspace.projectId,
       projectDisplayName: resolvedProjectRecord
         ? resolveProjectDisplayName(resolvedProjectRecord)

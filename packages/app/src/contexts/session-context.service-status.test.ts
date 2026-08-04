@@ -21,6 +21,7 @@ function workspace(input: {
     archivingAt: null,
     statusEnteredAt: null,
     diffStat: null,
+    defaultAgentId: null,
     scripts: input.scripts ?? [],
   };
 }

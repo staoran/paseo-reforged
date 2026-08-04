@@ -38,6 +38,8 @@ vi.mock("lucide-react-native", () => ({
   GitPullRequest: () => null,
   Globe: () => null,
   Monitor: () => null,
+  Power: () => null,
+  PowerOff: () => null,
   SquareTerminal: () => null,
 }));
 
@@ -57,6 +59,8 @@ const ROW_WORKSPACE: SidebarWorkspaceEntry = {
   statusBucket: "done",
   statusEnteredAt: null,
   lastActivityAt: new Date("2026-08-03T06:55:00.000Z"),
+  defaultAgentId: null,
+  runtimeResidency: null,
   archivingAt: null,
   diffStat: null,
   prHint: null,

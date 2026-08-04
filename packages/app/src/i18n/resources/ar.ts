@@ -575,6 +575,10 @@ export const ar: TranslationResources = {
         reloadingAgent: "وكيل إعادة التحميل...",
         reloadedAgent: "وكيل إعادة تحميل",
         failedToReloadAgent: "فشل في إعادة تحميل الوكيل",
+        agentRuntimeCloseFailed: "تعذر إيقاف runtime الوكيل: {{message}}",
+        agentRuntimeCleanupWarning:
+          "تم إغلاق علامة تبويب الوكيل، لكن تنظيف runtime أبلغ عن تحذير: {{message}}",
+        updateHostToCloseAgentRuntime: "حدّث المضيف لإيقاف runtimes الوكلاء عند إغلاق علامات التبويب.",
       },
       confirmations: {
         unsavedTitle: "تغييرات غير محفوظة",
@@ -586,27 +590,28 @@ export const ar: TranslationResources = {
           "تحتوي {{count}} علامة تبويب على تغييرات غير محفوظة. سيؤدي الإغلاق إلى تجاهل المسودات.",
         close: "يغلق",
         cancel: "يلغي",
-        archive: "أرشيف",
+        stopAgent: "إيقاف وإغلاق",
         closeTerminalTitle: "إغلاق المحطة؟",
         closeTerminalMessage: "سيتم إيقاف أي عملية جارية في هذه المحطة على الفور.",
-        archiveRunningAgentTitle: "وكيل تشغيل الأرشيف؟",
-        archiveRunningAgentMessage:
-          "هذا الوكيل لا يزال قيد التشغيل. ستؤدي أرشفته إلى إيقاف الوكيل وإغلاق علامة التبويب.",
+        stopRunningAgentTitle: "إيقاف الوكيل قيد التشغيل؟",
+        stopRunningAgentMessage:
+          "لا يزال هذا الوكيل قيد التشغيل. سيؤدي إيقاف runtime الخاص به إلى إغلاق علامة التبويب، مع إبقاء الجلسة متاحة.",
         closeTabsLeftTitle: "هل تريد إغلاق علامات التبويب على اليسار؟",
         closeTabsRightTitle: "هل تريد إغلاق علامات التبويب على اليمين؟",
         closeOtherTabsTitle: "هل تريد إغلاق علامات التبويب الأخرى؟",
         bulk: {
-          all: "سيؤدي هذا إلى أرشفة وكيل (وكلاء){{agents}}، وإغلاق محطة (محطات){{terminals}}، وإغلاق علامة (علامات) تبويب{{tabs}}. سيتم إيقاف أي عملية جارية في محطة مغلقة على الفور.",
+          all: "سيؤدي هذا إلى إيقاف {{agents}} runtime للوكيل وإغلاق علامات تبويبها، وإغلاق {{terminals}} محطة و{{tabs}} علامة تبويب أخرى. ستظل جلسات الوكلاء متاحة. سيتم إيقاف أي عملية جارية في محطة مغلقة على الفور.",
           agentsAndTerminals:
-            "سيؤدي هذا إلى أرشفة وكيل (وكلاء){{agents}}وإغلاق محطة (محطات){{terminals}}. سيتم إيقاف أي عملية جارية في محطة مغلقة على الفور.",
+            "سيؤدي هذا إلى إيقاف {{agents}} runtime للوكيل وإغلاق علامات تبويبها، وإغلاق {{terminals}} محطة. ستظل جلسات الوكلاء متاحة. سيتم إيقاف أي عملية جارية في محطة مغلقة على الفور.",
           terminalsAndTabs:
             "سيؤدي هذا إلى إغلاق محطة (محطات){{terminals}}وإغلاق علامة تبويب (علامات تبويب){{tabs}}. سيتم إيقاف أي عملية جارية في محطة مغلقة على الفور.",
           agentsAndTabs:
-            "سيؤدي هذا إلى أرشفة وكيل (وكلاء){{agents}}وإغلاق علامة (علامات) تبويب{{tabs}}.",
+            "سيؤدي هذا إلى إيقاف {{agents}} runtime للوكيل وإغلاق علامات تبويبها، وإغلاق {{tabs}} علامة تبويب أخرى. ستظل جلسات الوكلاء متاحة.",
           terminals:
             "سيؤدي هذا إلى إغلاق محطة (محطات){{terminals}}. سيتم إيقاف أي عملية جارية في محطة مغلقة على الفور.",
           tabs: "سيؤدي هذا إلى إغلاق علامة التبويب (علامات التبويب){{tabs}}.",
-          agents: "سيؤدي هذا إلى أرشفة وكيل (وكلاء){{agents}}.",
+          agents:
+            "سيؤدي هذا إلى إيقاف {{agents}} runtime للوكيل وإغلاق علامات تبويبها. ستظل الجلسات متاحة.",
         },
       },
     },
@@ -976,6 +981,8 @@ export const ar: TranslationResources = {
       status: {
         scriptsAvailable: "البرامج النصية المتاحة",
         creating: "جارٍ الإنشاء...",
+        runtimeResident: "runtime الوكيل نشط",
+        runtimeClosed: "runtime الوكيل متوقف",
       },
       actions: {
         menu: "إجراءات Workspace",

@@ -5481,6 +5481,51 @@ test("sends close_items_request and resolves close_items_response", async () => 
   });
 });
 
+test("sends agent.runtime.close.request and preserves an authoritative false outcome", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const responsePromise = client.closeAgentRuntime("agent-1", "req-close-runtime");
+
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "agent.runtime.close.request",
+    agentId: "agent-1",
+    requestId: "req-close-runtime",
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.runtime.close.response",
+      payload: {
+        requestId: "req-close-runtime",
+        agentId: "agent-1",
+        closed: false,
+        error: "runtime is still resident",
+      },
+    }),
+  );
+
+  await expect(responsePromise).resolves.toEqual({
+    requestId: "req-close-runtime",
+    agentId: "agent-1",
+    closed: false,
+    error: "runtime is still resident",
+  });
+});
+
 test("waitForFinish with timeout=0 omits timeoutMs and has no client deadline", async () => {
   useHeartbeatClock();
   try {

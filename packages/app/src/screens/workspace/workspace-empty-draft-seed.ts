@@ -8,6 +8,7 @@ export function shouldSeedEmptyWorkspaceDraft(input: {
   activeAgentCount: number;
   terminalCount: number;
   tabCount: number;
+  defaultAgentId: string | null;
 }): boolean {
   if (
     !input.isRouteFocused ||
@@ -17,6 +18,10 @@ export function shouldSeedEmptyWorkspaceDraft(input: {
     !input.hasHydratedAgents ||
     !input.hasLoadedTerminals
   ) {
+    return false;
+  }
+
+  if (input.defaultAgentId !== null) {
     return false;
   }
 

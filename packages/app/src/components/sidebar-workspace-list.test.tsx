@@ -1,7 +1,7 @@
 /**
  * @vitest-environment jsdom
  */
-import { act } from "@testing-library/react";
+import { act, fireEvent } from "@testing-library/react";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { WorkspaceScriptPayload } from "@getpaseo/protocol/messages";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -30,6 +30,9 @@ vi.hoisted(() => {
 const pathnameState = vi.hoisted(() => ({
   value: "/",
 }));
+const navigationMocks = vi.hoisted(() => ({
+  navigateToWorkspace: vi.fn(),
+}));
 
 vi.mock("expo-router", () => ({
   router: {
@@ -37,6 +40,16 @@ vi.mock("expo-router", () => ({
   },
   useLocalSearchParams: () => ({}),
   usePathname: () => pathnameState.value,
+}));
+
+vi.mock("@/stores/navigation-active-workspace-store", () => ({
+  navigateToWorkspace: navigationMocks.navigateToWorkspace,
+  useActiveWorkspaceSelection: () => {
+    const match = pathnameState.value.match(/^\/h\/([^/]+)\/workspace\/([^/?]+)/);
+    return match?.[1] && match[2]
+      ? { serverId: decodeURIComponent(match[1]), workspaceId: decodeURIComponent(match[2]) }
+      : null;
+  },
 }));
 
 vi.mock("react-native-draggable-flatlist", async () => {
@@ -94,7 +107,20 @@ vi.mock("@/components/ui/context-menu", () => ({
   ContextMenu: ({ children }: { children: React.ReactNode }) => children,
   ContextMenuContent: () => null,
   ContextMenuItem: () => null,
-  ContextMenuTrigger: ({ children }: { children: React.ReactNode }) => children,
+  ContextMenuTrigger: ({
+    children,
+    onPress,
+    testID,
+  }: {
+    children: React.ReactNode;
+    onPress?: () => void;
+    testID?: string;
+  }) =>
+    React.createElement(
+      "button",
+      { "data-testid": testID, onClick: onPress, type: "button" },
+      children,
+    ),
 }));
 
 vi.mock("@/components/ui/dropdown-menu", () => ({
@@ -136,6 +162,8 @@ import {
 import { useSidebarWorkspacesList } from "@/hooks/use-sidebar-workspaces-list";
 import { useSidebarWorkspaceEntries } from "@/hooks/use-sidebar-workspace-entries";
 import { SidebarWorkspaceList } from "@/components/sidebar-workspace-list";
+import { buildStatusGroups } from "@/hooks/sidebar-status-view-model";
+import type { PinnedSidebarGroups } from "@/hooks/use-sidebar-pins";
 import { patchWorkspaceScripts } from "@/contexts/session-workspace-scripts";
 import {
   getHostRuntimeStore,
@@ -143,7 +171,7 @@ import {
   type HostRuntimeSnapshot,
 } from "@/runtime/host-runtime";
 import type { HostProfile } from "@/types/host-connection";
-import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
+import { useSessionStore, type Agent, type WorkspaceDescriptor } from "@/stores/session-store";
 import { seedSessionWorkspaces } from "@/test/seed-session";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
@@ -169,6 +197,7 @@ vi.mock("@/contexts/toast-context", () => ({
 }));
 
 const SERVER_ID = "sidebar-render-count";
+const onToggleProjectCollapsed = () => undefined;
 
 interface RenderCounts {
   frame: number;
@@ -198,6 +227,8 @@ function workspace(input: {
   status?: WorkspaceDescriptor["status"];
   scripts?: WorkspaceDescriptor["scripts"];
   diffStat?: WorkspaceDescriptor["diffStat"];
+  defaultAgentId?: string | null;
+  archivingAt?: string | null;
 }): WorkspaceDescriptor {
   return {
     id: input.id,
@@ -210,10 +241,52 @@ function workspace(input: {
     name: input.name,
     status: input.status ?? "done",
     statusEnteredAt: null,
-    archivingAt: null,
+    archivingAt: input.archivingAt ?? null,
     diffStat: input.diffStat ?? null,
+    defaultAgentId: input.defaultAgentId ?? null,
     scripts: input.scripts ?? [],
   };
+}
+
+function agent(input: { id: string; workspaceId: string; status?: Agent["status"] }): Agent {
+  const timestamp = new Date("2026-08-03T12:00:00.000Z");
+  return {
+    serverId: SERVER_ID,
+    id: input.id,
+    provider: "codex",
+    status: input.status ?? "closed",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    lastUserMessageAt: null,
+    lastActivityAt: timestamp,
+    capabilities: {
+      supportsStreaming: true,
+      supportsSessionPersistence: true,
+      supportsDynamicModes: true,
+      supportsMcpServers: true,
+      supportsReasoningStream: true,
+      supportsToolInvocations: true,
+    },
+    currentModeId: null,
+    availableModes: [],
+    pendingPermissions: [],
+    persistence: null,
+    title: null,
+    cwd: "/repo",
+    workspaceId: input.workspaceId,
+    model: null,
+    providerRetryMessage: null,
+    requiresAttention: false,
+    attentionReason: null,
+    attentionTimestamp: null,
+    archivedAt: null,
+    parentAgentId: null,
+    labels: {},
+  };
+}
+
+function pinnedGroupsFor(project: SidebarProjectEntry): PinnedSidebarGroups {
+  return { pinnedChats: [], unpinnedProjects: [project] };
 }
 
 function createWorkspaces(): WorkspaceDescriptor[] {
@@ -441,7 +514,11 @@ function renderSidebarFrame(root: Root, counts: RenderCounts) {
   root.render(<SidebarFrameProbe counts={counts} />);
 }
 
-function SidebarWorkspaceListProbe(): ReactElement {
+function SidebarWorkspaceListProbe({
+  groupMode = "project",
+}: {
+  groupMode?: "project" | "status";
+}): ReactElement {
   const { projects, projectNamesByKey } = useSidebarWorkspacesList({ hostFilters: [SERVER_ID] });
   const placements = React.useMemo(
     () => projects.flatMap((project) => project.workspaces),
@@ -453,10 +530,14 @@ function SidebarWorkspaceListProbe(): ReactElement {
     [projects],
   );
   const handleToggleProjectCollapsed = React.useCallback(() => undefined, []);
+  const statusGroups = React.useMemo(
+    () => buildStatusGroups(Array.from(workspaceEntriesByKey.values()), projectNamesByKey),
+    [projectNamesByKey, workspaceEntriesByKey],
+  );
 
   return (
     <SidebarWorkspaceList
-      statusGroups={[]}
+      statusGroups={statusGroups}
       pinnedGroups={pinnedGroups}
       projects={projects}
       workspaceEntriesByKey={workspaceEntriesByKey}
@@ -464,7 +545,7 @@ function SidebarWorkspaceListProbe(): ReactElement {
       collapsedProjectKeys={new Set()}
       onToggleProjectCollapsed={handleToggleProjectCollapsed}
       shortcutIndexByWorkspaceKey={new Map()}
-      groupMode="project"
+      groupMode={groupMode}
     />
   );
 }
@@ -474,6 +555,7 @@ describe("sidebar workspace render isolation", () => {
   let container: HTMLElement | null = null;
 
   beforeEach(async () => {
+    navigationMocks.navigateToWorkspace.mockReset();
     initializeSidebarState(createWorkspaces());
   });
 
@@ -635,4 +717,170 @@ describe("sidebar workspace render isolation", () => {
       "b-two": 1,
     });
   });
+
+  it("shows runtime residency only when no higher-priority status icon is present", async () => {
+    const workspaces = [
+      workspace({
+        id: "done",
+        projectId: "project-a",
+        projectDisplayName: "Project A",
+        name: "done",
+        status: "done",
+        defaultAgentId: "agent-done",
+      }),
+      workspace({
+        id: "running",
+        projectId: "project-a",
+        projectDisplayName: "Project A",
+        name: "running",
+        status: "running",
+        defaultAgentId: "agent-running",
+      }),
+      workspace({
+        id: "needs-input",
+        projectId: "project-a",
+        projectDisplayName: "Project A",
+        name: "needs-input",
+        status: "needs_input",
+        defaultAgentId: "agent-needs-input",
+      }),
+      workspace({
+        id: "attention",
+        projectId: "project-a",
+        projectDisplayName: "Project A",
+        name: "attention",
+        status: "attention",
+        defaultAgentId: "agent-attention",
+      }),
+      workspace({
+        id: "loading",
+        projectId: "project-a",
+        projectDisplayName: "Project A",
+        name: "loading",
+        status: "done",
+        archivingAt: "2026-08-03T12:01:00.000Z",
+        defaultAgentId: "agent-loading",
+      }),
+    ];
+    const workspaceAgents = new Map(
+      workspaces.map((entry) => {
+        const agentId = entry.defaultAgentId ?? `agent-${entry.id}`;
+        return [agentId, agent({ id: agentId, workspaceId: entry.id })];
+      }),
+    );
+    initializeSidebarState(workspaces);
+    act(() => {
+      useSessionStore.getState().setAgents(SERVER_ID, workspaceAgents);
+    });
+
+    const queryClient = new QueryClient();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(
+        <QueryClientProvider client={queryClient}>
+          <SidebarWorkspaceListProbe />
+        </QueryClientProvider>,
+      );
+    });
+
+    const runtimeIndicators = container.querySelectorAll(
+      '[data-testid="workspace-status-indicator-runtime-closed"]',
+    );
+    expect(runtimeIndicators).toHaveLength(1);
+    expect(runtimeIndicators[0]?.getAttribute("aria-label")).toBe("Agent runtime is stopped");
+    expect(
+      container.querySelector('[data-testid="workspace-status-indicator-running"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="workspace-status-indicator-needs_input"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="workspace-status-indicator-attention"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="workspace-status-indicator-loading"]'),
+    ).not.toBeNull();
+  });
+
+  it.each(["project", "status"] as const)(
+    "opens the persisted default agent from the %s sidebar entry",
+    async (groupMode) => {
+      const defaultWorkspace = workspace({
+        id: "default-workspace",
+        projectId: "project-a",
+        projectDisplayName: "Project A",
+        name: "default-workspace",
+        defaultAgentId: "initial-agent",
+      });
+      const workspaceEntry = createSidebarWorkspaceEntry({
+        serverId: SERVER_ID,
+        workspace: defaultWorkspace,
+        workspaceAgents: new Map([
+          ["initial-agent", { workspaceId: defaultWorkspace.id, archivedAt: null }],
+        ]),
+        workspaceRuntimeResidency: new Map([[defaultWorkspace.id, "closed"]]),
+      });
+      const project: SidebarProjectEntry = {
+        projectKey: "project-a",
+        projectName: "Project A",
+        projectKind: "git",
+        iconWorkingDir: "/repo/project-a",
+        hosts: [
+          {
+            serverId: SERVER_ID,
+            projectId: "project-a",
+            iconWorkingDir: "/repo/project-a",
+            canCreateWorktree: true,
+          },
+        ],
+        workspaces: [workspaceEntry],
+      };
+      const workspaceEntriesByKey = new Map([[workspaceEntry.workspaceKey, workspaceEntry]]);
+      const projectNamesByKey = new Map([[project.projectKey, project.projectName]]);
+      const statusGroups = buildStatusGroups([workspaceEntry], projectNamesByKey);
+      const pinnedGroups = pinnedGroupsFor(project);
+      const collapsedProjectKeys = new Set<string>();
+      const shortcutIndexByWorkspaceKey = new Map<string, number>();
+
+      const queryClient = new QueryClient();
+      container = document.createElement("div");
+      document.body.appendChild(container);
+      root = createRoot(container);
+      await act(async () => {
+        root?.render(
+          <QueryClientProvider client={queryClient}>
+            <SidebarWorkspaceList
+              statusGroups={statusGroups}
+              pinnedGroups={pinnedGroups}
+              projects={[project]}
+              workspaceEntriesByKey={workspaceEntriesByKey}
+              projectNamesByKey={projectNamesByKey}
+              collapsedProjectKeys={collapsedProjectKeys}
+              onToggleProjectCollapsed={onToggleProjectCollapsed}
+              shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
+              groupMode={groupMode}
+            />
+          </QueryClientProvider>,
+        );
+      });
+
+      const expectedRowTestId = `sidebar-workspace-row-${SERVER_ID}:default-workspace`;
+      const rows = Array.from(
+        container.querySelectorAll('[data-testid^="sidebar-workspace-row-"]'),
+      );
+      const rowTestIds = rows.map((row) => row.getAttribute("data-testid"));
+      expect(rowTestIds).toContain(expectedRowTestId);
+      const row = rows.find(
+        (candidate) => candidate.getAttribute("data-testid") === expectedRowTestId,
+      );
+      fireEvent.click(row as Element);
+      expect(navigationMocks.navigateToWorkspace).toHaveBeenCalledWith({
+        serverId: SERVER_ID,
+        workspaceId: "default-workspace",
+        target: { kind: "agent", agentId: "initial-agent" },
+      });
+    },
+  );
 });

@@ -376,6 +376,23 @@ describe("translation resources", () => {
     expect(en.workspace.tabs.toasts.reloadingAgent).toBe("Reloading agent...");
     expect(en.workspace.tabs.toasts.reloadedAgent).toBe("Reloaded agent");
     expect(en.workspace.tabs.toasts.failedToReloadAgent).toBe("Failed to reload agent");
+    expect(en.workspace.tabs.toasts.agentRuntimeCloseFailed).toBe(
+      "Could not stop the agent runtime: {{message}}",
+    );
+    expect(en.workspace.tabs.toasts.agentRuntimeCleanupWarning).toBe(
+      "The agent tab was closed, but runtime cleanup reported: {{message}}",
+    );
+    expect(en.workspace.tabs.toasts.updateHostToCloseAgentRuntime).toBe(
+      "Update the host to stop agent runtimes when closing tabs.",
+    );
+    expect(en.workspace.tabs.confirmations.stopAgent).toBe("Stop and close");
+    expect(en.workspace.tabs.confirmations.stopRunningAgentTitle).toBe("Stop running agent?");
+    expect(en.workspace.tabs.confirmations.stopRunningAgentMessage).toContain(
+      "session will remain available",
+    );
+    expect(en.workspace.tabs.confirmations).not.toHaveProperty("archive");
+    expect(en.workspace.tabs.confirmations).not.toHaveProperty("archiveRunningAgentTitle");
+    expect(en.workspace.tabs.confirmations).not.toHaveProperty("archiveRunningAgentMessage");
     expect(en.workspace.header.toasts.workspacePathCopiedLabel).toBe("Workspace path");
     expect(en.workspace.header.toasts.branchNameCopiedLabel).toBe("Branch name");
   });

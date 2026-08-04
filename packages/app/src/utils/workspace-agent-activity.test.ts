@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { Agent } from "@/stores/session-store";
-import { buildWorkspaceAgentActivityIndex } from "./workspace-agent-activity";
+import {
+  buildWorkspaceAgentActivityIndex,
+  buildWorkspaceRuntimeResidencyIndex,
+} from "./workspace-agent-activity";
 
 function agent(input: {
   id: string;
@@ -321,5 +324,102 @@ describe("workspace agent activity index", () => {
       enteredAt: new Date("2026-06-01T10:00:00.000Z"),
       lastActivityAt: new Date("2026-06-01T10:05:00.000Z"),
     });
+  });
+});
+
+describe("workspace runtime residency index", () => {
+  it("is resident when any unarchived root or subagent runtime is resident", () => {
+    const index = buildWorkspaceRuntimeResidencyIndex(
+      new Map([
+        [
+          "root",
+          agent({
+            id: "root",
+            workspaceId: "workspace-a",
+            status: "closed",
+            updatedAt: "2026-06-01T10:00:00.000Z",
+          }),
+        ],
+        [
+          "child",
+          agent({
+            id: "child",
+            workspaceId: "workspace-a",
+            status: "idle",
+            updatedAt: "2026-06-01T10:01:00.000Z",
+            parentAgentId: "root",
+          }),
+        ],
+      ]),
+    );
+
+    expect(index).toEqual(new Map([["workspace-a", "resident"]]));
+  });
+
+  it("is closed only when every unarchived managed agent is closed", () => {
+    const index = buildWorkspaceRuntimeResidencyIndex(
+      new Map([
+        [
+          "root",
+          agent({
+            id: "root",
+            workspaceId: "workspace-a",
+            status: "closed",
+            updatedAt: "2026-06-01T10:00:00.000Z",
+          }),
+        ],
+        [
+          "child",
+          agent({
+            id: "child",
+            workspaceId: "workspace-a",
+            status: "closed",
+            updatedAt: "2026-06-01T10:01:00.000Z",
+            parentAgentId: "root",
+          }),
+        ],
+      ]),
+    );
+
+    expect(index).toEqual(new Map([["workspace-a", "closed"]]));
+  });
+
+  it("omits workspaces with no unarchived managed agents", () => {
+    const index = buildWorkspaceRuntimeResidencyIndex(
+      new Map([
+        [
+          "archived",
+          agent({
+            id: "archived",
+            workspaceId: "workspace-a",
+            status: "idle",
+            updatedAt: "2026-06-01T10:00:00.000Z",
+            archivedAt: "2026-06-01T10:01:00.000Z",
+          }),
+        ],
+      ]),
+    );
+
+    expect(index).toEqual(new Map());
+  });
+
+  it("preserves the previous index when residency is unchanged", () => {
+    const previous = new Map([["workspace-a", "closed" as const]]);
+    const next = buildWorkspaceRuntimeResidencyIndex(
+      new Map([
+        [
+          "root",
+          agent({
+            id: "root",
+            workspaceId: "workspace-a",
+            status: "closed",
+            updatedAt: "2026-06-01T10:00:00.000Z",
+          }),
+        ],
+      ]),
+      previous,
+    );
+
+    expect(next).toBe(previous);
   });
 });

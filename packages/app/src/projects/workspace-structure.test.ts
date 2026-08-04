@@ -33,6 +33,7 @@ function workspace(id: string, projectId: string, root: string): WorkspaceDescri
     statusEnteredAt: null,
     archivingAt: null,
     diffStat: null,
+    defaultAgentId: null,
     scripts: [],
   };
 }

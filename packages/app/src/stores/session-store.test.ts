@@ -6,6 +6,7 @@ import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
 import {
   normalizeWorkspaceDescriptor,
   useSessionStore,
+  type Agent,
   type WorkspaceDescriptor,
 } from "./session-store";
 import { patchWorkspaceScripts } from "../contexts/session-workspace-scripts";
@@ -27,12 +28,51 @@ function createWorkspace(
     statusEnteredAt: input.statusEnteredAt ?? null,
     archivingAt: input.archivingAt ?? null,
     diffStat: input.diffStat ?? null,
+    defaultAgentId: input.defaultAgentId ?? null,
     scripts: input.scripts ?? [],
+  };
+}
+
+function createAgent(input: { id: string; workspaceId: string; status: Agent["status"] }): Agent {
+  const timestamp = new Date("2026-08-03T12:00:00.000Z");
+  return {
+    serverId: "test-server",
+    id: input.id,
+    provider: "codex",
+    status: input.status,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    lastUserMessageAt: null,
+    lastActivityAt: timestamp,
+    capabilities: {
+      supportsStreaming: true,
+      supportsSessionPersistence: true,
+      supportsDynamicModes: true,
+      supportsMcpServers: true,
+      supportsReasoningStream: true,
+      supportsToolInvocations: true,
+    },
+    currentModeId: null,
+    availableModes: [],
+    pendingPermissions: [],
+    persistence: null,
+    title: null,
+    cwd: "/repo",
+    workspaceId: input.workspaceId,
+    model: null,
+    providerRetryMessage: null,
+    requiresAttention: false,
+    attentionReason: null,
+    attentionTimestamp: null,
+    archivedAt: null,
+    parentAgentId: null,
+    labels: {},
   };
 }
 
 afterEach(() => {
   useSessionStore.getState().clearSession("test-server");
+  useSessionStore.getState().clearSession("restore-server");
 });
 
 function initializeTestSession(): void {
@@ -182,6 +222,33 @@ describe("normalizeWorkspaceDescriptor", () => {
     expect(workspace.archivingAt).toBeNull();
   });
 
+  it("normalizes a missing default agent id to null and preserves an explicit id", () => {
+    const payload = {
+      id: "1",
+      projectId: "1",
+      projectDisplayName: "Project 1",
+      projectRootPath: "/repo",
+      workspaceDirectory: "/repo",
+      projectKind: "git",
+      workspaceKind: "checkout",
+      name: "main",
+      archivingAt: null,
+      status: "done",
+      statusEnteredAt: null,
+      activityAt: null,
+      diffStat: null,
+      scripts: [],
+    } satisfies WorkspaceDescriptorPayload;
+
+    expect(normalizeWorkspaceDescriptor(payload).defaultAgentId).toBeNull();
+    expect(
+      normalizeWorkspaceDescriptor({
+        ...payload,
+        defaultAgentId: "agent-default",
+      }).defaultAgentId,
+    ).toBe("agent-default");
+  });
+
   it("normalizes statusEnteredAt strings to Date and missing or null values to null", () => {
     const basePayload = {
       id: "1",
@@ -262,6 +329,51 @@ describe("normalizeWorkspaceDescriptor", () => {
         mainRepoRoot: null,
       },
     });
+  });
+});
+
+describe("workspace runtime residency projection", () => {
+  it("updates residency whenever the session agent map changes", () => {
+    initializeTestSession();
+    const store = useSessionStore.getState();
+
+    store.setAgents(
+      "test-server",
+      new Map([
+        ["agent-1", createAgent({ id: "agent-1", workspaceId: "workspace-a", status: "idle" })],
+      ]),
+    );
+    expect(useSessionStore.getState().sessions["test-server"]?.workspaceRuntimeResidency).toEqual(
+      new Map([["workspace-a", "resident"]]),
+    );
+
+    store.setAgents(
+      "test-server",
+      new Map([
+        ["agent-1", createAgent({ id: "agent-1", workspaceId: "workspace-a", status: "closed" })],
+      ]),
+    );
+    expect(useSessionStore.getState().sessions["test-server"]?.workspaceRuntimeResidency).toEqual(
+      new Map([["workspace-a", "closed"]]),
+    );
+  });
+
+  it("rebuilds residency when restoring a cached session replica", () => {
+    const closedAgent = createAgent({
+      id: "agent-1",
+      workspaceId: "workspace-a",
+      status: "closed",
+    });
+    useSessionStore.getState().restoreSessionReplica("restore-server", {
+      agents: new Map([[closedAgent.id, { ...closedAgent, serverId: "restore-server" }]]),
+      workspaces: new Map(),
+      projects: new Map(),
+      timeline: null,
+    });
+
+    expect(
+      useSessionStore.getState().sessions["restore-server"]?.workspaceRuntimeResidency,
+    ).toEqual(new Map([["workspace-a", "closed"]]));
   });
 });
 

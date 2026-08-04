@@ -29,6 +29,7 @@ function workspaceWithForge(forge: string | undefined, prUrl: string): Workspace
     statusEnteredAt: null,
     archivingAt: null,
     diffStat: null,
+    defaultAgentId: null,
     scripts: [],
     forge,
     githubRuntime: {
@@ -84,6 +85,42 @@ describe("createSidebarWorkspaceEntry activity threading", () => {
     });
 
     expect(entry.lastActivityAt).toBe(lastActivityAt);
+  });
+});
+
+describe("createSidebarWorkspaceEntry runtime threading", () => {
+  it("exposes residency and a valid unarchived default agent target", () => {
+    const source = workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42");
+    source.defaultAgentId = "agent-default";
+
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: source,
+      workspaceAgents: new Map([["agent-default", { workspaceId: "ws-1", archivedAt: null }]]),
+      workspaceRuntimeResidency: new Map([["ws-1", "closed"]]),
+    });
+
+    expect(entry.defaultAgentId).toBe("agent-default");
+    expect(entry.runtimeResidency).toBe("closed");
+  });
+
+  it("drops stale, archived, and cross-workspace default agent targets", () => {
+    const source = workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42");
+    source.defaultAgentId = "agent-default";
+
+    for (const workspaceAgents of [
+      new Map(),
+      new Map([["agent-default", { workspaceId: "ws-1", archivedAt: new Date() }]]),
+      new Map([["agent-default", { workspaceId: "other", archivedAt: null }]]),
+    ]) {
+      expect(
+        createSidebarWorkspaceEntry({
+          serverId: "srv",
+          workspace: source,
+          workspaceAgents,
+        }).defaultAgentId,
+      ).toBeNull();
+    }
   });
 });
 
@@ -159,6 +196,7 @@ function workspace(input: {
     statusEnteredAt: input.statusEnteredAt ?? null,
     archivingAt: null,
     diffStat: null,
+    defaultAgentId: null,
     scripts: [],
   };
 }
@@ -310,7 +348,9 @@ describe("shared sidebar workspace model", () => {
       sessions: [
         {
           serverId: "host-a",
+          agents: new Map(),
           workspaceAgentActivity: new Map(),
+          workspaceRuntimeResidency: new Map(),
           workspaces: new Map([
             [
               "main",
@@ -326,7 +366,9 @@ describe("shared sidebar workspace model", () => {
         },
         {
           serverId: "host-b",
+          agents: new Map(),
           workspaceAgentActivity: new Map(),
+          workspaceRuntimeResidency: new Map(),
           workspaces: new Map([
             [
               "feature",
@@ -413,7 +455,9 @@ describe("shared sidebar workspace model", () => {
       sessions: [
         {
           serverId: "srv",
+          agents: new Map(),
           workspaceAgentActivity: new Map(),
+          workspaceRuntimeResidency: new Map(),
           workspaces: new Map([
             ["one", one],
             ["two", two],
@@ -426,7 +470,9 @@ describe("shared sidebar workspace model", () => {
       sessions: [
         {
           serverId: "srv",
+          agents: new Map(),
           workspaceAgentActivity: new Map(),
+          workspaceRuntimeResidency: new Map(),
           workspaces: new Map([
             ["one", one],
             ["two", { ...two, status: "running" }],
@@ -450,7 +496,9 @@ describe("shared sidebar workspace model", () => {
       sessions: [
         {
           serverId: "srv",
+          agents: new Map(),
           workspaceAgentActivity: new Map(),
+          workspaceRuntimeResidency: new Map(),
           workspaces: new Map([
             [
               "clone-a",

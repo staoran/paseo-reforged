@@ -493,29 +493,34 @@ class CreateAgentTestSession implements AgentSession {
 
   async interrupt(): Promise<void> {}
 
-  async close(): Promise<void> {}
+  readonly close = vi.fn(async (): Promise<void> => {});
 }
 
 class CreateAgentTestClient implements AgentClient {
   readonly provider = "codex";
   readonly capabilities = CREATE_AGENT_TEST_CAPABILITIES;
+  readonly sessions: CreateAgentTestSession[] = [];
 
   async createSession(
     config: AgentSessionConfig,
     _launchContext?: AgentLaunchContext,
     _options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
-    return new CreateAgentTestSession(config);
+    const session = new CreateAgentTestSession(config);
+    this.sessions.push(session);
+    return session;
   }
 
   async resumeSession(
     _handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
   ): Promise<AgentSession> {
-    return new CreateAgentTestSession({
+    const session = new CreateAgentTestSession({
       provider: this.provider,
       cwd: overrides?.cwd ?? process.cwd(),
     });
+    this.sessions.push(session);
+    return session;
   }
 
   async fetchCatalog() {
@@ -533,12 +538,15 @@ class CreateAgentTestClient implements AgentClient {
 function createSessionForWorkspaceTests(
   options: {
     appVersion?: string | null;
+    serverId?: string;
     onMessage?: (message: SessionOutboundMessage) => void;
     onWorkspaceRecovered?: SessionOptions["onWorkspaceRecovered"];
     workspaceGitService?: ReturnType<typeof createNoopWorkspaceGitService>;
     terminalManager?: TerminalManager | null;
     projectRegistry?: SessionOptions["projectRegistry"];
     workspaceRegistry?: SessionOptions["workspaceRegistry"];
+    agentManager?: SessionOptions["agentManager"];
+    agentStorage?: SessionOptions["agentStorage"];
     github?: ForgeService;
     paseoHome?: string;
     worktreesRoot?: string;
@@ -557,16 +565,18 @@ function createSessionForWorkspaceTests(
     warn: vi.fn(),
     error: vi.fn(),
   };
-  const agentManager = asAgentManager({
-    subscribe: () => () => {},
-    listAgents: () => [],
-    getAgent: () => null,
-    archiveAgent: async () => ({ archivedAt: new Date().toISOString() }),
-    archiveSnapshot: async () => ({}),
-    unarchiveSnapshot: async () => true,
-    clearAgentAttention: async () => {},
-    notifyAgentState: () => {},
-  });
+  const agentManager =
+    options.agentManager ??
+    asAgentManager({
+      subscribe: () => () => {},
+      listAgents: () => [],
+      getAgent: () => null,
+      archiveAgent: async () => ({ archivedAt: new Date().toISOString() }),
+      archiveSnapshot: async () => ({}),
+      unarchiveSnapshot: async () => true,
+      clearAgentAttention: async () => {},
+      notifyAgentState: () => {},
+    });
   const workspaceRegistry: SessionOptions["workspaceRegistry"] = options.workspaceRegistry ?? {
     initialize: async () => {},
     existsOnDisk: async () => true,
@@ -619,6 +629,7 @@ function createSessionForWorkspaceTests(
   const session = asTestSession(
     new Session({
       clientId: "test-client",
+      serverId: options.serverId,
       scopes: ["*"],
       appVersion: options.appVersion ?? null,
       onMessage: options.onMessage ?? vi.fn(),
@@ -629,32 +640,34 @@ function createSessionForWorkspaceTests(
       paseoHome: options.paseoHome ?? "/tmp/paseo-test",
       worktreesRoot: options.worktreesRoot,
       agentManager,
-      agentStorage: asAgentStorage({
-        list: async () => [
-          createPersistedWorkspaceRecord({
-            workspaceId: "ws-repo-running",
-            projectId: "proj-repo-running",
-            cwd: REPO_CWD,
-            kind: "directory",
-            displayName: "repo",
-            createdAt: "2026-03-01T12:00:00.000Z",
-            updatedAt: "2026-03-01T12:00:00.000Z",
-          }),
-        ],
-        get: async (workspaceId: string) =>
-          workspaceId === "ws-repo-running"
-            ? createPersistedWorkspaceRecord({
-                workspaceId: "ws-repo-running",
-                projectId: "proj-repo-running",
-                cwd: REPO_CWD,
-                kind: "directory",
-                displayName: "repo",
-                createdAt: "2026-03-01T12:00:00.000Z",
-                updatedAt: "2026-03-01T12:00:00.000Z",
-              })
-            : null,
-        upsert: async () => {},
-      }),
+      agentStorage:
+        options.agentStorage ??
+        asAgentStorage({
+          list: async () => [
+            createPersistedWorkspaceRecord({
+              workspaceId: "ws-repo-running",
+              projectId: "proj-repo-running",
+              cwd: REPO_CWD,
+              kind: "directory",
+              displayName: "repo",
+              createdAt: "2026-03-01T12:00:00.000Z",
+              updatedAt: "2026-03-01T12:00:00.000Z",
+            }),
+          ],
+          get: async (workspaceId: string) =>
+            workspaceId === "ws-repo-running"
+              ? createPersistedWorkspaceRecord({
+                  workspaceId: "ws-repo-running",
+                  projectId: "proj-repo-running",
+                  cwd: REPO_CWD,
+                  kind: "directory",
+                  displayName: "repo",
+                  createdAt: "2026-03-01T12:00:00.000Z",
+                  updatedAt: "2026-03-01T12:00:00.000Z",
+                })
+              : null,
+          upsert: async () => {},
+        }),
       projectRegistry: options.projectRegistry ?? {
         initialize: async () => {},
         existsOnDisk: async () => true,
@@ -750,6 +763,381 @@ test("client heartbeat clears attention for the focused terminal", async () => {
     focusedTerminalId: "terminal-1",
     appVisible: true,
   });
+});
+
+test("create_agent_request registers the workspace default before close-only runtime shutdown", async () => {
+  const workdir = mkdtempSync(path.join(tmpdir(), "paseo-agent-runtime-close-"));
+  const cwd = path.join(workdir, "repo");
+  const agentId = "00000000-0000-4000-8000-000000000550";
+  mkdirSync(cwd, { recursive: true });
+
+  const logger = {
+    child: () => logger,
+    trace: vi.fn(),
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  };
+  const agentStorage = new AgentStorage(path.join(workdir, "agents"), asSessionLogger(logger));
+  const client = new CreateAgentTestClient();
+  const agentManager = new AgentManager({
+    clients: { codex: client },
+    registry: agentStorage,
+    logger: asSessionLogger(logger),
+    idFactory: () => agentId,
+  });
+  const projectRegistry = new FileBackedProjectRegistry(
+    path.join(workdir, "projects.json"),
+    asSessionLogger(logger),
+  );
+  const workspaceRegistry = new FileBackedWorkspaceRegistry(
+    path.join(workdir, "workspaces.json"),
+    asSessionLogger(logger),
+  );
+  const emitted: SessionOutboundMessage[] = [];
+  const session = createSessionForWorkspaceTests({
+    serverId: "test-server",
+    paseoHome: path.join(workdir, "paseo-home"),
+    onMessage: (message) => emitted.push(message),
+    agentManager,
+    agentStorage,
+    projectRegistry,
+    workspaceRegistry,
+  });
+
+  try {
+    await session.handleMessage({
+      type: "create_agent_request",
+      requestId: "req-create-default",
+      config: { provider: "codex", cwd },
+      attachments: [],
+    });
+
+    const createdAgent = agentManager.getAgent(agentId);
+    expect(createdAgent?.workspaceId).toBeTruthy();
+    expect(findByType(emitted, "status")?.payload).toMatchObject({
+      status: "agent_created",
+      requestId: "req-create-default",
+      agentId,
+    });
+
+    emitted.length = 0;
+    await session.handleMessage({
+      type: "fetch_workspaces_request",
+      requestId: "req-fetch-default",
+    });
+    expect(findByType(emitted, "fetch_workspaces_response")).toMatchObject({
+      payload: {
+        requestId: "req-fetch-default",
+        entries: [{ id: createdAgent?.workspaceId, defaultAgentId: agentId }],
+      },
+    });
+
+    emitted.length = 0;
+    await session.handleMessage({
+      type: "agent.runtime.close.request",
+      agentId,
+      requestId: "req-close-runtime",
+    });
+    expect(emitted).toContainEqual({
+      type: "agent.runtime.close.response",
+      payload: {
+        requestId: "req-close-runtime",
+        agentId,
+        closed: true,
+        warning: null,
+      },
+    });
+    expect(client.sessions[0]?.close).toHaveBeenCalledTimes(1);
+    const storedAgent = await agentStorage.get(agentId);
+    expect(storedAgent).toMatchObject({
+      id: agentId,
+      lastStatus: "closed",
+    });
+    expect(storedAgent?.archivedAt ?? null).toBeNull();
+  } finally {
+    await Promise.all(
+      agentManager.listAgents().map((agent) => agentManager.closeAgent(agent.id)),
+    ).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("concurrent agent.runtime.close requests do not resume a runtime while it is closing", async () => {
+  const workdir = mkdtempSync(path.join(tmpdir(), "paseo-agent-runtime-concurrent-close-"));
+  const cwd = path.join(workdir, "repo");
+  const agentId = "00000000-0000-4000-8000-000000000547";
+  mkdirSync(cwd, { recursive: true });
+
+  const logger = {
+    child: () => logger,
+    trace: vi.fn(),
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  };
+  const agentStorage = new AgentStorage(path.join(workdir, "agents"), asSessionLogger(logger));
+  const client = new CreateAgentTestClient();
+  const agentManager = new AgentManager({
+    clients: { codex: client },
+    registry: agentStorage,
+    logger: asSessionLogger(logger),
+    idFactory: () => agentId,
+  });
+  const emitted: SessionOutboundMessage[] = [];
+  const session = createSessionForWorkspaceTests({
+    serverId: "test-server",
+    paseoHome: path.join(workdir, "paseo-home"),
+    onMessage: (message) => emitted.push(message),
+    agentManager,
+    agentStorage,
+    projectRegistry: new FileBackedProjectRegistry(
+      path.join(workdir, "projects.json"),
+      asSessionLogger(logger),
+    ),
+    workspaceRegistry: new FileBackedWorkspaceRegistry(
+      path.join(workdir, "workspaces.json"),
+      asSessionLogger(logger),
+    ),
+  });
+  let signalCloseStarted!: () => void;
+  let releaseClose!: () => void;
+  const closeStarted = new Promise<void>((resolve) => {
+    signalCloseStarted = resolve;
+  });
+  const closeAllowed = new Promise<void>((resolve) => {
+    releaseClose = resolve;
+  });
+
+  try {
+    await session.handleMessage({
+      type: "create_agent_request",
+      requestId: "req-create-concurrent-close",
+      config: { provider: "codex", cwd },
+      attachments: [],
+    });
+    client.sessions[0]?.close.mockImplementationOnce(async () => {
+      signalCloseStarted();
+      await closeAllowed;
+    });
+
+    emitted.length = 0;
+    const firstClose = session.handleMessage({
+      type: "agent.runtime.close.request",
+      agentId,
+      requestId: "req-close-concurrent-1",
+    });
+    await closeStarted;
+    const secondClose = session.handleMessage({
+      type: "agent.runtime.close.request",
+      agentId,
+      requestId: "req-close-concurrent-2",
+    });
+    await waitForImmediate();
+    releaseClose();
+    await Promise.all([firstClose, secondClose]);
+
+    expect(client.sessions).toHaveLength(1);
+    expect(client.sessions[0]?.close).toHaveBeenCalledTimes(1);
+    const responses = filterByType(emitted, "agent.runtime.close.response");
+    expect(responses).toHaveLength(2);
+    expect(responses.every((response) => response.payload.closed)).toBe(true);
+  } finally {
+    releaseClose();
+    await Promise.all(
+      agentManager.listAgents().map((agent) => agentManager.closeAgent(agent.id)),
+    ).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("agent.runtime.close reports durable closure with a cleanup warning and retries idempotently", async () => {
+  const workdir = mkdtempSync(path.join(tmpdir(), "paseo-agent-runtime-warning-"));
+  const cwd = path.join(workdir, "repo");
+  const agentId = "00000000-0000-4000-8000-000000000549";
+  mkdirSync(cwd, { recursive: true });
+
+  const logger = {
+    child: () => logger,
+    trace: vi.fn(),
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  };
+  const agentStorage = new AgentStorage(path.join(workdir, "agents"), asSessionLogger(logger));
+  const client = new CreateAgentTestClient();
+  const agentManager = new AgentManager({
+    clients: { codex: client },
+    registry: agentStorage,
+    logger: asSessionLogger(logger),
+    idFactory: () => agentId,
+  });
+  const projectRegistry = new FileBackedProjectRegistry(
+    path.join(workdir, "projects.json"),
+    asSessionLogger(logger),
+  );
+  const workspaceRegistry = new FileBackedWorkspaceRegistry(
+    path.join(workdir, "workspaces.json"),
+    asSessionLogger(logger),
+  );
+  const emitted: SessionOutboundMessage[] = [];
+  const session = createSessionForWorkspaceTests({
+    serverId: "test-server",
+    paseoHome: path.join(workdir, "paseo-home"),
+    onMessage: (message) => emitted.push(message),
+    agentManager,
+    agentStorage,
+    projectRegistry,
+    workspaceRegistry,
+  });
+
+  try {
+    await session.handleMessage({
+      type: "create_agent_request",
+      requestId: "req-create-warning",
+      config: { provider: "codex", cwd },
+      attachments: [],
+    });
+    client.sessions[0]?.close.mockRejectedValueOnce(new Error("provider cleanup failed"));
+
+    emitted.length = 0;
+    await session.handleMessage({
+      type: "agent.runtime.close.request",
+      agentId,
+      requestId: "req-close-warning",
+    });
+    expect(emitted).toContainEqual({
+      type: "agent.runtime.close.response",
+      payload: {
+        requestId: "req-close-warning",
+        agentId,
+        closed: true,
+        warning: "provider cleanup failed",
+      },
+    });
+    expect(client.sessions[0]?.close).toHaveBeenCalledTimes(1);
+    expect((await agentStorage.get(agentId))?.lastStatus).toBe("closed");
+
+    emitted.length = 0;
+    await session.handleMessage({
+      type: "agent.runtime.close.request",
+      agentId,
+      requestId: "req-close-idempotent",
+    });
+    expect(emitted).toContainEqual({
+      type: "agent.runtime.close.response",
+      payload: {
+        requestId: "req-close-idempotent",
+        agentId,
+        closed: true,
+        warning: null,
+      },
+    });
+    expect(client.sessions[0]?.close).toHaveBeenCalledTimes(1);
+
+    const durableRecord = await agentStorage.get(agentId);
+    expect(durableRecord).not.toBeNull();
+    await agentStorage.upsert({ ...durableRecord!, lastStatus: "idle" });
+    emitted.length = 0;
+    await session.handleMessage({
+      type: "agent.runtime.close.request",
+      agentId,
+      requestId: "req-close-stored-runtime",
+    });
+    expect(emitted).toContainEqual({
+      type: "agent.runtime.close.response",
+      payload: {
+        requestId: "req-close-stored-runtime",
+        agentId,
+        closed: true,
+        warning: null,
+      },
+    });
+    expect(client.sessions[1]?.close).toHaveBeenCalledTimes(1);
+  } finally {
+    await Promise.all(
+      agentManager.listAgents().map((agent) => agentManager.closeAgent(agent.id)),
+    ).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("agent.runtime.close returns false when durable closure cannot be confirmed", async () => {
+  const workdir = mkdtempSync(path.join(tmpdir(), "paseo-agent-runtime-persist-failure-"));
+  const cwd = path.join(workdir, "repo");
+  const agentStoragePath = path.join(workdir, "agents");
+  const agentId = "00000000-0000-4000-8000-000000000548";
+  mkdirSync(cwd, { recursive: true });
+
+  const logger = {
+    child: () => logger,
+    trace: vi.fn(),
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  };
+  const agentStorage = new AgentStorage(agentStoragePath, asSessionLogger(logger));
+  const client = new CreateAgentTestClient();
+  const agentManager = new AgentManager({
+    clients: { codex: client },
+    registry: agentStorage,
+    logger: asSessionLogger(logger),
+    idFactory: () => agentId,
+  });
+  const emitted: SessionOutboundMessage[] = [];
+  const session = createSessionForWorkspaceTests({
+    serverId: "test-server",
+    paseoHome: path.join(workdir, "paseo-home"),
+    onMessage: (message) => emitted.push(message),
+    agentManager,
+    agentStorage,
+    projectRegistry: new FileBackedProjectRegistry(
+      path.join(workdir, "projects.json"),
+      asSessionLogger(logger),
+    ),
+    workspaceRegistry: new FileBackedWorkspaceRegistry(
+      path.join(workdir, "workspaces.json"),
+      asSessionLogger(logger),
+    ),
+  });
+
+  try {
+    await session.handleMessage({
+      type: "create_agent_request",
+      requestId: "req-create-persist-failure",
+      config: { provider: "codex", cwd },
+      attachments: [],
+    });
+    rmSync(agentStoragePath, { recursive: true, force: true });
+    writeFileSync(agentStoragePath, "storage unavailable\n");
+
+    emitted.length = 0;
+    await session.handleMessage({
+      type: "agent.runtime.close.request",
+      agentId,
+      requestId: "req-close-persist-failure",
+    });
+
+    expect(emitted).toContainEqual({
+      type: "agent.runtime.close.response",
+      payload: {
+        requestId: "req-close-persist-failure",
+        agentId,
+        closed: false,
+        error: expect.stringContaining(`Agent ${agentId} did not reach durable closed state`),
+      },
+    });
+    expect(client.sessions[0]?.close).toHaveBeenCalledTimes(1);
+  } finally {
+    await Promise.all(
+      agentManager.listAgents().map((agent) => agentManager.closeAgent(agent.id)),
+    ).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 test("create_agent_request keeps requested child cwd when grouped under an existing parent workspace", async () => {
@@ -3990,6 +4378,15 @@ test("import_agent_request registers a workspace for a never-seen cwd", async ()
 test("import_agent_request imports into the workspace that opened the import sheet", async () => {
   const session = createSessionForWorkspaceTests();
   const workspaceId = "ws-repo-running";
+  let workspace = createPersistedWorkspaceRecord({
+    workspaceId,
+    projectId: "proj-repo-running",
+    cwd: REPO_CWD,
+    kind: "directory",
+    displayName: "repo",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
   let importedWorkspaceId: string | undefined;
   let importedTitle: string | null | undefined;
   let workspaceCreated = false;
@@ -4006,6 +4403,12 @@ test("import_agent_request imports into the workspace that opened the import she
   session.workspaceRegistry.upsert = async () => {
     workspaceCreated = true;
   };
+  session.workspaceRegistry.get = async (id: string) => (id === workspaceId ? workspace : null);
+  session.workspaceRegistry.update = async (id, updater) => {
+    if (id !== workspaceId) return null;
+    workspace = updater(workspace);
+    return workspace;
+  };
 
   session.agentManager.importProviderSession = async (input: unknown) => {
     const importInput = input as { workspaceId: string; title?: string | null };
@@ -4021,7 +4424,22 @@ test("import_agent_request imports into the workspace that opened the import she
   };
   session.agentManager.getTimeline = () => [];
   session.agentStorage.list = async () => [];
-  session.agentStorage.get = async () => null;
+  session.agentStorage.get = async (agentId: string) =>
+    agentId === "imported-agent"
+      ? {
+          id: "imported-agent",
+          provider: "codex",
+          cwd: REPO_CWD,
+          workspaceId,
+          createdAt: "2026-05-21T00:00:00.000Z",
+          updatedAt: "2026-05-21T00:00:00.000Z",
+          labels: {},
+          lastStatus: "idle",
+          config: null,
+          persistence: { provider: "codex", sessionId: "session-xyz" },
+          archivedAt: null,
+        }
+      : null;
   session.agentUpdates.forwardLiveAgent = async () => undefined;
 
   await session.handleMessage({
@@ -4037,6 +4455,7 @@ test("import_agent_request imports into the workspace that opened the import she
   expect(importedWorkspaceId).toBe(workspaceId);
   expect(importedTitle).toBe("Imported session title");
   expect(workspaceCreated).toBe(false);
+  expect(workspace.defaultAgentId).toBe("imported-agent");
 });
 
 test("import_agent_request maps an import failure to agent_create_failed", async () => {

@@ -191,6 +191,7 @@ describe("replaceFetchedAgentDirectory", () => {
             statusEnteredAt: null,
             archivingAt: null,
             diffStat: null,
+            defaultAgentId: null,
             scripts: [],
           },
         ],

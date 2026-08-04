@@ -2,14 +2,20 @@ import type { PrHint } from "@/git/pr-hint";
 import { selectPrHintFromStatus } from "@/git/pr-hint";
 import { type HostProjectListItem } from "@/projects/host-project-model";
 import type { PendingCreateAttempt } from "@/stores/create-flow-store";
-import type { WorkspaceDescriptor } from "@/stores/session-store";
+import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
 import type {
   WorkspaceStructureHostPlacement,
   WorkspaceStructureProject,
 } from "@/projects/workspace-structure";
 import { projectDisplayNameFromProjectId } from "@/utils/project-display-name";
-import type { WorkspaceAgentActivity } from "@/utils/workspace-agent-activity";
-import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
+import type {
+  WorkspaceAgentActivity,
+  WorkspaceRuntimeResidency,
+} from "@/utils/workspace-agent-activity";
+import {
+  normalizeWorkspaceOpaqueId,
+  resolveWorkspaceMapKeyByIdentity,
+} from "@/utils/workspace-identity";
 
 const EMPTY_PROJECTS: SidebarProjectEntry[] = [];
 
@@ -35,6 +41,8 @@ export interface SidebarStatusWorkspacePlacement extends SidebarWorkspacePlaceme
 
 export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
   lastActivityAt: Date | null;
+  defaultAgentId: string | null;
+  runtimeResidency: WorkspaceRuntimeResidency | null;
   // Raw user-set title (null when the name is derived from branch/directory).
   // Prefills the rename input and signals whether a reset is available.
   title: string | null;
@@ -67,13 +75,17 @@ export interface SidebarWorkspacePlacementModel {
 
 export interface SidebarWorkspaceSession {
   serverId: string;
+  agents: Map<string, Agent>;
   workspaces: Map<string, WorkspaceDescriptor>;
   workspaceAgentActivity: Map<string, WorkspaceAgentActivity>;
+  workspaceRuntimeResidency: Map<string, WorkspaceRuntimeResidency>;
 }
 
 interface SidebarWorkspaceSessionSource {
+  agents: Map<string, Agent>;
   workspaces: Map<string, WorkspaceDescriptor>;
   workspaceAgentActivity: Map<string, WorkspaceAgentActivity>;
+  workspaceRuntimeResidency: Map<string, WorkspaceRuntimeResidency>;
 }
 
 export function selectSidebarWorkspaceSessions(
@@ -88,8 +100,10 @@ export function selectSidebarWorkspaceSessions(
     }
     selected.push({
       serverId,
+      agents: session.agents,
       workspaces: session.workspaces,
       workspaceAgentActivity: session.workspaceAgentActivity,
+      workspaceRuntimeResidency: session.workspaceRuntimeResidency,
     });
   }
   return selected;
@@ -109,8 +123,10 @@ export function areSidebarWorkspaceSessionsEqual(
       !leftSession ||
       !rightSession ||
       leftSession.serverId !== rightSession.serverId ||
+      leftSession.agents !== rightSession.agents ||
       leftSession.workspaces !== rightSession.workspaces ||
-      leftSession.workspaceAgentActivity !== rightSession.workspaceAgentActivity
+      leftSession.workspaceAgentActivity !== rightSession.workspaceAgentActivity ||
+      leftSession.workspaceRuntimeResidency !== rightSession.workspaceRuntimeResidency
     ) {
       return false;
     }
@@ -144,7 +160,9 @@ export function createSidebarWorkspaceEntry(input: {
   workspace: WorkspaceDescriptor;
   projectKey?: string;
   pendingCreateAttempts?: Record<string, PendingCreateAttempt>;
+  workspaceAgents?: ReadonlyMap<string, Pick<Agent, "workspaceId" | "archivedAt">>;
   workspaceAgentActivity?: ReadonlyMap<string, WorkspaceAgentActivity>;
+  workspaceRuntimeResidency?: ReadonlyMap<string, WorkspaceRuntimeResidency>;
 }): SidebarWorkspaceEntry {
   const projectKey = input.projectKey ?? input.workspace.projectId;
   const effectiveStatus = deriveEffectiveWorkspaceStatus(input);
@@ -165,6 +183,8 @@ export function createSidebarWorkspaceEntry(input: {
     statusBucket: effectiveStatus.status,
     statusEnteredAt: effectiveStatus.enteredAt,
     lastActivityAt: input.workspaceAgentActivity?.get(input.workspace.id)?.lastActivityAt ?? null,
+    defaultAgentId: resolveDefaultAgentId(input),
+    runtimeResidency: input.workspaceRuntimeResidency?.get(input.workspace.id) ?? null,
     archivingAt: input.workspace.archivingAt,
     diffStat: input.workspace.diffStat,
     prHint: selectPrHintFromStatus(
@@ -176,6 +196,26 @@ export function createSidebarWorkspaceEntry(input: {
     scripts: input.workspace.scripts,
     hasRunningScripts: input.workspace.scripts.some((script) => script.lifecycle === "running"),
   };
+}
+
+function resolveDefaultAgentId(input: {
+  workspace: WorkspaceDescriptor;
+  workspaceAgents?: ReadonlyMap<string, Pick<Agent, "workspaceId" | "archivedAt">>;
+}): string | null {
+  const defaultAgentId = input.workspace.defaultAgentId;
+  if (!defaultAgentId) {
+    return null;
+  }
+
+  const agent = input.workspaceAgents?.get(defaultAgentId);
+  if (
+    !agent ||
+    agent.archivedAt ||
+    normalizeWorkspaceOpaqueId(agent.workspaceId) !== normalizeWorkspaceOpaqueId(input.workspace.id)
+  ) {
+    return null;
+  }
+  return defaultAgentId;
 }
 
 function deriveEffectiveWorkspaceStatus(input: {
@@ -328,7 +368,9 @@ export function buildSidebarWorkspaceEntries(input: {
       workspace,
       projectKey: placement.projectKey,
       pendingCreateAttempts: input.pendingCreateAttempts,
+      workspaceAgents: session.agents,
       workspaceAgentActivity: session.workspaceAgentActivity,
+      workspaceRuntimeResidency: session.workspaceRuntimeResidency,
     });
     const previousEntry = input.previousEntries?.get(placement.workspaceKey);
     entries.set(

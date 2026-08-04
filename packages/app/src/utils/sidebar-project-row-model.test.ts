@@ -33,6 +33,8 @@ function workspace(overrides: Partial<SidebarWorkspaceEntry> = {}): SidebarWorks
     ...overrides,
     archivingAt: overrides.archivingAt ?? null,
     lastActivityAt: overrides.lastActivityAt ?? null,
+    defaultAgentId: overrides.defaultAgentId ?? null,
+    runtimeResidency: overrides.runtimeResidency ?? null,
   };
 }
 

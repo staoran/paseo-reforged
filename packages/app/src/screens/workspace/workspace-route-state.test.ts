@@ -15,6 +15,7 @@ function createWorkspaceDescriptor(): WorkspaceDescriptor {
     name: "main",
     status: "running",
     diffStat: null,
+    defaultAgentId: null,
     scripts: [],
     archivingAt: null,
     statusEnteredAt: null,

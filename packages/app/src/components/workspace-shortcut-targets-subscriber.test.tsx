@@ -42,6 +42,7 @@ function workspaceDescriptor(input: {
     archivingAt: null,
     statusEnteredAt: input.statusEnteredAt ?? null,
     diffStat: null,
+    defaultAgentId: null,
     scripts: [],
   };
 }

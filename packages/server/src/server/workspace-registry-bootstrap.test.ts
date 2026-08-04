@@ -237,6 +237,7 @@ describe("bootstrapWorkspaceRegistries", () => {
     expect(workspaces).toHaveLength(1);
     expect(workspaces[0]?.workspaceId).toMatch(/^wks_[0-9a-f]{16}$/);
     expect(workspaces[0]?.cwd).toBe(NON_GIT_PROJECT);
+    expect(workspaces[0]?.defaultAgentId).toBe("agent-1");
     expect(workspaces[0]?.createdAt).toBe("2026-03-01T00:00:00.000Z");
     expect(workspaces[0]?.updatedAt).toBe("2026-03-03T00:00:00.000Z");
 
@@ -450,6 +451,7 @@ describe("bootstrapWorkspaceRegistries", () => {
 
     expect((await agentStorage.get("legacy-agent"))?.workspaceId).toBe("ws-older");
     expect(await workspaceRegistry.list()).toHaveLength(2);
+    expect((await workspaceRegistry.get("ws-older"))?.defaultAgentId).toBe("legacy-agent");
   });
 
   test("migrated legacy agents stay owned by the deterministic workspace when a same-cwd workspace is added later", async () => {

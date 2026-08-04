@@ -37,6 +37,8 @@ function workspace(projectKey: string, workspaceId: string): SidebarWorkspaceEnt
     statusBucket: "done",
     statusEnteredAt: null,
     lastActivityAt: null,
+    defaultAgentId: null,
+    runtimeResidency: null,
     archivingAt: null,
     diffStat: null,
     prHint: null,

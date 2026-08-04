@@ -580,6 +580,11 @@ export const ja: TranslationResources = {
         reloadingAgent: "エージェントを再読み込み中...",
         reloadedAgent: "エージェントを再読み込みしました",
         failedToReloadAgent: "エージェントの再読み込みに失敗しました",
+        agentRuntimeCloseFailed: "エージェントの runtime を停止できませんでした: {{message}}",
+        agentRuntimeCleanupWarning:
+          "エージェントタブは閉じましたが、runtime のクリーンアップで警告が発生しました: {{message}}",
+        updateHostToCloseAgentRuntime:
+          "タブを閉じるときにエージェント runtime を停止するには、ホストを更新してください。",
       },
       confirmations: {
         unsavedTitle: "未保存の変更",
@@ -589,26 +594,28 @@ export const ja: TranslationResources = {
         bulkUnsaved: "{{count}} 個のタブに未保存の変更があります。閉じると下書きが破棄されます。",
         close: "閉じる",
         cancel: "キャンセル",
-        archive: "アーカイブ",
+        stopAgent: "停止して閉じる",
         closeTerminalTitle: "ターミナルを閉じますか？",
         closeTerminalMessage: "このターミナルで実行中のプロセスはすぐに停止されます。",
-        archiveRunningAgentTitle: "実行中のエージェントをアーカイブしますか？",
-        archiveRunningAgentMessage:
-          "このエージェントはまだ実行中です。アーカイブするとエージェントが停止してタブが閉じられます。",
+        stopRunningAgentTitle: "実行中のエージェントを停止しますか？",
+        stopRunningAgentMessage:
+          "このエージェントはまだ実行中です。runtime を停止するとタブは閉じますが、セッションは保持されます。",
         closeTabsLeftTitle: "左のタブを閉じますか？",
         closeTabsRightTitle: "右のタブを閉じますか？",
         closeOtherTabsTitle: "他のタブを閉じますか？",
         bulk: {
-          all: "{{agents}}件のエージェントをアーカイブし、{{terminals}}件のターミナルを閉じ、{{tabs}}件のタブを閉じます。閉じたターミナルで実行中のプロセスはすぐに停止されます。",
+          all: "{{agents}}件のエージェント runtime とそのタブ、{{terminals}}件のターミナル、{{tabs}}件のその他のタブを閉じます。エージェントセッションは保持されます。閉じたターミナルで実行中のプロセスはすぐに停止されます。",
           agentsAndTerminals:
-            "{{agents}}件のエージェントをアーカイブし、{{terminals}}件のターミナルを閉じます。閉じたターミナルで実行中のプロセスはすぐに停止されます。",
+            "{{agents}}件のエージェント runtime とそのタブ、および {{terminals}}件のターミナルを閉じます。エージェントセッションは保持されます。閉じたターミナルで実行中のプロセスはすぐに停止されます。",
           terminalsAndTabs:
             "{{terminals}}件のターミナルを閉じ、{{tabs}}件のタブを閉じます。閉じたターミナルで実行中のプロセスはすぐに停止されます。",
-          agentsAndTabs: "{{agents}}件のエージェントをアーカイブし、{{tabs}}件のタブを閉じます。",
+          agentsAndTabs:
+            "{{agents}}件のエージェント runtime とそのタブ、および {{tabs}}件のその他のタブを閉じます。エージェントセッションは保持されます。",
           terminals:
             "{{terminals}}件のターミナルを閉じます。閉じたターミナルで実行中のプロセスはすぐに停止されます。",
           tabs: "{{tabs}}件のタブを閉じます。",
-          agents: "{{agents}}件のエージェントをアーカイブします。",
+          agents:
+            "{{agents}}件のエージェント runtime とそのタブを閉じます。エージェントセッションは保持されます。",
         },
       },
     },
@@ -987,6 +994,8 @@ export const ja: TranslationResources = {
       status: {
         scriptsAvailable: "スクリプトが利用可能",
         creating: "作成中...",
+        runtimeResident: "エージェント runtime は稼働中です",
+        runtimeClosed: "エージェント runtime は停止しています",
       },
       actions: {
         menu: "ワークスペースアクション",

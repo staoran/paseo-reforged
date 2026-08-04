@@ -220,10 +220,18 @@ Client session RPC waits default to 60s so slow relay or mobile networks do not 
 
 New session RPCs use dotted names with `.request` and `.response` suffixes, such as `checkout.forge.set_auto_merge.request` and `checkout.forge.set_auto_merge.response`. See [rpc-namespacing.md](rpc-namespacing.md) for the convention and migration rules for older flat RPC names.
 
+`server_info.features.agentRuntimeClose` gates the close-only agent lifecycle RPC. A supporting client
+sends `agent.runtime.close.request` and treats `agent.runtime.close.response.payload.closed` as the
+authoritative outcome. `closed: true` means the daemon reread an unarchived durable record with
+`lifecycle === "closed"`; it may include a non-blocking cleanup warning. `closed: false` preserves the
+client view and carries an error. Clients connected to an older daemon do not emulate this operation
+with archive or local tab removal.
+
 **Notable session message types:**
 
 - `agent_update` — Agent state changed (status, title, labels)
 - `agent_stream` — New timeline event from a running agent
+- `agent.runtime.close.request` / `agent.runtime.close.response` — Provider-agnostic close-only runtime lifecycle RPC
 - `workspace_update`, `script_status_update`, `workspace_setup_progress` — Workspace state
 - `agent_permission_request` / `agent_permission_resolved` — Tool-call permission flow
 - `agent_deleted`, `agent_archived`, `agent_status`, `agent_list`
@@ -288,7 +296,7 @@ initializing → idle ⇄ running
 - `idle` — has a live session, awaiting the next prompt
 - `running` — provider is currently producing a turn
 - `error` — last attempt failed; session is still attached
-- `closed` — terminal state, no live session
+- `closed` — persisted, resumable state with no live provider session
 
 `ManagedAgent` is a discriminated union over those lifecycle tags. Notes:
 
@@ -297,6 +305,23 @@ initializing → idle ⇄ running
 - Timeline row `timestamp` values are canonical daemon-owned timestamps. Providers may supply original replay timestamps, but clients must not guess timestamp trust or hide time UI based on local clock heuristics.
 - Events stream to connected clients in real time; correctness is backed by authoritative timeline fetches and paged-to-completion catch-up.
 - Agent state persists to `$PASEO_HOME/agents/{cwd-with-dashes}/{agent-id}.json` (timeline rows live alongside the record). That storage path is derived from `cwd`, not from workspace id.
+
+Closing any Paseo-managed root or subagent tab uses the same close-only RPC. The daemon closes the
+provider session, preserves `archivedAt: null`, and persists `closed`; the app removes the tab only
+after authoritative success. Provider-owned child timeline tabs have no independent `AgentSession`
+and remain layout-only. `ensureAgentLoaded()` resumes a closed durable session under the same Paseo
+agent ID when it is opened or prompted again.
+
+Each workspace registry record also carries nullable `defaultAgentId`. Creation and import register
+the first eligible root agent without overwriting an existing default; startup migration repairs
+missing or invalid legacy references deterministically. The wire `WorkspaceDescriptor` exposes this
+field optionally for backward compatibility, and new clients normalize absence to `null`.
+
+The app separately projects runtime residency across every unarchived managed agent in a workspace:
+any lifecycle other than `closed` is `resident`, while all `closed` is `closed`. This raw lifecycle
+projection is intentionally independent of the workspace activity bucket, where idle and closed may
+both otherwise appear done. Sidebar business-status indicators remain higher priority than the
+runtime fallback icon, and valid default-agent targets make a fully closed workspace reopenable.
 
 ## Right-sidebar boundary: directory-backed vs workspace-owned
 
@@ -373,7 +398,7 @@ Providers that can accept native tool definitions should set `supportsNativePase
 $PASEO_HOME/
 ├── agents/{cwd-with-dashes}/{agent-id}.json   # Agent record + persisted timeline rows
 ├── projects/projects.json                      # Project registry
-├── projects/workspaces.json                    # Workspace registry
+├── projects/workspaces.json                    # Workspace registry, including stable defaultAgentId
 ├── chat/                                       # Chat rooms
 ├── schedules/                                  # Scheduled-agent definitions and runs
 ├── loops/                                      # Loop runs and logs

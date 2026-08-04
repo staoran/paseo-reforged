@@ -575,11 +575,15 @@ export const en = {
         reloadingAgent: "Reloading agent...",
         reloadedAgent: "Reloaded agent",
         failedToReloadAgent: "Failed to reload agent",
+        agentRuntimeCloseFailed: "Could not stop the agent runtime: {{message}}",
+        agentRuntimeCleanupWarning:
+          "The agent tab was closed, but runtime cleanup reported: {{message}}",
+        updateHostToCloseAgentRuntime: "Update the host to stop agent runtimes when closing tabs.",
       },
       confirmations: {
         close: "Close",
         cancel: "Cancel",
-        archive: "Archive",
+        stopAgent: "Stop and close",
         unsavedTitle: "Unsaved changes",
         unsavedMessage:
           "This tab has changes that have not been saved. Closing it will discard the draft.",
@@ -588,23 +592,25 @@ export const en = {
         bulkUnsaved: "{{count}} tab(s) have unsaved changes. Closing will discard those drafts.",
         closeTerminalTitle: "Close terminal?",
         closeTerminalMessage: "Any running process in this terminal will be stopped immediately.",
-        archiveRunningAgentTitle: "Archive running agent?",
-        archiveRunningAgentMessage:
-          "This agent is still running. Archiving it will stop the agent and close the tab.",
+        stopRunningAgentTitle: "Stop running agent?",
+        stopRunningAgentMessage:
+          "This agent is still running. Stopping its runtime will close the tab, but its session will remain available.",
         closeTabsLeftTitle: "Close tabs to the left?",
         closeTabsRightTitle: "Close tabs to the right?",
         closeOtherTabsTitle: "Close other tabs?",
         bulk: {
-          all: "This will archive {{agents}} agent(s), close {{terminals}} terminal(s), and close {{tabs}} tab(s). Any running process in a closed terminal will be stopped immediately.",
+          all: "This will stop {{agents}} agent runtime(s) and close their tabs, close {{terminals}} terminal(s), and close {{tabs}} other tab(s). Agent sessions will remain available. Any running process in a closed terminal will be stopped immediately.",
           agentsAndTerminals:
-            "This will archive {{agents}} agent(s) and close {{terminals}} terminal(s). Any running process in a closed terminal will be stopped immediately.",
+            "This will stop {{agents}} agent runtime(s) and close their tabs, and close {{terminals}} terminal(s). Agent sessions will remain available. Any running process in a closed terminal will be stopped immediately.",
           terminalsAndTabs:
             "This will close {{terminals}} terminal(s) and close {{tabs}} tab(s). Any running process in a closed terminal will be stopped immediately.",
-          agentsAndTabs: "This will archive {{agents}} agent(s) and close {{tabs}} tab(s).",
+          agentsAndTabs:
+            "This will stop {{agents}} agent runtime(s) and close their tabs, and close {{tabs}} other tab(s). Agent sessions will remain available.",
           terminals:
             "This will close {{terminals}} terminal(s). Any running process in a closed terminal will be stopped immediately.",
           tabs: "This will close {{tabs}} tab(s).",
-          agents: "This will archive {{agents}} agent(s).",
+          agents:
+            "This will stop {{agents}} agent runtime(s) and close their tabs. Agent sessions will remain available.",
         },
       },
     },
@@ -987,6 +993,8 @@ export const en = {
       status: {
         scriptsAvailable: "Scripts available",
         creating: "Creating...",
+        runtimeResident: "Agent runtime is active",
+        runtimeClosed: "Agent runtime is stopped",
       },
       actions: {
         menu: "Workspace actions",
