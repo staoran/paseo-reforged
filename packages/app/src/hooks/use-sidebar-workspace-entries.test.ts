@@ -58,15 +58,31 @@ describe("sidebar workspace session selection", () => {
   });
 
   it("ignores high-frequency session changes outside the sidebar indexes", () => {
+    const agents = new Map();
     const workspaces = workspaceMap();
     const workspaceAgentActivity = activityMap();
+    const workspaceRuntimeResidency = new Map();
 
     const previous = selectSidebarWorkspaceSessions(
-      { "host-a": sidebarSession({ workspaces, workspaceAgentActivity }) },
+      {
+        "host-a": sidebarSession({
+          agents,
+          workspaces,
+          workspaceAgentActivity,
+          workspaceRuntimeResidency,
+        }),
+      },
       ["host-a"],
     );
     const next = selectSidebarWorkspaceSessions(
-      { "host-a": sidebarSession({ workspaces, workspaceAgentActivity }) },
+      {
+        "host-a": sidebarSession({
+          agents,
+          workspaces,
+          workspaceAgentActivity,
+          workspaceRuntimeResidency,
+        }),
+      },
       ["host-a"],
     );
 

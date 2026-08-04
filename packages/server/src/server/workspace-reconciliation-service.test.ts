@@ -618,6 +618,7 @@ describe("WorkspaceReconciliationService", () => {
       workspaceId: "w1",
       projectId: "p1",
       cwd: "/tmp/does-not-exist-reconcile-orphan",
+      defaultAgentId: null,
       kind: "directory",
       displayName: "orphan",
       title: null,

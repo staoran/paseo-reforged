@@ -22,7 +22,15 @@ import { expectWorkspaceHeader, waitForSidebarHydration } from "./helpers/worksp
 import { getVisibleWorkspaceAgentTabIds } from "./helpers/workspace-tabs";
 
 type NewWorkspaceDaemonClient = Awaited<ReturnType<typeof connectNewWorkspaceDaemonClient>>;
-type WorkspaceIndicator = "attention" | "done" | "failed" | "loading" | "needs_input" | "running";
+type WorkspaceIndicator =
+  | "attention"
+  | "done"
+  | "failed"
+  | "loading"
+  | "needs_input"
+  | "running"
+  | "runtime-closed"
+  | "runtime-resident";
 
 interface CreatedAgentAssertion {
   workspaceId: string;
@@ -122,6 +130,8 @@ async function expectWorkspaceRowHasOnlyIndicator(
     "loading",
     "needs_input",
     "running",
+    "runtime-closed",
+    "runtime-resident",
   ] satisfies WorkspaceIndicator[]) {
     const locator = row.locator(`[data-testid="workspace-status-indicator-${indicator}"]`);
     if (indicator === input.indicator) {
@@ -559,7 +569,7 @@ test.describe("Workspace model regressions", () => {
       });
       await expectWorkspaceRowHasOnlyIndicator(page, {
         rowTestId: parentRowTestId,
-        indicator: "done",
+        indicator: "runtime-resident",
       });
 
       await gotoWorkspace(page, agents.parent.workspaceId);
