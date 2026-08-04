@@ -1,10 +1,11 @@
 # Changelog
 
-## 0.2.5-beta.1 - 2026-08-03
+## 0.2.5-beta.2 - 2026-08-04
 
 ### Added
 
 - Paseo Reforged now has its own desktop installation, mobile package, beta update channel, and support links ([a4172e9](https://github.com/staoran/paseo-reforged/commit/a4172e995dae47a83516da9568dcfc59cc5ad910) by [@staoran](https://github.com/staoran))
+- Edit your latest plain-text message in place and regenerate its answer without leaving the conversation ([bbca95d](https://github.com/staoran/paseo-reforged/commit/bbca95d08ec35c9834596979b600b82418676992) by [@staoran](https://github.com/staoran))
 - Import a session from the current project while creating a workspace ([feb4e82](https://github.com/staoran/paseo-reforged/commit/feb4e82d5f0e8ddacf85217664941a9e27ab7dc6) by [@staoran](https://github.com/staoran))
 - Set a separate font family and size for each workspace ([1a00edd](https://github.com/staoran/paseo-reforged/commit/1a00eddcd23cf5eb033586ceeae678c56b240468), [a3dbaa2](https://github.com/staoran/paseo-reforged/commit/a3dbaa27a13c2e45eb28df488194417860485bf2) by [@staoran](https://github.com/staoran))
 - See Codex retry status live during automatic retries ([ae4af3d](https://github.com/staoran/paseo-reforged/commit/ae4af3dc1ba90b18bda8a94c7b9828f0ef82690f) by [@staoran](https://github.com/staoran))
@@ -16,8 +17,10 @@
 
 ### Improved
 
-- Completed agent activity collapses into a processed summary while final answers remain visible ([d330db7](https://github.com/staoran/paseo-reforged/commit/d330db7601cdc40b9945d0ed46b40ccd7f2f2b2d) by [@staoran](https://github.com/staoran))
+- Completed agent activity collapses into a processed summary even when it finishes in the background, while final answers remain visible ([d330db7](https://github.com/staoran/paseo-reforged/commit/d330db7601cdc40b9945d0ed46b40ccd7f2f2b2d), [ff6ab7e](https://github.com/staoran/paseo-reforged/commit/ff6ab7ef747076b9afd9ab5c46bf052e187b9d25) by [@staoran](https://github.com/staoran))
+- Closing agent tabs stops their runtimes while keeping conversations available to reopen ([023dea1](https://github.com/staoran/paseo-reforged/commit/023dea1881475ae08226a3ddfb9bd331fad3127d) by [@staoran](https://github.com/staoran))
 - Agent mode controls use risk-aware colors ([6d8b205](https://github.com/staoran/paseo-reforged/commit/6d8b205f69d885e9b5d109fea4431a5311788077) by [@staoran](https://github.com/staoran))
+- Sidebar workspaces show when their agents were last active ([a32ab54](https://github.com/staoran/paseo-reforged/commit/a32ab5489c846a5bb9b6e177d9fa139e54553e30) by [@staoran](https://github.com/staoran))
 - Workspace headers show the active Git branch ([d127e69](https://github.com/staoran/paseo-reforged/commit/d127e69ad9a81aa28919f4f0b200867879b23b51) by [@staoran](https://github.com/staoran))
 - Interface text follows the selected size consistently across the app ([041b5ee](https://github.com/staoran/paseo-reforged/commit/041b5eeee47d2b040971a109e46056596f4b4a34) by [@staoran](https://github.com/staoran))
 - Final answers use clearer Markdown typography ([e658832](https://github.com/staoran/paseo-reforged/commit/e65883216265e6a2bb506d1b3d8e87050052b33c), [24a7a7d](https://github.com/staoran/paseo-reforged/commit/24a7a7daa6cd2521965b7fdc5c24fce477d0cf7a) by [@staoran](https://github.com/staoran))
@@ -29,6 +32,7 @@
 - Imported sessions retain their original titles ([084dca0](https://github.com/staoran/paseo-reforged/commit/084dca00b7bff618b09458082d878decfdd40918) by [@staoran](https://github.com/staoran))
 - Reasoning details react immediately to the auto-expand setting ([432f4fd](https://github.com/staoran/paseo-reforged/commit/432f4fd6e755c5b71ebd30a180ce5559569412f9) by [@staoran](https://github.com/staoran))
 - Windows file links open at requested lines without forcing Markdown out of preview mode ([14f8ed7](https://github.com/staoran/paseo-reforged/commit/14f8ed70e5bae181be0a47a584c2034ab61fe65e), [caedd39](https://github.com/staoran/paseo-reforged/commit/caedd3980ec52be66afc9738ab19a8e1c04f50cb) by [@staoran](https://github.com/staoran))
+- Windows file links with Chinese filenames open correctly ([76bf444](https://github.com/staoran/paseo-reforged/commit/76bf444bc2c724f0df0cc31d64b63240abab5d7e) by [@staoran](https://github.com/staoran))
 
 ## 0.2.4-beta.1 - 2026-07-29
 
