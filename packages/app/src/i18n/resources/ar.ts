@@ -977,6 +977,10 @@ export const ar: TranslationResources = {
     workspace: {
       activity: {
         justNow: "للتو",
+        minuteAgo: "قبل {{value}} د",
+        hourAgo: "قبل {{value}} س",
+        dayAgo: "قبل {{value}} ي",
+        weekAgo: "قبل {{value}} أسب",
       },
       status: {
         scriptsAvailable: "البرامج النصية المتاحة",

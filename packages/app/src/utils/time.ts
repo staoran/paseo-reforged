@@ -35,13 +35,16 @@ export function formatTimeAgo(date: Date, now: Date = new Date()): string {
   return `${month} ${day}`;
 }
 
-/** Format elapsed activity time with locale-aware minute, hour, day, and week units. */
+type RelativeTimeUnit = "minute" | "hour" | "day" | "week";
+
+/** Format elapsed activity time, using the caller's localized fallback when Intl is unavailable. */
 export function formatRelativeTime(
   date: Date,
   options: {
     locale: string;
     now?: Date;
     justNowLabel: string;
+    formatFallback: (value: number, unit: RelativeTimeUnit) => string;
   },
 ): string {
   const now = options.now ?? new Date();
@@ -52,25 +55,37 @@ export function formatRelativeTime(
     return options.justNowLabel;
   }
 
-  const formatter = new Intl.RelativeTimeFormat(options.locale, {
+  let value: number;
+  let unit: RelativeTimeUnit;
+  if (elapsedMinutes < 60) {
+    value = elapsedMinutes;
+    unit = "minute";
+  } else {
+    const elapsedHours = Math.floor(elapsedMinutes / 60);
+    if (elapsedHours < 24) {
+      value = elapsedHours;
+      unit = "hour";
+    } else {
+      const elapsedDays = Math.floor(elapsedHours / 24);
+      if (elapsedDays < 7) {
+        value = elapsedDays;
+        unit = "day";
+      } else {
+        value = Math.floor(elapsedDays / 7);
+        unit = "week";
+      }
+    }
+  }
+
+  const RelativeTimeFormat = Intl.RelativeTimeFormat;
+  if (typeof RelativeTimeFormat !== "function") {
+    return options.formatFallback(value, unit);
+  }
+
+  return new RelativeTimeFormat(options.locale, {
     numeric: "always",
     style: "narrow",
-  });
-  if (elapsedMinutes < 60) {
-    return formatter.format(-elapsedMinutes, "minute");
-  }
-
-  const elapsedHours = Math.floor(elapsedMinutes / 60);
-  if (elapsedHours < 24) {
-    return formatter.format(-elapsedHours, "hour");
-  }
-
-  const elapsedDays = Math.floor(elapsedHours / 24);
-  if (elapsedDays < 7) {
-    return formatter.format(-elapsedDays, "day");
-  }
-
-  return formatter.format(-Math.floor(elapsedDays / 7), "week");
+  }).format(-value, unit);
 }
 
 function isSameLocalDay(a: Date, b: Date): boolean {

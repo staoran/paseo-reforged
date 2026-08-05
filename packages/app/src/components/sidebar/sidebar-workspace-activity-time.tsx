@@ -6,6 +6,12 @@ import { StyleSheet } from "react-native-unistyles";
 import { formatRelativeTime } from "@/utils/time";
 
 const RELATIVE_TIME_REFRESH_MS = 30_000;
+const FALLBACK_KEY_BY_UNIT = {
+  minute: "sidebar.workspace.activity.minuteAgo",
+  hour: "sidebar.workspace.activity.hourAgo",
+  day: "sidebar.workspace.activity.dayAgo",
+  week: "sidebar.workspace.activity.weekAgo",
+} as const;
 
 export function SidebarWorkspaceActivityTime({ lastActivityAt }: { lastActivityAt: Date }) {
   const { t, i18n } = useTranslation();
@@ -15,6 +21,10 @@ export function SidebarWorkspaceActivityTime({ lastActivityAt }: { lastActivityA
     locale,
     now,
     justNowLabel: t("sidebar.workspace.activity.justNow"),
+    formatFallback: (value, unit) =>
+      t(FALLBACK_KEY_BY_UNIT[unit], {
+        value: new Intl.NumberFormat(locale).format(value),
+      }),
   });
 
   useEffect(() => {

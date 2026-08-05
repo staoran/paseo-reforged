@@ -1001,6 +1001,10 @@ export const ru: TranslationResources = {
     workspace: {
       activity: {
         justNow: "только что",
+        minuteAgo: "{{value}} мин назад",
+        hourAgo: "{{value}} ч назад",
+        dayAgo: "{{value}} дн назад",
+        weekAgo: "{{value}} нед назад",
       },
       status: {
         scriptsAvailable: "Доступны скрипты",

@@ -1003,6 +1003,10 @@ export const ptBR: TranslationResources = {
     workspace: {
       activity: {
         justNow: "agora mesmo",
+        minuteAgo: "há {{value}} min",
+        hourAgo: "há {{value}} h",
+        dayAgo: "há {{value}} d",
+        weekAgo: "há {{value}} sem",
       },
       status: {
         scriptsAvailable: "Scripts disponíveis",

@@ -990,6 +990,10 @@ export const ja: TranslationResources = {
     workspace: {
       activity: {
         justNow: "たった今",
+        minuteAgo: "{{value}}分前",
+        hourAgo: "{{value}}時間前",
+        dayAgo: "{{value}}日前",
+        weekAgo: "{{value}}週間前",
       },
       status: {
         scriptsAvailable: "スクリプトが利用可能",

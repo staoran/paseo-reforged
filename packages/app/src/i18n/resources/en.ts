@@ -989,6 +989,10 @@ export const en = {
     workspace: {
       activity: {
         justNow: "just now",
+        minuteAgo: "{{value}}m ago",
+        hourAgo: "{{value}}h ago",
+        dayAgo: "{{value}}d ago",
+        weekAgo: "{{value}}w ago",
       },
       status: {
         scriptsAvailable: "Scripts available",

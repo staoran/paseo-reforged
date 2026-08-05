@@ -966,6 +966,10 @@ export const zhCN: TranslationResources = {
     workspace: {
       activity: {
         justNow: "刚刚",
+        minuteAgo: "{{value}}分钟前",
+        hourAgo: "{{value}}小时前",
+        dayAgo: "{{value}}天前",
+        weekAgo: "{{value}}周前",
       },
       status: {
         scriptsAvailable: "有可用 scripts",

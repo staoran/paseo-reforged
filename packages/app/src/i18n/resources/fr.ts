@@ -1011,6 +1011,10 @@ export const fr: TranslationResources = {
     workspace: {
       activity: {
         justNow: "à l'instant",
+        minuteAgo: "il y a {{value}} min",
+        hourAgo: "il y a {{value}} h",
+        dayAgo: "il y a {{value}} j",
+        weekAgo: "il y a {{value}} sem",
       },
       status: {
         scriptsAvailable: "Scripts disponibles",

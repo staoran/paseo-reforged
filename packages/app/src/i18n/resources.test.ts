@@ -411,6 +411,10 @@ describe("translation resources", () => {
     expect(en.sidebar.workspace.actions.createWorkspaceFor).toBe(
       "Create a new workspace for {{projectName}}",
     );
+    expect(en.sidebar.workspace.activity.minuteAgo).toBe("{{value}}m ago");
+    expect(en.sidebar.workspace.activity.hourAgo).toBe("{{value}}h ago");
+    expect(en.sidebar.workspace.activity.dayAgo).toBe("{{value}}d ago");
+    expect(en.sidebar.workspace.activity.weekAgo).toBe("{{value}}w ago");
     expect(en.sidebar.project.empty.title).toBe("No projects yet");
     expect(en.sidebar.project.empty.description).toBe("Add a project to get started");
     expect(en.settings.projectList.hostLoadFailed).toBe(

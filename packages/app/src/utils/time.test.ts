@@ -24,6 +24,34 @@ describe("formatTimeAgo", () => {
 
 describe("formatRelativeTime", () => {
   const now = new Date("2026-08-03T07:00:00.000Z");
+  const unexpectedFallback = () => {
+    throw new Error("fallback should not be used when RelativeTimeFormat is available");
+  };
+
+  it("uses the localized fallback when RelativeTimeFormat is unavailable", () => {
+    const descriptor = Object.getOwnPropertyDescriptor(Intl, "RelativeTimeFormat");
+    Object.defineProperty(Intl, "RelativeTimeFormat", {
+      configurable: true,
+      value: undefined,
+    });
+
+    try {
+      expect(
+        formatRelativeTime(new Date("2026-08-03T06:55:00.000Z"), {
+          locale: "zh-CN",
+          now,
+          justNowLabel: "刚刚",
+          formatFallback: (value, unit) => `${value}${unit === "minute" ? "分钟" : unit}前`,
+        }),
+      ).toBe("5分钟前");
+    } finally {
+      if (descriptor) {
+        Object.defineProperty(Intl, "RelativeTimeFormat", descriptor);
+      } else {
+        Reflect.deleteProperty(Intl, "RelativeTimeFormat");
+      }
+    }
+  });
 
   it.each([
     ["2026-08-03T06:59:30.000Z", "刚刚"],
@@ -36,6 +64,7 @@ describe("formatRelativeTime", () => {
         locale: "zh-CN",
         now,
         justNowLabel: "刚刚",
+        formatFallback: unexpectedFallback,
       }),
     ).toBe(expected);
   });

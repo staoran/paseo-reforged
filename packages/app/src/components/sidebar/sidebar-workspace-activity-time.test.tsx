@@ -11,6 +11,23 @@ import { i18n } from "@/i18n/i18next";
 import { SidebarWorkspaceActivityTime } from "./sidebar-workspace-activity-time";
 import { SidebarWorkspaceRowContent } from "./sidebar-workspace-row-content";
 
+vi.hoisted(() => {
+  (globalThis as unknown as { __DEV__: boolean }).__DEV__ = false;
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    value: () => ({
+      addEventListener: () => {},
+      addListener: () => {},
+      dispatchEvent: () => false,
+      matches: false,
+      media: "",
+      onchange: null,
+      removeEventListener: () => {},
+      removeListener: () => {},
+    }),
+  });
+});
+
 vi.mock("react-native-unistyles", () => ({
   StyleSheet: {
     create: () => ({ label: {} }),
@@ -75,6 +92,29 @@ const ROW_WITHOUT_ACTIVITY: SidebarWorkspaceEntry = {
   lastActivityAt: null,
 };
 
+function disableRelativeTimeFormat(): () => void {
+  const descriptor = Object.getOwnPropertyDescriptor(Intl, "RelativeTimeFormat");
+  Object.defineProperty(Intl, "RelativeTimeFormat", {
+    configurable: true,
+    value: undefined,
+  });
+
+  return () => {
+    if (descriptor) {
+      Object.defineProperty(Intl, "RelativeTimeFormat", descriptor);
+    } else {
+      Reflect.deleteProperty(Intl, "RelativeTimeFormat");
+    }
+  };
+}
+
+const FALLBACK_CASES = [
+  ["minute", "2026-08-03T06:55:00.000Z", "5分钟前"],
+  ["hour", "2026-08-03T05:00:00.000Z", "2小时前"],
+  ["day", "2026-08-01T07:00:00.000Z", "2天前"],
+  ["week", "2026-07-20T07:00:00.000Z", "2周前"],
+] as const;
+
 describe("SidebarWorkspaceActivityTime", () => {
   let root: Root | null = null;
   let container: HTMLElement | null = null;
@@ -127,6 +167,33 @@ describe("SidebarWorkspaceActivityTime", () => {
 
     expect(container.textContent).toBe("刚刚");
   });
+
+  it.each(FALLBACK_CASES)(
+    "shows localized %s activity time when RelativeTimeFormat is unavailable",
+    async (_unit, lastActivityAt, expected) => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-08-03T07:00:00.000Z"));
+      await i18n.changeLanguage("zh-CN");
+      container = document.createElement("div");
+      document.body.appendChild(container);
+      root = createRoot(container);
+      const restoreRelativeTimeFormat = disableRelativeTimeFormat();
+
+      try {
+        act(() => {
+          root?.render(
+            <I18nextProvider i18n={i18n}>
+              <SidebarWorkspaceActivityTime lastActivityAt={new Date(lastActivityAt)} />
+            </I18nextProvider>,
+          );
+        });
+
+        expect(container.textContent).toBe(expected);
+      } finally {
+        restoreRelativeTimeFormat();
+      }
+    },
+  );
 
   it("refreshes when elapsed activity crosses a minute boundary", async () => {
     vi.useFakeTimers();
