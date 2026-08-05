@@ -353,6 +353,52 @@ describe("parseAssistantFileLink", () => {
     });
   });
 
+  it("decodes percent-encoded browser drive paths with line suffixes", () => {
+    const href =
+      "/E:/Code/paseo/mydocs/micro_specs/0048_%E4%BE%A7%E8%BE%B9%E6%A0%8F%E7%9B%B8%E5%AF%B9%E6%97%B6%E9%97%B4Hermes%E5%85%BC%E5%AE%B9.md:1";
+
+    expect(
+      parseAssistantFileLink(href, {
+        workspaceRoot: "E:\\Code\\paseo",
+      }),
+    ).toEqual({
+      raw: href,
+      path: "/E:/Code/paseo/mydocs/micro_specs/0048_侧边栏相对时间Hermes兼容.md",
+      lineStart: 1,
+      lineEnd: undefined,
+    });
+  });
+
+  it("keeps invalid percent escapes literal in absolute paths with line suffixes", () => {
+    const href = "/E:/repo/%PATH%/notes.md:12";
+
+    expect(
+      parseAssistantFileLink(href, {
+        workspaceRoot: "E:\\repo",
+      }),
+    ).toEqual({
+      raw: href,
+      path: "/E:/repo/%PATH%/notes.md",
+      lineStart: 12,
+      lineEnd: undefined,
+    });
+  });
+
+  it("keeps percent-encoded relative line targets under the workspace root", () => {
+    const href = "%2Ftmp/escape.ts:12";
+
+    expect(
+      parseAssistantFileLink(href, {
+        workspaceRoot: "/Users/test/project",
+      }),
+    ).toEqual({
+      raw: href,
+      path: "/Users/test/project/%2Ftmp/escape.ts",
+      lineStart: 12,
+      lineEnd: undefined,
+    });
+  });
+
   it("allows file URLs even when they are outside the workspace root", () => {
     expect(
       parseAssistantFileLink("file:///tmp/outside.txt", {

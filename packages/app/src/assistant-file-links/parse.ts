@@ -247,7 +247,13 @@ function parseAssistantInlinePathLink(value: string): InlinePathTarget | null {
     return null;
   }
 
-  const normalizedPath = normalizePathToken(inlinePathTarget.path);
+  // Decode only after line parsing and the existing absolute-path classification
+  const encodedPath = normalizePathToken(inlinePathTarget.path);
+  if (!encodedPath || !isAbsolutePath(encodedPath)) {
+    return null;
+  }
+
+  const normalizedPath = normalizePathToken(safeDecodeURIComponent(encodedPath));
   if (!normalizedPath || !isAbsolutePath(normalizedPath)) {
     return null;
   }

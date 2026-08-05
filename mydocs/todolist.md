@@ -71,36 +71,37 @@
 
 ## 任务汇总
 
-| 编号 | 状态   | 文档类型   | 落盘/同步状态 | 任务名                                                                               | 最近更新时间     | 备注                                                           |
-| ---- | ------ | ---------- | ------------- | ------------------------------------------------------------------------------------ | ---------------- | -------------------------------------------------------------- |
-| 0015 | 已收口 | micro-spec | 已同步        | [新 Workspace 导入入口布局](micro_specs/0015_新Workspace导入入口布局.md)             | 2026-07-30 03:42 | desktop/compact E2E 通过                                       |
-| 0016 | 已收口 | micro-spec | 已同步        | [Activity Fold 推理过程折叠](micro_specs/0016_推理过程轮次完成自动折叠.md)           | 2026-07-31 15:25 | 浏览器三层开合、reload 与 final 常驻通过                       |
-| 0017 | 已收口 | micro-spec | 已同步        | [侧边栏项目与 Workspace 右键菜单](micro_specs/0017_侧边栏项目与Workspace右键菜单.md) | 2026-07-30 03:42 | 三类右键菜单 E2E 通过                                          |
-| 0018 | 已收口 | micro-spec | 已同步        | [权限模式选择风险色](micro_specs/0018_权限模式选择风险色.md)                         | 2026-07-30 03:42 | 映射与运行时颜色验证通过                                       |
-| 0019 | 已收口 | micro-spec | 已同步        | [会话文字选择操作 Tip](micro_specs/0019_会话文字选择操作Tip.md)                      | 2026-07-30 17:13 | 三按钮与 preset E2E 通过                                       |
-| 0020 | 已收口 | micro-spec | 已同步        | [隐藏侧边栏代码改动数量](micro_specs/0020_隐藏侧边栏代码改动数量.md)                 | 2026-07-31 04:42 | 导航统计已移除；聚焦测试/typecheck 通过                        |
-| 0021 | 已收口 | micro-spec | 已同步        | [Workspace 顶部显示分支名](micro_specs/0021_Workspace顶部显示分支名.md)              | 2026-07-30 03:42 | 分支优先级单测通过                                             |
-| 0022 | 待验证 | micro-spec | 已同步        | [统一 Interface 字号](micro_specs/0022_侧边栏与标签标题字号.md)                      | 2026-07-31 10:36 | Web E2E/单测/App 检查通过；Native 待补                         |
-| 0023 | 待验证 | micro-spec | 已同步        | [最终回答 Markdown 排版](micro_specs/0023_最终回答Markdown排版.md)                   | 2026-07-31 15:53 | Web 列表间距通过；待 Android/iOS smoke                         |
-| 0024 | 已收口 | micro-spec | 已同步        | [Web 右键菜单连续切换](micro_specs/0024_Web右键菜单连续切换.md)                      | 2026-07-30 20:18 | 左键不下穿 mutation RED/GREEN 通过                             |
-| 0025 | 已收口 | micro-spec | 已同步        | [修复 file 链接行号解析与定位高亮](micro_specs/0025_修复file链接行号解析.md)         | 2026-07-31 04:04 | Markdown Preview/Source RED→GREEN 通过                         |
-| 0026 | 已收口 | micro-spec | 已同步        | [会话轮次文件变更卡片](micro_specs/0026_会话轮次文件变更卡片.md)                     | 2026-08-01 23:26 | 投影、Chromium、真实 Web 导航通过；提交 `b6ab2a314`            |
-| 0027 | 已收口 | micro-spec | 已同步        | [全平台 Mermaid 流程图渲染](micro_specs/0027_全平台Mermaid流程图渲染.md)             | 2026-07-31 23:39 | 自动验证与用户对正常显示、源码查看、展开预览的人工验收通过     |
-| 0028 | 已收口 | micro-spec | 已同步        | [轮次变更卡片修饰点击侧分栏](micro_specs/0028_轮次变更卡片修饰点击侧分栏.md)         | 2026-08-01 23:26 | Ctrl/Cmd side-pane RED/GREEN 通过；提交 `b6ab2a314`            |
-| 0029 | 已收口 | micro-spec | 已同步        | [更改页差异渲染卡顿修复](micro_specs/0029_更改页差异渲染卡顿修复.md)                 | 2026-08-01 00:18 | 默认折叠、定向单文件、canonical query 与 Electron 性能验证通过 |
-| 0030 | 已收口 | micro-spec | 已同步        | [Mermaid 展开视图缩放与拖动](micro_specs/0030_Mermaid展开视图缩放与拖动.md)          | 2026-08-01 20:06 | 自动验证、用户验收与提交 hook 通过；Native 真机风险已接受      |
-| 0031 | 已收口 | micro-spec | 已同步        | [上游 v0.2.5 差异与冲突复检](micro_specs/0031_上游v0.2.5差异与冲突复检.md)           | 2026-08-02       | 19 个冲突已解析并通过 Windows 验证；Nix 风险已接受，获准提交   |
-| 0032 | 已收口 | micro-spec | 已同步        | [发布上游 0.2.5 基线测试版](micro_specs/0032_发布0.2.6-beta.1测试版.md)              | 2026-08-03       | `v0.2.5-beta.1` 已发布；三条 workflow 全绿，24 个资产已核验    |
-| 0033 | 已收口 | micro-spec | 已同步        | [后台完成会话的推理过程自动折叠](micro_specs/0033_后台完成会话推理过程自动折叠.md)   | 2026-08-03 18:32 | phased chunk catch-up E2E RED→GREEN；18 单测与静态检查通过     |
-| 0047 | 已收口 | micro-spec | 已同步        | [修复 beta.2 发布 CI 旧断言](micro_specs/0047_修复beta2发布CI旧断言.md)                 | 2026-08-04 18:02 | beta.2 已发布；CI 19/19、三条发布 workflow 与 24 个资产已核验；按用户决定保留 ACP pin |
+| 编号 | 状态   | 文档类型   | 落盘/同步状态 | 任务名                                                                               | 最近更新时间     | 备注                                                                                  |
+| ---- | ------ | ---------- | ------------- | ------------------------------------------------------------------------------------ | ---------------- | ------------------------------------------------------------------------------------- |
+| 0015 | 已收口 | micro-spec | 已同步        | [新 Workspace 导入入口布局](micro_specs/0015_新Workspace导入入口布局.md)             | 2026-07-30 03:42 | desktop/compact E2E 通过                                                              |
+| 0016 | 已收口 | micro-spec | 已同步        | [Activity Fold 推理过程折叠](micro_specs/0016_推理过程轮次完成自动折叠.md)           | 2026-07-31 15:25 | 浏览器三层开合、reload 与 final 常驻通过                                              |
+| 0017 | 已收口 | micro-spec | 已同步        | [侧边栏项目与 Workspace 右键菜单](micro_specs/0017_侧边栏项目与Workspace右键菜单.md) | 2026-07-30 03:42 | 三类右键菜单 E2E 通过                                                                 |
+| 0018 | 已收口 | micro-spec | 已同步        | [权限模式选择风险色](micro_specs/0018_权限模式选择风险色.md)                         | 2026-07-30 03:42 | 映射与运行时颜色验证通过                                                              |
+| 0019 | 已收口 | micro-spec | 已同步        | [会话文字选择操作 Tip](micro_specs/0019_会话文字选择操作Tip.md)                      | 2026-07-30 17:13 | 三按钮与 preset E2E 通过                                                              |
+| 0020 | 已收口 | micro-spec | 已同步        | [隐藏侧边栏代码改动数量](micro_specs/0020_隐藏侧边栏代码改动数量.md)                 | 2026-07-31 04:42 | 导航统计已移除；聚焦测试/typecheck 通过                                               |
+| 0021 | 已收口 | micro-spec | 已同步        | [Workspace 顶部显示分支名](micro_specs/0021_Workspace顶部显示分支名.md)              | 2026-07-30 03:42 | 分支优先级单测通过                                                                    |
+| 0022 | 待验证 | micro-spec | 已同步        | [统一 Interface 字号](micro_specs/0022_侧边栏与标签标题字号.md)                      | 2026-07-31 10:36 | Web E2E/单测/App 检查通过；Native 待补                                                |
+| 0023 | 待验证 | micro-spec | 已同步        | [最终回答 Markdown 排版](micro_specs/0023_最终回答Markdown排版.md)                   | 2026-07-31 15:53 | Web 列表间距通过；待 Android/iOS smoke                                                |
+| 0024 | 已收口 | micro-spec | 已同步        | [Web 右键菜单连续切换](micro_specs/0024_Web右键菜单连续切换.md)                      | 2026-07-30 20:18 | 左键不下穿 mutation RED/GREEN 通过                                                    |
+| 0025 | 已收口 | micro-spec | 已同步        | [修复 file 链接行号解析与定位高亮](micro_specs/0025_修复file链接行号解析.md)         | 2026-07-31 04:04 | Markdown Preview/Source RED→GREEN 通过                                                |
+| 0026 | 已收口 | micro-spec | 已同步        | [会话轮次文件变更卡片](micro_specs/0026_会话轮次文件变更卡片.md)                     | 2026-08-01 23:26 | 投影、Chromium、真实 Web 导航通过；提交 `b6ab2a314`                                   |
+| 0027 | 已收口 | micro-spec | 已同步        | [全平台 Mermaid 流程图渲染](micro_specs/0027_全平台Mermaid流程图渲染.md)             | 2026-07-31 23:39 | 自动验证与用户对正常显示、源码查看、展开预览的人工验收通过                            |
+| 0028 | 已收口 | micro-spec | 已同步        | [轮次变更卡片修饰点击侧分栏](micro_specs/0028_轮次变更卡片修饰点击侧分栏.md)         | 2026-08-01 23:26 | Ctrl/Cmd side-pane RED/GREEN 通过；提交 `b6ab2a314`                                   |
+| 0029 | 已收口 | micro-spec | 已同步        | [更改页差异渲染卡顿修复](micro_specs/0029_更改页差异渲染卡顿修复.md)                 | 2026-08-01 00:18 | 默认折叠、定向单文件、canonical query 与 Electron 性能验证通过                        |
+| 0030 | 已收口 | micro-spec | 已同步        | [Mermaid 展开视图缩放与拖动](micro_specs/0030_Mermaid展开视图缩放与拖动.md)          | 2026-08-01 20:06 | 自动验证、用户验收与提交 hook 通过；Native 真机风险已接受                             |
+| 0031 | 已收口 | micro-spec | 已同步        | [上游 v0.2.5 差异与冲突复检](micro_specs/0031_上游v0.2.5差异与冲突复检.md)           | 2026-08-02       | 19 个冲突已解析并通过 Windows 验证；Nix 风险已接受，获准提交                          |
+| 0032 | 已收口 | micro-spec | 已同步        | [发布上游 0.2.5 基线测试版](micro_specs/0032_发布0.2.6-beta.1测试版.md)              | 2026-08-03       | `v0.2.5-beta.1` 已发布；三条 workflow 全绿，24 个资产已核验                           |
+| 0033 | 已收口 | micro-spec | 已同步        | [后台完成会话的推理过程自动折叠](micro_specs/0033_后台完成会话推理过程自动折叠.md)   | 2026-08-03 18:32 | phased chunk catch-up E2E RED→GREEN；18 单测与静态检查通过                            |
+| 0037 | 已收口 | micro-spec | 已同步        | [解码 Windows 中文文件链接路径](micro_specs/0037_解码Windows中文文件链接路径.md)     | 2026-08-05 15:45 | 二轮分类保护、真实输入 RED→GREEN、完整链路、typecheck 与 lint 均通过；已授权提交      |
+| 0047 | 已收口 | micro-spec | 已同步        | [修复 beta.2 发布 CI 旧断言](micro_specs/0047_修复beta2发布CI旧断言.md)              | 2026-08-04 18:02 | beta.2 已发布；CI 19/19、三条发布 workflow 与 24 个资产已核验；按用户决定保留 ACP pin |
 
 ## 候选待办
 
-| 来源             | 分类 | 摘要                                                                    | 建议下一步                                                      |
-| ---------------- | ---- | ----------------------------------------------------------------------- | --------------------------------------------------------------- |
-| CI `30750520143` | 维护 | GitHub Actions 中仍有基于 Node 20 的 action，被 runner 强制切到 Node 24 | 独立升级相关 action 版本并复跑 CI，避免未来 runner 移除兼容路径 |
-| `v0.2.5-beta.1/.2` | 发布 | 连续两次原子 tag push 未自动触发三条发布 workflow，均需手动 dispatch   | 核对 GitHub 凭证/事件链路并在下一 beta 验证自动 tag trigger     |
-| `v0.2.5-beta.1/.2` | 发布 | Release Notes Sync 后仍需手工补充 macOS beta 未签名/未公证提示         | 将警告纳入持久事实源或同步脚本，并补回归测试                    |
+| 来源               | 分类 | 摘要                                                                    | 建议下一步                                                      |
+| ------------------ | ---- | ----------------------------------------------------------------------- | --------------------------------------------------------------- |
+| CI `30750520143`   | 维护 | GitHub Actions 中仍有基于 Node 20 的 action，被 runner 强制切到 Node 24 | 独立升级相关 action 版本并复跑 CI，避免未来 runner 移除兼容路径 |
+| `v0.2.5-beta.1/.2` | 发布 | 连续两次原子 tag push 未自动触发三条发布 workflow，均需手动 dispatch    | 核对 GitHub 凭证/事件链路并在下一 beta 验证自动 tag trigger     |
+| `v0.2.5-beta.1/.2` | 发布 | Release Notes Sync 后仍需手工补充 macOS beta 未签名/未公证提示          | 将警告纳入持久事实源或同步脚本，并补回归测试                    |
 
 ## 维护检查
 
