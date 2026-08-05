@@ -147,6 +147,39 @@ describe("last user message edit transaction", () => {
     });
   });
 
+  it("submits the original text to regenerate the latest answer", () => {
+    const editing = beginLastUserMessageEdit({
+      messageId: "user-1",
+      text: "original prompt",
+    });
+
+    expect(getLastUserMessageEditControls(editing, true)).toEqual({
+      canEdit: true,
+      canCancel: true,
+      canSubmit: true,
+    });
+    expect(
+      prepareLastUserMessageEditSubmission(editing, {
+        agentId: "agent-1",
+        isAgentIdle: true,
+        replacementMessageId: "replacement-1",
+      }),
+    ).toEqual({
+      state: {
+        phase: "pending",
+        messageId: "user-1",
+        originalText: "original prompt",
+        draft: "original prompt",
+      },
+      request: {
+        agentId: "agent-1",
+        messageId: "user-1",
+        replacementText: "original prompt",
+        replacementMessageId: "replacement-1",
+      },
+    });
+  });
+
   it("keeps the inline draft when the daemon proves history is unchanged", () => {
     const editing = setLastUserMessageEditDraft(
       beginLastUserMessageEdit({ messageId: "user-1", text: "original prompt" }),
@@ -329,7 +362,7 @@ describe("last user message edit transaction", () => {
       getLastUserMessageEditControls(submission!.state, true),
       getLastUserMessageEditControls(recovery.state, true),
     ]).toEqual([
-      { canEdit: true, canCancel: true, canSubmit: false },
+      { canEdit: true, canCancel: true, canSubmit: true },
       { canEdit: true, canCancel: true, canSubmit: false },
       { canEdit: true, canCancel: true, canSubmit: true },
       { canEdit: false, canCancel: false, canSubmit: false },

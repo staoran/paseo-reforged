@@ -90,7 +90,7 @@ export function getLastUserMessageEditControls(
   return {
     canEdit: true,
     canCancel: true,
-    canSubmit: isAgentIdle && state.draft.trim().length > 0 && state.draft !== state.originalText,
+    canSubmit: isAgentIdle && state.draft.trim().length > 0,
   };
 }
 
@@ -98,12 +98,7 @@ export function prepareLastUserMessageEditSubmission(
   state: LastUserMessageEditState,
   input: { agentId: string; isAgentIdle: boolean; replacementMessageId: string },
 ): { state: LastUserMessageEditState; request: LastUserMessageEditRequest } | null {
-  if (
-    state.phase !== "editing" ||
-    !input.isAgentIdle ||
-    state.draft.trim().length === 0 ||
-    state.draft === state.originalText
-  ) {
+  if (state.phase !== "editing" || !input.isAgentIdle || state.draft.trim().length === 0) {
     return null;
   }
 

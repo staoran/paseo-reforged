@@ -56,13 +56,11 @@ function sortedIds(values: Array<{ id: string }>): string[] {
 test.describe("Edit latest user message", () => {
   test.describe.configure({ timeout: 120_000 });
 
-  test("replaces only the latest idle text message without creating navigation or session state", async ({
+  test("regenerates from the latest idle text message without creating navigation or session state", async ({
     page,
   }) => {
     const firstPrompt = "emit 1 coalesced agent stream updates for the first edit turn.";
     const latestPrompt = "emit 1 coalesced agent stream updates for the latest edit turn.";
-    const replacementPrompt =
-      "emit 1 coalesced agent stream updates for the edited replacement turn.";
     const editRequests = observeEditRequests(page);
     const session = await seedMockAgentWorkspace({
       repoPrefix: "edit-last-user-message-e2e-",
@@ -114,7 +112,7 @@ test.describe("Edit latest user message", () => {
       await latestMessage.getByTestId("edit-last-user-message-trigger").click();
       const reopenedEditor = page.getByTestId("edit-last-user-message-editor");
       const reopenedInput = reopenedEditor.getByRole("textbox", { name: "Edit message" });
-      await reopenedInput.fill(replacementPrompt);
+      await expect(reopenedInput).toHaveValue(latestPrompt);
       const submit = reopenedEditor.getByRole("button", { name: "Submit edit" });
       await expect(submit).toBeEnabled();
       await submit.evaluate((element) => {
@@ -127,15 +125,15 @@ test.describe("Edit latest user message", () => {
       await expect(submit).toBeDisabled();
       await expect.poll(() => editRequests.length).toBe(1);
 
-      await expect(userMessage(page, replacementPrompt)).toBeVisible({ timeout: 15_000 });
-      await expect(userMessage(page, latestPrompt)).toHaveCount(0);
+      await expect(userMessage(page, latestPrompt)).toBeVisible({ timeout: 15_000 });
+      await expect(userMessage(page, latestPrompt)).toHaveCount(1);
       await expect(userMessage(page, firstPrompt)).toBeVisible();
       await expectAgentIdle(page);
 
       expect(editRequests[0]).toMatchObject({
         type: EDIT_REQUEST_TYPE,
         agentId: session.agentId,
-        replacementText: replacementPrompt,
+        replacementText: latestPrompt,
       });
       expect(page.url()).toBe(routeBefore);
       expect(page.context().pages()).toHaveLength(browserPageCountBefore);

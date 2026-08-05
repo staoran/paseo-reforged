@@ -2504,10 +2504,6 @@ export class AgentManager {
     ) {
       throw new Error("The edit target is not the latest replayable text user message");
     }
-    if (latestUserMessage.text === input.replacementText) {
-      throw new Error("Replacement text must differ from the current message");
-    }
-
     const persistence = agent.session.describePersistence() ?? agent.persistence;
     if (!persistence) {
       throw new Error("The provider session has no stable persistence identity");

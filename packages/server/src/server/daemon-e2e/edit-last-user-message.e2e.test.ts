@@ -182,7 +182,7 @@ class InPlaceEditClient implements AgentClient {
   }
 }
 
-test("edits the latest canonical text message in the same session and starts one replacement turn", async () => {
+test("regenerates the latest answer from the original text in the same session", async () => {
   const cwd = mkdtempSync(path.join(tmpdir(), "paseo-edit-last-user-message-"));
   const provider = new InPlaceEditClient();
   const daemon = await createTestPaseoDaemon({ agentClients: { mock: provider }, isDev: true });
@@ -227,7 +227,7 @@ test("edits the latest canonical text message in the same session and starts one
     const result = await client.editLastUserMessage({
       agentId: created.id,
       messageId: original.item.messageId,
-      replacementText: "replacement prompt",
+      replacementText: "original prompt",
       replacementMessageId: "replacement-client-message",
     });
 
@@ -261,14 +261,16 @@ test("edits the latest canonical text message in the same session and starts one
       expect.arrayContaining([
         expect.objectContaining({
           type: "user_message",
-          text: "replacement prompt",
+          text: "original prompt",
+          messageId: "replacement-client-message",
           clientMessageId: "replacement-client-message",
         }),
       ]),
     );
     expect(
       afterTimeline.entries.some(
-        (entry) => entry.item.type === "user_message" && entry.item.text === "original prompt",
+        (entry) =>
+          entry.item.type === "user_message" && entry.item.messageId === original.item.messageId,
       ),
     ).toBe(false);
     expect(provider.createSessionCalls).toHaveLength(1);
