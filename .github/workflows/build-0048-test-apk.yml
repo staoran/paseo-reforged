@@ -1,0 +1,104 @@
+name: Build 0048 Test APK
+
+on:
+  push:
+    branches:
+      - build/0048-android-apk
+
+concurrency:
+  group: build-0048-test-apk
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_COMMIT: b727d18cd1ee0010eb995f96dc90239216778871
+  EXPECTED_VERSION: 0.2.5-beta.2
+  APK_NAME: Paseo-Reforged-0048-b727d18-android.apk
+
+jobs:
+  build-test-apk:
+    runs-on: ubuntu-latest
+    env:
+      EAS_PROJECT_ID: ${{ vars.EAS_PROJECT_ID }}
+
+    steps:
+      - name: Check out immutable source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ env.SOURCE_COMMIT }}
+
+      - name: Verify immutable source
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual_commit="$(git rev-parse HEAD)"
+          test "$actual_commit" = "$SOURCE_COMMIT"
+          echo "Verified source commit: $actual_commit"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          registry-url: https://npm.pkg.github.com
+          scope: "@boudra"
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Install dependencies
+        run: node scripts/npm-retry.mjs ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build signed APK
+        shell: bash
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "${EAS_PROJECT_ID:-}"
+          cd packages/app
+          npx --no-install eas build \
+            --platform android \
+            --profile production-apk \
+            --local \
+            --non-interactive \
+            --output "$RUNNER_TEMP/$APK_NAME"
+
+      - name: Validate APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk_path="$RUNNER_TEMP/$APK_NAME"
+          test -s "$apk_path"
+
+          build_tools_dir="$(find "${ANDROID_HOME:?}/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          apksigner="$build_tools_dir/apksigner"
+          aapt="$build_tools_dir/aapt"
+          test -x "$apksigner"
+          test -x "$aapt"
+
+          "$apksigner" verify --verbose --print-certs "$apk_path"
+          package_line="$("$aapt" dump badging "$apk_path" | sed -n '1p')"
+          echo "$package_line"
+          grep -Fq "name='sh.paseo.reforged'" <<< "$package_line"
+          grep -Fq "versionName='$EXPECTED_VERSION'" <<< "$package_line"
+
+          sha256sum "$apk_path" | tee "$RUNNER_TEMP/$APK_NAME.sha256"
+
+      - name: Upload test artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: paseo-reforged-0048-b727d18-android
+          path: |
+            ${{ runner.temp }}/${{ env.APK_NAME }}
+            ${{ runner.temp }}/${{ env.APK_NAME }}.sha256
+          if-no-files-found: error
+          retention-days: 14
