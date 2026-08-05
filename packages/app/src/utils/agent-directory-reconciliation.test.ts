@@ -58,6 +58,7 @@ function replica(id: string, status: Agent["status"]): Agent {
     updatedAt: new Date("2026-07-12T10:00:00.000Z"),
     lastActivityAt: new Date("2026-07-12T10:00:00.000Z"),
     lastUserMessageAt: null,
+    lastMessageAt: null,
     attentionTimestamp: null,
     archivedAt: null,
     parentAgentId: null,

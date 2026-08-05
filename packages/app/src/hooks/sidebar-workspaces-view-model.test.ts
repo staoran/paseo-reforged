@@ -66,7 +66,7 @@ describe("createSidebarWorkspaceEntry forge threading", () => {
 });
 
 describe("createSidebarWorkspaceEntry activity threading", () => {
-  it("exposes the workspace root agent last activity", () => {
+  it("exposes the workspace root Agent last message time", () => {
     const lastActivityAt = new Date("2026-08-03T06:55:00.000Z");
     const entry = createSidebarWorkspaceEntry({
       serverId: "srv",
@@ -85,6 +85,26 @@ describe("createSidebarWorkspaceEntry activity threading", () => {
     });
 
     expect(entry.lastActivityAt).toBe(lastActivityAt);
+  });
+
+  it("keeps the sidebar timestamp empty when the workspace has no messages", () => {
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42"),
+      workspaceAgentActivity: new Map([
+        [
+          "ws-1",
+          {
+            agentId: "agent-1",
+            status: "running",
+            enteredAt: new Date("2026-08-03T06:54:00.000Z"),
+            lastActivityAt: null,
+          },
+        ],
+      ]),
+    });
+
+    expect(entry.lastActivityAt).toBeNull();
   });
 });
 

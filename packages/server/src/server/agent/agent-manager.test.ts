@@ -14,7 +14,7 @@ import {
   type ManagedAgent,
 } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
-import { toAgentPayload } from "./agent-projections.js";
+import { toAgentListItemPayload, toAgentPayload } from "./agent-projections.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { formatSystemNotificationPrompt } from "./agent-prompt.js";
 import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent-loading.js";
@@ -111,6 +111,143 @@ function expectArchivedAgentRecord(
   expect(record?.attentionReason).toBeNull();
   expect(record?.attentionTimestamp).toBeNull();
 }
+
+test("tracks the last user or assistant message without advancing on non-message activity", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-last-message-at-"));
+  const storage = new AgentStorage(join(workdir, "agents"), createTestLogger());
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger: createTestLogger(),
+    idFactory: () => "00000000-0000-4000-8000-000000000150",
+  });
+  const userMessageAt = new Date("2026-08-05T07:01:00.000Z");
+  const assistantMessageAt = new Date("2026-08-05T07:02:00.000Z");
+  const nonMessageActivityAt = new Date("2026-08-05T07:03:00.000Z");
+
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(new Date("2026-08-05T07:00:00.000Z"));
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: "workspace-last-message-at",
+    });
+    expect(toAgentPayload(manager.getAgent(created.id)!)).toMatchObject({
+      lastMessageAt: null,
+    });
+
+    vi.setSystemTime(userMessageAt);
+    await manager.appendTimelineItem(created.id, {
+      type: "user_message",
+      text: "T1 user message",
+    });
+    expect(toAgentPayload(manager.getAgent(created.id)!)).toMatchObject({
+      lastMessageAt: userMessageAt.toISOString(),
+    });
+
+    vi.setSystemTime(assistantMessageAt);
+    await manager.appendTimelineItem(created.id, {
+      type: "assistant_message",
+      text: "T2 assistant message",
+    });
+
+    vi.setSystemTime(nonMessageActivityAt);
+    await manager.setAgentMode(created.id, "plan");
+    await manager.flush();
+    await storage.flush();
+
+    const snapshot = toAgentPayload(manager.getAgent(created.id)!);
+    expect(snapshot).toMatchObject({
+      updatedAt: nonMessageActivityAt.toISOString(),
+      lastMessageAt: assistantMessageAt.toISOString(),
+    });
+    expect(toAgentListItemPayload(snapshot)).toMatchObject({
+      lastMessageAt: assistantMessageAt.toISOString(),
+    });
+    expect(await storage.get(created.id)).toMatchObject({
+      updatedAt: nonMessageActivityAt.toISOString(),
+      lastMessageAt: assistantMessageAt.toISOString(),
+    });
+  } finally {
+    vi.useRealTimers();
+    await manager.closeAgent("00000000-0000-4000-8000-000000000150").catch(() => undefined);
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("publishes and persists lastMessageAt for out-of-band assistant messages", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-out-of-band-last-message-at-"));
+  const storage = new AgentStorage(join(workdir, "agents"), createTestLogger());
+  const handlerCompleted = deferred<void>();
+
+  class OutOfBandSession extends TestAgentSession {
+    override tryHandleOutOfBand(prompt: AgentPromptInput) {
+      if (prompt !== "/status") {
+        return null;
+      }
+      return {
+        run: async ({ emit }: { emit: (event: AgentStreamEvent) => void }) => {
+          emit({
+            type: "timeline",
+            provider: this.provider,
+            item: { type: "assistant_message", text: "Out-of-band status" },
+          });
+          handlerCompleted.resolve();
+        },
+      };
+    }
+  }
+
+  class OutOfBandClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new OutOfBandSession(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new OutOfBandClient() },
+    registry: storage,
+    logger: createTestLogger(),
+    idFactory: () => "00000000-0000-4000-8000-000000000151",
+  });
+  const messageAt = new Date("2026-08-05T07:04:00.000Z");
+
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(new Date("2026-08-05T07:00:00.000Z"));
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: "workspace-out-of-band-last-message-at",
+    });
+    const stateEvents: ManagedAgent[] = [];
+    manager.subscribe(
+      (event) => {
+        if (event.type === "agent_state") {
+          stateEvents.push(event.agent);
+        }
+      },
+      { agentId: created.id, replayState: false },
+    );
+
+    vi.setSystemTime(messageAt);
+    expect(manager.tryRunOutOfBand(created.id, "/status")).toBe(true);
+    await handlerCompleted.promise;
+    await manager.flush();
+    await storage.flush();
+
+    expect(stateEvents).toHaveLength(1);
+    expect(stateEvents[0]?.lastMessageAt).toEqual(messageAt);
+    expect(await storage.get(created.id)).toMatchObject({
+      lastMessageAt: messageAt.toISOString(),
+    });
+  } finally {
+    vi.useRealTimers();
+    await manager.closeAgent("00000000-0000-4000-8000-000000000151").catch(() => undefined);
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
 
 class TestAgentClient implements AgentClient {
   readonly provider: AgentProvider;
@@ -2626,6 +2763,7 @@ test("importProviderSession imports the selected session without listing and pub
   });
   expect(imported.lifecycle).toBe("idle");
   expect(imported.historyPrimed).toBe(true);
+  expect(imported.lastMessageAt).toEqual(new Date("2026-01-02T00:00:01.000Z"));
   expect(manager.getTimeline(imported.id)).toEqual([
     { type: "user_message", text: "Trace provider imports" },
     { type: "assistant_message", text: "Done" },
@@ -2658,7 +2796,10 @@ test("importProviderSession imports the selected session without listing and pub
       persistence: { nativeHandle: "thread-selected" },
     },
   });
-  expect((await storage.get(imported.id))?.title).toBe("Trace provider imports");
+  expect(await storage.get(imported.id)).toMatchObject({
+    title: "Trace provider imports",
+    lastMessageAt: "2026-01-02T00:00:01.000Z",
+  });
 });
 
 test.each([
@@ -8133,6 +8274,68 @@ test("hydrateTimeline preserves provider replay timestamps and marks missing one
     item: { type: "user_message", text: "hello", messageId: "msg_history_1" },
   });
   expect(timeline[1]?.timestamp).toEqual(expect.any(String));
+  expect(manager.getAgent(snapshot.id)?.lastMessageAt).toEqual(fallbackTimestamp);
+  expect(await storage.get(snapshot.id)).toMatchObject({
+    lastMessageAt: fallbackTimestamp.toISOString(),
+  });
+});
+
+test("force history hydration replaces lastMessageAt with the rebuilt canonical timeline", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-force-history-last-message-at-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+
+  class RebuiltHistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield {
+        type: "timeline",
+        provider: this.provider,
+        timestamp: "2026-05-01T10:00:00.000Z",
+        item: { type: "assistant_message", text: "rebuilt history" },
+      };
+    }
+  }
+
+  class RebuiltHistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new RebuiltHistorySession(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new RebuiltHistoryClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000205",
+  });
+
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(new Date("2026-05-01T10:02:00.000Z"));
+    const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+
+    await manager.appendTimelineItem(snapshot.id, {
+      type: "assistant_message",
+      text: "newer live timeline",
+    });
+    expect(manager.getAgent(snapshot.id)?.lastMessageAt).toEqual(
+      new Date("2026-05-01T10:02:00.000Z"),
+    );
+
+    await manager.hydrateTimelineFromProvider(snapshot.id, { force: true });
+    await manager.flush();
+    await storage.flush();
+
+    expect(manager.getAgent(snapshot.id)?.lastMessageAt).toEqual(
+      new Date("2026-05-01T10:00:00.000Z"),
+    );
+    expect(await storage.get(snapshot.id)).toMatchObject({
+      lastMessageAt: "2026-05-01T10:00:00.000Z",
+    });
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test("provider user_message is recorded from the live stream", async () => {

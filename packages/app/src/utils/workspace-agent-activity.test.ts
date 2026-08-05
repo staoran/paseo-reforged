@@ -11,6 +11,7 @@ function agent(input: {
   status?: Agent["status"];
   updatedAt: string;
   lastActivityAt?: string;
+  lastMessageAt?: string | null;
   attentionTimestamp?: string | null;
   requiresAttention?: boolean;
   attentionReason?: Agent["attentionReason"];
@@ -18,6 +19,13 @@ function agent(input: {
   archivedAt?: string | null;
   parentAgentId?: string | null;
 }): Agent {
+  let lastMessageAt: Date | null = null;
+  if (input.lastMessageAt === undefined) {
+    lastMessageAt = new Date(input.lastActivityAt ?? input.updatedAt);
+  } else if (input.lastMessageAt) {
+    lastMessageAt = new Date(input.lastMessageAt);
+  }
+
   return {
     serverId: "host-a",
     id: input.id,
@@ -26,6 +34,7 @@ function agent(input: {
     createdAt: new Date("2026-01-01T00:00:00.000Z"),
     updatedAt: new Date(input.updatedAt),
     lastUserMessageAt: null,
+    lastMessageAt,
     lastActivityAt: new Date(input.lastActivityAt ?? input.updatedAt),
     capabilities: {
       supportsStreaming: true,
@@ -60,6 +69,110 @@ function agent(input: {
 }
 
 describe("workspace agent activity index", () => {
+  it("uses the last message timestamp instead of later Agent activity", () => {
+    const index = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "root",
+          agent({
+            id: "root",
+            workspaceId: "workspace-a",
+            updatedAt: "2026-08-05T07:03:00.000Z",
+            lastActivityAt: "2026-08-05T07:03:00.000Z",
+            lastMessageAt: "2026-08-05T07:02:00.000Z",
+          }),
+        ],
+      ]),
+    );
+
+    expect(index.get("workspace-a")?.lastActivityAt).toEqual(new Date("2026-08-05T07:02:00.000Z"));
+  });
+
+  it("takes the latest message across unarchived workspace roots", () => {
+    const index = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "latest-status",
+          agent({
+            id: "latest-status",
+            workspaceId: "workspace-a",
+            status: "running",
+            updatedAt: "2026-08-05T07:04:00.000Z",
+            lastMessageAt: "2026-08-05T07:01:00.000Z",
+          }),
+        ],
+        [
+          "latest-message",
+          agent({
+            id: "latest-message",
+            workspaceId: "workspace-a",
+            updatedAt: "2026-08-05T07:03:00.000Z",
+            lastMessageAt: "2026-08-05T07:02:00.000Z",
+          }),
+        ],
+        [
+          "child",
+          agent({
+            id: "child",
+            workspaceId: "workspace-a",
+            updatedAt: "2026-08-05T07:05:00.000Z",
+            lastMessageAt: "2026-08-05T07:05:00.000Z",
+            parentAgentId: "latest-status",
+          }),
+        ],
+        [
+          "archived",
+          agent({
+            id: "archived",
+            workspaceId: "workspace-a",
+            updatedAt: "2026-08-05T07:06:00.000Z",
+            lastMessageAt: "2026-08-05T07:06:00.000Z",
+            archivedAt: "2026-08-05T07:06:00.000Z",
+          }),
+        ],
+      ]),
+    );
+
+    expect(index.get("workspace-a")).toMatchObject({
+      agentId: "latest-status",
+      status: "running",
+      lastActivityAt: new Date("2026-08-05T07:02:00.000Z"),
+    });
+  });
+
+  it("keeps workspace status without displaying a time when roots have no messages", () => {
+    const index = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "root",
+          agent({
+            id: "root",
+            workspaceId: "workspace-a",
+            status: "running",
+            updatedAt: "2026-08-05T07:03:00.000Z",
+            lastMessageAt: null,
+          }),
+        ],
+        [
+          "child",
+          agent({
+            id: "child",
+            workspaceId: "workspace-a",
+            updatedAt: "2026-08-05T07:04:00.000Z",
+            lastMessageAt: "2026-08-05T07:04:00.000Z",
+            parentAgentId: "root",
+          }),
+        ],
+      ]),
+    );
+
+    expect(index.get("workspace-a")).toMatchObject({
+      agentId: "root",
+      status: "running",
+      lastActivityAt: null,
+    });
+  });
+
   it("keeps the latest active root agent for each workspace", () => {
     const index = buildWorkspaceAgentActivityIndex(
       new Map([

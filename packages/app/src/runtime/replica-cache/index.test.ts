@@ -58,6 +58,7 @@ function agent(id: string, workspaceId = "workspace-1", cwd = "/repo/paseo") {
       createdAt: "2026-07-18T08:00:00.000Z",
       updatedAt: "2026-07-18T08:01:00.000Z",
       lastUserMessageAt: "2026-07-18T08:01:00.000Z",
+      lastMessageAt: "2026-07-18T08:00:30.000Z",
       status: "idle",
       capabilities: {
         supportsStreaming: true,
@@ -171,6 +172,9 @@ describe("ReplicaCache", () => {
     expect(Array.from(session?.workspaces.keys() ?? [])).toEqual(["workspace-1"]);
     expect(Array.from(session?.projects.keys() ?? [])).toEqual(["project-1"]);
     expect(session?.agents.get("agent-1")?.updatedAt).toBeInstanceOf(Date);
+    expect(session?.agents.get("agent-1")?.lastMessageAt).toEqual(
+      new Date("2026-07-18T08:00:30.000Z"),
+    );
     expect(session?.workspaces.get("workspace-1")?.statusEnteredAt).toBeInstanceOf(Date);
     expect(session?.agentStreamTail.get("agent-1")).toEqual([message("message-1", "Cached")]);
     expect(session?.agentAuthoritativeHistoryApplied.get("agent-1")).toBe(true);
@@ -180,6 +184,30 @@ describe("ReplicaCache", () => {
       endSeq: 12,
     });
     expect(session?.agentTimelineHasOlder.get("agent-1")).toBe(true);
+  });
+
+  it("restores legacy cache snapshots without lastMessageAt as null", async () => {
+    const storage = new MemoryStorage();
+    const writer = new ReplicaCache(storage);
+    writer.setHosts([SERVER_ID]);
+    seedSession();
+    await writer.flush();
+
+    const cacheKey = "@paseo:replica-cache";
+    const cached = JSON.parse(storage.values.get(cacheKey) ?? "") as {
+      hosts: Array<{ agents: Array<{ snapshot: Record<string, unknown> }> }>;
+    };
+    delete cached.hosts[0]?.agents[0]?.snapshot.lastMessageAt;
+    storage.values.set(cacheKey, JSON.stringify(cached));
+    useSessionStore.getState().clearSession(SERVER_ID);
+
+    const reader = new ReplicaCache(storage);
+    reader.setHosts([SERVER_ID]);
+    await reader.restore();
+
+    expect(
+      useSessionStore.getState().sessions[SERVER_ID]?.agents.get("agent-1")?.lastMessageAt,
+    ).toBeNull();
   });
 
   it("persists only the focused agent view with a short timeline tail", async () => {

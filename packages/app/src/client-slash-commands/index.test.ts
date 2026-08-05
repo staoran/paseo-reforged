@@ -16,6 +16,7 @@ function createAgent(overrides: Partial<Agent> = {}): Agent {
     createdAt: now,
     updatedAt: now,
     lastUserMessageAt: now,
+    lastMessageAt: now,
     lastActivityAt: now,
     capabilities: {
       supportsStreaming: true,

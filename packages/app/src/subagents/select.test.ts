@@ -16,6 +16,7 @@ const AGENT_DEFAULTS: Agent = {
   createdAt: AGENT_TIMESTAMP,
   updatedAt: AGENT_TIMESTAMP,
   lastUserMessageAt: null,
+  lastMessageAt: null,
   lastActivityAt: AGENT_TIMESTAMP,
   capabilities: {
     supportsStreaming: true,

@@ -16,6 +16,7 @@ function createSnapshot(
     createdAt: input.createdAt ?? "2026-04-20T00:00:00.000Z",
     updatedAt: input.updatedAt ?? "2026-04-20T00:01:00.000Z",
     lastUserMessageAt: input.lastUserMessageAt ?? null,
+    ...(input.lastMessageAt !== undefined ? { lastMessageAt: input.lastMessageAt } : {}),
     status: input.status ?? "idle",
     capabilities: input.capabilities ?? {
       supportsStreaming: true,
@@ -84,5 +85,21 @@ describe("normalizeAgentSnapshot", () => {
 
     expect(missing.providerRetryMessage).toBeNull();
     expect(retrying.providerRetryMessage).toBe(" Reconnecting... 2/5 ");
+  });
+
+  it("normalizes lastMessageAt independently from updatedAt and defaults legacy payloads to null", () => {
+    const messageAt = new Date("2026-08-05T07:02:00.000Z");
+    const normalized = normalizeAgentSnapshot(
+      createSnapshot({
+        updatedAt: "2026-08-05T07:03:00.000Z",
+        lastMessageAt: messageAt.toISOString(),
+      }),
+      "server-1",
+    );
+    const legacy = normalizeAgentSnapshot(createSnapshot(), "server-1");
+
+    expect(normalized.lastMessageAt).toEqual(messageAt);
+    expect(normalized.lastActivityAt).toEqual(new Date("2026-08-05T07:03:00.000Z"));
+    expect(legacy.lastMessageAt).toBeNull();
   });
 });

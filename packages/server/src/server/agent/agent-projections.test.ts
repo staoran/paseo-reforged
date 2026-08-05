@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { AGENT_LIFECYCLE_STATUSES } from "./agent-manager.js";
 import {
+  buildStoredAgentPayload,
   toAgentListItemPayload,
   toAgentPayload,
   toRecentProviderSessionDescriptorPayload,
@@ -95,6 +96,7 @@ function createManagedAgent(overrides: ManagedAgentOverrides = {}): ManagedAgent
     historyPrimed: true,
     providerRetryMessage: null,
     lastUserMessageAt: now,
+    lastMessageAt: now,
     attention: { requiresAttention: false },
   };
 
@@ -219,6 +221,24 @@ describe("toStoredAgentRecord", () => {
 });
 
 describe("toAgentPayload", () => {
+  it("projects lastMessageAt independently across live, stored, and list payloads", () => {
+    const messageAt = new Date("2026-08-05T07:02:00.000Z");
+    const agent = createManagedAgent({
+      updatedAt: new Date("2026-08-05T07:03:00.000Z"),
+      lastMessageAt: messageAt,
+    });
+    const record = toStoredAgentRecord(agent);
+    const livePayload = toAgentPayload(agent);
+
+    expect(record.lastMessageAt).toBe(messageAt.toISOString());
+    expect(livePayload.lastMessageAt).toBe(messageAt.toISOString());
+    expect(toAgentListItemPayload(livePayload).lastMessageAt).toBe(messageAt.toISOString());
+    expect(buildStoredAgentPayload(record, ["claude"]).lastMessageAt).toBe(messageAt.toISOString());
+
+    const { lastMessageAt: _removed, ...legacyRecord } = record;
+    expect(buildStoredAgentPayload(legacyRecord, ["claude"]).lastMessageAt).toBeNull();
+  });
+
   it("serializes dates, clones arrays, and hides session", () => {
     const permissionA = createPermission({ id: "perm-a" });
     const permissionB = createPermission({

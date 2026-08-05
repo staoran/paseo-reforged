@@ -43,6 +43,7 @@ function createAgent(input: { id: string; workspaceId: string; status: Agent["st
     createdAt: timestamp,
     updatedAt: timestamp,
     lastUserMessageAt: null,
+    lastMessageAt: null,
     lastActivityAt: timestamp,
     capabilities: {
       supportsStreaming: true,

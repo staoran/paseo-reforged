@@ -6,7 +6,7 @@ export interface WorkspaceAgentActivity {
   agentId: string;
   status: WorkspaceDescriptor["status"];
   enteredAt: Date | null;
-  lastActivityAt: Date;
+  lastActivityAt: Date | null;
 }
 
 export function buildWorkspaceResidentAgentCountIndex(
@@ -41,7 +41,7 @@ export function buildWorkspaceAgentActivityIndex(
 ): Map<string, WorkspaceAgentActivity> {
   const activityByWorkspaceId = new Map<string, WorkspaceAgentActivity>();
   const latestStatusAtByWorkspaceId = new Map<string, Date>();
-  const latestActivityAtByWorkspaceId = new Map<string, Date>();
+  const latestMessageAtByWorkspaceId = new Map<string, Date>();
 
   for (const agent of agents.values()) {
     const parentAgent = agent.parentAgentId ? agents.get(agent.parentAgentId) : undefined;
@@ -49,9 +49,9 @@ export function buildWorkspaceAgentActivityIndex(
       continue;
     }
 
-    const latestActivityAt = latestActivityAtByWorkspaceId.get(agent.workspaceId);
-    if (!latestActivityAt || agent.lastActivityAt > latestActivityAt) {
-      latestActivityAtByWorkspaceId.set(agent.workspaceId, agent.lastActivityAt);
+    const latestMessageAt = latestMessageAtByWorkspaceId.get(agent.workspaceId);
+    if (agent.lastMessageAt && (!latestMessageAt || agent.lastMessageAt > latestMessageAt)) {
+      latestMessageAtByWorkspaceId.set(agent.workspaceId, agent.lastMessageAt);
     }
 
     const enteredAt = agent.attentionTimestamp ?? agent.updatedAt;
@@ -71,14 +71,13 @@ export function buildWorkspaceAgentActivityIndex(
       agentId: agent.id,
       status,
       enteredAt,
-      lastActivityAt: agent.lastActivityAt,
+      lastActivityAt: agent.lastMessageAt,
     });
   }
 
   for (const [workspaceId, activity] of activityByWorkspaceId) {
     const previousActivity = previous?.get(workspaceId);
-    const lastActivityAt =
-      latestActivityAtByWorkspaceId.get(workspaceId) ?? activity.lastActivityAt;
+    const lastActivityAt = latestMessageAtByWorkspaceId.get(workspaceId) ?? null;
     activityByWorkspaceId.set(
       workspaceId,
       reconcileWorkspaceAgentActivity(activity, previousActivity, lastActivityAt),
@@ -94,18 +93,18 @@ export function buildWorkspaceAgentActivityIndex(
 function reconcileWorkspaceAgentActivity(
   activity: WorkspaceAgentActivity,
   previousActivity: WorkspaceAgentActivity | undefined,
-  lastActivityAt: Date,
+  lastActivityAt: Date | null,
 ): WorkspaceAgentActivity {
   const continuesPreviousStatus =
     previousActivity?.agentId === activity.agentId && previousActivity.status === activity.status;
 
   if (!continuesPreviousStatus) {
-    return activity.lastActivityAt.getTime() === lastActivityAt.getTime()
+    return areActivityTimestampsEqual(activity.lastActivityAt, lastActivityAt)
       ? activity
       : { ...activity, lastActivityAt };
   }
 
-  if (previousActivity.lastActivityAt.getTime() === lastActivityAt.getTime()) {
+  if (areActivityTimestampsEqual(previousActivity.lastActivityAt, lastActivityAt)) {
     return previousActivity;
   }
 
@@ -114,6 +113,10 @@ function reconcileWorkspaceAgentActivity(
     enteredAt: previousActivity.enteredAt,
     lastActivityAt,
   };
+}
+
+function areActivityTimestampsEqual(left: Date | null, right: Date | null): boolean {
+  return left === right || (left !== null && right !== null && left.getTime() === right.getTime());
 }
 
 function areWorkspaceAgentActivityIndexesIdentical(

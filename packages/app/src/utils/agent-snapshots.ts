@@ -22,6 +22,7 @@ export function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId:
   const lastUserMessageAt = snapshot.lastUserMessageAt
     ? new Date(snapshot.lastUserMessageAt)
     : null;
+  const lastMessageAt = snapshot.lastMessageAt ? new Date(snapshot.lastMessageAt) : null;
   const attentionTimestamp = snapshot.attentionTimestamp
     ? new Date(snapshot.attentionTimestamp)
     : null;
@@ -36,6 +37,7 @@ export function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId:
     createdAt,
     updatedAt,
     lastUserMessageAt,
+    lastMessageAt,
     lastActivityAt: updatedAt,
     capabilities: snapshot.capabilities,
     currentModeId: snapshot.currentModeId,

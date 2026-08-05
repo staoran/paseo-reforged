@@ -12,6 +12,7 @@ function createAgent(input: Partial<Agent> & Pick<Agent, "id">): Agent {
     createdAt: new Date("2026-01-01T00:00:00.000Z"),
     updatedAt: new Date("2026-01-01T00:00:00.000Z"),
     lastUserMessageAt: null,
+    lastMessageAt: null,
     lastActivityAt: new Date("2026-01-01T00:00:00.000Z"),
     capabilities: {
       supportsStreaming: true,

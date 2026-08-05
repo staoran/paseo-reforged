@@ -124,6 +124,7 @@ function createManagedAgent(overrides: ManagedAgentOverrides = {}): ManagedAgent
     persistence: overrides.persistence ?? null,
     historyPrimed: overrides.historyPrimed ?? true,
     lastUserMessageAt: overrides.lastUserMessageAt ?? core.now,
+    lastMessageAt: overrides.lastMessageAt === undefined ? core.now : overrides.lastMessageAt,
     lastUsage: overrides.lastUsage,
     lastError: overrides.lastError,
   };
@@ -190,6 +191,28 @@ describe("AgentStorage", () => {
     const [persisted] = await reloaded.list();
     expect(persisted.cwd).toBe("/tmp/project");
     expect(persisted.config?.extra?.claude).toMatchObject({ maxThinkingTokens: 1024 });
+  });
+
+  test("round-trips lastMessageAt while keeping legacy records without the field readable", async () => {
+    const agentId = "agent-last-message-at";
+    const messageAt = new Date("2026-08-05T07:02:00.000Z");
+    await storage.applySnapshot(
+      createManagedAgent({
+        id: agentId,
+        lastMessageAt: messageAt,
+        updatedAt: new Date("2026-08-05T07:03:00.000Z"),
+      }),
+    );
+
+    const current = await storage.get(agentId);
+    expect(current?.lastMessageAt).toBe(messageAt.toISOString());
+
+    const { lastMessageAt: _removed, ...legacyRecord } = current!;
+    await storage.upsert(legacyRecord);
+    await storage.flush();
+
+    const reloaded = new AgentStorage(storagePath, logger);
+    expect(await reloaded.get(agentId)).not.toHaveProperty("lastMessageAt");
   });
 
   test("applySnapshot stores and reloads featureValues when present", async () => {

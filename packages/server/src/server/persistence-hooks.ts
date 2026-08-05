@@ -104,10 +104,12 @@ export function isStoredAgentProviderAvailable(
   return isProviderRegistered(validProviders, record.provider);
 }
 
+/** Extracts persisted timestamps while retaining whether legacy records omitted new fields. */
 export function extractTimestamps(record: StoredAgentRecord): {
   createdAt: Date;
   updatedAt: Date;
   lastUserMessageAt: Date | null;
+  lastMessageAt?: Date | null;
   labels?: Record<string, string>;
   workspaceId?: string;
   owner?: StoredAgentRecord["owner"];
@@ -116,6 +118,9 @@ export function extractTimestamps(record: StoredAgentRecord): {
     createdAt: new Date(record.createdAt),
     updatedAt: new Date(record.lastActivityAt ?? record.updatedAt),
     lastUserMessageAt: record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null,
+    ...(Object.prototype.hasOwnProperty.call(record, "lastMessageAt")
+      ? { lastMessageAt: record.lastMessageAt ? new Date(record.lastMessageAt) : null }
+      : {}),
     labels: record.labels,
     workspaceId: record.workspaceId,
     owner: record.owner,

@@ -3,6 +3,7 @@ import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import {
   buildConfigOverrides,
   buildSessionConfig,
+  extractTimestamps,
   toAgentPersistenceHandle,
 } from "./persistence-hooks.js";
 
@@ -179,5 +180,17 @@ describe("persistence hooks", () => {
     });
 
     expect(handle).toBeNull();
+  });
+
+  test("propagates lastMessageAt without collapsing a missing legacy field into null", () => {
+    const messageAt = "2026-08-05T07:02:00.000Z";
+    const withMessage = extractTimestamps(createRecord({ lastMessageAt: messageAt }));
+    expect(withMessage.lastMessageAt).toEqual(new Date(messageAt));
+
+    const explicitNone = extractTimestamps(createRecord({ lastMessageAt: null }));
+    expect(explicitNone).toHaveProperty("lastMessageAt", null);
+
+    const legacy = extractTimestamps(createRecord());
+    expect(Object.prototype.hasOwnProperty.call(legacy, "lastMessageAt")).toBe(false);
   });
 });

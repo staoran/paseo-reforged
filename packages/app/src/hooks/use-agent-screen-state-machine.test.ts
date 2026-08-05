@@ -20,6 +20,7 @@ function createAgent(id: string): Agent {
     createdAt: now,
     updatedAt: now,
     lastUserMessageAt: now,
+    lastMessageAt: now,
     lastActivityAt: now,
     capabilities: {
       supportsStreaming: true,

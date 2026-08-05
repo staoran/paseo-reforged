@@ -159,6 +159,7 @@ function serializeAgent(agent: Agent): StoredAgent {
     createdAt: agent.createdAt.toISOString(),
     updatedAt: agent.updatedAt.toISOString(),
     lastUserMessageAt: agent.lastUserMessageAt?.toISOString() ?? null,
+    lastMessageAt: agent.lastMessageAt?.toISOString() ?? null,
     status: agent.status,
     capabilities: agent.capabilities,
     currentModeId: agent.currentModeId,

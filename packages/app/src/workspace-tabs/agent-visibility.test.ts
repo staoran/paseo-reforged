@@ -26,6 +26,7 @@ function makeAgent(input: {
     createdAt,
     updatedAt: createdAt,
     lastUserMessageAt: null,
+    lastMessageAt: null,
     lastActivityAt,
     capabilities: {
       supportsStreaming: true,

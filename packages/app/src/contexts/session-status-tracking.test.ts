@@ -11,6 +11,7 @@ function createAgent(status: Agent["status"]): Agent {
     createdAt: new Date(0),
     updatedAt: new Date(0),
     lastUserMessageAt: null,
+    lastMessageAt: null,
     lastActivityAt: new Date(0),
     capabilities: {
       supportsStreaming: true,

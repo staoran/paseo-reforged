@@ -248,6 +248,7 @@ function buildDraftAgentSnapshot(input: {
     createdAt: now,
     updatedAt: now,
     lastUserMessageAt: now,
+    lastMessageAt: now,
     lastActivityAt: now,
     capabilities: DRAFT_CAPABILITIES,
     currentModeId: modeId,
