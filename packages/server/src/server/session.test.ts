@@ -1050,6 +1050,75 @@ function createStoredAgentRecord(
   };
 }
 
+test("fetch_agents_request reports a stored-only idle agent as closed after daemon startup", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const agent = createStoredAgentRecord({
+    id: "cold-start-agent",
+    cwd: "/tmp/cold-start",
+    workspaceId: "cold-start-workspace",
+    lastStatus: "idle",
+  });
+  const workspace = {
+    workspaceId: "cold-start-workspace",
+    projectId: "cold-start-project",
+    cwd: agent.cwd,
+    kind: "directory" as const,
+    displayName: "Cold start workspace",
+    title: null,
+    branch: null,
+    baseBranch: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    archivedAt: null,
+  };
+  const project = {
+    projectId: "cold-start-project",
+    rootPath: agent.cwd,
+    kind: "non_git" as const,
+    displayName: "Cold start project",
+    customName: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    archivedAt: null,
+  };
+  const providerSnapshotManager = createProviderSnapshotManagerStub();
+  providerSnapshotManager.listRegisteredProviderIds.mockReturnValue(["codex"]);
+  const session = createSessionForTest({
+    messages,
+    providerSnapshotManager: providerSnapshotManager.manager,
+    agentStorage: {
+      list: vi.fn().mockResolvedValue([agent]),
+    },
+    workspaceRegistry: {
+      get: vi.fn().mockResolvedValue(workspace),
+      list: vi.fn().mockResolvedValue([workspace]),
+    },
+    projectRegistry: {
+      get: vi.fn().mockResolvedValue(project),
+      list: vi.fn().mockResolvedValue([project]),
+    },
+  });
+
+  await session.handleMessage({
+    type: "fetch_agents_request",
+    requestId: "cold-start-agents",
+  });
+
+  const response = messages.find((message) => message.type === "fetch_agents_response");
+  expect(response).toMatchObject({
+    payload: {
+      entries: [
+        {
+          agent: {
+            id: agent.id,
+            status: "closed",
+          },
+        },
+      ],
+    },
+  });
+});
+
 describe("agent detach RPC", () => {
   test("detaches a stored subagent and emits the updated standalone agent", async () => {
     const messages: unknown[] = [];

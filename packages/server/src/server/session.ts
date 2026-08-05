@@ -898,7 +898,7 @@ export class Session {
     this.agentUpdates = createAgentUpdatesService({
       emit: (message) => this.emit(message),
       buildAgentPayload: (agent) => this.buildAgentPayload(agent),
-      buildStoredAgentPayload: (record) => this.buildStoredAgentPayload(record),
+      buildStoredAgentPayload: (record) => this.buildStoredAgentDirectoryPayload(record),
       isProviderVisibleToClient: (provider) => this.isProviderVisibleToClient(provider),
       buildProjectPlacementForWorkspaceId: (workspaceId) =>
         this.buildProjectPlacementForWorkspaceId(workspaceId),
@@ -1664,6 +1664,19 @@ export class Session {
     registeredProviderIds = new Set(this.providerSnapshotManager.listRegisteredProviderIds()),
   ): AgentSnapshotPayload {
     return buildStoredAgentPayload(record, registeredProviderIds);
+  }
+
+  private buildStoredAgentDirectoryPayload(
+    record: StoredAgentRecord,
+    registeredProviderIds = new Set(this.providerSnapshotManager.listRegisteredProviderIds()),
+  ): AgentSnapshotPayload {
+    const payload = this.buildStoredAgentPayload(record, registeredProviderIds);
+    if (record.archivedAt) {
+      return payload;
+    }
+
+    // A non-archived stored-only record has no provider runtime in this daemon
+    return { ...payload, status: "closed" };
   }
 
   private isProviderVisibleToClient(provider: string): boolean {
@@ -4022,7 +4035,7 @@ export class Session {
           filter?.includeUnavailablePersisted === true ||
           isStoredAgentProviderAvailable(record, registeredProviderIds),
       )
-      .map((record) => this.buildStoredAgentPayload(record, registeredProviderIds));
+      .map((record) => this.buildStoredAgentDirectoryPayload(record, registeredProviderIds));
 
     let agents = [...liveAgents, ...persistedAgents];
 
@@ -6016,7 +6029,7 @@ export class Session {
             attentionTimestamp: null,
           };
           await this.agentStorage.upsert(nextRecord);
-          const agent = this.buildStoredAgentPayload(nextRecord);
+          const agent = this.buildStoredAgentDirectoryPayload(nextRecord);
           const project = await this.buildProjectPlacementForWorkspace(workspace);
           this.emit({
             type: "agent_update",
