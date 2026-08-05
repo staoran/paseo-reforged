@@ -997,8 +997,7 @@ export const en = {
       status: {
         scriptsAvailable: "Scripts available",
         creating: "Creating...",
-        runtimeResident: "Agent runtime is active",
-        runtimeClosed: "Agent runtime is stopped",
+        runtimeResident: "Resident Agent runtime count: {{count}}",
       },
       actions: {
         menu: "Workspace actions",

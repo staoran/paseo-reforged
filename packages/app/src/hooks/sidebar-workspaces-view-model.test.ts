@@ -89,7 +89,7 @@ describe("createSidebarWorkspaceEntry activity threading", () => {
 });
 
 describe("createSidebarWorkspaceEntry runtime threading", () => {
-  it("exposes residency and a valid unarchived default agent target", () => {
+  it("exposes the resident Agent count and a valid unarchived default agent target", () => {
     const source = workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42");
     source.defaultAgentId = "agent-default";
 
@@ -97,11 +97,11 @@ describe("createSidebarWorkspaceEntry runtime threading", () => {
       serverId: "srv",
       workspace: source,
       workspaceAgents: new Map([["agent-default", { workspaceId: "ws-1", archivedAt: null }]]),
-      workspaceRuntimeResidency: new Map([["ws-1", "closed"]]),
+      workspaceResidentAgentCounts: new Map([["ws-1", 2]]),
     });
 
     expect(entry.defaultAgentId).toBe("agent-default");
-    expect(entry.runtimeResidency).toBe("closed");
+    expect(entry.residentAgentCount).toBe(2);
   });
 
   it("drops stale, archived, and cross-workspace default agent targets", () => {
@@ -350,7 +350,7 @@ describe("shared sidebar workspace model", () => {
           serverId: "host-a",
           agents: new Map(),
           workspaceAgentActivity: new Map(),
-          workspaceRuntimeResidency: new Map(),
+          workspaceResidentAgentCounts: new Map(),
           workspaces: new Map([
             [
               "main",
@@ -368,7 +368,7 @@ describe("shared sidebar workspace model", () => {
           serverId: "host-b",
           agents: new Map(),
           workspaceAgentActivity: new Map(),
-          workspaceRuntimeResidency: new Map(),
+          workspaceResidentAgentCounts: new Map(),
           workspaces: new Map([
             [
               "feature",
@@ -457,7 +457,7 @@ describe("shared sidebar workspace model", () => {
           serverId: "srv",
           agents: new Map(),
           workspaceAgentActivity: new Map(),
-          workspaceRuntimeResidency: new Map(),
+          workspaceResidentAgentCounts: new Map(),
           workspaces: new Map([
             ["one", one],
             ["two", two],
@@ -472,7 +472,7 @@ describe("shared sidebar workspace model", () => {
           serverId: "srv",
           agents: new Map(),
           workspaceAgentActivity: new Map(),
-          workspaceRuntimeResidency: new Map(),
+          workspaceResidentAgentCounts: new Map(),
           workspaces: new Map([
             ["one", one],
             ["two", { ...two, status: "running" }],
@@ -498,7 +498,7 @@ describe("shared sidebar workspace model", () => {
           serverId: "srv",
           agents: new Map(),
           workspaceAgentActivity: new Map(),
-          workspaceRuntimeResidency: new Map(),
+          workspaceResidentAgentCounts: new Map(),
           workspaces: new Map([
             [
               "clone-a",

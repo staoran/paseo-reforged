@@ -998,8 +998,7 @@ export const ja: TranslationResources = {
       status: {
         scriptsAvailable: "スクリプトが利用可能",
         creating: "作成中...",
-        runtimeResident: "エージェント runtime は稼働中です",
-        runtimeClosed: "エージェント runtime は停止しています",
+        runtimeResident: "常駐 Agent runtime 数：{{count}}",
       },
       actions: {
         menu: "ワークスペースアクション",

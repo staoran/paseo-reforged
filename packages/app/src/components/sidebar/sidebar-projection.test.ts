@@ -25,7 +25,7 @@ function makeWorkspace(id: string, statusBucket: SidebarWorkspaceEntry["statusBu
     statusEnteredAt: null,
     lastActivityAt: null,
     defaultAgentId: null,
-    runtimeResidency: null,
+    residentAgentCount: 0,
     archivingAt: null,
     diffStat: null,
     prHint: null,

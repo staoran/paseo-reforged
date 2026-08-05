@@ -32,6 +32,7 @@ vi.mock("react-native-unistyles", () => ({
   StyleSheet: {
     create: () => ({ label: {} }),
   },
+  useUnistyles: () => ({ rt: { breakpoint: "md" } }),
   withUnistyles: (component: unknown) => component,
 }));
 
@@ -48,6 +49,7 @@ vi.mock("@/components/synced-loader", () => ({ SyncedLoader: () => null }));
 vi.mock("@/git/forge-icon", () => ({ ForgeBrandIcon: () => null }));
 vi.mock("@/utils/open-external-url", () => ({ openExternalUrl: () => Promise.resolve() }));
 vi.mock("lucide-react-native", () => ({
+  Bot: () => null,
   CircleAlert: () => null,
   ExternalLink: () => null,
   Folder: () => null,
@@ -55,8 +57,6 @@ vi.mock("lucide-react-native", () => ({
   GitPullRequest: () => null,
   Globe: () => null,
   Monitor: () => null,
-  Power: () => null,
-  PowerOff: () => null,
   SquareTerminal: () => null,
 }));
 
@@ -77,7 +77,7 @@ const ROW_WORKSPACE: SidebarWorkspaceEntry = {
   statusEnteredAt: null,
   lastActivityAt: new Date("2026-08-03T06:55:00.000Z"),
   defaultAgentId: null,
-  runtimeResidency: null,
+  residentAgentCount: 0,
   archivingAt: null,
   diffStat: null,
   prHint: null,
@@ -90,6 +90,11 @@ const ROW_WORKSPACE: SidebarWorkspaceEntry = {
 const ROW_WITHOUT_ACTIVITY: SidebarWorkspaceEntry = {
   ...ROW_WORKSPACE,
   lastActivityAt: null,
+};
+
+const ROW_WITH_RESIDENT_AGENTS: SidebarWorkspaceEntry = {
+  ...ROW_WORKSPACE,
+  residentAgentCount: 2,
 };
 
 function disableRelativeTimeFormat(): () => void {
@@ -219,7 +224,7 @@ describe("SidebarWorkspaceActivityTime", () => {
     expect(container.textContent).toBe("1m ago");
   });
 
-  it("renders the activity time in the shared workspace row", async () => {
+  it("renders the activity time before resident Agent status in the shared workspace row", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-03T07:00:00.000Z"));
     await i18n.changeLanguage("en");
@@ -231,7 +236,7 @@ describe("SidebarWorkspaceActivityTime", () => {
       root?.render(
         <I18nextProvider i18n={i18n}>
           <SidebarWorkspaceRowContent
-            workspace={ROW_WORKSPACE}
+            workspace={ROW_WITH_RESIDENT_AGENTS}
             isHovered={false}
             isLoading={false}
           />
@@ -240,6 +245,16 @@ describe("SidebarWorkspaceActivityTime", () => {
     });
 
     expect(container.textContent).toContain("5m ago");
+    const activityTime = container.querySelector('[data-testid="sidebar-workspace-activity-time"]');
+    const residentIndicator = container.querySelector(
+      '[data-testid="workspace-runtime-resident-indicator"]',
+    );
+    if (!activityTime || !residentIndicator) {
+      throw new Error("Expected activity time and resident Agent indicator");
+    }
+    expect(
+      activityTime.compareDocumentPosition(residentIndicator) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 
   it("omits the activity time when the workspace has no activity", async () => {

@@ -1011,8 +1011,7 @@ export const ptBR: TranslationResources = {
       status: {
         scriptsAvailable: "Scripts disponíveis",
         creating: "Criando...",
-        runtimeResident: "O runtime do agente está ativo",
-        runtimeClosed: "O runtime do agente está parado",
+        runtimeResident: "Quantidade de runtimes de agente ativos: {{count}}",
       },
       actions: {
         menu: "Ações do workspace",

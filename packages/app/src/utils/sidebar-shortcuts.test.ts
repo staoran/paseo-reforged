@@ -37,7 +37,7 @@ function workspace(input: {
     statusEnteredAt: input.statusEnteredAt ?? null,
     lastActivityAt: null,
     defaultAgentId: null,
-    runtimeResidency: null,
+    residentAgentCount: 0,
     diffStat: null,
     prHint: null,
     archiveHasUncommittedChanges: null,

@@ -1009,8 +1009,7 @@ export const ru: TranslationResources = {
       status: {
         scriptsAvailable: "Доступны скрипты",
         creating: "Создание...",
-        runtimeResident: "Runtime агента активен",
-        runtimeClosed: "Runtime агента остановлен",
+        runtimeResident: "Количество активных runtime агента: {{count}}",
       },
       actions: {
         menu: "Действия Workspace",

@@ -1020,8 +1020,7 @@ export const es: TranslationResources = {
       status: {
         scriptsAvailable: "Guiones disponibles",
         creating: "Creando...",
-        runtimeResident: "El runtime del agente está activo",
-        runtimeClosed: "El runtime del agente está detenido",
+        runtimeResident: "Cantidad de runtimes de agente activos: {{count}}",
       },
       actions: {
         menu: "AccionesWorkspace",

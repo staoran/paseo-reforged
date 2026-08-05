@@ -332,8 +332,8 @@ describe("normalizeWorkspaceDescriptor", () => {
   });
 });
 
-describe("workspace runtime residency projection", () => {
-  it("updates residency whenever the session agent map changes", () => {
+describe("workspace resident Agent count projection", () => {
+  it("updates resident counts whenever the session agent map changes", () => {
     initializeTestSession();
     const store = useSessionStore.getState();
 
@@ -343,9 +343,9 @@ describe("workspace runtime residency projection", () => {
         ["agent-1", createAgent({ id: "agent-1", workspaceId: "workspace-a", status: "idle" })],
       ]),
     );
-    expect(useSessionStore.getState().sessions["test-server"]?.workspaceRuntimeResidency).toEqual(
-      new Map([["workspace-a", "resident"]]),
-    );
+    expect(
+      useSessionStore.getState().sessions["test-server"]?.workspaceResidentAgentCounts,
+    ).toEqual(new Map([["workspace-a", 1]]));
 
     store.setAgents(
       "test-server",
@@ -353,12 +353,12 @@ describe("workspace runtime residency projection", () => {
         ["agent-1", createAgent({ id: "agent-1", workspaceId: "workspace-a", status: "closed" })],
       ]),
     );
-    expect(useSessionStore.getState().sessions["test-server"]?.workspaceRuntimeResidency).toEqual(
-      new Map([["workspace-a", "closed"]]),
-    );
+    expect(
+      useSessionStore.getState().sessions["test-server"]?.workspaceResidentAgentCounts,
+    ).toEqual(new Map());
   });
 
-  it("rebuilds residency when restoring a cached session replica", () => {
+  it("rebuilds resident counts when restoring a cached session replica", () => {
     const closedAgent = createAgent({
       id: "agent-1",
       workspaceId: "workspace-a",
@@ -372,8 +372,8 @@ describe("workspace runtime residency projection", () => {
     });
 
     expect(
-      useSessionStore.getState().sessions["restore-server"]?.workspaceRuntimeResidency,
-    ).toEqual(new Map([["workspace-a", "closed"]]));
+      useSessionStore.getState().sessions["restore-server"]?.workspaceResidentAgentCounts,
+    ).toEqual(new Map());
   });
 });
 

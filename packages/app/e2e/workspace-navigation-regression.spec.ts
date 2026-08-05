@@ -213,7 +213,7 @@ test.describe("Workspace navigation regression", () => {
     await expect(page.getByText("Add a project", { exact: true })).toHaveCount(0);
   });
 
-  test("closes all runtimes without a replacement draft and reopens the persisted default agent", async ({
+  test("updates resident Agent counts while closing tabs and reopens the persisted default agent", async ({
     page,
   }) => {
     const workspace = await seedWorkspace({ repoPrefix: "workspace-runtime-reopen-" });
@@ -231,35 +231,40 @@ test.describe("Workspace navigation regression", () => {
       await openWorkspaceWithAgents(page, [defaultAgent, lastClosedAgent]);
       await expectOnlyWorkspaceAgentTabsVisible(page, [defaultAgent.id, lastClosedAgent.id]);
 
+      const workspaceRow = page
+        .getByTestId(`sidebar-workspace-row-${serverId}:${workspace.workspaceId}`)
+        .filter({ visible: true })
+        .first();
+      const residentIndicator = workspaceRow.getByTestId("workspace-runtime-resident-indicator");
+      const residentCount = workspaceRow.getByTestId("workspace-runtime-resident-count");
+      await expect(workspaceRow).toBeVisible({ timeout: 30_000 });
+      await expect(residentIndicator).toBeVisible({ timeout: 30_000 });
+      await expect(residentCount).toHaveText("2");
+      await workspaceRow.hover();
+      await expect(
+        workspaceRow.getByTestId(`sidebar-workspace-kebab-${serverId}:${workspace.workspaceId}`),
+      ).toBeVisible();
+
       await page
         .getByTestId(`workspace-tab-agent_${defaultAgent.id}`)
         .filter({ visible: true })
         .click();
       await closeWorkspaceAgentTab(page, defaultAgent.id);
+      await expect(residentIndicator).toBeVisible({ timeout: 30_000 });
+      await expect(residentCount).toHaveCount(0);
       await closeWorkspaceAgentTab(page, lastClosedAgent.id);
 
       await expect.poll(() => getVisibleDraftTabCount(page), { timeout: 30_000 }).toBe(0);
       await expectOnlyWorkspaceAgentTabsVisible(page, []);
 
-      const workspaceRow = page
-        .getByTestId(`sidebar-workspace-row-${serverId}:${workspace.workspaceId}`)
-        .filter({ visible: true })
-        .first();
-      await expect(workspaceRow).toBeVisible({ timeout: 30_000 });
-      await expect(
-        workspaceRow.getByTestId("workspace-status-indicator-runtime-closed"),
-      ).toBeVisible({ timeout: 30_000 });
+      await expect(residentIndicator).toHaveCount(0, { timeout: 30_000 });
 
       await workspaceRow.click();
       await expectWorkspaceTabVisible(page, defaultAgent.id);
       await expectOnlyWorkspaceAgentTabsVisible(page, [defaultAgent.id]);
       await expectWorkspaceTabHidden(page, lastClosedAgent.id);
-      await expect(
-        workspaceRow.getByTestId("workspace-status-indicator-runtime-resident"),
-      ).toBeVisible({ timeout: 30_000 });
-      await expect(
-        workspaceRow.getByTestId("workspace-status-indicator-runtime-closed"),
-      ).toHaveCount(0);
+      await expect(residentIndicator).toBeVisible({ timeout: 30_000 });
+      await expect(residentCount).toHaveCount(0);
     } finally {
       await workspace.cleanup();
     }

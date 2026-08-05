@@ -39,9 +39,8 @@ import {
 } from "@/runtime/activity";
 import {
   buildWorkspaceAgentActivityIndex,
-  buildWorkspaceRuntimeResidencyIndex,
+  buildWorkspaceResidentAgentCountIndex,
   type WorkspaceAgentActivity,
-  type WorkspaceRuntimeResidency,
 } from "@/utils/workspace-agent-activity";
 
 // Re-export types that were in session-context
@@ -375,7 +374,7 @@ export interface SessionState {
   // Agents
   agents: Map<string, Agent>;
   workspaceAgentActivity: Map<string, WorkspaceAgentActivity>;
-  workspaceRuntimeResidency: Map<string, WorkspaceRuntimeResidency>;
+  workspaceResidentAgentCounts: Map<string, number>;
   agentDetails: Map<string, Agent>;
   workspaces: Map<string, WorkspaceDescriptor>;
   // All active project descriptors, keyed by host-local projectId.
@@ -591,7 +590,7 @@ function createInitialSessionState(
     initializingAgents: new Map(),
     agents: new Map(),
     workspaceAgentActivity: new Map(),
-    workspaceRuntimeResidency: new Map(),
+    workspaceResidentAgentCounts: new Map(),
     agentDetails: new Map(),
     workspaces: new Map(),
     projects: new Map(),
@@ -722,7 +721,7 @@ export const useSessionStore = create<SessionStore>()(
                 ...session,
                 agents: replica.agents,
                 workspaceAgentActivity: buildWorkspaceAgentActivityIndex(replica.agents),
-                workspaceRuntimeResidency: buildWorkspaceRuntimeResidencyIndex(replica.agents),
+                workspaceResidentAgentCounts: buildWorkspaceResidentAgentCountIndex(replica.agents),
                 workspaces: replica.workspaces,
                 projects: replica.projects,
                 agentStreamTail,
@@ -1308,9 +1307,9 @@ export const useSessionStore = create<SessionStore>()(
                   nextAgents,
                   session.workspaceAgentActivity,
                 ),
-                workspaceRuntimeResidency: buildWorkspaceRuntimeResidencyIndex(
+                workspaceResidentAgentCounts: buildWorkspaceResidentAgentCountIndex(
                   nextAgents,
-                  session.workspaceRuntimeResidency,
+                  session.workspaceResidentAgentCounts,
                 ),
               },
             },

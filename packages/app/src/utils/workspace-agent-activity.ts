@@ -9,33 +9,30 @@ export interface WorkspaceAgentActivity {
   lastActivityAt: Date;
 }
 
-export type WorkspaceRuntimeResidency = "resident" | "closed";
-
-export function buildWorkspaceRuntimeResidencyIndex(
+export function buildWorkspaceResidentAgentCountIndex(
   agents: ReadonlyMap<string, Agent>,
-  previous?: ReadonlyMap<string, WorkspaceRuntimeResidency>,
-): Map<string, WorkspaceRuntimeResidency> {
-  const residencyByWorkspaceId = new Map<string, WorkspaceRuntimeResidency>();
+  previous?: ReadonlyMap<string, number>,
+): Map<string, number> {
+  const residentAgentCountByWorkspaceId = new Map<string, number>();
 
   for (const agent of agents.values()) {
-    if (agent.archivedAt || !agent.workspaceId) {
+    if (agent.archivedAt || !agent.workspaceId || agent.status === "closed") {
       continue;
     }
 
-    const current = residencyByWorkspaceId.get(agent.workspaceId);
-    if (current === "resident") {
-      continue;
-    }
-    residencyByWorkspaceId.set(
+    residentAgentCountByWorkspaceId.set(
       agent.workspaceId,
-      agent.status === "closed" ? "closed" : "resident",
+      (residentAgentCountByWorkspaceId.get(agent.workspaceId) ?? 0) + 1,
     );
   }
 
-  if (previous && areWorkspaceRuntimeResidencyIndexesEqual(previous, residencyByWorkspaceId)) {
+  if (
+    previous &&
+    areWorkspaceResidentAgentCountIndexesEqual(previous, residentAgentCountByWorkspaceId)
+  ) {
     return previous instanceof Map ? previous : new Map(previous);
   }
-  return residencyByWorkspaceId;
+  return residentAgentCountByWorkspaceId;
 }
 
 export function buildWorkspaceAgentActivityIndex(
@@ -134,15 +131,15 @@ function areWorkspaceAgentActivityIndexesIdentical(
   return true;
 }
 
-function areWorkspaceRuntimeResidencyIndexesEqual(
-  previous: ReadonlyMap<string, WorkspaceRuntimeResidency>,
-  next: ReadonlyMap<string, WorkspaceRuntimeResidency>,
+function areWorkspaceResidentAgentCountIndexesEqual(
+  previous: ReadonlyMap<string, number>,
+  next: ReadonlyMap<string, number>,
 ): boolean {
   if (previous.size !== next.size) {
     return false;
   }
-  for (const [workspaceId, residency] of next) {
-    if (previous.get(workspaceId) !== residency) {
+  for (const [workspaceId, count] of next) {
+    if (previous.get(workspaceId) !== count) {
       return false;
     }
   }

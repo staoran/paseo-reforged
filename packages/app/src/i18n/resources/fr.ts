@@ -1019,8 +1019,7 @@ export const fr: TranslationResources = {
       status: {
         scriptsAvailable: "Scripts disponibles",
         creating: "Création...",
-        runtimeResident: "Le runtime de l'agent est actif",
-        runtimeClosed: "Le runtime de l'agent est arrêté",
+        runtimeResident: "Nombre de runtimes d'agent actifs : {{count}}",
       },
       actions: {
         menu: "ActionsWorkspace",

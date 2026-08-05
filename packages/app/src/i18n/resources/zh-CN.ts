@@ -974,8 +974,7 @@ export const zhCN: TranslationResources = {
       status: {
         scriptsAvailable: "有可用 scripts",
         creating: "正在创建...",
-        runtimeResident: "Agent runtime 已驻留",
-        runtimeClosed: "Agent runtime 已停止",
+        runtimeResident: "驻留 Agent runtime 数量：{{count}}",
       },
       actions: {
         menu: "Workspace 操作",

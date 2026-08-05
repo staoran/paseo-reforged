@@ -38,7 +38,7 @@ function workspace(projectKey: string, workspaceId: string): SidebarWorkspaceEnt
     statusEnteredAt: null,
     lastActivityAt: null,
     defaultAgentId: null,
-    runtimeResidency: null,
+    residentAgentCount: 0,
     archivingAt: null,
     diffStat: null,
     prHint: null,

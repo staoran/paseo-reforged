@@ -20,7 +20,7 @@ function sidebarSession(input?: Partial<Omit<SidebarWorkspaceSession, "serverId"
     agents: input?.agents ?? new Map(),
     workspaces: input?.workspaces ?? workspaceMap(),
     workspaceAgentActivity: input?.workspaceAgentActivity ?? activityMap(),
-    workspaceRuntimeResidency: input?.workspaceRuntimeResidency ?? new Map(),
+    workspaceResidentAgentCounts: input?.workspaceResidentAgentCounts ?? new Map(),
   };
 }
 
@@ -45,14 +45,14 @@ describe("sidebar workspace session selection", () => {
         agents: hostB.agents,
         workspaces: hostB.workspaces,
         workspaceAgentActivity: hostB.workspaceAgentActivity,
-        workspaceRuntimeResidency: hostB.workspaceRuntimeResidency,
+        workspaceResidentAgentCounts: hostB.workspaceResidentAgentCounts,
       },
       {
         serverId: "host-a",
         agents: hostA.agents,
         workspaces: hostA.workspaces,
         workspaceAgentActivity: hostA.workspaceAgentActivity,
-        workspaceRuntimeResidency: hostA.workspaceRuntimeResidency,
+        workspaceResidentAgentCounts: hostA.workspaceResidentAgentCounts,
       },
     ]);
   });
@@ -61,7 +61,7 @@ describe("sidebar workspace session selection", () => {
     const agents = new Map();
     const workspaces = workspaceMap();
     const workspaceAgentActivity = activityMap();
-    const workspaceRuntimeResidency = new Map();
+    const workspaceResidentAgentCounts = new Map();
 
     const previous = selectSidebarWorkspaceSessions(
       {
@@ -69,7 +69,7 @@ describe("sidebar workspace session selection", () => {
           agents,
           workspaces,
           workspaceAgentActivity,
-          workspaceRuntimeResidency,
+          workspaceResidentAgentCounts,
         }),
       },
       ["host-a"],
@@ -80,7 +80,7 @@ describe("sidebar workspace session selection", () => {
           agents,
           workspaces,
           workspaceAgentActivity,
-          workspaceRuntimeResidency,
+          workspaceResidentAgentCounts,
         }),
       },
       ["host-a"],

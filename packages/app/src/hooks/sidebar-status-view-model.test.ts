@@ -27,7 +27,7 @@ function ws(
     statusEnteredAt: input.statusEnteredAt ?? null,
     lastActivityAt: input.lastActivityAt ?? null,
     defaultAgentId: input.defaultAgentId ?? null,
-    runtimeResidency: input.runtimeResidency ?? null,
+    residentAgentCount: input.residentAgentCount ?? 0,
     archivingAt: null,
     diffStat: null,
     prHint: null,

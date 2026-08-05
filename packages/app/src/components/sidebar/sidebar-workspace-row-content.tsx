@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { Pressable, Text, View, type GestureResponderEvent, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
+  Bot,
   CircleAlert,
   ExternalLink,
   Folder,
@@ -12,8 +13,6 @@ import {
   GitPullRequest,
   Globe,
   Monitor,
-  Power,
-  PowerOff,
   SquareTerminal,
 } from "lucide-react-native";
 import { WorkspaceHoverCard } from "@/components/workspace-hover-card";
@@ -57,8 +56,7 @@ const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedCircleAlert = withUnistyles(CircleAlert);
 const ThemedSyncedLoader = withUnistyles(SyncedLoader);
 const ThemedMonitor = withUnistyles(Monitor);
-const ThemedPower = withUnistyles(Power);
-const ThemedPowerOff = withUnistyles(PowerOff);
+const ThemedBot = withUnistyles(Bot);
 const ThemedFolder = withUnistyles(Folder);
 const ThemedFolderGit2 = withUnistyles(FolderGit2);
 const ThemedGlobe = withUnistyles(Globe);
@@ -141,7 +139,6 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
         <WorkspaceStatusIndicator
           bucket={workspace.statusBucket}
           workspaceKind={workspace.workspaceKind}
-          runtimeResidency={workspace.runtimeResidency}
           loading={isLoading}
           reserveIdleSpace={reserveIdleStatusIndicatorSpace}
         />
@@ -157,6 +154,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
               {workspace.lastActivityAt ? (
                 <SidebarWorkspaceActivityTime lastActivityAt={workspace.lastActivityAt} />
               ) : null}
+              <WorkspaceResidentAgentsIndicator count={workspace.residentAgentCount} />
               {children}
             </View>
           </View>
@@ -201,13 +199,11 @@ function WorkspaceScriptIcon({ kind }: { kind: SidebarWorkspaceScriptIconKind })
 function WorkspaceStatusIndicator({
   bucket,
   workspaceKind,
-  runtimeResidency,
   loading = false,
   reserveIdleSpace = true,
 }: {
   bucket: SidebarWorkspaceEntry["statusBucket"];
   workspaceKind: SidebarWorkspaceEntry["workspaceKind"];
-  runtimeResidency: SidebarWorkspaceEntry["runtimeResidency"];
   loading?: boolean;
   reserveIdleSpace?: boolean;
 }) {
@@ -246,9 +242,6 @@ function WorkspaceStatusIndicator({
   }
 
   if (bucket === "done") {
-    if (runtimeResidency) {
-      return <WorkspaceRuntimeResidencyIndicator residency={runtimeResidency} />;
-    }
     return reserveIdleSpace ? (
       <View style={styles.workspaceStatusDot} testID="workspace-status-indicator-done" />
     ) : null;
@@ -281,18 +274,11 @@ function WorkspaceStatusIndicator({
   );
 }
 
-function WorkspaceRuntimeResidencyIndicator({
-  residency,
-}: {
-  residency: NonNullable<SidebarWorkspaceEntry["runtimeResidency"]>;
-}) {
+function WorkspaceResidentAgentsIndicator({ count }: { count: number }) {
   const { t } = useTranslation();
-  const isResident = residency === "resident";
-  const label = t(
-    isResident
-      ? "sidebar.workspace.status.runtimeResident"
-      : "sidebar.workspace.status.runtimeClosed",
-  );
+  if (count <= 0) return null;
+
+  const label = t("sidebar.workspace.status.runtimeResident", { count });
 
   return (
     <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
@@ -301,14 +287,18 @@ function WorkspaceRuntimeResidencyIndicator({
           accessible
           accessibilityRole="image"
           accessibilityLabel={label}
-          style={styles.workspaceStatusDot}
-          testID={`workspace-status-indicator-runtime-${residency}`}
+          style={styles.workspaceResidentAgents}
+          testID="workspace-runtime-resident-indicator"
         >
-          {isResident ? (
-            <ThemedPower size={14} uniProps={greenColorMapping} />
-          ) : (
-            <ThemedPowerOff size={14} uniProps={foregroundMutedColorMapping} />
-          )}
+          <ThemedBot size={14} uniProps={greenColorMapping} />
+          {count > 1 ? (
+            <Text
+              style={styles.workspaceResidentAgentCount}
+              testID="workspace-runtime-resident-count"
+            >
+              {count}
+            </Text>
+          ) : null}
         </View>
       </TooltipTrigger>
       <TooltipContent side="right" align="center" offset={8}>
@@ -618,6 +608,22 @@ const styles = StyleSheet.create((theme) => ({
   runtimeTooltipText: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.xs,
+  },
+  workspaceResidentAgents: {
+    minWidth: 28,
+    height: 20,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 2,
+    flexShrink: 0,
+  },
+  workspaceResidentAgentCount: {
+    color: theme.colors.palette.green[500],
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.medium,
+    lineHeight: Math.round(theme.fontSize.xs * 1.25),
+    fontVariant: ["tabular-nums"],
   },
   workspacePrBadgeRow: {
     flexDirection: "row",

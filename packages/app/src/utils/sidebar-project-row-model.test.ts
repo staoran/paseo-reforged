@@ -34,7 +34,7 @@ function workspace(overrides: Partial<SidebarWorkspaceEntry> = {}): SidebarWorks
     archivingAt: overrides.archivingAt ?? null,
     lastActivityAt: overrides.lastActivityAt ?? null,
     defaultAgentId: overrides.defaultAgentId ?? null,
-    runtimeResidency: overrides.runtimeResidency ?? null,
+    residentAgentCount: overrides.residentAgentCount ?? 0,
   };
 }
 

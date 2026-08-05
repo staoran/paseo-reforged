@@ -985,8 +985,7 @@ export const ar: TranslationResources = {
       status: {
         scriptsAvailable: "البرامج النصية المتاحة",
         creating: "جارٍ الإنشاء...",
-        runtimeResident: "runtime الوكيل نشط",
-        runtimeClosed: "runtime الوكيل متوقف",
+        runtimeResident: "عدد runtimes الوكيل النشطة: {{count}}",
       },
       actions: {
         menu: "إجراءات Workspace",

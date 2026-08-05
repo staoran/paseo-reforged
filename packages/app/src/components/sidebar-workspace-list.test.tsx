@@ -718,15 +718,23 @@ describe("sidebar workspace render isolation", () => {
     });
   });
 
-  it("shows runtime residency only when no higher-priority status icon is present", async () => {
+  it("shows resident agent counts independently from workspace activity", async () => {
     const workspaces = [
       workspace({
-        id: "done",
+        id: "closed",
         projectId: "project-a",
         projectDisplayName: "Project A",
-        name: "done",
+        name: "closed",
         status: "done",
-        defaultAgentId: "agent-done",
+        defaultAgentId: "agent-closed",
+      }),
+      workspace({
+        id: "single",
+        projectId: "project-a",
+        projectDisplayName: "Project A",
+        name: "single",
+        status: "done",
+        defaultAgentId: "agent-single",
       }),
       workspace({
         id: "running",
@@ -736,38 +744,16 @@ describe("sidebar workspace render isolation", () => {
         status: "running",
         defaultAgentId: "agent-running",
       }),
-      workspace({
-        id: "needs-input",
-        projectId: "project-a",
-        projectDisplayName: "Project A",
-        name: "needs-input",
-        status: "needs_input",
-        defaultAgentId: "agent-needs-input",
-      }),
-      workspace({
-        id: "attention",
-        projectId: "project-a",
-        projectDisplayName: "Project A",
-        name: "attention",
-        status: "attention",
-        defaultAgentId: "agent-attention",
-      }),
-      workspace({
-        id: "loading",
-        projectId: "project-a",
-        projectDisplayName: "Project A",
-        name: "loading",
-        status: "done",
-        archivingAt: "2026-08-03T12:01:00.000Z",
-        defaultAgentId: "agent-loading",
-      }),
     ];
-    const workspaceAgents = new Map(
-      workspaces.map((entry) => {
-        const agentId = entry.defaultAgentId ?? `agent-${entry.id}`;
-        return [agentId, agent({ id: agentId, workspaceId: entry.id })];
-      }),
-    );
+    const workspaceAgents = new Map<string, Agent>([
+      ["agent-closed", agent({ id: "agent-closed", workspaceId: "closed", status: "closed" })],
+      ["agent-single", agent({ id: "agent-single", workspaceId: "single", status: "idle" })],
+      ["agent-running", agent({ id: "agent-running", workspaceId: "running", status: "running" })],
+      [
+        "agent-running-second",
+        agent({ id: "agent-running-second", workspaceId: "running", status: "idle" }),
+      ],
+    ]);
     initializeSidebarState(workspaces);
     act(() => {
       useSessionStore.getState().setAgents(SERVER_ID, workspaceAgents);
@@ -785,23 +771,46 @@ describe("sidebar workspace render isolation", () => {
       );
     });
 
-    const runtimeIndicators = container.querySelectorAll(
-      '[data-testid="workspace-status-indicator-runtime-closed"]',
+    const closedRow = container.querySelector(
+      `[data-testid="sidebar-workspace-row-${SERVER_ID}:closed"]`,
     );
-    expect(runtimeIndicators).toHaveLength(1);
-    expect(runtimeIndicators[0]?.getAttribute("aria-label")).toBe("Agent runtime is stopped");
+    expect(closedRow).not.toBeNull();
     expect(
-      container.querySelector('[data-testid="workspace-status-indicator-running"]'),
-    ).not.toBeNull();
+      closedRow?.querySelector('[data-testid="workspace-runtime-resident-indicator"]'),
+    ).toBeNull();
     expect(
-      container.querySelector('[data-testid="workspace-status-indicator-needs_input"]'),
-    ).not.toBeNull();
+      closedRow?.querySelector('[data-testid^="workspace-status-indicator-runtime-"]'),
+    ).toBeNull();
+
+    const singleRow = container.querySelector(
+      `[data-testid="sidebar-workspace-row-${SERVER_ID}:single"]`,
+    );
+    const singleResidentIndicator = singleRow?.querySelector(
+      '[data-testid="workspace-runtime-resident-indicator"]',
+    );
+    expect(singleResidentIndicator?.getAttribute("aria-label")).toBe(
+      "Resident Agent runtime count: 1",
+    );
     expect(
-      container.querySelector('[data-testid="workspace-status-indicator-attention"]'),
-    ).not.toBeNull();
+      singleResidentIndicator?.querySelector('[data-testid="workspace-runtime-resident-count"]'),
+    ).toBeNull();
+
+    const runningRow = container.querySelector(
+      `[data-testid="sidebar-workspace-row-${SERVER_ID}:running"]`,
+    );
     expect(
-      container.querySelector('[data-testid="workspace-status-indicator-loading"]'),
+      runningRow?.querySelector('[data-testid="workspace-status-indicator-running"]'),
     ).not.toBeNull();
+    const runningResidentIndicator = runningRow?.querySelector(
+      '[data-testid="workspace-runtime-resident-indicator"]',
+    );
+    expect(runningResidentIndicator?.getAttribute("aria-label")).toBe(
+      "Resident Agent runtime count: 2",
+    );
+    expect(
+      runningResidentIndicator?.querySelector('[data-testid="workspace-runtime-resident-count"]')
+        ?.textContent,
+    ).toBe("2");
   });
 
   it.each(["project", "status"] as const)(
@@ -820,7 +829,7 @@ describe("sidebar workspace render isolation", () => {
         workspaceAgents: new Map([
           ["initial-agent", { workspaceId: defaultWorkspace.id, archivedAt: null }],
         ]),
-        workspaceRuntimeResidency: new Map([[defaultWorkspace.id, "closed"]]),
+        workspaceResidentAgentCounts: new Map(),
       });
       const project: SidebarProjectEntry = {
         projectKey: "project-a",
