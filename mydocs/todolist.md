@@ -94,6 +94,7 @@
 | 0033 | 已收口 | micro-spec | 已同步        | [后台完成会话的推理过程自动折叠](micro_specs/0033_后台完成会话推理过程自动折叠.md)   | 2026-08-03 18:32 | phased chunk catch-up E2E RED→GREEN；18 单测与静态检查通过                            |
 | 0037 | 已收口 | micro-spec | 已同步        | [解码 Windows 中文文件链接路径](micro_specs/0037_解码Windows中文文件链接路径.md)     | 2026-08-05 15:45 | 二轮分类保护、真实输入 RED→GREEN、完整链路、typecheck 与 lint 均通过；已授权提交      |
 | 0047 | 已收口 | micro-spec | 已同步        | [修复 beta.2 发布 CI 旧断言](micro_specs/0047_修复beta2发布CI旧断言.md)              | 2026-08-04 18:02 | beta.2 已发布；CI 19/19、三条发布 workflow 与 24 个资产已核验；按用户决定保留 ACP pin |
+| 0052 | 已收口 | micro-spec | 已同步        | [弱化侧边栏时间提示](micro_specs/0052_弱化侧边栏时间提示.md)                         | 2026-08-05 21:28 | 16→13 RED/GREEN、字号边界、desktop/compact 视觉、9/9 组件测试与静态检查通过           |
 
 ## 候选待办
 

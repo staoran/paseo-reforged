@@ -348,6 +348,103 @@ async function expectInterfaceFontSize(locator: Locator, expected: number): Prom
   }
 }
 
+test("renders sidebar activity time as secondary metadata", async ({ page }, testInfo) => {
+  test.setTimeout(180_000);
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "sidebar-activity-time-",
+    title: "Sidebar activity time",
+    initialPrompt: "Show the sidebar activity metadata.",
+  });
+
+  try {
+    await agent.client.waitForFinish(agent.agentId, 30_000);
+    await openAgentRoute(page, agent);
+    await expectComposerVisible(page);
+    await setStoredFontSize(page, "uiFontSize", 16);
+
+    const sidebarRow = page
+      .getByTestId(`sidebar-workspace-row-${getServerId()}:${agent.workspaceId}`)
+      .filter({ visible: true })
+      .first();
+    const sidebarTitle = sidebarRow.getByText(agent.workspaceName, { exact: true });
+    const activityTime = sidebarRow.getByTestId("sidebar-workspace-activity-time");
+    await expect(sidebarTitle).toBeVisible();
+    await expect(activityTime).toBeVisible();
+
+    const titleStyle = await sidebarTitle.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        color: style.color,
+        fontSize: Number.parseFloat(style.fontSize),
+      };
+    });
+    const activityStyle = await activityTime.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        color: style.color,
+        fontSize: Number.parseFloat(style.fontSize),
+        horizontalOverflow: element.scrollWidth > element.clientWidth + 1,
+        whiteSpace: style.whiteSpace,
+      };
+    });
+
+    expect(titleStyle.fontSize).toBe(16);
+    expect(activityStyle.fontSize).toBe(13);
+    expect(activityStyle.color).not.toBe(titleStyle.color);
+    expect(activityStyle.whiteSpace).toBe("nowrap");
+    expect(activityStyle.horizontalOverflow).toBe(false);
+
+    const desktopScreenshotPath = testInfo.outputPath("sidebar-activity-time-desktop-16px.png");
+    await page.screenshot({ path: desktopScreenshotPath });
+    await testInfo.attach("sidebar-activity-time-desktop-16px", {
+      path: desktopScreenshotPath,
+      contentType: "image/png",
+    });
+
+    for (const [interfaceSize, expectedActivitySize] of [
+      [20, 16],
+      [24, 19],
+      [11, 10],
+    ] as const) {
+      await setStoredFontSize(page, "uiFontSize", interfaceSize);
+      await expect(sidebarTitle).toBeVisible();
+      await expect(activityTime).toBeVisible();
+      expect((await readTypography(sidebarTitle)).fontSize).toBe(interfaceSize);
+      expect((await readTypography(activityTime)).fontSize).toBe(expectedActivitySize);
+      expect(expectedActivitySize).toBeLessThan(interfaceSize);
+    }
+
+    await setStoredFontSize(page, "uiFontSize", 16);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole("button", { name: "Open menu", exact: true }).click();
+    await expect(page.getByTestId("sidebar-sessions")).toBeInViewport({ ratio: 1 });
+    await expect(sidebarTitle).toBeVisible();
+    await expect(activityTime).toBeVisible();
+
+    const [compactTitleBox, compactActivityBox] = await Promise.all([
+      sidebarTitle.boundingBox(),
+      activityTime.boundingBox(),
+    ]);
+    if (!compactTitleBox || !compactActivityBox) {
+      throw new Error("Expected sidebar title and activity time geometry in compact view");
+    }
+    expect(compactTitleBox.x + compactTitleBox.width).toBeLessThanOrEqual(compactActivityBox.x + 1);
+    expect((await readTypography(activityTime)).fontSize).toBe(13);
+    expect(
+      await activityTime.evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
+    ).toBe(true);
+
+    const compactScreenshotPath = testInfo.outputPath("sidebar-activity-time-compact-16px.png");
+    await page.screenshot({ path: compactScreenshotPath });
+    await testInfo.attach("sidebar-activity-time-compact-16px", {
+      path: compactScreenshotPath,
+      contentType: "image/png",
+    });
+  } finally {
+    await agent.cleanup();
+  }
+});
+
 test("keeps interface, workspace, and code typography independent", async ({ page }, testInfo) => {
   test.setTimeout(180_000);
   const prompt = "Verify independent workspace typography.";

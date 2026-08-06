@@ -41,8 +41,8 @@ export function SidebarWorkspaceActivityTime({ lastActivityAt }: { lastActivityA
 
 const styles = StyleSheet.create((theme) => ({
   label: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundExtraMuted,
+    fontSize: Math.max(10, Math.round(theme.fontSize.xs * 0.8)),
     fontWeight: theme.fontWeight.normal,
     lineHeight: Math.round(theme.fontSize.xs * 1.25),
     fontVariant: ["tabular-nums"],
