@@ -348,6 +348,7 @@ interface ManagedAgentBase {
   pendingReplacement: boolean;
   persistence: AgentPersistenceHandle | null;
   historyPrimed: boolean;
+  lastReplayableUserMessageId?: string | null;
   providerRetryMessage: string | null;
   lastUserMessageAt: Date | null;
   lastMessageAt: Date | null;
@@ -490,6 +491,66 @@ function normalizeReplayableTimelineEvent(
     ...event,
     item: limitAgentTimelineItemContent(item),
   };
+}
+
+type LegacyProviderHistoryEvent =
+  | Extract<AgentStreamEvent, { type: "timeline" }>
+  | Extract<AgentStreamEvent, { type: "provider_subagent" }>;
+
+type LegacyProviderHistoryRead =
+  | {
+      complete: true;
+      events: LegacyProviderHistoryEvent[];
+      latestUserMessageId: string | null;
+    }
+  | {
+      complete: false;
+      events: LegacyProviderHistoryEvent[];
+      latestUserMessageId: string | null;
+      error: unknown;
+    };
+
+async function readLegacyProviderHistory(
+  session: AgentSession,
+): Promise<LegacyProviderHistoryRead> {
+  const events: LegacyProviderHistoryEvent[] = [];
+  let latestUserMessageId: string | null = null;
+  try {
+    for await (const event of session.streamHistory()) {
+      if (event.type === "provider_subagent") {
+        events.push(event);
+        continue;
+      }
+      if (event.type !== "timeline") {
+        continue;
+      }
+      if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
+        continue;
+      }
+      events.push(event);
+      if (event.item.type === "user_message") {
+        latestUserMessageId = event.item.messageId ?? null;
+      }
+    }
+  } catch (error) {
+    return { complete: false, events, latestUserMessageId, error };
+  }
+  return { complete: true, events, latestUserMessageId };
+}
+
+function restoreReplayableHistoryTimelineEvent(
+  event: Extract<AgentStreamEvent, { type: "timeline" }>,
+  lastReplayableUserMessageId: string | null | undefined,
+): Extract<AgentStreamEvent, { type: "timeline" }> {
+  if (event.item.type !== "user_message") {
+    return event;
+  }
+  const { replayKind: _historyReplayKind, ...itemWithoutReplayKind } = event.item;
+  const item =
+    lastReplayableUserMessageId && event.item.messageId === lastReplayableUserMessageId
+      ? { ...itemWithoutReplayKind, replayKind: "text_only" as const }
+      : itemWithoutReplayKind;
+  return { ...event, item };
 }
 
 interface SubscriptionRecord {
@@ -1135,6 +1196,7 @@ export class AgentManager {
       updatedAt?: Date;
       lastUserMessageAt?: Date | null;
       lastMessageAt?: Date | null;
+      lastReplayableUserMessageId?: string;
       labels?: Record<string, string>;
       workspaceId?: string;
       owner?: AgentOwner;
@@ -1155,6 +1217,7 @@ export class AgentManager {
       updatedAt?: Date;
       lastUserMessageAt?: Date | null;
       lastMessageAt?: Date | null;
+      lastReplayableUserMessageId?: string;
       labels?: Record<string, string>;
       workspaceId?: string;
       owner?: AgentOwner;
@@ -1192,8 +1255,15 @@ export class AgentManager {
       launchContext,
       resumeOptions,
     );
+    const lastReplayableUserMessageId = hasSamePersistenceIdentity(
+      handle,
+      session.describePersistence(),
+    )
+      ? options?.lastReplayableUserMessageId
+      : undefined;
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       ...options,
+      lastReplayableUserMessageId,
       persistence: handle,
     });
   }
@@ -1310,6 +1380,7 @@ export class AgentManager {
     const preservedLastUsage = existing.lastUsage;
     const preservedLastError = existing.lastError;
     const preservedAttention = existing.attention;
+    const preservedLastReplayableUserMessageId = existing.lastReplayableUserMessageId;
     const handle = existing.persistence;
     const provider = handle?.provider ?? existing.provider;
     const client = this.requireClient(provider);
@@ -1358,6 +1429,10 @@ export class AgentManager {
         updatedAt: existing.updatedAt,
         lastUserMessageAt: existing.lastUserMessageAt,
         lastMessageAt: existing.lastMessageAt,
+        lastReplayableUserMessageId:
+          handle && hasSamePersistenceIdentity(handle, session.describePersistence())
+            ? (preservedLastReplayableUserMessageId ?? undefined)
+            : undefined,
         historyPrimed: rehydrateFromDisk ? false : preservedHistoryPrimed,
         lastUsage: preservedLastUsage,
         lastError: preservedLastError,
@@ -2940,6 +3015,7 @@ export class AgentManager {
       updatedAt?: Date;
       lastUserMessageAt?: Date | null;
       lastMessageAt?: Date | null;
+      lastReplayableUserMessageId?: string;
       labels?: Record<string, string>;
       timeline?: AgentTimelineItem[];
       timelineRows?: AgentTimelineRow[];
@@ -3127,6 +3203,7 @@ export class AgentManager {
           updatedAt?: Date;
           lastUserMessageAt?: Date | null;
           lastMessageAt?: Date | null;
+          lastReplayableUserMessageId?: string;
           labels?: Record<string, string>;
           historyPrimed?: boolean;
           lastUsage?: AgentUsage;
@@ -3167,6 +3244,7 @@ export class AgentManager {
         config.cwd,
       ),
       historyPrimed: options.historyPrimed ?? durableTimelineHasRows,
+      lastReplayableUserMessageId: options.lastReplayableUserMessageId ?? null,
       providerRetryMessage: null,
       lastUserMessageAt: options.lastUserMessageAt ?? null,
       lastMessageAt: options.lastMessageAt ?? null,
@@ -3484,18 +3562,23 @@ export class AgentManager {
     agent: ActiveManagedAgent,
     broadcast: boolean,
   ): Promise<void> {
-    const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
-    const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
-    for await (const event of agent.session.streamHistory()) {
-      if (event.type === "timeline") {
-        if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
-          continue;
-        }
-        historyEvents.push(event);
-      } else if (event.type === "provider_subagent") {
-        providerSubagentEvents.push(event);
+    const history = await readLegacyProviderHistory(agent.session);
+    if (!history.complete) {
+      if (this.clearReplayableProofUnlessLatest(agent, null)) {
+        this.emitState(agent);
       }
+      throw history.error;
     }
+    const historyEvents = history.events.filter(
+      (event): event is Extract<AgentStreamEvent, { type: "timeline" }> =>
+        event.type === "timeline",
+    );
+    const providerSubagentEvents = history.events.filter(
+      (event): event is Extract<AgentStreamEvent, { type: "provider_subagent" }> =>
+        event.type === "provider_subagent",
+    );
+
+    this.clearReplayableProofUnlessLatest(agent, history.latestUserMessageId);
 
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
     await this.deleteCommittedTimeline(agent.id);
@@ -3516,7 +3599,11 @@ export class AgentManager {
         this.dispatch({ type: "provider_subagent", event: update });
       }
     }
-    for (const event of historyEvents) {
+    for (const historyEvent of historyEvents) {
+      const event = restoreReplayableHistoryTimelineEvent(
+        historyEvent,
+        agent.lastReplayableUserMessageId,
+      );
       const row = this.recordTimeline(
         agent.id,
         event.item,
@@ -3534,6 +3621,20 @@ export class AgentManager {
     this.emitState(agent);
   }
 
+  private clearReplayableProofUnlessLatest(
+    agent: ActiveManagedAgent,
+    latestHistoryUserMessageId: string | null,
+  ): boolean {
+    if (
+      !agent.lastReplayableUserMessageId ||
+      agent.lastReplayableUserMessageId === latestHistoryUserMessageId
+    ) {
+      return false;
+    }
+    agent.lastReplayableUserMessageId = null;
+    return true;
+  }
+
   private async primeTimelineFromLegacyProviderHistory(
     agent: ActiveManagedAgent,
     broadcast: boolean | (() => boolean),
@@ -3546,44 +3647,48 @@ export class AgentManager {
     }> = [];
     const providerSubagentEvents: AgentManagerEvent[] = [];
     agent.historyPrimed = true;
-    try {
-      for await (const event of agent.session.streamHistory()) {
-        if (event.type === "provider_subagent") {
-          const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
-          const managerEvent: AgentManagerEvent = { type: "provider_subagent", event: update };
-          if (deferredBroadcast) {
-            providerSubagentEvents.push(managerEvent);
-          } else if (broadcast) {
-            this.dispatch(managerEvent);
-          }
-          continue;
-        }
-        if (event.type !== "timeline") {
-          continue;
-        }
-        if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
-          continue;
-        }
-        const row = this.recordTimeline(
-          agent.id,
-          event.item,
-          event.timestamp ? { timestamp: event.timestamp } : undefined,
-        );
+    const history = await readLegacyProviderHistory(agent.session);
+
+    const replayableProofChanged = this.clearReplayableProofUnlessLatest(
+      agent,
+      history.complete ? history.latestUserMessageId : null,
+    );
+    for (const event of history.events) {
+      if (event.type === "provider_subagent") {
+        const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
+        const managerEvent: AgentManagerEvent = { type: "provider_subagent", event: update };
         if (deferredBroadcast) {
-          timelineEvents.push({ event, row });
+          providerSubagentEvents.push(managerEvent);
         } else if (broadcast) {
-          this.dispatchStream(agent.id, event, {
-            seq: row.seq,
-            epoch: this.timelineStore.getEpoch(agent.id),
-            timestamp: row.timestamp,
-          });
+          this.dispatch(managerEvent);
         }
+        continue;
       }
-    } catch {
-      // ignore history failures
+      const restoredEvent = restoreReplayableHistoryTimelineEvent(
+        event,
+        agent.lastReplayableUserMessageId,
+      );
+      const row = this.recordTimeline(
+        agent.id,
+        restoredEvent.item,
+        restoredEvent.timestamp ? { timestamp: restoredEvent.timestamp } : undefined,
+      );
+      if (deferredBroadcast) {
+        timelineEvents.push({ event: restoredEvent, row });
+      } else if (broadcast) {
+        this.dispatchStream(agent.id, restoredEvent, {
+          seq: row.seq,
+          epoch: this.timelineStore.getEpoch(agent.id),
+          timestamp: row.timestamp,
+        });
+      }
     }
 
-    this.emitStateIfLastMessageAtChanged(agent, previousLastMessageAtMs);
+    if (replayableProofChanged) {
+      this.emitState(agent);
+    } else {
+      this.emitStateIfLastMessageAtChanged(agent, previousLastMessageAtMs);
+    }
 
     if (typeof broadcast !== "function" || !broadcast()) {
       return;
@@ -3909,6 +4014,8 @@ export class AgentManager {
 
     this.recordAndDispatchTimelineItem(agent.id, event.item, event.provider, event.turnId);
     if (event.item.type === "user_message") {
+      agent.lastReplayableUserMessageId =
+        event.item.replayKind === "text_only" && event.item.messageId ? event.item.messageId : null;
       agent.lastUserMessageAt = new Date();
       this.emitState(agent);
     }

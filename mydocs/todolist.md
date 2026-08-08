@@ -95,6 +95,7 @@
 | 0037 | 已收口 | micro-spec | 已同步        | [解码 Windows 中文文件链接路径](micro_specs/0037_解码Windows中文文件链接路径.md)     | 2026-08-05 15:45 | 二轮分类保护、真实输入 RED→GREEN、完整链路、typecheck 与 lint 均通过；已授权提交      |
 | 0047 | 已收口 | micro-spec | 已同步        | [修复 beta.2 发布 CI 旧断言](micro_specs/0047_修复beta2发布CI旧断言.md)              | 2026-08-04 18:02 | beta.2 已发布；CI 19/19、三条发布 workflow 与 24 个资产已核验；按用户决定保留 ACP pin |
 | 0052 | 已收口 | micro-spec | 已同步        | [弱化侧边栏时间提示](micro_specs/0052_弱化侧边栏时间提示.md)                         | 2026-08-05 21:28 | 16→13 RED/GREEN、字号边界、desktop/compact 视觉、9/9 组件测试与静态检查通过           |
+| 0054 | 已收口 | micro-spec | 已同步        | [持久化最后消息编辑资格](micro_specs/0054_持久化最后消息编辑资格.md)                 | 2026-08-08 11:43 | 冷启动与 same-session refresh 均已 GREEN；定向回归、静态检查与正式本地提交完成        |
 
 ## 候选待办
 
