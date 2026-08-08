@@ -565,6 +565,7 @@ export class HostRuntimeController {
   private listeners = new Set<() => void>();
   private activeClient: DaemonClient | null = null;
   private unsubscribeClientStatus: (() => void) | null = null;
+  private unsubscribeClientServerInfo: (() => void) | null = null;
   private unsubscribeClientHandlers: (() => void) | null = null;
   private probeIntervalHandle: ReturnType<typeof setInterval> | null = null;
   private started = false;
@@ -647,6 +648,10 @@ export class HostRuntimeController {
     if (this.unsubscribeClientStatus) {
       this.unsubscribeClientStatus();
       this.unsubscribeClientStatus = null;
+    }
+    if (this.unsubscribeClientServerInfo) {
+      this.unsubscribeClientServerInfo();
+      this.unsubscribeClientServerInfo = null;
     }
     if (this.unsubscribeClientHandlers) {
       this.unsubscribeClientHandlers();
@@ -746,6 +751,17 @@ export class HostRuntimeController {
     });
     this.probeCycleInFlight = cycle;
     return cycle;
+  }
+
+  /** Bypasses adaptive probe backoff for an explicit user retry. */
+  async retryConnectionNow(): Promise<void> {
+    // A failed transport can leave its probe waiting on a timeout. Supersede
+    // that request so a user retry starts immediately; stale probe results are
+    // already discarded and their clients closed by the request-version gate.
+    this.probeRequestVersion += 1;
+    this.probeCycleInFlight = null;
+    this.connectionLastProbedAt.clear();
+    await this.runProbeCycleNow();
   }
 
   private async runProbeCycle(): Promise<void> {
@@ -1132,6 +1148,10 @@ export class HostRuntimeController {
       this.unsubscribeClientStatus();
       this.unsubscribeClientStatus = null;
     }
+    if (this.unsubscribeClientServerInfo) {
+      this.unsubscribeClientServerInfo();
+      this.unsubscribeClientServerInfo = null;
+    }
     if (this.unsubscribeClientHandlers) {
       this.unsubscribeClientHandlers();
       this.unsubscribeClientHandlers = null;
@@ -1225,6 +1245,23 @@ export class HostRuntimeController {
     };
     for (const listener of this.listeners) {
       listener();
+    }
+
+    this.unsubscribeClientServerInfo = client.on("status", (message) => {
+      if (this.activeClient !== client || message.payload.status !== "server_info") {
+        return;
+      }
+      // Server capabilities arrive after the transport becomes online. Emit a
+      // runtime tick so capability-gated screens do not retain their loading
+      // decision from the pre-handshake render.
+      for (const listener of this.listeners) {
+        listener();
+      }
+    });
+    if (client.getLastServerInfoMessage()) {
+      for (const listener of this.listeners) {
+        listener();
+      }
     }
 
     this.unsubscribeClientStatus = client.subscribeConnectionStatus((state) => {
@@ -2238,6 +2275,20 @@ export class HostRuntimeStore {
     return Promise.all(
       Array.from(this.controllers.values(), (controller) => controller.runProbeCycleNow()),
     ).then(() => undefined);
+  }
+
+  /** Retries the requested host immediately instead of waiting for probe backoff. */
+  async retryConnectionsNow(serverId?: string): Promise<void> {
+    if (serverId) {
+      await (this.controllers.get(serverId)?.retryConnectionNow() ?? Promise.resolve());
+      this.emit(serverId);
+      return;
+    }
+    const controllers = [...this.controllers.entries()];
+    await Promise.all(controllers.map(([, controller]) => controller.retryConnectionNow()));
+    for (const [targetServerId] of controllers) {
+      this.emit(targetServerId);
+    }
   }
 
   async refreshAgentDirectory(

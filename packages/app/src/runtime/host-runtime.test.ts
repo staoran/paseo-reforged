@@ -6,7 +6,7 @@ import type {
   FetchAgentsOptions,
 } from "@getpaseo/client/internal/daemon-client";
 import type { ConnectionOffer } from "@getpaseo/protocol/connection-offer";
-import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
+import type { ServerInfoStatusPayload, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import type { AgentPermissionRequest } from "@getpaseo/protocol/agent-types";
 import type { HostConnection, HostProfile } from "@/types/host-connection";
 import { defaultHostAppearance } from "@/hosts/appearance";
@@ -41,17 +41,52 @@ class FakeDaemonClient {
   private agentUpdateListeners = new Set<
     (message: Extract<SessionOutboundMessage, { type: "agent_update" }>) => void
   >();
+  private statusListeners = new Set<
+    (message: Extract<SessionOutboundMessage, { type: "status" }>) => void
+  >();
+  private lastServerInfoMessage: ServerInfoStatusPayload | null = null;
   private fetchWaiters = new Set<() => void>();
   private agentListenerWaiters = new Set<() => void>();
   private sentMessageWaiters = new Set<() => void>();
 
   on(
-    type: "agent_update",
-    listener: (message: Extract<SessionOutboundMessage, { type: "agent_update" }>) => void,
+    type: "agent_update" | "status",
+    listener:
+      | ((message: Extract<SessionOutboundMessage, { type: "agent_update" }>) => void)
+      | ((message: Extract<SessionOutboundMessage, { type: "status" }>) => void),
   ): () => void {
-    if (type === "agent_update") this.agentUpdateListeners.add(listener);
+    if (type === "agent_update") {
+      this.agentUpdateListeners.add(
+        listener as (message: Extract<SessionOutboundMessage, { type: "agent_update" }>) => void,
+      );
+    } else {
+      this.statusListeners.add(
+        listener as (message: Extract<SessionOutboundMessage, { type: "status" }>) => void,
+      );
+    }
     for (const waiter of this.agentListenerWaiters) waiter();
-    return () => this.agentUpdateListeners.delete(listener);
+    return () => {
+      if (type === "agent_update") {
+        this.agentUpdateListeners.delete(
+          listener as (message: Extract<SessionOutboundMessage, { type: "agent_update" }>) => void,
+        );
+      } else {
+        this.statusListeners.delete(
+          listener as (message: Extract<SessionOutboundMessage, { type: "status" }>) => void,
+        );
+      }
+    };
+  }
+
+  getLastServerInfoMessage(): ServerInfoStatusPayload | null {
+    return this.lastServerInfoMessage;
+  }
+
+  serverInfo(payload: ServerInfoStatusPayload): void {
+    this.lastServerInfoMessage = payload;
+    for (const listener of this.statusListeners) {
+      listener({ type: "status", payload });
+    }
   }
 
   async waitForAgentUpdates(): Promise<void> {
@@ -607,6 +642,47 @@ describe("HostRuntimeController", () => {
     expect(controller.getSnapshot().connectionStatus).toBe("online");
   });
 
+  it("notifies runtime subscribers when server capabilities arrive after connection", async () => {
+    const host = makeHost({
+      connections: [
+        {
+          id: "direct:lan:6767",
+          type: "directTcp",
+          endpoint: "lan:6767",
+        },
+      ],
+    });
+    const fakeClient = new FakeDaemonClient();
+    const controller = new HostRuntimeController({
+      host,
+      deps: {
+        createClient: () => fakeClient as unknown as DaemonClient,
+        connectToDaemon: async () => {
+          throw new Error("probe unavailable");
+        },
+        getClientId: async () => "cid_runtime_stable",
+      },
+    });
+    let notifications = 0;
+    controller.subscribe(() => {
+      notifications += 1;
+    });
+
+    await controller.activateConnection({ connectionId: "direct:lan:6767" });
+    const notificationsBeforeServerInfo = notifications;
+
+    fakeClient.serverInfo({
+      status: "server_info",
+      serverId: host.serverId,
+      hostname: host.label,
+      version: "0.3.0",
+      features: { agentHistorySearch: true },
+    });
+
+    expect(notifications).toBe(notificationsBeforeServerInfo + 1);
+    await controller.stop();
+  });
+
   it("keeps browser client lifecycle tied to the active host runtime client", async () => {
     const host = makeHost({ preferredConnectionId: "direct:lan:6767" });
     const fakeClient = makeConnectedProbeClient(12);
@@ -660,6 +736,96 @@ describe("HostRuntimeController", () => {
     expect(snapshot.client).toBe(clients[0] as unknown as DaemonClient);
     expect(clients[0]?.connectCalls).toBe(1);
     expect(clients[1]?.isDisposed()).toBe(true);
+  });
+
+  it("bypasses probe backoff for an explicit connection retry", async () => {
+    const host = makeHost({
+      connections: [
+        {
+          id: "direct:lan:6767",
+          type: "directTcp",
+          endpoint: "lan:6767",
+        },
+      ],
+    });
+    let probeAttempts = 0;
+    const controller = new HostRuntimeController({
+      host,
+      deps: {
+        createClient: () => {
+          throw new Error("should adopt the probe client");
+        },
+        connectToDaemon: async ({ host: hostProfile }) => {
+          probeAttempts += 1;
+          if (probeAttempts === 1) {
+            throw new Error("host unavailable");
+          }
+          return {
+            client: makeConnectedProbeClient(12) as unknown as DaemonClient,
+            serverId: hostProfile.serverId,
+            hostname: hostProfile.label ?? null,
+          };
+        },
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    await controller.start({ autoProbe: false });
+    expect(probeAttempts).toBe(1);
+
+    await controller.retryConnectionNow();
+
+    expect(probeAttempts).toBe(2);
+    expect(controller.getSnapshot().connectionStatus).toBe("online");
+    await controller.stop();
+  });
+
+  it("supersedes an in-flight probe for an explicit connection retry", async () => {
+    const host = makeHost({
+      connections: [
+        {
+          id: "direct:lan:6767",
+          type: "directTcp",
+          endpoint: "lan:6767",
+        },
+      ],
+    });
+    const blockedProbe =
+      createDeferred<Awaited<ReturnType<HostRuntimeControllerDeps["connectToDaemon"]>>>();
+    const firstProbeStarted = createDeferred<void>();
+    let probeAttempts = 0;
+    const controller = new HostRuntimeController({
+      host,
+      deps: {
+        createClient: () => {
+          throw new Error("should adopt the probe client");
+        },
+        connectToDaemon: async ({ host: hostProfile }) => {
+          probeAttempts += 1;
+          if (probeAttempts === 1) {
+            firstProbeStarted.resolve();
+            return await blockedProbe.promise;
+          }
+          return {
+            client: makeConnectedProbeClient(12) as unknown as DaemonClient,
+            serverId: hostProfile.serverId,
+            hostname: hostProfile.label ?? null,
+          };
+        },
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    const firstCycle = controller.runProbeCycleNow();
+    await firstProbeStarted.promise;
+
+    await controller.retryConnectionNow();
+
+    expect(probeAttempts).toBe(2);
+    expect(controller.getSnapshot().connectionStatus).toBe("online");
+    blockedProbe.reject(new Error("stale probe failed"));
+    await firstCycle;
+    await controller.stop();
   });
 
   it("activates the first successful probe without waiting for slower probes", async () => {

@@ -6,6 +6,7 @@ import { buildTerminalsQueryKey } from "@/screens/workspace/terminals/state";
 import { daemonConfigQueryKey } from "@/data/daemon-config";
 import { daemonPairingOfferQueryKey } from "@/data/daemon-pairing";
 import { providersSnapshotQueryKey } from "@/data/providers-snapshot";
+import { agentHistoryQueryKey, allAgentHistoryQueryKey } from "@/hooks/agent-history-query-key";
 import {
   checkoutDiffPushRoute,
   invalidateServerDataQueriesAfterReconnect,
@@ -501,7 +502,7 @@ describe("server data push router", () => {
     unmount();
   });
 
-  it("invalidates only the reconnect-repair scopes for one server", () => {
+  it("invalidates the reconnect-repair scopes for one server", () => {
     const queryClient = new QueryClient();
     const serverId = "server-1";
     const otherServerId = "server-2";
@@ -510,6 +511,9 @@ describe("server data push router", () => {
     const pairingOfferKey = daemonPairingOfferQueryKey(serverId);
     const diffKey = checkoutDiffQueryKey(serverId, "/repo", "uncommitted", undefined, false);
     const terminalKey = buildTerminalsQueryKey(serverId, "/repo", "workspace-a");
+    const historyKey = [...agentHistoryQueryKey(serverId), ""] as const;
+    const allHistoryKey = [...allAgentHistoryQueryKey([serverId, otherServerId]), ""] as const;
+    const otherHistoryKey = [...agentHistoryQueryKey(otherServerId), ""] as const;
     const otherProviderKey = providersSnapshotQueryKey(otherServerId);
 
     queryClient.setQueryData(providerKey, { entries: [], generatedAt: "now", requestId: "p" });
@@ -517,6 +521,9 @@ describe("server data push router", () => {
     queryClient.setQueryData(pairingOfferKey, { relayEnabled: false, url: "" });
     queryClient.setQueryData(diffKey, { cwd: "/repo", files: [], error: null, requestId: "d" });
     queryClient.setQueryData(terminalKey, { cwd: "/repo", terminals: [], requestId: "t" });
+    queryClient.setQueryData(historyKey, { pages: [], pageParams: [] });
+    queryClient.setQueryData(allHistoryKey, { pages: [], pageParams: [] });
+    queryClient.setQueryData(otherHistoryKey, { pages: [], pageParams: [] });
     queryClient.setQueryData(otherProviderKey, {
       entries: [],
       generatedAt: "now",
@@ -530,6 +537,9 @@ describe("server data push router", () => {
     expect(queryClient.getQueryState(pairingOfferKey)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(diffKey)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(terminalKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(historyKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(allHistoryKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(otherHistoryKey)?.isInvalidated).toBe(false);
     expect(queryClient.getQueryState(otherProviderKey)?.isInvalidated).toBe(false);
   });
 });

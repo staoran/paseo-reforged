@@ -5,6 +5,7 @@ import type {
   SessionOutboundMessage,
 } from "@getpaseo/protocol/messages";
 import { agentCommandsQueryRoot } from "@/hooks/agent-commands-query";
+import { agentHistoryQueryKey, allAgentHistoryQueryRootKey } from "@/hooks/agent-history-query-key";
 import { orderCheckoutDiffFiles } from "@/git/diff-order";
 import { daemonConfigQueryKey } from "@/data/daemon-config";
 import { daemonPairingOfferQueryKey } from "@/data/daemon-pairing";
@@ -115,6 +116,14 @@ const RECONNECT_REPAIR_POLICIES: ReconnectRepairPolicy[] = [
     domain: "daemonPairingOffer",
     invalidate: ({ queryClient, serverId }) => {
       void queryClient.invalidateQueries({ queryKey: daemonPairingOfferQueryKey(serverId) });
+    },
+  },
+  {
+    domain: "agentHistory",
+    invalidate: ({ queryClient, serverId }) => {
+      void queryClient.invalidateQueries({ queryKey: agentHistoryQueryKey(serverId) });
+      // All-host keys do not reserve one fixed slot for a server id.
+      void queryClient.invalidateQueries({ queryKey: allAgentHistoryQueryRootKey() });
     },
   },
   {

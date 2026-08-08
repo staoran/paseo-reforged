@@ -4,6 +4,7 @@ import { ChevronDown, Server } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { HostProfile } from "@/types/host-connection";
 import type { Theme } from "@/styles/theme";
+import { createControlGeometry } from "@/components/ui/control-geometry";
 import {
   ALL_HOSTS_OPTION_ID,
   getHostPickerLabel,
@@ -20,6 +21,7 @@ export interface HostFilterProps {
   selectedHost: string;
   onSelectHost: (serverId: string) => void;
   triggerTestID?: string;
+  hostOptionTestID?: (serverId: string) => string;
 }
 
 /**
@@ -32,6 +34,7 @@ export function HostFilter({
   selectedHost,
   onSelectHost,
   triggerTestID,
+  hostOptionTestID,
 }: HostFilterProps): ReactElement {
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const filterAnchorRef = useRef<View>(null);
@@ -64,6 +67,7 @@ export function HostFilter({
       searchable={false}
       title="Filter by host"
       desktopPlacement="bottom-start"
+      hostOptionTestID={hostOptionTestID}
     >
       <View ref={filterAnchorRef} collapsable={false} style={styles.filterTriggerWrap}>
         <Pressable
@@ -88,31 +92,38 @@ export function HostFilter({
   );
 }
 
-const styles = StyleSheet.create((theme) => ({
-  filterTriggerWrap: {
-    alignSelf: "flex-start",
-  },
-  filterTrigger: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1.5],
-    alignSelf: "flex-start",
-    paddingVertical: theme.spacing[1.5],
-    paddingHorizontal: theme.spacing[3],
-    borderRadius: theme.borderRadius.md,
-    backgroundColor: theme.colors.surface1,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-  },
-  filterTriggerHovered: {
-    backgroundColor: theme.colors.surface2,
-  },
-  filterTriggerPressed: {
-    backgroundColor: theme.colors.surface3,
-  },
-  filterTriggerText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-    fontWeight: theme.fontWeight.medium,
-  },
-}));
+const HOST_FILTER_MAX_WIDTH = 240;
+
+const styles = StyleSheet.create((theme) => {
+  const geometry = createControlGeometry(theme);
+  return {
+    filterTriggerWrap: {
+      alignSelf: "flex-start",
+      maxWidth: "100%",
+    },
+    filterTrigger: {
+      ...geometry.fieldControlSm,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: theme.spacing[1.5],
+      alignSelf: "flex-start",
+      maxWidth: HOST_FILTER_MAX_WIDTH,
+      backgroundColor: theme.colors.surface1,
+      borderWidth: theme.borderWidth[1],
+      borderColor: theme.colors.border,
+    },
+    filterTriggerHovered: {
+      backgroundColor: theme.colors.surface2,
+    },
+    filterTriggerPressed: {
+      backgroundColor: theme.colors.surface3,
+    },
+    filterTriggerText: {
+      ...geometry.fieldTextSm,
+      minWidth: 0,
+      flexShrink: 1,
+      color: theme.colors.foreground,
+      fontWeight: theme.fontWeight.medium,
+    },
+  };
+});
