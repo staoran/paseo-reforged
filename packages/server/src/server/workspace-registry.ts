@@ -29,6 +29,12 @@ const PersistedProjectRecordSchema = z.object({
     .nullable()
     .optional()
     .transform((value) => value ?? null),
+  // Identifies the project's stored custom icon; null means automatic.
+  customIconRevision: z
+    .string()
+    .nullable()
+    .optional()
+    .transform((value) => value ?? null),
   createdAt: z.string(),
   updatedAt: z.string(),
   archivedAt: z.string().nullable(),
@@ -80,6 +86,13 @@ const PersistedWorkspaceRecordSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
   archivedAt: z.string().nullable(),
+  // COMPAT(autoArchivedChangeRequestUrl): added in v0.2.6, remove optional parsing after 2027-01-31.
+  // Records the merged change request whose automatic archive was consumed.
+  autoArchivedChangeRequestUrl: z
+    .string()
+    .nullable()
+    .optional()
+    .transform((value) => value ?? null),
   pinnedAt: z
     .string()
     .nullable()
@@ -101,6 +114,10 @@ export interface WorkspaceMutationContext {
   expectsInitialAgent?: boolean;
 }
 
+export interface WorkspaceArchiveContext {
+  autoArchivedChangeRequestUrl?: string;
+}
+
 export interface ProjectMutation {
   kind: "upsert" | "archive" | "remove";
   projectId: string;
@@ -120,6 +137,10 @@ export interface ProjectRegistry {
     timestamp: string;
   }): Promise<PersistedProjectRecord>;
   upsert(record: PersistedProjectRecord): Promise<void>;
+  update(
+    projectId: string,
+    updater: (record: PersistedProjectRecord) => PersistedProjectRecord,
+  ): Promise<PersistedProjectRecord | null>;
   archive(projectId: string, archivedAt: string): Promise<void>;
   remove(projectId: string): Promise<void>;
   /** Central lifecycle seam for daemon-global project observers. */
@@ -136,7 +157,11 @@ export interface WorkspaceRegistry {
     updater: (record: PersistedWorkspaceRecord) => PersistedWorkspaceRecord,
   ): Promise<PersistedWorkspaceRecord | null>;
   upsert(record: PersistedWorkspaceRecord, context?: WorkspaceMutationContext): Promise<void>;
-  archive(workspaceId: string, archivedAt: string): Promise<void>;
+  archive(
+    workspaceId: string,
+    archivedAt: string,
+    context?: WorkspaceArchiveContext,
+  ): Promise<void>;
   remove(workspaceId: string): Promise<void>;
   /** Central lifecycle seam for daemon-global workspace observers. */
   subscribeToMutations?(
@@ -387,6 +412,16 @@ export class FileBackedProjectRegistry
     await this.notifyMutation({ kind: "upsert", projectId: record.projectId, project: record });
   }
 
+  override async update(
+    projectId: string,
+    updater: (record: PersistedProjectRecord) => PersistedProjectRecord,
+  ): Promise<PersistedProjectRecord | null> {
+    const project = await super.update(projectId, updater);
+    if (!project) return null;
+    await this.notifyMutation({ kind: "upsert", projectId, project });
+    return project;
+  }
+
   override async archive(projectId: string, archivedAt: string): Promise<void> {
     const project = await this.archiveIfActive(projectId, archivedAt);
     if (!project) return;
@@ -457,8 +492,19 @@ export class FileBackedWorkspaceRegistry
     });
   }
 
-  override async archive(workspaceId: string, archivedAt: string): Promise<void> {
-    const workspace = await this.archiveIfPresent(workspaceId, archivedAt);
+  override async archive(
+    workspaceId: string,
+    archivedAt: string,
+    context?: WorkspaceArchiveContext,
+  ): Promise<void> {
+    const workspace = await super.update(workspaceId, (existing) => ({
+      ...existing,
+      updatedAt: archivedAt,
+      archivedAt,
+      ...(context?.autoArchivedChangeRequestUrl
+        ? { autoArchivedChangeRequestUrl: context.autoArchivedChangeRequestUrl }
+        : {}),
+    }));
     if (!workspace) return;
     await this.notifyMutation({ kind: "archive", workspaceId, workspace });
   }
@@ -481,6 +527,7 @@ export function createPersistedProjectRecord(input: {
   displayName: string;
   customName?: string | null;
   projectKey?: string | null;
+  customIconRevision?: string | null;
   createdAt: string;
   updatedAt: string;
   archivedAt?: string | null;
@@ -489,6 +536,7 @@ export function createPersistedProjectRecord(input: {
     ...input,
     customName: input.customName ?? null,
     projectKey: input.projectKey ?? null,
+    customIconRevision: input.customIconRevision ?? null,
     archivedAt: input.archivedAt ?? null,
   });
 }
@@ -513,6 +561,7 @@ export function createPersistedWorkspaceRecord(input: {
   createdAt: string;
   updatedAt: string;
   archivedAt?: string | null;
+  autoArchivedChangeRequestUrl?: string | null;
   pinnedAt?: string | null;
 }): PersistedWorkspaceRecord {
   return PersistedWorkspaceRecordSchema.parse({
@@ -525,6 +574,7 @@ export function createPersistedWorkspaceRecord(input: {
     isPaseoOwnedWorktree: input.isPaseoOwnedWorktree ?? false,
     mainRepoRoot: input.mainRepoRoot ?? null,
     archivedAt: input.archivedAt ?? null,
+    autoArchivedChangeRequestUrl: input.autoArchivedChangeRequestUrl ?? null,
     pinnedAt: input.pinnedAt ?? null,
   });
 }

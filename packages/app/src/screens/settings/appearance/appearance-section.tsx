@@ -273,6 +273,30 @@ function ExpansionSwitchRow({
   );
 }
 
+interface ChatOutlineRowProps {
+  value: boolean;
+  onChange: (value: boolean) => void;
+}
+
+function ChatOutlineRow({ value, onChange }: ChatOutlineRowProps) {
+  const { t } = useTranslation();
+  return (
+    <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle}>{t("settings.appearance.chatOutline.title")}</Text>
+        <Text style={settingsStyles.rowHint}>
+          {t("settings.appearance.chatOutline.description")}
+        </Text>
+      </View>
+      <Switch
+        value={value}
+        onValueChange={onChange}
+        accessibilityLabel={t("settings.appearance.chatOutline.title")}
+      />
+    </View>
+  );
+}
+
 const TOOL_CALL_DETAIL_LEVELS: readonly AppSettings["toolCallDetailLevel"][] = [
   "detailed",
   "overview",
@@ -595,6 +619,13 @@ export function AppearanceSection() {
     [updateSettings],
   );
 
+  const handleChatOutlineChange = useCallback(
+    (chatOutlineEnabled: boolean) => {
+      void updateSettings({ chatOutlineEnabled });
+    },
+    [updateSettings],
+  );
+
   // Live-while-typing: the in-progress drafts drive the preview without
   // committing to the global theme. Empty/invalid fields fall back to the
   // theme value inside the preview.
@@ -632,6 +663,12 @@ export function AppearanceSection() {
             value={settings.toolCallDetailLevel}
             onChange={handleToolCallDetailLevelChange}
           />
+          {!isNative ? (
+            <ChatOutlineRow
+              value={settings.chatOutlineEnabled}
+              onChange={handleChatOutlineChange}
+            />
+          ) : null}
         </View>
       </SettingsSection>
       <SettingsSection title={t("settings.appearance.fonts.title")}>

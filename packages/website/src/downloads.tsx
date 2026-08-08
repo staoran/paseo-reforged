@@ -26,8 +26,6 @@ export function downloadUrls(release: ReleaseAssetInfo) {
   };
 }
 
-export const webAppUrl = "https://app.paseo.sh";
-
 type Platform = "mac-silicon" | "mac-intel" | "windows" | "linux";
 
 export interface DownloadOption {

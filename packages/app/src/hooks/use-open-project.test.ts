@@ -97,6 +97,7 @@ describe("openProjectDirectly", () => {
           projectKey: null,
           projectDisplayName: "project",
           projectCustomName: null,
+          projectCustomIconRevision: null,
           projectKind: "git",
           projectRootPath: PROJECT_PATH,
         },
@@ -194,6 +195,7 @@ describe("cloneGithubProjectDirectly", () => {
           ...projectPayload,
           projectCustomName: null,
           projectKey: null,
+          projectCustomIconRevision: null,
         },
       },
     ]);

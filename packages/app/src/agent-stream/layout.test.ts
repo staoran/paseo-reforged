@@ -84,6 +84,7 @@ function strategyFor(platform: "web" | "android"): StreamStrategy {
 
 function layoutFor(input: {
   platform: "web" | "android";
+  isTurnActive?: boolean;
   agentStatus?: string;
   tail: StreamItem[];
   head?: StreamItem[];
@@ -92,6 +93,7 @@ function layoutFor(input: {
   const strategy = strategyFor(input.platform);
   return layoutStream({
     strategy,
+    isTurnActive: input.isTurnActive ?? false,
     agentStatus: input.agentStatus ?? "idle",
     history: orderTailForStreamRenderStrategy({
       strategy,
@@ -288,14 +290,14 @@ describe("layoutStream", () => {
       const thirdBlock = assistantMessage("turn:block:2", 4, { groupId: "turn", index: 2 });
       const splitLayout = layoutFor({
         platform,
-        agentStatus: "running",
+        isTurnActive: true,
         tail: [userMessage("u1", 1), firstBlock],
         head: [secondBlock, thirdBlock],
         timingIds: [firstBlock.id, secondBlock.id, thirdBlock.id],
       });
       const unsplitLayout = layoutFor({
         platform,
-        agentStatus: "running",
+        isTurnActive: true,
         tail: [userMessage("u1", 1), firstBlock, secondBlock, thirdBlock],
         timingIds: [firstBlock.id, secondBlock.id, thirdBlock.id],
       });
@@ -592,7 +594,7 @@ describe("layoutStream", () => {
       const tool = toolCall("tool-1", 3);
       const layout = layoutFor({
         platform,
-        agentStatus: "running",
+        isTurnActive: true,
         tail: [userMessage("u1", 1), assistant, tool],
         timingIds: [assistant.id],
       });

@@ -31,6 +31,7 @@ function agent(input: {
     id: input.id,
     provider: "codex",
     status: input.status ?? "idle",
+    activeTurn: input.status === "running" ? { turnId: "turn-1", startedAt: null } : null,
     createdAt: new Date("2026-01-01T00:00:00.000Z"),
     updatedAt: new Date(input.updatedAt),
     lastUserMessageAt: null,

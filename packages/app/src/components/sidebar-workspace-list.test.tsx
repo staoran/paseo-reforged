@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import React from "react";
 import type { ReactElement } from "react";
+import { createProjectViewKey } from "@/projects/workspace-structure";
 
 vi.hoisted(() => {
   (globalThis as unknown as { __DEV__: boolean }).__DEV__ = false;
@@ -144,6 +145,19 @@ vi.mock("@/components/ui/tooltip", () => ({
 
 vi.mock("@/components/sidebar/sidebar-workspace-menu", () => ({
   SidebarWorkspaceContextMenuContent: () => null,
+  SidebarWorkspaceContextMenu: ({
+    children,
+    testID,
+    onPress,
+  }: {
+    children: React.ReactNode;
+    testID?: string;
+    onPress?: () => void;
+  }) => (
+    <button type="button" data-testid={testID} onClick={onPress}>
+      {children}
+    </button>
+  ),
   SidebarWorkspaceMenu: () => null,
 }));
 
@@ -176,6 +190,7 @@ import { seedSessionWorkspaces } from "@/test/seed-session";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
+import { defaultHostAppearance } from "@/hosts/appearance";
 
 vi.mock("@react-native-async-storage/async-storage", () => ({
   default: {
@@ -255,6 +270,7 @@ function agent(input: { id: string; workspaceId: string; status?: Agent["status"
     id: input.id,
     provider: "codex",
     status: input.status ?? "closed",
+    activeTurn: null,
     createdAt: timestamp,
     updatedAt: timestamp,
     lastUserMessageAt: null,
@@ -337,6 +353,7 @@ function makeHost(): HostProfile {
   return {
     serverId: SERVER_ID,
     label: "Render Count Host",
+    appearance: defaultHostAppearance(),
     lifecycle: {},
     connections: [],
     preferredConnectionId: null,
@@ -388,7 +405,7 @@ function ProjectHeaderProbe({
   project: SidebarProjectEntry;
   counts: RenderCounts;
 }): null {
-  incrementRecord(counts.headers, project.projectKey);
+  incrementRecord(counts.headers, project.viewKey);
   return null;
 }
 
@@ -424,7 +441,7 @@ function ProjectActiveProbe({
     activeSelection?.serverId === serverId &&
     project.workspaces.some((entry) => entry.workspaceId === activeSelection.workspaceId);
   void isActive;
-  incrementRecord(counts.projectSelection, project.projectKey);
+  incrementRecord(counts.projectSelection, project.viewKey);
   return null;
 }
 
@@ -452,7 +469,7 @@ function SidebarFrameProbe({ counts }: { counts: RenderCounts }): ReactElement {
   return (
     <>
       {projects.map((project) => (
-        <div key={project.projectKey}>
+        <div key={project.viewKey}>
           <ProjectHeaderProbe project={project} counts={counts} />
           <ProjectActiveProbe serverId={SERVER_ID} project={project} counts={counts} />
           {project.workspaces.map((entry) => (
@@ -520,7 +537,9 @@ function SidebarWorkspaceListProbe({
 }: {
   groupMode?: "project" | "status";
 }): ReactElement {
-  const { projects, projectNamesByKey } = useSidebarWorkspacesList({ hostFilters: [SERVER_ID] });
+  const { projects, projectNamesByViewKey } = useSidebarWorkspacesList({
+    hostFilters: [SERVER_ID],
+  });
   const placements = React.useMemo(
     () => projects.flatMap((project) => project.workspaces),
     [projects],
@@ -532,8 +551,8 @@ function SidebarWorkspaceListProbe({
   );
   const handleToggleProjectCollapsed = React.useCallback(() => undefined, []);
   const statusGroups = React.useMemo(
-    () => buildStatusGroups(Array.from(workspaceEntriesByKey.values()), projectNamesByKey),
-    [projectNamesByKey, workspaceEntriesByKey],
+    () => buildStatusGroups(Array.from(workspaceEntriesByKey.values()), projectNamesByViewKey),
+    [projectNamesByViewKey, workspaceEntriesByKey],
   );
 
   return (
@@ -542,7 +561,6 @@ function SidebarWorkspaceListProbe({
       pinnedGroups={pinnedGroups}
       projects={projects}
       workspaceEntriesByKey={workspaceEntriesByKey}
-      projectNamesByKey={projectNamesByKey}
       collapsedProjectKeys={new Set()}
       onToggleProjectCollapsed={handleToggleProjectCollapsed}
       shortcutIndexByWorkspaceKey={new Map()}
@@ -706,8 +724,8 @@ describe("sidebar workspace render isolation", () => {
 
     expect(counts.frame).toBe(1);
     expect(counts.projectSelection).toEqual({
-      "project-a": 1,
-      "project-b": 1,
+      [createProjectViewKey({ kind: "equivalence", projectKey: "project-a" })]: 1,
+      [createProjectViewKey({ kind: "equivalence", projectKey: "project-b" })]: 1,
     });
     expect(counts.rowSelection).toEqual({
       "a-main": 1,
@@ -833,7 +851,7 @@ describe("sidebar workspace render isolation", () => {
         workspaceResidentAgentCounts: new Map(),
       });
       const project: SidebarProjectEntry = {
-        projectKey: "project-a",
+        viewKey: "project-a",
         projectName: "Project A",
         projectKind: "git",
         iconWorkingDir: "/repo/project-a",
@@ -842,14 +860,14 @@ describe("sidebar workspace render isolation", () => {
             serverId: SERVER_ID,
             projectId: "project-a",
             iconWorkingDir: "/repo/project-a",
-            canCreateWorktree: true,
+            worktreeSupport: "supported",
           },
         ],
         workspaces: [workspaceEntry],
       };
       const workspaceEntriesByKey = new Map([[workspaceEntry.workspaceKey, workspaceEntry]]);
-      const projectNamesByKey = new Map([[project.projectKey, project.projectName]]);
-      const statusGroups = buildStatusGroups([workspaceEntry], projectNamesByKey);
+      const projectNamesByViewKey = new Map([[project.viewKey, project.projectName]]);
+      const statusGroups = buildStatusGroups([workspaceEntry], projectNamesByViewKey);
       const pinnedGroups = pinnedGroupsFor(project);
       const collapsedProjectKeys = new Set<string>();
       const shortcutIndexByWorkspaceKey = new Map<string, number>();
@@ -866,7 +884,6 @@ describe("sidebar workspace render isolation", () => {
               pinnedGroups={pinnedGroups}
               projects={[project]}
               workspaceEntriesByKey={workspaceEntriesByKey}
-              projectNamesByKey={projectNamesByKey}
               collapsedProjectKeys={collapsedProjectKeys}
               onToggleProjectCollapsed={onToggleProjectCollapsed}
               shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}

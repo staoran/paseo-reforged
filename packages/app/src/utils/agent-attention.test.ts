@@ -36,6 +36,7 @@ function createAgent(input: Partial<Agent> & Pick<Agent, "id">): Agent {
     attentionTimestamp: null,
     ...rest,
     providerRetryMessage: rest.providerRetryMessage ?? null,
+    activeTurn: rest.activeTurn ?? null,
   };
 }
 

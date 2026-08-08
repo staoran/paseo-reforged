@@ -1,10 +1,13 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const pkg = require("./package.json");
+const withAndroidProfileable = require("./plugins/with-android-profileable");
 const withFdroidAutolinking = require("./plugins/with-fdroid-autolinking");
+const { getNativeReleaseVersion } = require("./native-release-version");
 const appVariant = process.env.APP_VARIANT ?? "production";
 const isFdroidBuild = process.env.PASEO_FDROID_BUILD === "1";
 const easProjectId = process.env.EAS_PROJECT_ID?.trim();
+const isProfileBuild = process.env.PASEO_PROFILE_BUILD === "1";
 
 const buildProfile = isFdroidBuild
   ? {
@@ -48,30 +51,6 @@ const buildProfile = isFdroidBuild
       updates: easProjectId ? { url: `https://u.expo.dev/${easProjectId}` } : { enabled: false },
     };
 
-function getNativeBuildVersionCode(version) {
-  const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(version);
-  if (!match) {
-    throw new Error(`Cannot derive Android versionCode from non-semver version: ${version}`);
-  }
-
-  const [, majorText, minorText, patchText] = match;
-  const major = Number(majorText);
-  const minor = Number(minorText);
-  const patch = Number(patchText);
-
-  if (minor > 999 || patch > 999) {
-    throw new Error(`Cannot derive collision-free Android versionCode from version: ${version}`);
-  }
-
-  const versionCode = major * 1_000_000 + minor * 1_000 + patch;
-
-  if (!Number.isSafeInteger(versionCode) || versionCode <= 0 || versionCode > 2_100_000_000) {
-    throw new Error(`Derived Android versionCode is out of range: ${versionCode}`);
-  }
-
-  return versionCode;
-}
-
 function resolveSecretFile(params) {
   const fromEnv = process.env[params.envKey];
   if (typeof fromEnv === "string" && fromEnv.trim().length > 0) {
@@ -114,13 +93,13 @@ const variants = {
 };
 
 const variant = variants[appVariant] ?? variants.production;
-const nativeBuildVersionCode = getNativeBuildVersionCode(pkg.version);
+const nativeReleaseVersion = getNativeReleaseVersion(pkg.version);
 
 export default {
   expo: {
     name: variant.name,
     slug: "paseo-reforged",
-    version: pkg.version,
+    version: nativeReleaseVersion.appVersion,
     orientation: "portrait",
     icon: "./assets/images/icon.png",
     scheme: "paseo",
@@ -140,7 +119,7 @@ export default {
       ...(variant.googleServiceInfoPlist
         ? { googleServicesFile: variant.googleServiceInfoPlist }
         : {}),
-      buildNumber: String(nativeBuildVersionCode),
+      buildNumber: nativeReleaseVersion.iosBuildNumber,
     },
     android: {
       adaptiveIcon: {
@@ -154,7 +133,7 @@ export default {
       usesCleartextTraffic: true,
       permissions: buildProfile.androidPermissions,
       package: variant.packageId,
-      versionCode: nativeBuildVersionCode,
+      versionCode: nativeReleaseVersion.androidVersionCode,
       ...(variant.googleServicesFile ? { googleServicesFile: variant.googleServicesFile } : {}),
     },
     web: {
@@ -200,6 +179,7 @@ export default {
         },
       ],
       ...buildProfile.fdroidPlugins,
+      ...(isProfileBuild ? [withAndroidProfileable] : []),
     ],
     experiments: {
       typedRoutes: true,
@@ -208,6 +188,7 @@ export default {
     },
     extra: {
       fdroidBuild: isFdroidBuild,
+      profileBuild: isProfileBuild,
       router: {},
       ...(easProjectId ? { eas: { projectId: easProjectId } } : {}),
     },

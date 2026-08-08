@@ -55,6 +55,7 @@ function createAgent(overrides: Partial<Agent> = {}): Agent {
     labels: {},
     ...overrides,
     providerRetryMessage: overrides.providerRetryMessage ?? null,
+    activeTurn: overrides.activeTurn ?? null,
   };
 }
 

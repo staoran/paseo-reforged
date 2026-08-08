@@ -43,6 +43,7 @@ function makeAgent(overrides: Partial<Agent> = {}): Agent {
     archivedAt: null,
     ...overrides,
     providerRetryMessage: overrides.providerRetryMessage ?? null,
+    activeTurn: overrides.activeTurn ?? null,
   };
 }
 

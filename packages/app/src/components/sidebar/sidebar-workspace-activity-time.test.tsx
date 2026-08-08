@@ -10,6 +10,7 @@ import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list"
 import { i18n } from "@/i18n/i18next";
 import { SidebarWorkspaceActivityTime } from "./sidebar-workspace-activity-time";
 import { SidebarWorkspaceRowContent } from "./sidebar-workspace-row-content";
+import { SidebarWorkspaceTrailingContent } from "./workspace-trailing";
 
 vi.hoisted(() => {
   (globalThis as unknown as { __DEV__: boolean }).__DEV__ = false;
@@ -54,9 +55,12 @@ vi.mock("lucide-react-native", () => ({
   ExternalLink: () => null,
   Folder: () => null,
   FolderGit2: () => null,
+  GitMerge: () => null,
   GitPullRequest: () => null,
+  GitPullRequestClosed: () => null,
   Globe: () => null,
   Monitor: () => null,
+  Server: () => null,
   SquareTerminal: () => null,
 }));
 
@@ -64,10 +68,11 @@ const ROW_WORKSPACE: SidebarWorkspaceEntry = {
   workspaceKey: "srv:ws-1",
   serverId: "srv",
   workspaceId: "ws-1",
-  projectKey: "project",
+  projectViewKey: "project",
   projectName: "Project",
   projectRootPath: "/repo",
   workspaceDirectory: "/repo/ws-1",
+  workspaceDirectoryLabel: "ws-1",
   projectKind: "git",
   workspaceKind: "worktree",
   name: "feature",
@@ -96,29 +101,6 @@ const ROW_WITH_RESIDENT_AGENTS: SidebarWorkspaceEntry = {
   ...ROW_WORKSPACE,
   residentAgentCount: 2,
 };
-
-function disableRelativeTimeFormat(): () => void {
-  const descriptor = Object.getOwnPropertyDescriptor(Intl, "RelativeTimeFormat");
-  Object.defineProperty(Intl, "RelativeTimeFormat", {
-    configurable: true,
-    value: undefined,
-  });
-
-  return () => {
-    if (descriptor) {
-      Object.defineProperty(Intl, "RelativeTimeFormat", descriptor);
-    } else {
-      Reflect.deleteProperty(Intl, "RelativeTimeFormat");
-    }
-  };
-}
-
-const FALLBACK_CASES = [
-  ["minute", "2026-08-03T06:55:00.000Z", "5分钟前"],
-  ["hour", "2026-08-03T05:00:00.000Z", "2小时前"],
-  ["day", "2026-08-01T07:00:00.000Z", "2天前"],
-  ["week", "2026-07-20T07:00:00.000Z", "2周前"],
-] as const;
 
 describe("SidebarWorkspaceActivityTime", () => {
   let root: Root | null = null;
@@ -151,13 +133,12 @@ describe("SidebarWorkspaceActivityTime", () => {
       );
     });
 
-    expect(container.textContent).toBe("5m ago");
+    expect(container.textContent).toBe("5m");
   });
 
-  it("shows the localized just-now label", async () => {
+  it("shows the compact now label", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-03T07:00:00.000Z"));
-    await i18n.changeLanguage("zh-CN");
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -170,35 +151,8 @@ describe("SidebarWorkspaceActivityTime", () => {
       );
     });
 
-    expect(container.textContent).toBe("刚刚");
+    expect(container.textContent).toBe("now");
   });
-
-  it.each(FALLBACK_CASES)(
-    "shows localized %s activity time when RelativeTimeFormat is unavailable",
-    async (_unit, lastActivityAt, expected) => {
-      vi.useFakeTimers();
-      vi.setSystemTime(new Date("2026-08-03T07:00:00.000Z"));
-      await i18n.changeLanguage("zh-CN");
-      container = document.createElement("div");
-      document.body.appendChild(container);
-      root = createRoot(container);
-      const restoreRelativeTimeFormat = disableRelativeTimeFormat();
-
-      try {
-        act(() => {
-          root?.render(
-            <I18nextProvider i18n={i18n}>
-              <SidebarWorkspaceActivityTime lastActivityAt={new Date(lastActivityAt)} />
-            </I18nextProvider>,
-          );
-        });
-
-        expect(container.textContent).toBe(expected);
-      } finally {
-        restoreRelativeTimeFormat();
-      }
-    },
-  );
 
   it("refreshes when elapsed activity crosses a minute boundary", async () => {
     vi.useFakeTimers();
@@ -215,13 +169,13 @@ describe("SidebarWorkspaceActivityTime", () => {
         </I18nextProvider>,
       );
     });
-    expect(container.textContent).toBe("just now");
+    expect(container.textContent).toBe("now");
 
     act(() => {
-      vi.advanceTimersByTime(31_000);
+      vi.advanceTimersByTime(60_001);
     });
 
-    expect(container.textContent).toBe("1m ago");
+    expect(container.textContent).toBe("1m");
   });
 
   it("renders the activity time before resident Agent status in the shared workspace row", async () => {
@@ -237,14 +191,20 @@ describe("SidebarWorkspaceActivityTime", () => {
         <I18nextProvider i18n={i18n}>
           <SidebarWorkspaceRowContent
             workspace={ROW_WITH_RESIDENT_AGENTS}
+            backdrop="surfaceSidebar"
             isHovered={false}
             isLoading={false}
-          />
+          >
+            <SidebarWorkspaceTrailingContent
+              workspace={ROW_WITH_RESIDENT_AGENTS}
+              trailing="timestamp"
+            />
+          </SidebarWorkspaceRowContent>
         </I18nextProvider>,
       );
     });
 
-    expect(container.textContent).toContain("5m ago");
+    expect(container.textContent).toContain("5m");
     const activityTime = container.querySelector('[data-testid="sidebar-workspace-activity-time"]');
     const residentIndicator = container.querySelector(
       '[data-testid="workspace-runtime-resident-indicator"]',
@@ -268,9 +228,15 @@ describe("SidebarWorkspaceActivityTime", () => {
         <I18nextProvider i18n={i18n}>
           <SidebarWorkspaceRowContent
             workspace={ROW_WITHOUT_ACTIVITY}
+            backdrop="surfaceSidebar"
             isHovered={false}
             isLoading={false}
-          />
+          >
+            <SidebarWorkspaceTrailingContent
+              workspace={ROW_WITHOUT_ACTIVITY}
+              trailing="timestamp"
+            />
+          </SidebarWorkspaceRowContent>
         </I18nextProvider>,
       );
     });

@@ -24,9 +24,10 @@ function workspace(input: {
     workspaceKey: `${input.serverId}:${input.workspaceId}`,
     serverId: input.serverId,
     workspaceId: input.workspaceId,
-    projectKey: input.projectKey ?? "project-default",
+    projectViewKey: input.projectKey ?? "project-default",
     projectName: input.projectKey ?? "Project",
     workspaceDirectory: input.workspaceDirectory,
+    workspaceDirectoryLabel: input.workspaceDirectory,
     projectKind: "git",
     workspaceKind: "checkout",
     name: input.name,
@@ -49,7 +50,7 @@ function workspace(input: {
 
 function project(projectKey: string, workspaces: SidebarWorkspaceEntry[]): SidebarProjectEntry {
   return {
-    projectKey,
+    viewKey: projectKey,
     projectName: projectKey,
     projectKind: "git",
     iconWorkingDir: workspaces[0]?.workspaceDirectory ?? "",
@@ -58,7 +59,7 @@ function project(projectKey: string, workspaces: SidebarWorkspaceEntry[]): Sideb
         serverId: workspaces[0]?.serverId ?? "s1",
         projectId: projectKey,
         iconWorkingDir: workspaces[0]?.workspaceDirectory ?? "",
-        canCreateWorktree: true,
+        worktreeSupport: "supported" as const,
       },
     ],
     workspaces,
@@ -153,7 +154,7 @@ describe("buildSidebarShortcutModel", () => {
     directoryProject.projectKind = "directory";
     directoryProject.hosts = directoryProject.hosts.map((host) => ({
       ...host,
-      canCreateWorktree: false,
+      worktreeSupport: "unsupported" as const,
     }));
 
     const model = buildSidebarShortcutModel({

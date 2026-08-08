@@ -16,6 +16,14 @@ import type { StoredAgentRecord } from "../../agent/agent-storage.js";
 
 type AgentUpdatePayload = Extract<SessionOutboundMessage, { type: "agent_update" }>["payload"];
 
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 function makeAgentPayload(input: {
   id: string;
   workspaceId?: string;
@@ -91,26 +99,30 @@ function buildHarness() {
   const workspaceUpdates: string[] = [];
   const loggedErrors: unknown[][] = [];
   const payloadById = new Map<string, AgentSnapshotPayload>();
+  const queuedPayloadBuilds: Promise<AgentSnapshotPayload>[] = [];
   const projectByWorkspaceId = new Map<string, ProjectPlacementPayload | null>();
   let providerVisible: (provider: string) => boolean = () => true;
   let buildAgentPayloadError: Error | null = null;
-  let buildAgentPayloadOverride: ((agent: ManagedAgent) => Promise<AgentSnapshotPayload>) | null =
-    null;
+  let enrichProjectedPayload = false;
 
   const service = createAgentUpdatesService({
     emit: (message) => emitted.push(message),
-    buildAgentPayload: async (agent) => {
+    enrichAgentPayload: async (payload) => {
+      if (enrichProjectedPayload) {
+        return payload;
+      }
+      const queuedPayload = queuedPayloadBuilds.shift();
+      if (queuedPayload) {
+        return queuedPayload;
+      }
       if (buildAgentPayloadError) {
         throw buildAgentPayloadError;
       }
-      if (buildAgentPayloadOverride) {
-        return buildAgentPayloadOverride(agent);
+      const registeredPayload = payloadById.get(payload.id);
+      if (!registeredPayload) {
+        throw new Error(`no payload registered for ${payload.id}`);
       }
-      const payload = payloadById.get(agent.id);
-      if (!payload) {
-        throw new Error(`no payload registered for ${agent.id}`);
-      }
-      return payload;
+      return registeredPayload;
     },
     buildStoredAgentPayload: (record) => {
       const payload = payloadById.get(record.id);
@@ -148,11 +160,14 @@ function buildHarness() {
     setProviderVisible(fn: (provider: string) => boolean) {
       providerVisible = fn;
     },
+    useProjectedPayload() {
+      enrichProjectedPayload = true;
+    },
     failBuildAgentPayload(error: Error) {
       buildAgentPayloadError = error;
     },
-    setBuildAgentPayload(fn: (agent: ManagedAgent) => Promise<AgentSnapshotPayload>) {
-      buildAgentPayloadOverride = fn;
+    queuePayloadBuilds(...payloads: Promise<AgentSnapshotPayload>[]) {
+      queuedPayloadBuilds.push(...payloads);
     },
     agentUpdates(): AgentUpdatePayload[] {
       return emitted
@@ -163,7 +178,26 @@ function buildHarness() {
         );
     },
     managed(id: string): ManagedAgent {
-      return { id } as unknown as ManagedAgent;
+      const payload = payloadById.get(id) ?? makeAgentPayload({ id });
+      return {
+        ...payload,
+        lifecycle: payload.status,
+        config: {
+          provider: payload.provider,
+          cwd: payload.cwd,
+        },
+        createdAt: new Date(payload.createdAt),
+        updatedAt: new Date(payload.updatedAt),
+        lastUserMessageAt: null,
+        pendingPermissions: new Map(),
+        attention: {
+          requiresAttention: payload.requiresAttention ?? false,
+          attentionReason: null,
+          attentionTimestamp: new Date(payload.updatedAt),
+        },
+        activeTurnId: null,
+        activeTurnStartedAt: null,
+      } as unknown as ManagedAgent;
     },
     stored(id: string): StoredAgentRecord {
       return { id } as unknown as StoredAgentRecord;
@@ -250,6 +284,48 @@ describe("matchesAgentUpdatesFilter", () => {
 });
 
 describe("forwardLiveAgent", () => {
+  test("emits snapshots for one agent in forward call order", async () => {
+    const h = buildHarness();
+    h.service.beginSubscription({ subscriptionId: "sub", filter: {} });
+    h.service.flushBootstrapped("sub");
+    const idle = makeAgentPayload({ id: "a", workspaceId: "ws-1", status: "idle" });
+    const running = makeAgentPayload({ id: "a", workspaceId: "ws-1", status: "running" });
+    h.register(running);
+    const delayedIdleBuild = deferred<AgentSnapshotPayload>();
+    h.queuePayloadBuilds(delayedIdleBuild.promise, Promise.resolve(running));
+
+    const idleForward = h.service.forwardLiveAgent(h.managed("a"));
+    const runningForward = h.service.forwardLiveAgent(h.managed("a"));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    delayedIdleBuild.resolve(idle);
+    await Promise.all([idleForward, runningForward]);
+
+    expect(
+      h.agentUpdates().map((update) => update.kind === "upsert" && update.agent.status),
+    ).toEqual(["idle", "running"]);
+  });
+
+  test("emits removal after an earlier queued upsert for the same agent", async () => {
+    const h = buildHarness();
+    h.service.beginSubscription({ subscriptionId: "sub", filter: {} });
+    h.service.flushBootstrapped("sub");
+    const running = makeAgentPayload({ id: "a", workspaceId: "ws-1", status: "running" });
+    h.register(running);
+    const delayedBuild = deferred<AgentSnapshotPayload>();
+    h.queuePayloadBuilds(delayedBuild.promise);
+
+    const runningForward = h.service.forwardLiveAgent(h.managed("a"));
+    const removal = h.service.removeAgent("a");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    delayedBuild.resolve(running);
+    await Promise.all([runningForward, removal]);
+
+    expect(h.agentUpdates()).toEqual([
+      { kind: "upsert", agent: expect.objectContaining({ id: "a" }), project: makeProject() },
+      { kind: "remove", agentId: "a" },
+    ]);
+  });
+
   test("emits an upsert for a matching agent and updates its workspace", async () => {
     const h = buildHarness();
     h.service.beginSubscription({ subscriptionId: "sub", filter: {} });
@@ -288,6 +364,56 @@ describe("forwardLiveAgent", () => {
         project: makeProject(),
       },
     ]);
+  });
+
+  test("never projects MCP credentials into ordinary client updates", async () => {
+    const h = buildHarness();
+    h.service.beginSubscription({ subscriptionId: "sub", filter: {} });
+    h.service.flushBootstrapped("sub");
+    h.register(makeAgentPayload({ id: "a", workspaceId: "ws-1" }));
+    h.useProjectedPayload();
+    const agent = h.managed("a");
+    agent.config.mcpServers = {
+      hub: {
+        type: "http",
+        url: "https://hub.test/mcp/executions/execution-1",
+        headers: { Authorization: "Bearer execution-secret" },
+      },
+    };
+    agent.persistence = {
+      provider: "codex",
+      sessionId: "session-a",
+      metadata: {
+        conversationId: "conversation-a",
+        mcpServers: agent.config.mcpServers,
+      },
+    };
+    expect(agent.config).toMatchObject({
+      provider: "codex",
+      mcpServers: {
+        hub: {
+          type: "http",
+          url: "https://hub.test/mcp/executions/execution-1",
+          headers: { Authorization: "Bearer execution-secret" },
+        },
+      },
+    });
+
+    await h.service.forwardLiveAgent(agent);
+
+    const update = h.agentUpdates()[0];
+    expect(update).toEqual({
+      kind: "upsert",
+      agent: expect.objectContaining({ id: "a" }),
+      project: makeProject(),
+    });
+    if (update?.kind !== "upsert") {
+      throw new Error("Expected an agent upsert");
+    }
+    expect(update.agent).not.toHaveProperty("config");
+    expect(update.agent).not.toHaveProperty("mcpServers");
+    expect(update.agent.persistence?.metadata).toEqual({ conversationId: "conversation-a" });
+    expect(JSON.stringify(update.agent)).not.toContain("execution-secret");
   });
 
   test("emits a remove when the agent's workspace resolves to no project", async () => {
@@ -432,49 +558,41 @@ describe("bootstrap buffering", () => {
     });
   });
 
-  test("keeps the newest buffered retry state when payload builds finish out of order", async () => {
+  test("keeps the newest buffered retry state across queued payload builds", async () => {
     const h = buildHarness();
     h.service.beginSubscription({ subscriptionId: "sub", filter: {} });
     h.register(makeAgentPayload({ id: "a", workspaceId: "ws-1" }));
 
-    const resolvers: Array<(payload: AgentSnapshotPayload) => void> = [];
-    h.setBuildAgentPayload(
-      () =>
-        new Promise((resolve) => {
-          resolvers.push(resolve);
+    h.queuePayloadBuilds(
+      Promise.resolve(
+        makeAgentPayload({
+          id: "a",
+          workspaceId: "ws-1",
+          updatedAt: "2026-03-01T12:00:00.001Z",
+          providerRetryMessage: "Reconnecting... 2/5",
         }),
+      ),
+      Promise.resolve(
+        makeAgentPayload({
+          id: "a",
+          workspaceId: "ws-1",
+          updatedAt: "2026-03-01T12:00:00.002Z",
+          providerRetryMessage: "Reconnecting... 3/5",
+        }),
+      ),
+      Promise.resolve(
+        makeAgentPayload({
+          id: "a",
+          workspaceId: "ws-1",
+          updatedAt: "2026-03-01T12:00:00.003Z",
+        }),
+      ),
     );
 
     const retryTwo = h.service.forwardLiveAgent(h.managed("a"));
     const retryThree = h.service.forwardLiveAgent(h.managed("a"));
     const cleared = h.service.forwardLiveAgent(h.managed("a"));
-
-    resolvers[2](
-      makeAgentPayload({
-        id: "a",
-        workspaceId: "ws-1",
-        updatedAt: "2026-03-01T12:00:00.003Z",
-      }),
-    );
-    await cleared;
-    resolvers[1](
-      makeAgentPayload({
-        id: "a",
-        workspaceId: "ws-1",
-        updatedAt: "2026-03-01T12:00:00.002Z",
-        providerRetryMessage: "Reconnecting... 3/5",
-      }),
-    );
-    await retryThree;
-    resolvers[0](
-      makeAgentPayload({
-        id: "a",
-        workspaceId: "ws-1",
-        updatedAt: "2026-03-01T12:00:00.001Z",
-        providerRetryMessage: "Reconnecting... 2/5",
-      }),
-    );
-    await retryTwo;
+    await Promise.all([retryTwo, retryThree, cleared]);
 
     h.service.flushBootstrapped("sub");
 
@@ -494,7 +612,7 @@ describe("bootstrap buffering", () => {
     expect(updates[0].agent).not.toHaveProperty("providerRetryMessage");
   });
 
-  test("skips a buffered upsert that is not newer than the snapshot", async () => {
+  test("skips a buffered upsert that is older than the snapshot", async () => {
     const h = buildHarness();
     h.service.beginSubscription({ subscriptionId: "sub", filter: {} });
 
@@ -519,11 +637,39 @@ describe("bootstrap buffering", () => {
     ]);
   });
 
+  test("replays a buffered live update with the same revision as the snapshot", async () => {
+    const h = buildHarness();
+    h.service.beginSubscription({ subscriptionId: "sub", filter: {} });
+    h.register(
+      makeAgentPayload({
+        id: "equal-revision",
+        workspaceId: "ws-1",
+        status: "running",
+        updatedAt: "2026-03-02T00:00:00.000Z",
+      }),
+    );
+
+    await h.service.forwardLiveAgent(h.managed("equal-revision"));
+    h.service.flushBootstrapped("sub", {
+      snapshotUpdatedAtByAgentId: new Map([
+        ["equal-revision", Date.parse("2026-03-02T00:00:00.000Z")],
+      ]),
+    });
+
+    expect(h.agentUpdates()).toEqual([
+      {
+        kind: "upsert",
+        agent: expect.objectContaining({ id: "equal-revision", status: "running" }),
+        project: makeProject(),
+      },
+    ]);
+  });
+
   test("a removed agent is always replayed, even against a snapshot", async () => {
     const h = buildHarness();
     h.service.beginSubscription({ subscriptionId: "sub", filter: {} });
 
-    h.service.removeAgent("a");
+    await h.service.removeAgent("a");
     expect(h.agentUpdates()).toEqual([]); // buffered
 
     h.service.flushBootstrapped("sub", {
@@ -579,18 +725,18 @@ describe("subscription lifecycle", () => {
     expect(h.service.hasSubscription()).toBe(false);
   });
 
-  test("removeAgent is a no-op without a subscription", () => {
+  test("removeAgent is a no-op without a subscription", async () => {
     const h = buildHarness();
-    h.service.removeAgent("a");
+    await h.service.removeAgent("a");
     expect(h.agentUpdates()).toEqual([]);
   });
 
-  test("removeAgent emits a remove for a live subscription", () => {
+  test("removeAgent emits a remove for a live subscription", async () => {
     const h = buildHarness();
     h.service.beginSubscription({ subscriptionId: "sub", filter: {} });
     h.service.flushBootstrapped("sub");
 
-    h.service.removeAgent("a");
+    await h.service.removeAgent("a");
 
     expect(h.agentUpdates()).toEqual([{ kind: "remove", agentId: "a" }]);
   });

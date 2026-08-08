@@ -36,6 +36,8 @@ export type DocsNavNode =
       label: string;
       children: DocsNavNode[];
       order: number;
+      /** Set when the directory has an `index.md`, which makes the group landable. */
+      href?: string;
     }
   | {
       type: "page";
@@ -104,6 +106,13 @@ const docModules = import.meta.glob("../../../public-docs/**/*.md", {
   import: "default",
 }) as Record<string, string>;
 
+const UPSTREAM_HUB_NOTICE =
+  "> **Upstream service:** Paseo Hub is maintained by the [upstream Paseo project](https://github.com/getpaseo/paseo). It is not operated, released, or hosted by Paseo Reforged.\n\n";
+
+function applyOwnershipNotice(slug: string, content: string): string {
+  return slug === "hub" || slug.startsWith("hub/") ? `${UPSTREAM_HUB_NOTICE}${content}` : content;
+}
+
 function pathToSlug(path: string): string {
   const after = path.split("/public-docs/")[1] ?? path;
   const noExt = after.replace(/\.md$/, "");
@@ -121,6 +130,7 @@ function loadDocs(): Doc[] {
   for (const [path, raw] of Object.entries(docModules)) {
     const { data, content } = parseFrontmatter(raw);
     const slug = pathToSlug(path);
+    const attributedContent = applyOwnershipNotice(slug, content);
     const href = slug === "" ? "/docs" : `/docs/${slug}`;
     const order = Number.parseInt(data.order ?? "999", 10);
 
@@ -135,8 +145,8 @@ function loadDocs(): Doc[] {
         order: Number.isFinite(order) ? order : 999,
         category: data.category,
       },
-      content,
-      headings: parseHeadings(content),
+      content: attributedContent,
+      headings: parseHeadings(attributedContent),
     });
   }
 
@@ -159,13 +169,18 @@ function formatLabel(segment: string): string {
   return segment.replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-function insertDocByPath(nodes: DocsNavNode[], doc: Doc): void {
+function insertDocByPath(nodes: DocsNavNode[], doc: Doc, stripTopDirectory = false): void {
   const relative = doc.sourcePath.replace(/^public-docs\//, "");
   const segments = relative.replace(/\.md$/, "").split("/");
   const fileName = segments.pop() ?? "";
   const directories = segments;
 
+  // A section's top-level directory and its category name the same thing, so
+  // only directories below it become collapsible groups.
+  if (stripTopDirectory) directories.shift();
+
   let current = nodes;
+  let parent: Extract<DocsNavNode, { type: "group" }> | undefined;
   for (const segment of directories) {
     let group = current.find(
       (node): node is Extract<DocsNavNode, { type: "group" }> =>
@@ -183,13 +198,22 @@ function insertDocByPath(nodes: DocsNavNode[], doc: Doc): void {
       current.push(group);
     }
 
+    parent = group;
     current = group.children;
   }
 
-  const pageSegment = fileName === "index" ? (directories.at(-1) ?? "") : fileName;
+  // A directory's index.md describes its own group: it supplies the label and
+  // order the directory name can't, and makes the group itself navigable.
+  if (fileName === "index" && parent !== undefined) {
+    parent.label = doc.frontmatter.nav;
+    parent.order = doc.frontmatter.order;
+    parent.href = doc.href;
+    return;
+  }
+
   current.push({
     type: "page",
-    segment: pageSegment,
+    segment: fileName,
     label: doc.frontmatter.nav,
     href: doc.href,
     order: doc.frontmatter.order,
@@ -198,6 +222,7 @@ function insertDocByPath(nodes: DocsNavNode[], doc: Doc): void {
 
 function nodeOrder(node: DocsNavNode): number {
   if (node.type === "page") return node.order;
+  if (node.type === "group" && node.href !== undefined) return node.order;
   if (node.children.length === 0) return Infinity;
   let min = Infinity;
   for (const child of node.children) {
@@ -240,7 +265,7 @@ export function buildDocsNavTree(docs: Doc[]): DocsNavNode[] {
   for (const [label, docsInCategory] of byCategory) {
     const children: DocsNavNode[] = [];
     for (const doc of docsInCategory) {
-      insertDocByPath(children, doc);
+      insertDocByPath(children, doc, true);
     }
     root.push({
       type: "category",
@@ -264,6 +289,9 @@ function findNodePath(
       return [...path, node];
     }
     if (node.type !== "page") {
+      if (node.type === "group" && node.href === href) {
+        return [...path, node];
+      }
       const found = findNodePath(node.children, href, [...path, node]);
       if (found) return found;
     }

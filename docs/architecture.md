@@ -399,6 +399,7 @@ $PASEO_HOME/
 ├── agents/{cwd-with-dashes}/{agent-id}.json   # Agent record + persisted timeline rows
 ├── projects/projects.json                      # Project registry
 ├── projects/workspaces.json                    # Workspace registry, including stable defaultAgentId
+├── projects/icons/                             # Custom project icon images
 ├── chat/                                       # Chat rooms
 ├── schedules/                                  # Scheduled-agent definitions and runs
 ├── loops/                                      # Loop runs and logs

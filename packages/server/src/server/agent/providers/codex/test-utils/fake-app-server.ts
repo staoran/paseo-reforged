@@ -62,6 +62,7 @@ export interface FakeCodexAppServer {
   }): void;
   warns(params: { threadId?: string | null; message: string }): void;
   compactsThread(params: { threadId: string; turnId: string }): void;
+  updatesPlan(params: { threadId: string; steps: string[] }): void;
   startsSubAgent(params: {
     callId: string;
     threadId: string;
@@ -334,6 +335,17 @@ export function createFakeCodexAppServer(
           params: {
             threadId: params.threadId,
             turn: { id: turnId },
+          },
+        })}\n`,
+      );
+    },
+    updatesPlan(params) {
+      child.stdout.write(
+        `${JSON.stringify({
+          method: "turn/plan/updated",
+          params: {
+            threadId: params.threadId,
+            plan: params.steps.map((step) => ({ step, status: "pending" })),
           },
         })}\n`,
       );

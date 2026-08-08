@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   AgentTimelineItemPayloadSchema,
+  AgentTimelineListPromptsResponseMessageSchema,
   AgentStreamMessageSchema,
   FetchAgentTimelineResponseMessageSchema,
   SessionInboundMessageSchema,
@@ -50,6 +51,33 @@ describe("shared messages stream parsing", () => {
       type: "assistant_message",
       text: "Legacy daemon response.",
     });
+  });
+
+  it("parses a full timeline prompt index response", () => {
+    const parsed = AgentTimelineListPromptsResponseMessageSchema.parse({
+      type: "agent.timeline.list_prompts.response",
+      payload: {
+        requestId: "req-prompts-1",
+        agentId: "agent_live",
+        epoch: "epoch-1",
+        prompts: [
+          {
+            seq: 42,
+            timestamp: "2026-02-08T20:10:00.000Z",
+            preview: "Review the pagination behavior",
+          },
+        ],
+        error: null,
+      },
+    });
+
+    expect(parsed.payload.prompts).toEqual([
+      {
+        seq: 42,
+        timestamp: "2026-02-08T20:10:00.000Z",
+        preview: "Review the pagination behavior",
+      },
+    ]);
   });
 
   it("parses representative fetch_agent_timeline_response payload", () => {

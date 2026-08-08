@@ -64,6 +64,16 @@ export const ar: TranslationResources = {
       home: "بيت",
       modelGroupLabel: "النموذج",
       modelSearchKeywords: "تبديل النموذج تغيير النموذج تعيين النموذج اختيار النموذج",
+      thinkingGroupLabel: "التفكير",
+      thinkingSearchKeywords: "الاستدلال الجهد التفكير",
+      modeGroupLabel: "الوضع",
+      modeSearchKeywords: "الوصول الإذن الموافقة الوضع",
+      planModeGroupLabel: "وضع التخطيط",
+      planModeSearchKeywords: "التخطيط خطة وضع التخطيط",
+      fastModeGroupLabel: "سريع",
+      fastModeSearchKeywords: "سريع سرعة زمن انتقال منخفض",
+      settingOn: "تشغيل",
+      settingOff: "إيقاف",
     },
   },
   composer: {
@@ -71,9 +81,11 @@ export const ar: TranslationResources = {
       desktop: "أرسل رسالة إلى الوكيل أو ضع علامة على @files أو استخدم /commands و /skills",
       mobile: "الرسالة، @files ، /commands",
       fallback: "رسالة...",
+      terminal: "Prompt",
     },
     input: {
       accessibilityLabel: "وكيل الرسائل...",
+      terminalAccessibilityLabel: "Terminal prompt",
       focusHint: "{{shortcut}}للتركيز",
       addAttachment: "إضافة مرفق",
       interruptAgent: "عامل المقاطعة",
@@ -117,6 +129,7 @@ export const ar: TranslationResources = {
     },
     attachments: {
       addImage: "أضف صورة",
+      pasteImage: "لصق صورة",
       addFile: "Upload file",
       addIssueOrPr: "أضف مشكلة أو PR",
       addIssueOrPr_mr: "أضف مشكلة أو MR",
@@ -142,6 +155,8 @@ export const ar: TranslationResources = {
       initialPromptRequired: "مطلوب موجه الأولي",
       alreadyLoading: "جارٍ التحميل بالفعل",
       uploadFailed: "Failed to upload file",
+      noClipboardImage: "لا توجد صورة في الحافظة",
+      pasteImageFailed: "تعذر لصق الصورة",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
     clientCommands: {
@@ -192,6 +207,7 @@ export const ar: TranslationResources = {
   agentStream: {
     empty: "ابدأ الدردشة مع هذا الوكيل...",
     scrollToBottom: "قم بالتمرير إلى الأسفل",
+    historyLoadFailed: "تعذر تحميل سجل الوكيل",
     permission: {
       plan: "يخطط",
       required: "الإذن مطلوب",
@@ -206,7 +222,7 @@ export const ar: TranslationResources = {
     states: {
       notFound: "لم يتم العثور على Agent",
       failedToLoad: "فشل تحميل الوكيل",
-      reconnecting: "جارٍ إعادة الاتصال...",
+      reconnecting: "جارٍ إعادة الاتصال",
       timelineSyncFailed: "تعذر تحديث سجل الوكيل. جارٍ إعادة المحاولة…",
       archivingTitle: "وكيل الارشيف...",
       archivingSubtitle: "الرجاء الانتظار بينما نقوم بأرشفة هذا الوكيل.",
@@ -407,7 +423,7 @@ export const ar: TranslationResources = {
       openFile: "افتح الملف",
       copyPath: "نسخ المسار",
       download: "تحميل",
-      addToChat: "إضافة إلى الدردشة…",
+      addToChat: "إضافة إلى الدردشة",
       moreActions: "المزيد من الإجراءات",
     },
     fileExplorer: {
@@ -504,6 +520,7 @@ export const ar: TranslationResources = {
     },
     terminal: {
       hostDisconnected: "Host غير متصل",
+      updateHost: "حدّث المضيف لاستخدام عارض الطرفية الأصلي.",
       unableToSubscribe: "غير قادر على الاشتراك في المحطة",
     },
     tabs: {
@@ -862,6 +879,14 @@ export const ar: TranslationResources = {
           viewPullRequest: "عرض",
           openOn: "فتح على {{brand}}",
         },
+        checksSummary: {
+          passedLabel: "نجح",
+          failedLabel: "فشل",
+          runningLabel: "قيد التشغيل",
+          passedAccessible: "نجحت الفحوصات",
+          failedAccessible: "فشلت الفحوصات",
+          runningAccessible: "الفحوصات قيد التشغيل",
+        },
         sections: {
           checks: "الشيكات",
           pipeline: "خط المعالجة",
@@ -909,6 +934,38 @@ export const ar: TranslationResources = {
     },
   },
   sidebar: {
+    display: {
+      trigger: "تفضيلات العرض",
+      heading: "العرض",
+      grouping: {
+        label: "التجميع",
+        project: "المشروع",
+        status: "الحالة",
+      },
+      titleSource: {
+        label: "العنوان",
+        title: "العنوان",
+        branch: "اسم الفرع",
+      },
+      show: {
+        label: "إظهار",
+        host: "المضيف",
+        changeRequest: "طلب السحب",
+        checks: "الفحوصات",
+        services: "الخدمات",
+        diff: "إحصائيات الفروق",
+        timestamp: "آخر نشاط",
+      },
+      checks: {
+        iconAndText: "أيقونة ونص",
+        icon: "أيقونة فقط",
+        none: "مخفي",
+      },
+      hostFilter: {
+        label: "المضيف",
+        all: "كل المضيفين",
+      },
+    },
     pinned: {
       title: "المثبتة",
     },
@@ -935,6 +992,7 @@ export const ar: TranslationResources = {
       github: "إنشاء مشكلة على GitHub",
       whatsNew: "ما الجديد",
       version: "Paseo Reforged {{version}}",
+      appName: "Paseo Reforged",
     },
     sections: {
       sessions: "السجل",
@@ -983,7 +1041,8 @@ export const ar: TranslationResources = {
         weekAgo: "قبل {{value}} أسب",
       },
       status: {
-        scriptsAvailable: "البرامج النصية المتاحة",
+        serviceRunning: "الخدمة {{name}} قيد التشغيل",
+        serviceUnhealthy: "الخدمة {{name}} غير سليمة",
         creating: "جارٍ الإنشاء...",
         runtimeResident: "عدد runtimes الوكيل النشطة: {{count}}",
       },
@@ -1046,14 +1105,29 @@ export const ar: TranslationResources = {
       composerStateRequired: "حالة الملحن مطلوبة",
       selectModel: "اختر نموذجا",
     },
+    tooltips: {
+      project: "Choose the project",
+      host: "Choose the host",
+      isolation: "Choose the isolation level",
+      startingRef: "اختر من أين تبدأ",
+      launch: "Choose what to launch",
+    },
     refPicker: {
       startingRef: "بدء المرجع",
-      chooseStart: "اختر من أين تبدأ",
       intoBase: "إلى {{baseRef}}",
       searching: "جارٍ البحث...",
       noMatchingRefs: "لا توجد مراجع مطابقة.",
       searchPlaceholder: "بحث الفروع والعلاقات العامة",
       title: "ابدأ من",
+    },
+    launch: {
+      title: "What to launch",
+      chat: "Chat",
+      terminal: "Terminal",
+      manageProfiles: "Manage profiles",
+      submit: "Launch",
+      promptPlaceholder: "Prompt {{name}}",
+      commandPlaceholder: "Run a command, or leave empty for a blank terminal",
     },
   },
   desktop: {
@@ -1210,6 +1284,7 @@ export const ar: TranslationResources = {
         installFailed: "غير قادر على تثبيت مهارات التنسيق.",
         updateFailed: "غير قادر على تحديث مهارات التنسيق.",
         uninstallFailed: "غير قادر على إلغاء تثبيت مهارات التنسيق.",
+        saveSelectionFailed: "غير قادر على حفظ اختيار مهارات التنسيق.",
       },
     },
   },
@@ -1398,6 +1473,19 @@ export const ar: TranslationResources = {
         show: "عرض متقدم",
         hide: "إخفاء المتقدمة",
       },
+      headers: {
+        title: "رؤوس مخصصة",
+        add: "إضافة رأس",
+        name: "الاسم",
+        value: "القيمة",
+        remove: "إزالة الرأس",
+        errors: {
+          missingName: "أدخل اسمًا لكل رأس",
+          invalidName: "{{name}} ليس اسم رأس صالحًا",
+          invalidValue: "يحتوي {{name}} على فاصل أسطر غير صالح",
+          duplicateName: "تم إدخال {{name}} أكثر من مرة",
+        },
+      },
       passwordVisibility: {
         show: "إظهار كلمة المرور",
         hide: "إخفاء كلمة المرور",
@@ -1461,9 +1549,21 @@ export const ar: TranslationResources = {
       loadingOffer: "جارٍ تحميل عرض الإقران...",
       failedToLoadOffer: "فشل تحميل عرض الاقتران.",
       relayDisabled: "لم يتم تمكين التتابع. تمكين التتابع لإقران جهاز.",
+      enableTitle: "تمكين التتابع؟",
+      enableDescription:
+        "يتيح التتابع لهذا الجهاز الاتصال من أي مكان. حركة مرور الإقران مشفرة من طرف إلى طرف.",
+      relayDocs: "كيفية عمل التتابع",
+      relayDocsAccessibility: "اقرأ كيفية عمل تتابع Paseo",
+      enableRelay: "تمكين التتابع",
+      enablingRelay: "جارٍ التمكين...",
+      notNow: "ليس الآن",
+      directConnectionHint:
+        "بدون التتابع، اتصل مباشرة عبر TCP أو Tailscale أو شبكة VPN أخرى. لن يتم إنشاء رمز QR.",
+      updateRequired: "حدّث المضيف لتمكين التتابع من Paseo Desktop.",
       unavailable: "عرض الاقتران غير متاح.",
       hint: "قم بمسح رمز QR هذا باستخدام Paseo على هاتفك، أو انسخ الرابط أدناه.",
       qrUnavailable: "رمز QR غير متاح.",
+      qrAccessibility: "رمز QR للإقران",
       retry: "أعد المحاولة",
       copy: "ينسخ",
       copied: "منقول",
@@ -1541,7 +1641,9 @@ export const ar: TranslationResources = {
         cursor: "السطر {{line}}، العمود {{column}}",
         preview: "معاينة",
         source: "المصدر",
-        unavailableTitle: "الملف غير متاح على القرص",
+        deletedTitle: "تم حذف الملف من القرص",
+        checkFailedTitle: "تعذّر التحقق من الملف على القرص",
+        preservedDescription: "تم الاحتفاظ بالنسخة المفتوحة.",
         conflictDescription: "تم الاحتفاظ بالمحتوى المحلي. اختر الإصدار الذي تريد إبقاءه.",
         overwrite: "استبدال",
         reload: "إعادة تحميل",
@@ -1658,6 +1760,7 @@ export const ar: TranslationResources = {
       vimHint: "تنطبق على ملفات المصدر في الويب وسطح المكتب.",
     },
     hostSections: {
+      projects: "المشاريع",
       connections: "اتصالات",
       agents: "Agents",
       workspaces: "Workspaces",
@@ -1732,6 +1835,7 @@ export const ar: TranslationResources = {
           es: "Español",
           fr: "Français",
           ja: "日本語",
+          ko: "한국어",
           ptBR: "Português brasileiro",
           ru: "Русский",
           zhCN: "中文",
@@ -1740,6 +1844,11 @@ export const ar: TranslationResources = {
     },
     diagnostics: {
       title: "التشخيص",
+      legacyTerminalRenderer: {
+        label: "استخدام عارض الطرفية السابق",
+        description: "استخدام طرفية WebView السابقة بعد إعادة فتح الطرفية",
+        accessibilityLabel: "استخدام عارض الطرفية السابق",
+      },
       testAudio: "اختبار الصوت",
       playTest: "لعب الاختبار",
       playing: "جارٍ اللعب...",
@@ -1805,6 +1914,10 @@ export const ar: TranslationResources = {
       },
       detailLevel: {
         title: "مستوى التفاصيل",
+      },
+      chatOutline: {
+        title: "مخطط المحادثة",
+        description: "عرض مخطط للتنقل بين المطالبات",
       },
       fonts: {
         title: "الخطوط",
@@ -1922,6 +2035,15 @@ export const ar: TranslationResources = {
         updateFallback: "مزامنة المهارات المجمعة لجهازك.",
         uninstallTitle: "إلغاء تثبيت مهارات Paseo ؟",
         uninstallMessage: "يزيل جميع مهارات تنسيق Paseo من ~/.agents ، ~/.claude ، ~/.codex.",
+        choose: "اختيار المهارات",
+        chooseAll: "كل المهارات",
+        chooseAllHint: "أبقِ جميع المهارات المرفقة مثبتة، بما فيها ما يُضاف لاحقًا.",
+        chooseList: "المهارات المرفقة",
+        chooseEmpty: "لا تتضمن هذه النسخة أي مهارات.",
+        removeTitle: "إزالة المهارات غير المحددة؟",
+        removeMessage:
+          "سيتم حذف {{skills}} من ~/.agents و~/.claude و~/.codex. كما يُحذف كل ما أضفته داخل مجلدات المهارات تلك.",
+        saveFailed: "تعذر حفظ اختيار المهارات.",
       },
       actions: {
         install: "ثَبَّتَ",
@@ -1929,7 +2051,10 @@ export const ar: TranslationResources = {
         installed: "تم التثبيت",
         update: "تحديث",
         working: "عمل...",
+        remove: "إزالة",
         uninstall: "إلغاء التثبيت",
+        save: "حفظ",
+        saving: "جارٍ الحفظ...",
       },
       operations: {
         add: "أضف مهارة",
@@ -1953,6 +2078,41 @@ export const ar: TranslationResources = {
       },
     },
     host: {
+      appearance: {
+        title: "المظهر",
+        name: {
+          label: "الاسم",
+        },
+        color: {
+          label: "اللون",
+          accessibilityLabel: "اللون، {{value}}",
+          options: {
+            none: "افتراضي",
+            violet: "بنفسجي",
+            sky: "سماوي",
+            emerald: "زمردي",
+            orange: "برتقالي",
+            pink: "وردي",
+            indigo: "نيلي",
+            teal: "أزرق مخضر",
+            red: "أحمر",
+            amber: "كهرماني",
+            blue: "أزرق",
+          },
+        },
+        badge: {
+          label: "شارة الشريط الجانبي",
+          accessibilityLabel: "شارة الشريط الجانبي، {{value}}",
+          options: {
+            name: "الاسم",
+            icon: "أيقونة فقط",
+            hidden: "مخفي",
+          },
+        },
+        preview: {
+          workspaceName: "my-workspace",
+        },
+      },
       notFound: "لم يتم العثور على Host",
       badges: {
         relay: "تتابع",
@@ -2157,24 +2317,23 @@ export const ar: TranslationResources = {
       },
     },
     project: {
-      noEditableTarget: "ليس لدينا نسخة قابلة للتحرير من هذا المشروع على أي مضيف متصل.",
+      noEditableTarget: "هذا المشروع غير متاح للتحرير على هذا المضيف.",
       backToProjects: "العودة إلى المشاريع",
-      switchHost: "تبديل المضيف",
-      rename: {
-        renamedToast: "تمت إعادة تسمية المشروع",
-        errorFallback: "تعذرت إعادة تسمية المشروع",
-        renameLabel: "إعادة تسمية المشروع",
-        resetLabel: "إعادة تعيين اسم المشروع إلى الافتراضي",
-        projectNameLabel: "اسم المشروع",
-        saveLabel: "احفظ اسم المشروع",
-        cancelLabel: "إلغاء إعادة التسمية",
-        reset: "إعادة ضبط",
+      edit: {
+        title: "تعديل المشروع",
+        name: "الاسم",
+        nameLabel: "اسم المشروع",
+        icon: "الأيقونة",
+        chooseImage: "اختيار صورة",
+        useAutomatic: "استخدام التلقائي",
+        imageUrl: "رابط صورة أو موقع",
+        save: "حفظ التغييرات",
+        savedToast: "تم تحديث المشروع",
       },
       readFailures: {
         invalidTitle: "تعذر تحليل paseo.json",
         invalidDescription: "قم بإصلاح الملف على القرص، ثم أعد تحميله.",
         missingTitle: "هذا المضيف ليس لديه هذا المشروع",
-        missingWithHosts: "قم بالتبديل إلى مضيف آخر أعلاه، أو أعد التحميل.",
         missingSingleHost: "المضيف المحدد ليس لديه سجل لهذا المشروع.",
         transportTitle: "تعذر تحميل paseo.json",
         transportFallback: "المضيف لم يستجب.",

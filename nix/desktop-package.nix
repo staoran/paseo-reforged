@@ -146,6 +146,7 @@ buildNpmPackage rec {
       icon = "paseo-desktop";
       categories = [ "Development" ];
       startupWMClass = "Paseo Reforged";
+      noDisplay = true;
     })
   ];
 

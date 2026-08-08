@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        I'm a solo maintainer and don't always keep up with GitHub Issues daily. If something is urgent or blocking you, [Discord](https://discord.gg/jz8T2uahpH) is the fastest place to reach me.
+        Issues are only for confirmed Paseo Reforged bugs. This fork does not currently maintain a feature request backlog. Ideas that also apply upstream can go to [upstream Paseo Discussions](https://github.com/getpaseo/paseo/discussions) or the upstream `#product` channel in [Discord](https://discord.gg/jz8T2uahpH); those channels do not create a Reforged commitment.
 
         Before opening, please:
 
@@ -56,9 +56,9 @@ body:
   - type: input
     id: paseo-version
     attributes:
-      label: Paseo version
+      label: Paseo Reforged version
       description: Settings → About in the app, or `paseo --version` from the CLI.
-      placeholder: "0.1.71"
+      placeholder: "0.3.0-beta.4"
     validations:
       required: true
 

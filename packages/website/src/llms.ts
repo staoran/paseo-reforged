@@ -8,13 +8,13 @@ const PRODUCT_PREAMBLE = `# Paseo Reforged
 
 > Mobile and desktop app for monitoring and controlling your local AI coding agents from anywhere. Your dev environment, in your pocket.
 
-Paseo Reforged is an independently maintained fork of Paseo that lets you run AI coding agents on your own machine and drive them from your phone, desktop, browser, or terminal. Your code stays local - Paseo Reforged connects directly to your real development environment instead of running agents in someone else's cloud.
+Paseo Reforged is an independently maintained fork of Paseo that lets you run AI coding agents on your own machine and drive them from Android, desktop, a self-hosted browser UI, or the terminal. Your code stays local - Paseo Reforged connects directly to your real development environment instead of running agents in someone else's cloud.
 
-A self-hosted daemon manages agent lifecycle, exposes a WebSocket API, and ships with an MCP server so other agents can talk to it. Native apps for iOS, Android, macOS, Windows, Linux, and the web let you launch sessions, watch them work, review diffs, and ship from anywhere. A Docker-style CLI ("paseo run", "paseo ls", "paseo logs", "paseo wait") gives you scripting access. An end-to-end encrypted relay lets the mobile app reach your daemon over the public internet without exposing it.
+A self-hosted daemon manages agent lifecycle, exposes a WebSocket API, and ships with an MCP server so other agents can talk to it. Reforged releases desktop apps for macOS, Windows, and Linux plus an Android APK; the daemon can serve the browser UI itself. The CLI ("paseo run", "paseo ls", "paseo logs", "paseo wait") gives you scripting access. An end-to-end encrypted relay lets compatible clients reach your daemon over the public internet without exposing it.
 
 Paseo Reforged supports every major coding agent: Claude Code, Codex, GitHub Copilot, OpenCode, Cursor, Gemini, Cline, Goose, Amp, Aider, and 30+ others. Each agent runs as its own process; Paseo Reforged handles I/O, persistence, git worktree isolation, schedules, and skills.
 
-Distribution: native apps for Mac, Windows, Linux, iOS, and Android; web app. Source: AGPL-3.0 at https://github.com/staoran/paseo-reforged. Upstream marketing site: https://paseo.sh.
+Distribution: Reforged GitHub release assets for Mac, Windows, Linux, and Android; Nix for the daemon and CLI; self-hosted browser UI. Reforged does not currently publish npm, Docker, app-store, or hosted web-app releases. Source: AGPL-3.0 at https://github.com/staoran/paseo-reforged.
 `;
 
 function docLine(doc: Doc): string {
@@ -59,8 +59,8 @@ ${agents}
 ## Optional
 
 - [Changelog](${SITE_URL}/changelog): Release notes for the Paseo Reforged daemon, CLI, desktop, and mobile apps.
-- [Download](${SITE_URL}/download): Install Paseo Reforged on Mac, Windows, Linux, iOS, Android, or run the web app.
-- [Paseo Cloud](${SITE_URL}/cloud): Upstream waitlist for the hosted multi-user version of Paseo.
+- [Download](${SITE_URL}/download): Install Paseo Reforged on Mac, Windows, Linux, or Android, or run its daemon and CLI with Nix.
+- [Upstream Paseo Hub](${SITE_URL}/hub): Optional upstream service for GitHub, Slack, and Discord triggers; it is not operated or released by Paseo Reforged.
 - [Blog](${SITE_URL}/blog): Paseo Reforged updates and archived technical posts from upstream Paseo.
 - [Privacy](${SITE_URL}/privacy): Privacy policy.
 - [GitHub](https://github.com/staoran/paseo-reforged): Source code, issues, and releases.

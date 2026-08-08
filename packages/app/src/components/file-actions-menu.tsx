@@ -45,7 +45,7 @@ interface FileActionsContentProps {
   onCopyPath?: () => void;
   onDownload?: () => void;
   onAddToChat?: () => void;
-  /** Optional metadata block rendered above the actions (e.g. size/modified). */
+  /** Optional metadata block rendered above the actions, such as size and modified time. */
   header?: ReactNode;
   testIDPrefix?: string;
 }
@@ -57,8 +57,6 @@ interface FileActionsMenuProps extends FileActionsContentProps {
   accessibilityLabel: string;
 }
 
-// The menu lives inside pressable rows (diff header, explorer entry); stop the
-// press so opening it doesn't also trigger the row.
 function stopTriggerPropagation(event: { stopPropagation?: () => void }) {
   event.stopPropagation?.();
 }
@@ -71,10 +69,7 @@ function triggerStyle({
   return [styles.trigger, (Boolean(hovered) || pressed || Boolean(open)) && styles.triggerActive];
 }
 
-/**
- * Shared kebab (⋮) menu for per-file actions. Used by the file explorer tree and
- * git diff pane so both surfaces share action availability, ordering, and chrome.
- */
+/** Shared kebab menu for file actions in the explorer and diff pane. */
 export function FileActionsMenu({
   fileKind,
   fileExists = true,
@@ -99,9 +94,8 @@ export function FileActionsMenu({
     testIDPrefix,
   });
 
-  if (actions.length === 0) {
-    return null;
-  }
+  if (actions.length === 0) return null;
+
   return (
     <DropdownMenu open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger
@@ -128,6 +122,7 @@ export function FileActionsMenu({
   );
 }
 
+/** Context-menu presentation of the same file action model. */
 export function FileActionsContextMenuContent({
   fileKind,
   fileExists = true,
@@ -154,7 +149,7 @@ export function FileActionsContextMenuContent({
     <ContextMenuContent
       align="start"
       width={220}
-      testID={testIDPrefix ? `${testIDPrefix}-context` : undefined}
+      testID={testIDPrefix ? `${testIDPrefix}-context-menu` : undefined}
     >
       {header ? (
         <>
@@ -243,10 +238,6 @@ function FileActionMenuItem({
 
 const styles = StyleSheet.create((theme) => ({
   trigger: {
-    // The hover box comes from padding, but an equal negative vertical margin
-    // cancels its height contribution so the trigger overlaps the row's natural
-    // line height instead of growing it. The comfortable tap target is `hitSlop`,
-    // never padding.
     padding: theme.spacing[1],
     width: FILE_ACTIONS_MENU_WIDTH,
     marginVertical: -theme.spacing[1],

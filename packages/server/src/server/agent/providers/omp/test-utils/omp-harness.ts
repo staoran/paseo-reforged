@@ -18,6 +18,7 @@ import {
   type OmpNoTurnScheduler,
   type OmpProviderIdleScheduler,
 } from "../agent.js";
+import type { OmpUsagePollScheduler } from "../usage-poller.js";
 import type { OmpAgentMessage, OmpRpcSlashCommand } from "../rpc-types.js";
 import { FakeOmp } from "./fake-omp.js";
 
@@ -70,6 +71,7 @@ export class OmpHarness {
       providerIdleScheduler?: OmpProviderIdleScheduler;
       noTurnScheduler?: OmpNoTurnScheduler;
       loadPaseoEditExtension?: boolean;
+      usagePollScheduler?: OmpUsagePollScheduler;
     } = {},
   ) {
     this.omp = new FakeOmp(["omp"], options.loadPaseoEditExtension ?? true);
@@ -78,6 +80,7 @@ export class OmpHarness {
       runtime: this.omp,
       providerIdleScheduler: options.providerIdleScheduler,
       noTurnScheduler: options.noTurnScheduler,
+      usagePollScheduler: options.usagePollScheduler,
     });
   }
 
@@ -393,6 +396,10 @@ export class OmpHarness {
     return this.events.flatMap((event) => (event.type === "timeline" ? [event.item] : []));
   }
 
+  eventTypes(): AgentStreamEvent["type"][] {
+    return this.events.map((event) => event.type);
+  }
+
   async history(): Promise<AgentTimelineItem[]> {
     const items: AgentTimelineItem[] = [];
     for await (const event of this.requireSession().streamHistory()) {
@@ -403,6 +410,10 @@ export class OmpHarness {
 
   completedTurnCount(): number {
     return this.events.filter((event) => event.type === "turn_completed").length;
+  }
+
+  usageUpdates() {
+    return this.events.flatMap((event) => (event.type === "usage_updated" ? [event.usage] : []));
   }
 
   requestToolApproval(input: {
@@ -513,7 +524,9 @@ export class OmpHarness {
       .map(([callId]) => callId);
   }
 
-  subagentUpserts(): Array<{ id: string; status: string }> {
+  // `status` is optional on the upsert event — an upsert may report only model or usage. OMP
+  // always sets one, so this stays a plain string for assertions.
+  subagentUpserts(): Array<{ id: string; status: string | undefined }> {
     return this.events.flatMap((event) =>
       event.type === "provider_subagent" && event.event.type === "upsert"
         ? [{ id: event.event.id, status: event.event.status }]

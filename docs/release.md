@@ -128,7 +128,7 @@ npm run release:beta:next        # X.Y.Z-beta.N -> X.Y.Z-beta.(N+1)
 ```
 
 - Beta tags are published GitHub prereleases like `v0.1.41-beta.1`
-- Betas publish desktop assets and APKs for testing, but they do not trigger the production web/mobile release flows
+- Betas publish desktop assets and APKs for testing, but they do not trigger the production web/mobile release flows. The website exposes available Reforged prerelease assets behind its Beta channel selector without advertising npm, Homebrew, store, or hosted Web channels that the fork does not publish.
 - A future formal release uses a fresh tag like `v0.2.5-reforged.1`; it never reuses the beta tag
 - Desktop assets now come from the Electron package at `packages/desktop`
 - Beta releases use Electron's `beta` update channel. Users on the stable channel only receive stable releases; users on the beta channel receive beta releases and the final stable release when it is published.
@@ -250,12 +250,13 @@ that variable is absent. Keep both values identical.
 - **iOS TestFlight/App Store** — blocked until a `sh.paseo.reforged` App Store Connect listing and signing/submission credentials exist. The removed upstream `ascAppId` must not be restored.
 
 EAS uses the local app version source. `packages/app/app.config.js` derives
-Android `versionCode` and iOS `buildNumber` from the package version as
-`major * 1_000_000 + minor * 1_000 + patch`, ignoring prerelease metadata.
-Because beta ordinals do not change that native number, do not submit multiple
-betas from the same base version to a store that requires monotonically
-increasing build numbers. GitHub APK validation is not subject to that store
-constraint.
+Android `versionCode` as `major * 1_000_000 + minor * 1_000 + patch`. iOS
+reserves 1,000 build slots per app version: beta `N` uses slot `N`, and stable
+uses slot `999`. For example, `0.3.0-beta.4` uses iOS build number `3000004`.
+Rebuilding the same tag produces the same native build number; if a store has
+already accepted a binary and a different binary is required, cut the next beta
+instead of relying on remote auto-increment. Reforged store submission remains
+blocked by the credential and listing gates above.
 
 ### Watching mobile builds from the terminal
 
@@ -305,8 +306,9 @@ implemented.
 
 ## Website behavior
 
-- The website download page points to GitHub's latest published **stable** release.
-- Published beta prereleases are public on GitHub Releases, but they do **not** become the website download target.
+- The website download page defaults to the latest published **stable** release from `staoran/paseo-reforged`.
+- A published Reforged beta prerelease is available behind the Stable/Beta switch on `/download` (`?channel=beta`) and never becomes the default. The switch appears only when the newest prerelease leads stable on its core version.
+- The Beta view contains only assets actually attached to the Reforged GitHub release. npm, Homebrew, App Store, Play Store, and hosted Web rows remain hidden until the fork configures and publishes those channels.
 - The download target only moves when a future `vX.Y.Z-reforged.N` release is published as a non-prerelease after formal-channel support is implemented.
 - The public `/changelog` page renders `CHANGELOG.md` as-is, so the in-flight `-beta.N` entry shows there once it lands on `main` — that's intended, it's where beta users check what's coming. Only the **download target** stays pinned to the latest stable; the download links read GitHub's releases API, not the changelog, so a `-beta.N` heading on top never affects them.
 - The source website reads releases from `staoran/paseo-reforged`. Cloudflare deployment is not part of the release contract until fork-owned account/project credentials are configured.

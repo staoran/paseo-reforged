@@ -12,10 +12,10 @@ import { openDesktopTarget, useDesktopOpenTargets } from "@/workspace/desktop-op
 import { resolveOpenInFileManagerPath } from "./availability";
 
 interface OpenInFileManagerMenuItemProps {
-  variant?: "dropdown" | "context";
   serverId?: string | null;
   path?: string | null;
   testID: string;
+  surface?: "context" | "dropdown";
 }
 
 const ThemedFolderOpen = withUnistyles(FolderOpen);
@@ -27,10 +27,10 @@ const foregroundMutedColorMapping = (theme: Theme) => ({
 const leadingIcon = <ThemedFolderOpen size={14} uniProps={foregroundMutedColorMapping} />;
 
 export function OpenInFileManagerMenuItem({
-  variant = "dropdown",
   serverId,
   path,
   testID,
+  surface = "dropdown",
 }: OpenInFileManagerMenuItemProps) {
   const { t } = useTranslation();
   const toast = useToast();
@@ -57,11 +57,17 @@ export function OpenInFileManagerMenuItem({
     return null;
   }
 
-  const MenuItem = variant === "context" ? ContextMenuItem : DropdownMenuItem;
-
+  const label = t("sidebar.project.actions.openFolder");
+  if (surface === "context") {
+    return (
+      <ContextMenuItem testID={testID} leading={leadingIcon} onSelect={openInFileManager}>
+        {label}
+      </ContextMenuItem>
+    );
+  }
   return (
-    <MenuItem testID={testID} leading={leadingIcon} onSelect={openInFileManager}>
-      {t("sidebar.project.actions.openFolder")}
-    </MenuItem>
+    <DropdownMenuItem testID={testID} leading={leadingIcon} onSelect={openInFileManager}>
+      {label}
+    </DropdownMenuItem>
   );
 }

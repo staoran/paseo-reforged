@@ -113,7 +113,7 @@ describe("workspace source of truth consumption", () => {
       kind: "ready",
       title: "feat/cached-branch",
       subtitle: "getpaseo/paseo",
-      shouldShowSubtitle: true,
+      isSubtitleDistinct: true,
       isGitCheckout: false,
       currentBranchName: null,
     });
@@ -134,7 +134,7 @@ describe("workspace source of truth consumption", () => {
       kind: "ready",
       title: "notes",
       subtitle: "Local folders",
-      shouldShowSubtitle: true,
+      isSubtitleDistinct: true,
       isGitCheckout: false,
       currentBranchName: null,
     });
@@ -160,7 +160,7 @@ describe("workspace source of truth consumption", () => {
       kind: "ready",
       title: "feat/real-branch",
       subtitle: "getpaseo/paseo",
-      shouldShowSubtitle: true,
+      isSubtitleDistinct: true,
       isGitCheckout: true,
       currentBranchName: "feat/real-branch",
     });
@@ -260,7 +260,7 @@ describe("workspace source of truth consumption", () => {
       kind: "ready",
       title: "notes",
       subtitle: "notes",
-      shouldShowSubtitle: false,
+      isSubtitleDistinct: false,
       isGitCheckout: false,
       currentBranchName: null,
     });
@@ -283,7 +283,7 @@ describe("workspace source of truth consumption", () => {
       kind: "ready",
       title: "feat/cached-branch",
       subtitle: "getpaseo/paseo",
-      shouldShowSubtitle: true,
+      isSubtitleDistinct: true,
       isGitCheckout: false,
       currentBranchName: null,
     });
