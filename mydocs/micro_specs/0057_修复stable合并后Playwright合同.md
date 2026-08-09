@@ -6,8 +6,8 @@
 | ------------------ | ----------------------------------------------------------- |
 | task_id            | `0057`                                                      |
 | spec layer         | `Feature Spec`                                              |
-| task status        | `待提交`                                                    |
-| document status    | `Active`                                                    |
+| task status        | `已收口`                                                    |
+| document status    | `Closed`                                                    |
 | depth              | `standard`                                                  |
 | phase              | `Execute`                                                   |
 | Execution Approval | `Approved`                                                  |
@@ -96,10 +96,10 @@
 ## 5. 执行前检查点
 
 - 当前目标：消除 stable merge 后新增的 16 个 Playwright 合同失败，同时保留 upstream stable 与已批准 Reforged 意图
-- 当前进度：C01-C09 已提交并推送；第二轮 main CI 的 C10 已用双 timeline 响应屏障修正，单轮与 `--repeat-each=10` 均通过，静态门禁已通过，待追加提交
+- 当前进度：C01-C10 已通过三个提交进入并推送 `main`；最终 main CI 与 Docker source-build 检查全绿
 - 当前动作是否仍服务核心目标：`是；每项计划均可追溯到 CI 失败或既有 0052/0056 产品决策`
-- 下一步：提交 C10 gate 屏障与记录，推送 main 并等待新 CI 全绿
-- 风险与回退：hydration 与 bottom-follow 仍共享滚动控制器；以 main CI 的完整分片作为最终回归证据；不 reset/abort、不触碰 `6767`
+- 下一步：无；beta.5 发布进入独立发布门禁，不属于本任务 Done Contract
+- 风险与回退：hydration 与 bottom-follow 仍共享滚动控制器；最终 main CI 四个 Playwright shard 已覆盖该交互；不 reset/abort、不触碰 `6767`
 - 验证方式：受影响单文件 Vitest；十个根因对应的 browser spec 与 C10 定向 Playwright；`npm run typecheck`、`npm run lint`、`npm run format`、`git diff --check`；最终以 main CI 全绿为证据
 - TDD 判定、测试 seam 与验收行为：`N/A；16 个现有 Playwright 失败已是有效回归 seam，本轮恢复既有/已批准行为，不新增测试先行循环`
 - seam 确认：`N/A；使用现有失败合同，不新增 TDD seam`
@@ -139,24 +139,26 @@
 | 静态与格式          | `npm run typecheck`、`npm run lint`、`npm run format`、`git diff --check` | 通过 | typecheck/format 退出 0；lint `0 warnings / 0 errors`；diff check 通过                     |
 | main CI             | run `31304387729`                                                         | 失败 | 17 个 job 中 16 个通过；仅 Playwright shard 4 的一条 C03 旧断言失败                        |
 | 第二轮 main CI      | run `31305997163`                                                         | 失败 | 17 个 job 中 16 个通过；仅 Playwright shard 1 的一条 C10 重连时序竞态失败                  |
+| 最终 main CI        | run `31310395218`                                                         | 通过 | `c017dcca1` 的 18 个 job 全部成功，四个 Playwright shard 与双平台 server/desktop 均通过    |
+| Docker source build | run `31310395221`                                                         | 通过 | `c017dcca1` 的非发布 source-build 检查成功，未发布 Docker 镜像                             |
 
-- 未验证项与原因：未运行完整本地测试套件，遵守项目的本地定向测试限制；C10 追加提交推送后的新 main CI 尚未产生
-- 剩余风险：产品代码的 hydration、gate 和 mock stream 已通过既有 CI 对应分片；C10 已在本地 10 次重连中稳定通过，剩余风险为追加提交后的 main CI 复验
-- Done Contract 是否由证据满足：`部分；C01-C10 本地与既有 CI 证据齐全，等待提交、推送与新 main CI 全绿`
+- 未验证项与原因：未运行完整本地测试套件，遵守项目的本地定向测试限制；完整仓库矩阵由最终 main CI 覆盖
+- 剩余风险：本任务合同内无已知未闭合回归；beta.5 的版本、tag、资产和 prerelease 仍服从独立发布门禁
+- Done Contract 是否由证据满足：`是；C01-C10 已提交并推送 main，定向验证、静态检查、最终 main CI 与 Docker source-build 检查均通过`
 
 ## 8. 恢复与同步
 
-- 状态说明：`Execute / 待提交 / Active`
+- 状态说明：`Execute / 已收口 / Closed`
 - 当前卡点：`无`
-- 下一步唯一动作：`提交并推送 C10 双 timeline hydration 屏障，等待新 main CI`
-- Resume / Handoff：工作树 `E:\Code\paseo-release-v0.3.0-beta.5`，分支 `release/v0.3.0-beta.5`，基线 `928a4ccad`
+- 下一步唯一动作：`无；beta.5 发布按独立发布门禁继续`
+- Resume / Handoff：工作树 `E:\Code\paseo-release-v0.3.0-beta.5`，分支 `release/v0.3.0-beta.5`，产品与测试收口提交 `c017dcca1`
 - Project Sync Candidates：`无；stable 合并的一次性合同修复留在本记录，原位编辑的长期约束已在既有 capability gate 规则中表达`
 - 长期文档同步：`N/A`
 
 ### 提交记录
 
-| 提交信息（Commit Message）                          | 提交脚注（Commit Footer） | 关联改动或阶段 | 文档同步状态 | 备注                                      |
-| --------------------------------------------------- | ------------------------- | -------------- | ------------ | ----------------------------------------- |
-| `fix: restore stable merge contracts`               | `N/A`                     | C01-C09        | `已合入`     | `64e93b04e`；main CI 追加暴露 C03 漏改    |
-| `test: align hidden hot chat mock contract`         | `N/A`                     | C03 CI 补漏    | `已合入`     | `9adf4a6f8`；run `31305997163` 暴露 C10   |
-| `test: stabilize provider retry reconnect contract` | `N/A`                     | C10            | `待提交`     | 本地单轮 `1/1`、重复 `10/10`；待推送 main |
+| 提交信息（Commit Message）                          | 提交脚注（Commit Footer） | 关联改动或阶段 | 文档同步状态 | 备注                                    |
+| --------------------------------------------------- | ------------------------- | -------------- | ------------ | --------------------------------------- |
+| `fix: restore stable merge contracts`               | `N/A`                     | C01-C09        | `已合入`     | `64e93b04e`；main CI 追加暴露 C03 漏改  |
+| `test: align hidden hot chat mock contract`         | `N/A`                     | C03 CI 补漏    | `已合入`     | `9adf4a6f8`；run `31305997163` 暴露 C10 |
+| `test: stabilize provider retry reconnect contract` | `N/A`                     | C10            | `已合入`     | `c017dcca1`；run `31310395218` 全绿     |
