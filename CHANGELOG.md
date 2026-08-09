@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.0 - 2026-08-08
+## 0.3.0-beta.5 - 2026-08-09
 
 ### Known limitations
 
