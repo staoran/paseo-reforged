@@ -167,12 +167,12 @@ jobs:
             echo "::error::Expected package sh.paseo.reforged."
             exit 1
           fi
-          if ! grep -Fq "versionName='$RELEASE_VERSION'" <<< "$package_line"; then
-            echo "::error::Expected versionName $RELEASE_VERSION."
+          if ! grep -Fq "versionName='$RELEASE_BASE_VERSION'" <<< "$package_line"; then
+            echo "::error::Expected versionName $RELEASE_BASE_VERSION."
             exit 1
           fi
 
-          echo "Verified package=sh.paseo.reforged versionName=$RELEASE_VERSION asset=$asset_name"
+          echo "Verified package=sh.paseo.reforged versionName=$RELEASE_BASE_VERSION asset=$asset_name"
 
           echo "asset_name=$asset_name" >> "$GITHUB_OUTPUT"
           echo "asset_path=$asset_path" >> "$GITHUB_OUTPUT"

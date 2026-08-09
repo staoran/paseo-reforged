@@ -5,6 +5,7 @@ import test from "node:test";
 
 const repoRoot = new URL("../", import.meta.url);
 const ciWorkflowPath = new URL(".github/workflows/ci.yml", repoRoot);
+const androidReleaseWorkflowPath = new URL(".github/workflows/android-apk-release.yml", repoRoot);
 const dockerWorkflowPath = new URL(".github/workflows/docker.yml", repoRoot);
 const nixWorkflowPath = new URL(".github/workflows/nix.yml", repoRoot);
 const filtersPath = new URL(".github/ci-paths.yml", repoRoot);
@@ -107,6 +108,17 @@ test("change gating allows superseded workflow runs to cancel", () => {
       "always() keeps jobs alive after concurrency cancellation; use !cancelled() for fail-open gating",
     );
   }
+});
+
+test("Android APK validation follows the native base-version contract", () => {
+  const workflowSource = readFileSync(androidReleaseWorkflowPath, "utf8");
+  const validationStep = workflowSource
+    .split("- name: Validate Android APK", 2)[1]
+    ?.split("- name: Upload APK to GitHub Release", 1)[0];
+
+  assert.ok(validationStep, "missing Android APK validation step");
+  assert.match(validationStep, /versionName='\$RELEASE_BASE_VERSION'/);
+  assert.doesNotMatch(validationStep, /versionName='\$RELEASE_VERSION'/);
 });
 
 test("focused contracts stay inside existing required checks", () => {
