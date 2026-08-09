@@ -4,7 +4,7 @@
 
 - 当前编号基线：`0058`
 - 下一个建议编号：`0059`
-- 最后更新：`2026-08-09`
+- 最后更新：`2026-08-10`
 - 迁移说明：既有 `0001` 至 `0014` 任务已于 2026-08-02 合并迁移至 `mydocs/specs/`，旧 `mydocs/tasks/` 目录已删除；这些编号继续占用。
 
 ## 用途
@@ -99,7 +99,7 @@
 | 0055 | 已收口 | micro-spec | 已同步        | [合并 upstream 0.3.0-beta.4 到 Reforged](micro_specs/0055_合并upstream_0.3.0-beta.4到Reforged.md) | 2026-08-08       | 94 个冲突及语义重复已解决；beta.4、Reforged identity、Edit fail-closed 与定向门禁通过                                   |
 | 0056 | 已收口 | micro-spec | 已同步        | [审计 upstream 0.3.0 正式版冲突](micro_specs/0056_审计upstream_0.3.0正式版冲突.md)                | 2026-08-08       | stable 全部推荐方案已实施；History 搜索/错误态/响应式布局、Nix hash、CHANGELOG 与定向门禁通过；原位编辑继续 fail-closed |
 | 0057 | 已收口 | micro-spec | 已同步        | [修复 stable 合并后 Playwright 合同](micro_specs/0057_修复stable合并后Playwright合同.md)          | 2026-08-09       | C01-C10 已由 `c017dcca1` 收口；定向验证、静态检查、main CI 18/18 与 Docker source-build 检查全绿                        |
-| 0058 | 待验证 | micro-spec | 已同步        | [修复 beta.5 Android APK 版本校验合同](micro_specs/0058_修复beta5AndroidAPK版本校验合同.md)       | 2026-08-09       | 本地 Red/Green、lint、typecheck 已通过；待推送修复并用不可变 `v0.3.0-beta.5` tag 重跑 Android workflow                  |
+| 0058 | 已收口 | micro-spec | 已同步        | [修复 beta.5 Android APK 版本校验合同](micro_specs/0058_修复beta5AndroidAPK版本校验合同.md)       | 2026-08-10 01:35 | 修复提交 `1ef02da58` 与 CI 全绿；immutable tag 重跑成功，beta.5 共 24 个资产且三条发布 workflow 全绿                    |
 
 ## 候选待办
 
