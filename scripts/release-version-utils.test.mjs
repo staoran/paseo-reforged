@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  computeNextAvailableBetaVersion,
   computeNextReleaseVersion,
   getReleaseInfoFromSourceTag,
   parseReleaseVersion,
@@ -12,6 +13,25 @@ test("computes the next beta patch from a stable version", () => {
 
 test("starts a beta line on the adopted stable upstream version", () => {
   assert.equal(computeNextReleaseVersion("0.2.5", "beta-next"), "0.2.5-beta.1");
+});
+
+test("starts after immutable beta tags already occupying the adopted stable version", () => {
+  assert.equal(
+    computeNextAvailableBetaVersion("0.3.0", [
+      "0.3.0-beta.1",
+      "0.3.0-beta.2",
+      "0.3.0-beta.3",
+      "0.3.0-beta.4",
+    ]),
+    "0.3.0-beta.5",
+  );
+});
+
+test("ignores occupied beta tags from other upstream bases", () => {
+  assert.equal(
+    computeNextAvailableBetaVersion("0.3.0", ["0.2.5-beta.9", "0.3.0-beta.2"]),
+    "0.3.0-beta.3",
+  );
 });
 
 test("advances beta versions", () => {

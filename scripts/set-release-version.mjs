@@ -2,7 +2,11 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { computeNextReleaseVersion } from "./release-version-utils.mjs";
+import {
+  computeNextAvailableBetaVersion,
+  computeNextReleaseVersion,
+  parseReleaseVersion,
+} from "./release-version-utils.mjs";
 
 const modulePath = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(modulePath);
@@ -25,6 +29,22 @@ export function assertReleaseModeEnabled(mode) {
       `Stable release mode ${mode} is blocked until signing and deployment gates are enabled.`,
     );
   }
+}
+
+function listOccupiedBetaVersions(currentVersion) {
+  const baseVersion = parseReleaseVersion(currentVersion).baseVersion;
+  const tagPattern = `v${baseVersion}-beta.*`;
+  const tags = execFileSync("git", ["tag", "--list", tagPattern], {
+    cwd: rootDir,
+    encoding: "utf8",
+  });
+  const exactTagPattern = new RegExp(`^v${baseVersion.replaceAll(".", "\\.")}-beta\\.\\d+$`);
+
+  return tags
+    .split(/\r?\n/)
+    .map((tag) => tag.trim())
+    .filter((tag) => exactTagPattern.test(tag))
+    .map((tag) => tag.slice(1));
 }
 
 function usageAndExit(code = 1) {
@@ -74,7 +94,10 @@ export function main(argv = process.argv.slice(2)) {
     throw new Error('Root package.json must contain a valid "version".');
   }
 
-  const nextVersion = computeNextReleaseVersion(currentVersion, args.mode);
+  const nextVersion =
+    args.mode === "beta-next"
+      ? computeNextAvailableBetaVersion(currentVersion, listOccupiedBetaVersions(currentVersion))
+      : computeNextReleaseVersion(currentVersion, args.mode);
 
   if (args.print) {
     process.stdout.write(`${nextVersion}\n`);

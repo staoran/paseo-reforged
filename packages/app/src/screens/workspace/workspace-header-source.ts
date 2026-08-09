@@ -83,7 +83,7 @@ export function resolveWorkspaceHeaderRenderState(input: {
     kind: "ready",
     title,
     subtitle: header.subtitle,
-    isSubtitleDistinct: !areHeaderLabelsEquivalent(header.title, header.subtitle),
+    isSubtitleDistinct: !areHeaderLabelsEquivalent(title, header.subtitle),
     isGitCheckout: checkout?.isGit ?? false,
     currentBranchName,
   };

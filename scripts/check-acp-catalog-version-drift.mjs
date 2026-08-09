@@ -2,9 +2,12 @@
 
 import { execFile } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+const modulePath = fileURLToPath(import.meta.url);
 
 const CATALOG_PATH = new URL("../packages/app/src/data/acp-provider-catalog.ts", import.meta.url);
 const EXACT_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:[-+].*)?$/;
@@ -250,8 +253,27 @@ function getPinnedVersion(selector) {
   return null;
 }
 
+export function resolveNpmInvocation(
+  args,
+  {
+    execPath = process.execPath,
+    npmExecPath = process.env.npm_execpath,
+    platform = process.platform,
+    comSpec = process.env.ComSpec,
+  } = {},
+) {
+  if (npmExecPath) {
+    return { command: execPath, args: [npmExecPath, ...args] };
+  }
+  if (platform === "win32") {
+    return { command: comSpec || "cmd.exe", args: ["/d", "/s", "/c", "npm", ...args] };
+  }
+  return { command: "npm", args };
+}
+
 async function getLatestNpmVersion(packageName) {
-  const { stdout } = await execFileAsync("npm", ["view", packageName, "version"], {
+  const invocation = resolveNpmInvocation(["view", packageName, "version"]);
+  const { stdout } = await execFileAsync(invocation.command, invocation.args, {
     encoding: "utf8",
     timeout: 30_000,
     maxBuffer: 1024 * 1024,
@@ -435,18 +457,24 @@ function printReport(results, options) {
   }
 }
 
-const options = parseArgs(process.argv.slice(2));
-const source = await readFile(CATALOG_PATH, "utf8");
-const entries = parseCatalogEntries(source);
-const results = await Promise.all(entries.map((entry) => inspectEntry(entry, options)));
-const hasDrift = results.some((result) => result.checked && result.status === "drift");
+export async function main(argv = process.argv.slice(2)) {
+  const options = parseArgs(argv);
+  const source = await readFile(CATALOG_PATH, "utf8");
+  const entries = parseCatalogEntries(source);
+  const results = await Promise.all(entries.map((entry) => inspectEntry(entry, options)));
+  const hasDrift = results.some((result) => result.checked && result.status === "drift");
 
-if (options.update) {
-  await writeFile(CATALOG_PATH, applyUpdates(source, results));
+  if (options.update) {
+    await writeFile(CATALOG_PATH, applyUpdates(source, results));
+  }
+
+  printReport(results, options);
+
+  if (options.failOnDrift && hasDrift) {
+    process.exitCode = 1;
+  }
 }
 
-printReport(results, options);
-
-if (options.failOnDrift && hasDrift) {
-  process.exitCode = 1;
+if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(modulePath)) {
+  await main();
 }

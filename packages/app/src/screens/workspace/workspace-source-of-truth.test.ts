@@ -179,7 +179,7 @@ describe("workspace source of truth consumption", () => {
       kind: "ready",
       title: "getpaseo/paseo",
       subtitle: "getpaseo/paseo",
-      shouldShowSubtitle: false,
+      isSubtitleDistinct: false,
       currentBranchName: null,
     };
 
@@ -217,7 +217,7 @@ describe("workspace source of truth consumption", () => {
       kind: "ready",
       title: "getpaseo/paseo",
       subtitle: "getpaseo/paseo",
-      shouldShowSubtitle: false,
+      isSubtitleDistinct: false,
       isGitCheckout: false,
       currentBranchName: null,
     };

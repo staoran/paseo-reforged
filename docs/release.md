@@ -7,6 +7,7 @@ All workspaces share one version and release together.
 - Releases target `https://github.com/staoran/paseo-reforged.git`; `release:push` refuses any other exact `origin` URL.
 - The three-number SemVer base always tracks the adopted upstream Paseo version; Reforged does not claim the next upstream patch or minor number.
 - Reforged validation releases use `X.Y.Z-beta.N`. `N` is the public beta release ordinal on that upstream base, not a Git commit count, and resets to `1` when the adopted upstream base changes.
+- If immutable same-base beta tags already exist in the local tag namespace, `release:beta:next` starts after the highest occupied ordinal instead of deleting, moving, or reusing a tag.
 - The future Reforged formal channel uses `X.Y.Z-reforged.N`, with the same reset rule. This is technically a SemVer prerelease, so the parser, updater ordering, and stable workflows must gain explicit Reforged-channel support before this naming policy can be published as a formal release.
 - npm and GHCR publishing are disabled. `release:check` still performs npm pack dry runs, and `docker.yml` remains a non-publishing build check.
 - Beta GitHub releases may include explicitly unsigned/non-notarized macOS artifacts. Stable releases are blocked locally and in CI until macOS signing and notarization credentials are configured; enabling stable requires intentionally removing both gates.
@@ -61,6 +62,7 @@ For beta releases, use `X.Y.Z-beta.N`:
 
 - From a stable upstream base `X.Y.Z`, `release:beta:next` starts `X.Y.Z-beta.1`.
 - From `X.Y.Z-beta.N`, the same command produces `X.Y.Z-beta.(N+1)`.
+- If same-base `vX.Y.Z-beta.N` tags already occupy later ordinals, the command advances past the highest occupied ordinal.
 - `N` counts public beta releases on that base. It does not count Git commits.
 - Adopting a new upstream base resets the next beta to `beta.1`.
 

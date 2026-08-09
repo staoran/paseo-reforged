@@ -8763,7 +8763,10 @@ test("hydrateTimeline preserves provider replay timestamps and marks missing one
     item: { type: "user_message", text: "hello", messageId: "msg_history_1" },
   });
   expect(timeline[1]?.timestamp).toEqual(expect.any(String));
+  const fallbackTimestamp = new Date(timeline[1]!.timestamp);
   expect(manager.getAgent(snapshot.id)?.lastMessageAt).toEqual(fallbackTimestamp);
+  await manager.flush();
+  await storage.flush();
   expect(await storage.get(snapshot.id)).toMatchObject({
     lastMessageAt: fallbackTimestamp.toISOString(),
   });

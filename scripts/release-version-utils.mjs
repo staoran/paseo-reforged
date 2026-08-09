@@ -180,3 +180,28 @@ export function computeNextReleaseVersion(currentVersion, mode) {
 
   throw new Error(`Unsupported release mode "${mode}".`);
 }
+
+export function computeNextAvailableBetaVersion(currentVersion, occupiedVersions = []) {
+  const initialVersion = computeNextReleaseVersion(currentVersion, "beta-next");
+  const initial = parseReleaseVersion(initialVersion);
+  let nextBetaNumber = initial.betaNumber;
+
+  for (const occupiedVersion of occupiedVersions) {
+    const occupied = parseReleaseVersion(occupiedVersion);
+    if (
+      occupied.baseVersion === initial.baseVersion &&
+      occupied.isBeta &&
+      occupied.betaNumber !== null &&
+      occupied.betaNumber >= nextBetaNumber
+    ) {
+      nextBetaNumber = occupied.betaNumber + 1;
+    }
+  }
+
+  return formatReleaseVersion({
+    major: initial.major,
+    minor: initial.minor,
+    patch: initial.patch,
+    prerelease: `beta.${nextBetaNumber}`,
+  });
+}
