@@ -93,6 +93,8 @@ test.describe("Agent stream UI", () => {
       gate.restore();
       await expectReconnectingToastGone(page);
       await expectComposerVisible(page);
+      // Reconnect starts route initialization and viewed-timeline synchronization independently.
+      await gate.waitForTimelineResponses(agent.agentId, 2);
       await gate.publish(agent.agentId, "Reconnecting... 3/5");
       await expect(retryMessage).toHaveText("Reconnecting... 3/5");
 

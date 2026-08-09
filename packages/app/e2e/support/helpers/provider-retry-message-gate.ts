@@ -53,6 +53,8 @@ export async function installProviderRetryMessageGate(page: Page) {
   const activeSockets = new Set<WebSocketRoute>();
   const sourceByAgentId = new Map<string, RetryAgentSource>();
   const heldMessages: HeldMessage[] = [];
+  const timelineRequestAgentById = new Map<string, string>();
+  const forwardedTimelineResponsesByAgentId = new Map<string, Set<string>>();
   let acceptingConnections = true;
   let holdAgentRefreshResponses = false;
   let latestTimestamp = 0;
@@ -107,10 +109,18 @@ export async function installProviderRetryMessageGate(page: Page) {
     activeSockets.add(socket);
     const server = socket.connectToServer();
     socket.onMessage((message) => {
+      const sessionMessage = readSessionMessage(message);
+      if (
+        sessionMessage?.type === "fetch_agent_timeline_request" &&
+        typeof sessionMessage.requestId === "string" &&
+        typeof sessionMessage.agentId === "string"
+      ) {
+        timelineRequestAgentById.set(sessionMessage.requestId, sessionMessage.agentId);
+      }
       if (acceptingConnections) server.send(message);
     });
     server.onMessage((message) => {
-      if (!acceptingConnections) return;
+      if (!acceptingConnections || !activeSockets.has(socket)) return;
       const sessionMessage = readSessionMessage(message);
       if (sessionMessage) captureAgentSources(sessionMessage);
       if (sessionMessage && shouldHold(sessionMessage)) {
@@ -118,6 +128,16 @@ export async function installProviderRetryMessageGate(page: Page) {
         return;
       }
       socket.send(message);
+      if (sessionMessage?.type === "fetch_agent_timeline_response") {
+        const payload = isRecord(sessionMessage.payload) ? sessionMessage.payload : null;
+        const requestId = typeof payload?.requestId === "string" ? payload.requestId : null;
+        const agentId = requestId ? timelineRequestAgentById.get(requestId) : undefined;
+        if (requestId && agentId) {
+          const forwarded = forwardedTimelineResponsesByAgentId.get(agentId) ?? new Set<string>();
+          forwarded.add(requestId);
+          forwardedTimelineResponsesByAgentId.set(agentId, forwarded);
+        }
+      }
     });
   });
 
@@ -131,6 +151,13 @@ export async function installProviderRetryMessageGate(page: Page) {
   }
 
   return {
+    async waitForTimelineResponses(agentId: string, minimumCount: number): Promise<void> {
+      await expect
+        .poll(() => forwardedTimelineResponsesByAgentId.get(agentId)?.size ?? 0, {
+          timeout: 30_000,
+        })
+        .toBeGreaterThanOrEqual(minimumCount);
+    },
     async publish(agentId: string, message: string | null): Promise<void> {
       const source = await waitForAgentSource(agentId);
       const currentTimestamp = Date.parse(source.agent.updatedAt);
@@ -187,6 +214,8 @@ export async function installProviderRetryMessageGate(page: Page) {
       const sockets = Array.from(activeSockets);
       activeSockets.clear();
       sourceByAgentId.clear();
+      timelineRequestAgentById.clear();
+      forwardedTimelineResponsesByAgentId.clear();
       await Promise.all(
         sockets.map((socket) =>
           socket
