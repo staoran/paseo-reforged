@@ -280,7 +280,7 @@ test.describe("CodeMirror workspace file editing", () => {
     }
   });
 
-  test("opens an HTML line target as source", async ({ page }) => {
+  test("opens an HTML line target in Preview and highlights it in Source", async ({ page }) => {
     const target = "plan.html:2";
     const session = await seedAgentWithFileLink({
       target,
@@ -297,6 +297,9 @@ test.describe("CodeMirror workspace file editing", () => {
       await page.getByText(target, { exact: true }).click();
 
       await expectFileTabOpen(page, "plan.html");
+      await expect(page.getByTestId("file-html-preview")).toBeVisible();
+      await expect(page.getByTestId("file-source-editor")).toHaveCount(0);
+      await selectFileView(page, "Source");
       await expect(page.getByTestId("file-source-editor")).toBeVisible();
       await expect(page.getByLabel("Line 2, column 1")).toBeVisible();
       await expect(page.getByTestId("file-html-preview")).toHaveCount(0);

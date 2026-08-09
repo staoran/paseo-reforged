@@ -55,7 +55,9 @@ export async function showWorkspaceHoverCard(page: Page, workspaceId: string): P
 
 export async function closeWorkspaceContextMenu(page: Page, workspaceId: string): Promise<void> {
   const workspaceKey = `${getServerId()}:${workspaceId}`;
-  await page.getByTestId(`sidebar-workspace-context-menu-${workspaceKey}-backdrop`).click();
+  const menu = page.getByTestId(`sidebar-workspace-context-menu-${workspaceKey}`);
+  await page.keyboard.press("Escape");
+  await expect(menu).not.toBeVisible();
 }
 
 export async function expectWorkspaceContextMenuOwnsAttention(page: Page): Promise<void> {
@@ -93,7 +95,9 @@ export async function openProjectContextMenu(page: Page, projectViewKey: string)
 }
 
 export async function closeProjectContextMenu(page: Page, projectViewKey: string): Promise<void> {
-  await page.getByTestId(`sidebar-project-context-menu-${projectViewKey}-backdrop`).click();
+  const menu = page.getByTestId(`sidebar-project-context-menu-${projectViewKey}`);
+  await page.keyboard.press("Escape");
+  await expect(menu).not.toBeVisible();
 }
 
 export async function expectProjectContextMenuActions(

@@ -242,7 +242,7 @@ describe("MockLoadTestAgentClient", () => {
     });
     expect(assistantTokens.at(-1)).toMatchObject({
       type: "assistant_message",
-      text: "Synthetic load test complete",
+      text: "\n\n_(end of synthetic stream)_\n",
       phase: "final_answer",
     });
 
@@ -260,6 +260,32 @@ describe("MockLoadTestAgentClient", () => {
     expect(completedNames).toContain("grep");
     expect(completedNames).toContain("edit");
     expect(completedNames).toContain("bash");
+  });
+
+  test("reserves the synthetic completion text for chunked final answers", async () => {
+    vi.useFakeTimers();
+    const client = new MockLoadTestAgentClient();
+    const session = await client.createSession({
+      provider: "mock",
+      cwd: process.cwd(),
+      model: "ten-second-stream",
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    const resultPromise = session.run("Emit a chunked final answer.");
+    await vi.advanceTimersByTimeAsync(10_000 + 250);
+    const result = await resultPromise;
+
+    const finalAnswerChunks = events
+      .flatMap((event): AgentTimelineItem[] => (event.type === "timeline" ? [event.item] : []))
+      .filter(
+        (item): item is Extract<AgentTimelineItem, { type: "assistant_message" }> =>
+          item.type === "assistant_message" && item.phase === "final_answer",
+      )
+      .map((item) => item.text);
+    expect(finalAnswerChunks).toEqual(["Synthetic load test ", "complete"]);
+    expect(result.finalText).toBe("Synthetic load test complete");
   });
 
   test("emits the requested read path for a mock fixture prompt", async () => {

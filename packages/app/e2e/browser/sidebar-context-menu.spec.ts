@@ -12,6 +12,7 @@ import {
   expectWorkspaceRowHoverCleared,
   openProjectContextMenu,
   openWorkspaceContextMenu,
+  selectSidebarStatusGrouping,
   showWorkspaceHoverCard,
 } from "../support/helpers/sidebar";
 
@@ -139,8 +140,7 @@ test.describe("Sidebar context menus", () => {
 
     try {
       await gotoAppShell(page);
-      await page.getByTestId("sidebar-display-preferences-menu").click();
-      await page.getByTestId("sidebar-grouping-status").click();
+      await selectSidebarStatusGrouping(page);
 
       const row = page.getByTestId(`sidebar-workspace-row-${workspaceKey}`);
       await expect(row).toBeVisible({ timeout: 30_000 });

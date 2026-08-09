@@ -37,15 +37,19 @@ interface CreateWebStreamStrategyInput {
   isMobileBreakpoint: boolean;
 }
 
-interface HistoryStartPrependAnchor {
-  progressKey: string;
+interface ViewportRowAnchor {
   rowId: string;
   viewportOffset: number;
+}
+
+interface HistoryStartPrependAnchor extends ViewportRowAnchor {
+  progressKey: string;
 }
 
 type ScrollBehaviorLike = "auto" | "smooth";
 
 const WEB_BOTTOM_SETTLE_TIMEOUT_MS = 200;
+const AUTHORITATIVE_HYDRATION_SETTLE_TIMEOUT_MS = 500;
 const USER_SCROLL_DELTA_EPSILON = 1;
 const BOTTOM_OVERSCROLL_TOLERANCE_PX = 2;
 const AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 64;
@@ -69,6 +73,28 @@ function findHistoryRowElement(contentNode: HTMLElement, rowId: string): HTMLEle
     if (element.dataset.historyRowId === rowId) {
       return element;
     }
+  }
+  return null;
+}
+
+function findFirstVisibleHistoryRowAnchor(
+  scrollContainer: HTMLElement,
+  contentNode: HTMLElement,
+): ViewportRowAnchor | null {
+  const viewportRect = scrollContainer.getBoundingClientRect();
+  for (const element of contentNode.querySelectorAll<HTMLElement>("[data-history-row-id]")) {
+    const rowId = element.dataset.historyRowId;
+    if (!rowId) {
+      continue;
+    }
+    const rowRect = element.getBoundingClientRect();
+    if (rowRect.bottom <= viewportRect.top || rowRect.top >= viewportRect.bottom) {
+      continue;
+    }
+    return {
+      rowId,
+      viewportOffset: rowRect.top - viewportRect.top,
+    };
   }
   return null;
 }
@@ -275,6 +301,18 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   const historyStartPrependAnchorRef = useRef<HistoryStartPrependAnchor | null>(null);
   const historyStartPrependAnchorActiveRef = useRef(false);
   const historyStartSettleSchedulerRef = useRef<HistoryStartSettleScheduler | null>(null);
+  const authoritativeHydrationAnchorRef = useRef<ViewportRowAnchor | null>(null);
+  const authoritativeHydrationProtectionActiveRef = useRef(false);
+  const authoritativeHydrationOverflowReachedRef = useRef(false);
+  const pendingAuthoritativeHydrationReleaseTimeoutRef = useRef<number | null>(null);
+  const clearAuthoritativeHydrationReleaseTimeout = useCallback(() => {
+    const timeout = pendingAuthoritativeHydrationReleaseTimeoutRef.current;
+    if (timeout === null) {
+      return;
+    }
+    window.clearTimeout(timeout);
+    pendingAuthoritativeHydrationReleaseTimeoutRef.current = null;
+  }, []);
   const shouldUseVirtualizer = segments.historyVirtualized.length > 0;
   const {
     renderHistoryVirtualizedRow,
@@ -287,6 +325,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   followOutputRef.current = followOutput;
 
   const hasRouteBottomAnchorRequest = routeBottomAnchorRequest !== null;
+  const canAnchorAuthoritativeHydration = routeBottomAnchorRequest?.reason !== "resume";
   const activationKey = routeBottomAnchorRequest?.requestKey ?? props.agentId;
   const isActivationReady = !hasRouteBottomAnchorRequest || isAuthoritativeHistoryReady;
 
@@ -509,8 +548,9 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         window.cancelAnimationFrame(frame);
       }
       pendingFrames.clear();
+      clearAuthoritativeHydrationReleaseTimeout();
     };
-  }, []);
+  }, [clearAuthoritativeHydrationReleaseTimeout]);
 
   const cancelPendingStickToBottom = useCallback(() => {
     const pendingFrame = pendingAutoScrollFrameRef.current;
@@ -553,10 +593,17 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       window.cancelAnimationFrame(frame);
     }
     pendingVirtualRowMeasureFramesRef.current.clear();
+    clearAuthoritativeHydrationReleaseTimeout();
     clearMouseScrollGesture();
     clearUpwardInputEvidence();
     lastTouchClientYRef.current = null;
-  }, [cancelPendingStickToBottom, clearMouseScrollGesture, clearUpwardInputEvidence, isActive]);
+  }, [
+    cancelPendingStickToBottom,
+    clearAuthoritativeHydrationReleaseTimeout,
+    clearMouseScrollGesture,
+    clearUpwardInputEvidence,
+    isActive,
+  ]);
 
   const scrollMessagesToBottom = useCallback(
     (behavior: ScrollBehaviorLike = "auto") => {
@@ -580,7 +627,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   );
 
   const scheduleStickToBottom = useCallback(() => {
-    if (!isActiveRef.current) {
+    if (!isActiveRef.current || authoritativeHydrationProtectionActiveRef.current) {
       return;
     }
     const scrollContainer = scrollContainerRef.current;
@@ -592,7 +639,11 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     }
     pendingAutoScrollFrameRef.current = window.requestAnimationFrame(() => {
       pendingAutoScrollFrameRef.current = null;
-      if (!isActiveRef.current || !followOutputRef.current) {
+      if (
+        !isActiveRef.current ||
+        !followOutputRef.current ||
+        authoritativeHydrationProtectionActiveRef.current
+      ) {
         return;
       }
       scrollMessagesToBottom("auto");
@@ -604,6 +655,51 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     scrollMessagesToBottom("auto");
     scheduleStickToBottom();
   }, [cancelPendingStickToBottom, scheduleStickToBottom, scrollMessagesToBottom]);
+
+  const preserveAuthoritativeHydrationAnchor = useStableEvent(() => {
+    const scrollContainer = scrollContainerRef.current;
+    const contentNode = contentRef.current;
+    const anchor = authoritativeHydrationAnchorRef.current;
+    if (!scrollContainer || !contentNode || !anchor) {
+      return false;
+    }
+    const anchorElement = findHistoryRowElement(contentNode, anchor.rowId);
+    if (!anchorElement) {
+      return false;
+    }
+    const viewportOffset =
+      anchorElement.getBoundingClientRect().top - scrollContainer.getBoundingClientRect().top;
+    scrollContainer.scrollTop += viewportOffset - anchor.viewportOffset;
+    lastKnownScrollTopRef.current = scrollContainer.scrollTop;
+    authoritativeHydrationProtectionActiveRef.current = true;
+    if (
+      scrollContainer.scrollHeight - scrollContainer.clientHeight >
+      AUTO_SCROLL_RESUME_THRESHOLD_PX
+    ) {
+      authoritativeHydrationOverflowReachedRef.current = true;
+    } else {
+      authoritativeHydrationOverflowReachedRef.current = false;
+      clearAuthoritativeHydrationReleaseTimeout();
+    }
+    return true;
+  });
+
+  // Authoritative rows can settle across multiple ResizeObserver callbacks. Start one fixed
+  // protection window after overflow appears so normal live-output following can resume.
+  const scheduleAuthoritativeHydrationProtectionRelease = useStableEvent(() => {
+    if (
+      !authoritativeHydrationOverflowReachedRef.current ||
+      pendingAuthoritativeHydrationReleaseTimeoutRef.current !== null
+    ) {
+      return;
+    }
+    pendingAuthoritativeHydrationReleaseTimeoutRef.current = window.setTimeout(() => {
+      pendingAuthoritativeHydrationReleaseTimeoutRef.current = null;
+      authoritativeHydrationProtectionActiveRef.current = false;
+      authoritativeHydrationOverflowReachedRef.current = false;
+      authoritativeHydrationAnchorRef.current = null;
+    }, AUTHORITATIVE_HYDRATION_SETTLE_TIMEOUT_MS);
+  });
 
   // Rows are laid out in DOM order, virtualized block first, so the first row whose bottom
   // clears the reading line is the one the reader is looking at.
@@ -750,6 +846,38 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     scheduleStickToBottom,
   ]);
 
+  useLayoutEffect(() => {
+    if (
+      !isActive ||
+      !canAnchorAuthoritativeHydration ||
+      !isAuthoritativeHistoryReady ||
+      !authoritativeHydrationAnchorRef.current
+    ) {
+      return;
+    }
+    if (!preserveAuthoritativeHydrationAnchor()) {
+      clearAuthoritativeHydrationReleaseTimeout();
+      authoritativeHydrationProtectionActiveRef.current = false;
+      authoritativeHydrationOverflowReachedRef.current = false;
+      authoritativeHydrationAnchorRef.current = null;
+      return;
+    }
+    scheduleAuthoritativeHydrationProtectionRelease();
+  }, [
+    canAnchorAuthoritativeHydration,
+    clearAuthoritativeHydrationReleaseTimeout,
+    isActive,
+    isAuthoritativeHistoryReady,
+    liveHeadRowRevision,
+    preserveAuthoritativeHydrationAnchor,
+    renderLiveAuxiliary,
+    scheduleAuthoritativeHydrationProtectionRelease,
+    segments.historyMounted,
+    segments.historyVirtualized,
+    segments.liveHead,
+    virtualTotalSize,
+  ]);
+
   // Following output is a layout invariant: rows, footer, and bottom offset must
   // reach the browser in the same paint.
   useLayoutEffect(() => {
@@ -757,12 +885,45 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       return;
     }
     cancelPendingStickToBottom();
+    if (authoritativeHydrationProtectionActiveRef.current) {
+      return;
+    }
     scrollMessagesToBottom("auto");
   }, [
     cancelPendingStickToBottom,
     isActive,
     renderLiveAuxiliary,
     scrollMessagesToBottom,
+    segments.historyMounted,
+    segments.historyVirtualized,
+    segments.liveHead,
+    virtualTotalSize,
+  ]);
+
+  useLayoutEffect(() => {
+    if (!isActive || !canAnchorAuthoritativeHydration) {
+      clearAuthoritativeHydrationReleaseTimeout();
+      authoritativeHydrationAnchorRef.current = null;
+      authoritativeHydrationProtectionActiveRef.current = false;
+      authoritativeHydrationOverflowReachedRef.current = false;
+      return;
+    }
+    if (!isAuthoritativeHistoryReady) {
+      clearAuthoritativeHydrationReleaseTimeout();
+      const scrollContainer = scrollContainerRef.current;
+      const contentNode = contentRef.current;
+      authoritativeHydrationAnchorRef.current =
+        scrollContainer && contentNode
+          ? findFirstVisibleHistoryRowAnchor(scrollContainer, contentNode)
+          : null;
+      authoritativeHydrationProtectionActiveRef.current = false;
+      authoritativeHydrationOverflowReachedRef.current = false;
+    }
+  }, [
+    canAnchorAuthoritativeHydration,
+    clearAuthoritativeHydrationReleaseTimeout,
+    isActive,
+    isAuthoritativeHistoryReady,
     segments.historyMounted,
     segments.historyVirtualized,
     segments.liveHead,
@@ -808,12 +969,16 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       if (historyStartPrependAnchorActiveRef.current) {
         applyHistoryStartPrependAnchor();
       }
+      if (authoritativeHydrationProtectionActiveRef.current) {
+        preserveAuthoritativeHydrationAnchor();
+        scheduleAuthoritativeHydrationProtectionRelease();
+      }
       if (historyStartPaginationStateRef.current.status === "settling") {
         scheduleHistoryStartPrependSettle();
       }
       updateScrollMetrics();
       evaluateHistoryStart();
-      if (!followOutputRef.current) {
+      if (!followOutputRef.current || authoritativeHydrationProtectionActiveRef.current) {
         return;
       }
       scheduleStickToBottom();
@@ -829,6 +994,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     applyHistoryStartPrependAnchor,
     evaluateHistoryStart,
     isActive,
+    preserveAuthoritativeHydrationAnchor,
+    scheduleAuthoritativeHydrationProtectionRelease,
     scheduleHistoryStartPrependSettle,
     scheduleStickToBottom,
     updateScrollMetrics,

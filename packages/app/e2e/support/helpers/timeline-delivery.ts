@@ -51,5 +51,25 @@ export function observeTimelineSubscriptions(page: Page) {
         })
         .toEqual(expected);
     },
+    async waitForSubscribedAgent(
+      agentId: string,
+      options: TimelineSubscriptionWaitOptions = {},
+    ): Promise<void> {
+      await expect
+        .poll(() => acknowledgedAgentIds?.includes(agentId) ?? false, {
+          timeout: options.timeout ?? 15_000,
+        })
+        .toBe(true);
+    },
+    async waitForUnsubscribedAgent(
+      agentId: string,
+      options: TimelineSubscriptionWaitOptions = {},
+    ): Promise<void> {
+      await expect
+        .poll(() => acknowledgedAgentIds !== null && !acknowledgedAgentIds.includes(agentId), {
+          timeout: options.timeout ?? 15_000,
+        })
+        .toBe(true);
+    },
   };
 }

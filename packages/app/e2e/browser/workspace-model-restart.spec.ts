@@ -453,7 +453,7 @@ test.describe("Workspace model restart regressions", () => {
         .toMatchObject({
           id: LEGACY_AGENT_ID,
           workspaceId: seeded.workspaceA,
-          status: "running",
+          status: "closed",
         });
 
       await page.goto(buildHostWorkspaceRoute(serverId, seeded.workspaceA));
@@ -461,7 +461,7 @@ test.describe("Workspace model restart regressions", () => {
       await expectWorkspaceRowHasOnlyIndicator(page, {
         serverId,
         workspaceId: seeded.workspaceA,
-        indicator: "running",
+        indicator: "done",
       });
       await expectWorkspaceRowDoesNotShowIndicator(page, {
         serverId,
@@ -507,7 +507,7 @@ test.describe("Workspace model restart regressions", () => {
           ]),
         )
         .toEqual({
-          [seeded.workspaceA]: "running",
+          [seeded.workspaceA]: "done",
           [seeded.workspaceB]: "done",
           [createdWorkspaceId]: "done",
         });
@@ -525,7 +525,7 @@ test.describe("Workspace model restart regressions", () => {
       await expectWorkspaceRowInStatusBucket(page, {
         serverId,
         workspaceId: seeded.workspaceA,
-        bucket: "running",
+        bucket: "done",
       });
       await expectWorkspaceRowInStatusBucket(page, {
         serverId,

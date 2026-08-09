@@ -139,6 +139,27 @@ describe("assistant selection copy ranges", () => {
     expect(content?.html).toContain("<div>- Second bullet text</div>");
   });
 
+  it("omits display-only line decorations from copied file-link labels", () => {
+    const host = document.createElement("div");
+    host.innerHTML = [
+      '<div data-testid="assistant-message">',
+      '<div data-paseo-markdown-tag="p">',
+      '<a href="file:///workspace/example.ts#L4">',
+      '<span>workspace file<span data-paseo-markdown-ignore="true"> (line 4)</span></span>',
+      "</a>",
+      "</div>",
+      "</div>",
+    ].join("");
+    document.body.append(host);
+    const message = fixtureElement(host, '[data-testid="assistant-message"]');
+
+    const content = createAssistantSelectionClipboardContent(selectNodeContents(message));
+
+    expect(content?.plainText).toBe("[workspace file](file:///workspace/example.ts#L4)");
+    expect(content?.html).toContain('<a href="file:///workspace/example.ts#L4">workspace file</a>');
+    expect(content?.html).not.toContain("line 4");
+  });
+
   it.each([
     { tag: "strong", range: [1, 5], expected: "old", forbiddenHtml: "<strong>" },
     { tag: "code", range: [2, 8], expected: "line c", forbiddenHtml: "<code>" },
@@ -175,6 +196,29 @@ describe("assistant selection copy ranges", () => {
     const content = createAssistantSelectionClipboardContent(
       selectText(element, 0, textNode(element).length),
     );
+    expect(content?.plainText).toBe("inline code");
+    expect(content?.html).not.toContain("<code>");
+  });
+
+  it("ignores adjacent whitespace absorbed by a browser word selection on inline code", () => {
+    const message = mountFixture();
+    const element = fixtureElement(message, '[data-paseo-markdown-tag="code"]');
+    const trailingText = element.nextSibling;
+    if (!(trailingText instanceof Text)) {
+      throw new Error("Expected trailing inline text");
+    }
+    const range = document.createRange();
+    range.setStart(textNode(element), 0);
+    range.setEnd(trailingText, 1);
+    const selection = window.getSelection();
+    if (!selection) {
+      throw new Error("Expected browser selection");
+    }
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    const content = createAssistantSelectionClipboardContent(selection);
+
     expect(content?.plainText).toBe("inline code");
     expect(content?.html).not.toContain("<code>");
   });

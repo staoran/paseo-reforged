@@ -17,7 +17,7 @@ const styles = StyleSheet.create((theme) => ({
     height: 20,
     lineHeight: 20,
     color: theme.colors.foregroundExtraMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: Math.max(10, Math.round(theme.fontSize.xs * 0.8)),
     fontWeight: theme.fontWeight.normal,
     flexShrink: 0,
   },

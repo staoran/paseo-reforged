@@ -1397,7 +1397,7 @@ export class MockLoadTestAgentSession implements AgentSession {
   }
 
   private finishTurn(turn: ActiveTurn): void {
-    const finalText = "Synthetic load test complete";
+    const resultFinalText = "Synthetic load test complete";
     const finalMessageId = `${turn.assistantMessageId}:final`;
     if (shouldEmitChunkedFinalAnswer(turn.prompt)) {
       this.emitTimeline(turn.turnId, {
@@ -1417,18 +1417,18 @@ export class MockLoadTestAgentSession implements AgentSession {
           messageId: finalMessageId,
           phase: "final_answer",
         });
-        this.finishTurnWithText(turn, finalText);
+        this.finishTurnWithText(turn, resultFinalText);
       }, CHUNKED_FINAL_ANSWER_DELAY_MS);
       return;
     }
 
     this.emitTimeline(turn.turnId, {
       type: "assistant_message",
-      text: finalText,
+      text: "\n\n_(end of synthetic stream)_\n",
       messageId: finalMessageId,
       phase: "final_answer",
     });
-    this.finishTurnWithText(turn, finalText);
+    this.finishTurnWithText(turn, resultFinalText);
   }
 
   private finishTurnWithText(turn: ActiveTurn, finalText: string): void {

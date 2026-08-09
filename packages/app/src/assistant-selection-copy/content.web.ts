@@ -100,12 +100,12 @@ export function createAssistantSelectionClipboardContent(
  * a complete block retains its fence.
  */
 function createPartialCodeContent(range: Range, message: Element): MarkdownClipboardContent | null {
-  const region = closestCodeRegion(range.commonAncestorContainer, message);
+  const region = selectedCodeRegion(range, message);
   if (!region) {
     return null;
   }
 
-  const code = selectedCodeText(range);
+  const code = selectedCodeText(range, region);
   if (!code) {
     return null;
   }
@@ -124,6 +124,38 @@ function createPartialCodeContent(range: Range, message: Element): MarkdownClipb
   });
 }
 
+function selectedCodeRegion(range: Range, message: Element): Element | null {
+  const startRegion = closestCodeRegion(range.startContainer, message);
+  const endRegion = closestCodeRegion(range.endContainer, message);
+  if (startRegion && startRegion === endRegion) {
+    return startRegion;
+  }
+  const candidate = startRegion ?? endRegion;
+  if (!candidate || (startRegion && endRegion)) {
+    return null;
+  }
+
+  // Chromium word selection can absorb the adjacent space when double-clicking inline code.
+  // Treat that browser boundary shape as code, but preserve syntax for real cross-boundary text.
+  const outside = range.cloneRange();
+  if (startRegion) {
+    outside.setStartAfter(candidate);
+  } else {
+    outside.setEndBefore(candidate);
+  }
+  const fragment = outside.cloneContents();
+  for (const ignored of fragment.querySelectorAll(`[${MARKDOWN_COPY_IGNORE_ATTRIBUTE}]`)) {
+    ignored.remove();
+  }
+  if ((fragment.textContent ?? "").trim()) {
+    return null;
+  }
+  const visibleVoidSelector = ["br", "hr"]
+    .map((tag) => `[${MARKDOWN_COPY_TAG_ATTRIBUTE}="${tag}"]`)
+    .join(",");
+  return fragment.querySelector(visibleVoidSelector) ? null : candidate;
+}
+
 function closestCodeRegion(node: Node, message: Element): Element | null {
   const element = node instanceof Element ? node : node.parentElement;
   const region = element?.closest(CODE_REGION_SELECTOR) ?? null;
@@ -136,8 +168,15 @@ function closestCodeRegion(node: Node, message: Element): Element | null {
   return element?.closest(`[${MARKDOWN_COPY_IGNORE_ATTRIBUTE}]`) ? null : region;
 }
 
-function selectedCodeText(range: Range): string {
-  const fragment = range.cloneContents();
+function selectedCodeText(range: Range, region: Element): string {
+  const codeRange = range.cloneRange();
+  if (!region.contains(codeRange.startContainer)) {
+    codeRange.setStart(region, 0);
+  }
+  if (!region.contains(codeRange.endContainer)) {
+    codeRange.setEnd(region, region.childNodes.length);
+  }
+  const fragment = codeRange.cloneContents();
   // The hover Copy button lives inside the `pre`, so a selection that reaches the
   // end of the block sweeps it up too.
   for (const ignored of fragment.querySelectorAll(`[${MARKDOWN_COPY_IGNORE_ATTRIBUTE}]`)) {

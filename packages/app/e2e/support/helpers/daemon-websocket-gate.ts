@@ -48,6 +48,20 @@ interface HeldServerMessage {
   blockedAgentId?: string;
 }
 
+/** Retains one held message per key and reports whether a new key was inserted */
+export function upsertLatestHeldMessage<T extends { key: string }>(
+  heldMessages: T[],
+  latestMessage: T,
+): boolean {
+  const index = heldMessages.findIndex((message) => message.key === latestMessage.key);
+  if (index >= 0) {
+    heldMessages[index] = latestMessage;
+    return false;
+  }
+  heldMessages.push(latestMessage);
+  return true;
+}
+
 function readSessionMessage(message: string | Buffer): ClientRequest | null {
   try {
     const envelope = JSON.parse(typeof message === "string" ? message : message.toString()) as {
@@ -249,6 +263,7 @@ export async function installDaemonWebSocketGate(page: Page) {
   let heldClientRequest: { server: WebSocketRoute; message: string | Buffer } | null = null;
   let resolveHeldClientRequest: (() => void) | null = null;
   const pendingServerMessageHolds = new Map<string, (message: ClientRequest | null) => boolean>();
+  const latestServerMessageHoldKeys = new Set<string>();
   const heldServerMessages: HeldServerMessage[] = [];
   const heldServerMessageWaiters = new Set<() => void>();
   const suppressedServerMessageTypes = new Set<string>();
@@ -346,8 +361,9 @@ export async function installDaemonWebSocketGate(page: Page) {
     );
     if (!matchedHold) return suppressed;
     const [key] = matchedHold;
-    pendingServerMessageHolds.delete(key);
-    heldServerMessages.push({
+    const retainUntilRelease = latestServerMessageHoldKeys.has(key);
+    if (!retainUntilRelease) pendingServerMessageHolds.delete(key);
+    const heldMessage: HeldServerMessage = {
       browser: input.browser,
       message: input.message,
       key,
@@ -356,10 +372,23 @@ export async function installDaemonWebSocketGate(page: Page) {
         readAgentStreamEventType(input.parsed) === "turn_started"
           ? (agentId ?? undefined)
           : undefined,
-    });
-    for (const resolve of heldServerMessageWaiters) resolve();
-    heldServerMessageWaiters.clear();
+    };
+    let inserted = true;
+    if (retainUntilRelease) {
+      inserted = upsertLatestHeldMessage(heldServerMessages, heldMessage);
+    } else {
+      heldServerMessages.push(heldMessage);
+    }
+    if (inserted) {
+      for (const resolve of heldServerMessageWaiters) resolve();
+      heldServerMessageWaiters.clear();
+    }
     return true;
+  };
+
+  const clearServerMessageHold = (key: string): void => {
+    pendingServerMessageHolds.delete(key);
+    latestServerMessageHoldKeys.delete(key);
   };
 
   const holdReadyFileUpdate = (
@@ -544,9 +573,9 @@ export async function installDaemonWebSocketGate(page: Page) {
     },
     holdNextAgentUpdate(agentId: string, status: string): void {
       const heldAgentUpdate = { agentId, status };
-      pendingServerMessageHolds.set(agentUpdateKey(agentId, status), (message) =>
-        matchesAgentUpdate(message, heldAgentUpdate),
-      );
+      const key = agentUpdateKey(agentId, status);
+      latestServerMessageHoldKeys.add(key);
+      pendingServerMessageHolds.set(key, (message) => matchesAgentUpdate(message, heldAgentUpdate));
     },
     holdNextAgentStreamEvent(type: string): void {
       pendingServerMessageHolds.set(
@@ -571,6 +600,7 @@ export async function installDaemonWebSocketGate(page: Page) {
       const index = heldServerMessages.findIndex((message) => key === null || message.key === key);
       const [heldServerMessage] = index >= 0 ? heldServerMessages.splice(index, 1) : [];
       if (!heldServerMessage) throw new Error("No held server message to release");
+      clearServerMessageHold(heldServerMessage.key);
       heldServerMessage.browser.send(heldServerMessage.message);
       for (const follower of heldServerMessage.agentStreamFollowers) {
         heldServerMessage.browser.send(follower);
@@ -587,6 +617,7 @@ export async function installDaemonWebSocketGate(page: Page) {
       const index = heldServerMessages.findIndex((message) => message.key === key);
       const [heldServerMessage] = index >= 0 ? heldServerMessages.splice(index, 1) : [];
       if (!heldServerMessage) throw new Error("No held agent update to release");
+      clearServerMessageHold(key);
       heldServerMessage.browser.send(heldServerMessage.message);
       for (const follower of heldServerMessage.agentStreamFollowers) {
         heldServerMessage.browser.send(follower);

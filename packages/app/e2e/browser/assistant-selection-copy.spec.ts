@@ -239,7 +239,7 @@ async function copySelection(page: Page): Promise<void> {
 
 /** The Copy button writes text/plain only, so the rich reader would throw on it. */
 async function readPlainClipboard(page: Page): Promise<string> {
-  return page.evaluate(() => navigator.clipboard.readText());
+  return (await page.evaluate(() => navigator.clipboard.readText())).replace(/\r\n/g, "\n");
 }
 
 async function readRichClipboard(page: Page): Promise<ClipboardContent> {

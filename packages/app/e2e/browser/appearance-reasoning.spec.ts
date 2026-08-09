@@ -12,7 +12,8 @@ import {
 const REASONING_TEXT =
   "Need to find the scroll container, the layout effect that watches for new messages, and any gesture handler that might fight with programmatic scrolling. Probably a ref on the FlatList plus a near-bottom threshold.";
 
-const FINAL_TEXT = "Synthetic load test complete";
+const STANDARD_FINAL_TEXT = "(end of synthetic stream)";
+const CHUNKED_FINAL_TEXT = "Synthetic load test complete";
 const ACTIVITY_SETTING = "Keep completed activity expanded";
 const REASONING_SETTING = "Expand reasoning details";
 
@@ -121,20 +122,20 @@ test("keeps activity, reasoning, and tool expansion independent", async ({ page 
     await expect(page.getByText(/export function ConversationList/)).toBeVisible();
     await readTool(page).getByRole("button").click();
     await expect(page.getByText(/export function ConversationList/)).toHaveCount(0);
-    await expect(page.getByText(FINAL_TEXT, { exact: true })).toBeVisible();
+    await expect(page.getByText(STANDARD_FINAL_TEXT, { exact: true })).toBeVisible();
 
     await fold.click();
     await expect(reasoningDetails(page)).toHaveCount(0);
     await expect(commentaryDetails(page)).toHaveCount(0);
     await expect(readTool(page)).toHaveCount(0);
-    await expect(page.getByText(FINAL_TEXT, { exact: true })).toBeVisible();
+    await expect(page.getByText(STANDARD_FINAL_TEXT, { exact: true })).toBeVisible();
 
     await page.reload();
     await expectComposerVisible(page);
     await expect(reasoningDetails(page)).toHaveCount(0);
     await expect(thinkingTool(page)).toBeVisible();
     await expect(readTool(page)).toBeVisible();
-    await expect(page.getByText(FINAL_TEXT, { exact: true })).toBeVisible();
+    await expect(page.getByText(STANDARD_FINAL_TEXT, { exact: true })).toBeVisible();
 
     await setExpansionSettings(page, { activity: false, reasoning: true });
     await expect(reasoningDetails(page)).toHaveCount(0);
@@ -142,7 +143,7 @@ test("keeps activity, reasoning, and tool expansion independent", async ({ page 
     await page.reload();
     await expectComposerVisible(page);
     await expect(reasoningDetails(page)).toHaveCount(0);
-    await expect(page.getByText(FINAL_TEXT, { exact: true })).toBeVisible();
+    await expect(page.getByText(STANDARD_FINAL_TEXT, { exact: true })).toBeVisible();
 
     await activityFold(page).click();
     await expect(reasoningDetails(page)).toBeVisible();
@@ -163,14 +164,18 @@ test("collapses a hidden chat after it completes with a chunked final answer", a
     title: "Background activity fold",
     model: "one-minute-stream",
   });
-  const decoyAgent = await firstAgent.client.createAgent({
-    provider: "mock",
-    cwd: firstAgent.cwd,
-    workspaceId: firstAgent.workspaceId,
-    title: "Background activity decoy",
-    modeId: "load-test",
-    model: "ten-second-stream",
-  });
+  const decoyAgents = await Promise.all(
+    Array.from({ length: 5 }, (_, index) =>
+      firstAgent.client.createAgent({
+        provider: "mock",
+        cwd: firstAgent.cwd,
+        workspaceId: firstAgent.workspaceId,
+        title: `Background activity decoy ${index + 1}`,
+        modeId: "load-test",
+        model: "ten-second-stream",
+      }),
+    ),
+  );
 
   try {
     await openAgentRoute(page, firstAgent);
@@ -182,15 +187,20 @@ test("collapses a hidden chat after it completes with a chunked final answer", a
       timeout: 30_000,
     });
 
-    await page.getByRole("button", { name: "Background activity decoy", exact: true }).click();
-    await subscriptions.waitForSubscribedAgents([decoyAgent.id], { timeout: 45_000 });
+    for (const [index, decoyAgent] of decoyAgents.entries()) {
+      await page
+        .getByRole("button", { name: `Background activity decoy ${index + 1}`, exact: true })
+        .click();
+      await subscriptions.waitForSubscribedAgent(decoyAgent.id, { timeout: 45_000 });
+    }
+    await subscriptions.waitForUnsubscribedAgent(firstAgent.agentId, { timeout: 45_000 });
     const finish = await firstAgent.client.waitForFinish(firstAgent.agentId, 90_000);
     expect(finish.status).toBe("idle");
 
     await page.getByRole("button", { name: "Background activity fold", exact: true }).click();
     const fold = activityFold(page);
     await expect(fold).toContainText(/Worked for /);
-    await expect(page.getByText(FINAL_TEXT, { exact: true })).toBeVisible();
+    await expect(page.getByText(CHUNKED_FINAL_TEXT, { exact: true })).toBeVisible();
     await expect(reasoningDetails(page)).toHaveCount(0);
     await expect(commentaryDetails(page)).toHaveCount(0);
     await expect(readTool(page)).toHaveCount(0);

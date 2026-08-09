@@ -135,7 +135,7 @@ export function AssistantMarkdownLink({
           style={hoveredTextStyle}
         >
           {children}
-          {lineLabel ? ` ${lineLabel}` : null}
+          {lineLabel ? <Text dataSet={markdownCopyDataSet.ignore}>{` ${lineLabel}`}</Text> : null}
         </Text>
       </Pressable>
     </a>
