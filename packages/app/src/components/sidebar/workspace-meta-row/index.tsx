@@ -48,9 +48,9 @@ const mergedMapping = (theme: Theme) => ({ color: theme.colors.statusMerged });
 const dangerMapping = (theme: Theme) => ({ color: theme.colors.statusDanger });
 
 /**
- * The subtitle under a workspace title: which host it lives on, its change request, that
- * change request's CI, and any running service. Everything the row knows about a workspace
- * that isn't its name.
+ * The subtitle under a workspace title: its project when the row is hoisted out of project
+ * grouping, which host it lives on, its change request, that change request's CI, and any
+ * running service
  *
  * Items are peers separated by a dot rather than ranked by chrome. The host used to be a
  * tinted pill on the title line, which made it the loudest thing in a row whose subject is
@@ -58,11 +58,13 @@ const dangerMapping = (theme: Theme) => ({ color: theme.colors.statusDanger });
  * leaves color to mean status.
  */
 export function WorkspaceMetaRow({
+  projectName = null,
   hostBadge,
   prHint,
   serviceSummary,
   residentAgentCount = 0,
 }: {
+  projectName?: string | null;
   hostBadge: HostBadgeModel | null;
   prHint: PrHint | null;
   serviceSummary: WorkspaceServiceSummary | null;
@@ -77,19 +79,24 @@ export function WorkspaceMetaRow({
     checksDisplay,
   });
 
-  if (items.length === 0 && residentAgentCount <= 0) return null;
+  if (!projectName && items.length === 0 && residentAgentCount <= 0) return null;
 
   return (
     <View style={styles.row}>
+      {projectName ? (
+        <Text style={styles.projectName} numberOfLines={1}>
+          {projectName}
+        </Text>
+      ) : null}
       {items.map((item, index) => (
         <Fragment key={item.kind}>
-          {index > 0 ? <Text style={styles.separator}>·</Text> : null}
+          {projectName || index > 0 ? <Text style={styles.separator}>·</Text> : null}
           <MetaItemNode item={item} hostBadge={hostBadge} />
         </Fragment>
       ))}
       {residentAgentCount > 0 ? (
         <>
-          {items.length > 0 ? <Text style={styles.separator}>·</Text> : null}
+          {projectName || items.length > 0 ? <Text style={styles.separator}>·</Text> : null}
           <WorkspaceResidentAgentsIndicator count={residentAgentCount} />
         </>
       ) : null}
@@ -315,6 +322,13 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
     lineHeight: 16,
     flexShrink: 0,
+  },
+  projectName: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    lineHeight: 16,
+    minWidth: 0,
+    flexShrink: 1,
   },
   // The one item that gives way when the line runs out of room — see `ServiceItem`.
   serviceItem: {

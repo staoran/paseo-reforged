@@ -5,7 +5,11 @@ import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-cli
 import { seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import { getServerId } from "../support/helpers/server-id";
 import { projectEquivalenceViewKey } from "../support/helpers/project-view-key";
-import { selectSidebarStatusGrouping } from "../support/helpers/sidebar";
+import {
+  expectMobileAgentSidebarVisible,
+  openMobileAgentSidebar,
+  selectSidebarStatusGrouping,
+} from "../support/helpers/sidebar";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 import { getVisibleWorkspaceAgentTabIds } from "../support/helpers/workspace-tabs";
 
@@ -113,6 +117,39 @@ test.describe("Model B sidebar shape", () => {
       await expect(sidebar.locator('[data-testid^="sidebar-terminal-row-"]')).toHaveCount(0);
     } finally {
       await mock.cleanup();
+    }
+  });
+
+  test("status grouping shows project names in workspace rows", async ({ page }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "model-b-status-project-name-" });
+
+    try {
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+
+      const row = workspaceRow(page, workspace.workspaceId).first();
+      await expect(row).toBeVisible({ timeout: 30_000 });
+      await selectSidebarStatusGrouping(page);
+      await expect(row).toBeVisible({ timeout: 30_000 });
+      await expect(row).toHaveAccessibleName(
+        `${workspace.projectDisplayName}, ${workspace.workspaceName}`,
+      );
+      await expect(row.getByText(workspace.projectDisplayName, { exact: true })).toBeVisible({
+        timeout: 1_000,
+      });
+
+      await page.setViewportSize({ width: 390, height: 844 });
+      await openMobileAgentSidebar(page);
+      await expectMobileAgentSidebarVisible(page);
+      const compactRow = workspaceRow(page, workspace.workspaceId)
+        .filter({ visible: true })
+        .first();
+      await expect(compactRow).toBeVisible({ timeout: 30_000 });
+      await expect(compactRow.getByText(workspace.projectDisplayName, { exact: true })).toBeVisible(
+        { timeout: 1_000 },
+      );
+    } finally {
+      await workspace.cleanup();
     }
   });
 

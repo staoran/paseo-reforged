@@ -757,6 +757,7 @@ function StatusWorkspaceRowInner({
               <SidebarWorkspaceRowContent
                 workspace={workspace}
                 hostBadge={hostBadge}
+                metaProjectName={projectName}
                 leadingProjectName={projectName}
                 leadingProjectIconDataUri={projectIconDataUri}
                 serviceSummary={serviceSummary}

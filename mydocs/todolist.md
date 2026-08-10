@@ -98,6 +98,7 @@
 | 0054 | 已收口 | micro-spec | 已同步        | [持久化最后消息编辑资格](micro_specs/0054_持久化最后消息编辑资格.md)                              | 2026-08-08 11:43 | 冷启动与 same-session refresh 均已 GREEN；定向回归、静态检查与正式本地提交完成                                          |
 | 0055 | 已收口 | micro-spec | 已同步        | [合并 upstream 0.3.0-beta.4 到 Reforged](micro_specs/0055_合并upstream_0.3.0-beta.4到Reforged.md) | 2026-08-08       | 94 个冲突及语义重复已解决；beta.4、Reforged identity、Edit fail-closed 与定向门禁通过                                   |
 | 0056 | 已收口 | micro-spec | 已同步        | [审计 upstream 0.3.0 正式版冲突](micro_specs/0056_审计upstream_0.3.0正式版冲突.md)                | 2026-08-08       | stable 全部推荐方案已实施；History 搜索/错误态/响应式布局、Nix hash、CHANGELOG 与定向门禁通过；原位编辑继续 fail-closed |
+| 0059 | 已收口 | micro-spec | 已同步        | [状态分组显示项目名](micro_specs/0059_状态分组显示项目名.md)                                      | 2026-08-10 00:12 | desktop/compact 项目名 RED→GREEN；状态分组回归、5 单测、lint/format 通过；typecheck 仅有既有拖拽 prop 阻塞              |
 
 ## 候选待办
 
