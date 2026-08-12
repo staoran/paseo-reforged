@@ -2,6 +2,61 @@
 
 This guide walks through adding a new agent provider end-to-end. There are two integration patterns, and this doc covers both.
 
+## Provider-native session options
+
+`AgentSessionConfig.providerOptions` carries JSON-safe configuration for the selected provider. The
+names and nesting are the provider's native contract; options are not portable between providers.
+Paseo validates the object with the selected provider's strict schema before constructing a session.
+Unknown keys fail with their `providerOptions.*` path. Paseo-owned controls such as cwd, model,
+prompt, environment, session identity, MCP transport, callbacks, and hooks cannot be passed here.
+
+This Paseo version accepts these keys:
+
+- **Codex:** `approval_policy`, `sandbox_mode`,
+  `sandbox_workspace_write.{writable_roots,network_access,exclude_slash_tmp,exclude_tmpdir_env_var}`,
+  `web_search`, `features.multi_agent_v2`, and `features.network_proxy`. A network proxy object may
+  contain `enabled`, `proxy_url`, `socks_url`, `enable_socks5`, `enable_socks5_udp`,
+  `allow_local_binding`, `allow_upstream_proxy`, `dangerously_allow_all_unix_sockets`,
+  `dangerously_allow_non_loopback_proxy`, `domains`, and `unix_sockets`. See the
+  [Codex configuration reference](https://developers.openai.com/codex/config-reference).
+- **Claude:** `allowedTools`, `disallowedTools`, `additionalDirectories`, `sandbox`, and `settings`.
+  The accepted sandbox fields cover enablement, fail-if-unavailable behavior, excluded and
+  unsandboxed commands, filesystem read/write rules, network domain/socket/local-binding rules,
+  weaker nested sandboxing, ignored violations, and the ripgrep command. `settings` accepts native
+  `permissions.{allow,ask,deny}` and sandbox settings. See the
+  [Claude Agent SDK TypeScript reference](https://platform.claude.com/docs/en/agent-sdk/typescript)
+  and [Claude settings reference](https://code.claude.com/docs/en/settings).
+- **OpenCode:** `permission`, either one `ask`/`allow`/`deny` action or the native per-tool rule
+  object. Supported entries are `read`, `edit`, `glob`, `grep`, `list`, `bash`, `task`,
+  `external_directory`, `todowrite`, `question`, `webfetch`, `websearch`, `codesearch`,
+  `repo_clone`, `repo_overview`, `lsp`, `doom_loop`, and `skill`. See the
+  [OpenCode permissions reference](https://opencode.ai/docs/permissions/). OpenCode permissions are
+  application policy, not an OS sandbox.
+
+Each provider definition owns its option schema and exact MCP preapproval mapping. A new provider
+must fail closed for Hub unattended execution until it can approve one exact injected MCP server
+and tool identity without approving native tools.
+
+## Legacy Agent configuration compatibility
+
+The beta.5 fields `approvalPolicy`, `sandboxMode`, `networkAccess`, `webSearch`, and `extra` remain
+readable on wire, Agent storage, and Schedule storage. They are compatibility inputs, not a second
+provider API. `AgentConfigCompatibility` resolves legacy and canonical fields once before a provider
+session is constructed and exposes the merged result as runtime-only `resolvedProviderOptions`.
+Provider adapters consume that resolved value and do not reinterpret raw legacy fields.
+
+Codex maps the four explicit legacy controls and `extra.codex`; `webSearch=false` maps to the native
+disabled value, while `webSearch=true` without an explicit native value is ambiguous and rejected.
+Claude maps only `extra.claude`, including validating that legacy environment entries are strings.
+Other providers reject legacy fields because no mapping has been proven. When canonical and legacy
+values overlap they must be deeply equal; conflicting values fail instead of choosing a more
+permissive source. Historical `extra` remains wider than the strict schema for new
+`providerOptions`, but it never relaxes validation of new requests.
+
+Client Agent and Schedule create/update paths gate canonical fields on
+`server_info.features.agentProviderOptions` and `agentToolPolicy`. This prevents an old daemon from
+silently stripping a policy-bearing field and creating a session with provider defaults.
+
 ## Two Integration Patterns
 
 ### ACP (Agent Client Protocol) -- recommended

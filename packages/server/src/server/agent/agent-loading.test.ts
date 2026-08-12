@@ -47,6 +47,49 @@ function createDurableTimelineStore(initialRows: readonly AgentTimelineRow[]): A
   };
 }
 
+function storedHubAgentRecord(params: { id: string; cwd: string; hubExecutionContract: unknown }) {
+  const timestamp = "2026-08-10T00:00:00.000Z";
+  return parseStoredAgentRecord({
+    id: params.id,
+    provider: "codex",
+    cwd: params.cwd,
+    workspaceId: `workspace-${params.id}`,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    lastUserMessageAt: null,
+    title: null,
+    labels: {},
+    lastStatus: "closed",
+    lastModeId: null,
+    config: null,
+    persistence: {
+      provider: "codex",
+      sessionId: `session-${params.id}`,
+      metadata: { provider: "codex", cwd: params.cwd },
+    },
+    hubExecutionContract: params.hubExecutionContract,
+  });
+}
+
+function createResumeRecordingClient(onResume: () => void): AgentClient {
+  const baseClient = createTestAgentClients().codex;
+  if (!baseClient) {
+    throw new Error("expected Codex test client");
+  }
+  return {
+    provider: baseClient.provider,
+    capabilities: baseClient.capabilities,
+    createSession: async (config, launchContext, options) =>
+      await baseClient.createSession(config, launchContext, options),
+    resumeSession: async (handle, overrides, launchContext, options) => {
+      onResume();
+      return await baseClient.resumeSession(handle, overrides, launchContext, options);
+    },
+    fetchCatalog: async (options) => await baseClient.fetchCatalog(options),
+    isAvailable: async () => await baseClient.isAvailable(),
+  };
+}
+
 test("loads archived records for history and active records with the interactive default", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "agent-loading-purpose-"));
   const logger = createTestLogger();
@@ -190,6 +233,99 @@ test("recovers a legacy lastMessageAt from canonical durable rows without using 
     });
   } finally {
     vi.useRealTimers();
+    await manager.closeAgent(agentId).catch(() => undefined);
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test.each([
+  {
+    name: "prepared",
+    id: "00000000-0000-4000-8000-000000000304",
+    contract: {
+      protocolVersion: 1,
+      executionFingerprint: "a".repeat(64),
+      policyFingerprint: "b".repeat(64),
+      applicationState: "prepared",
+    },
+    expectedCode: "hub_execution_contract_incomplete",
+  },
+  {
+    name: "malformed",
+    id: "00000000-0000-4000-8000-000000000305",
+    contract: {
+      protocolVersion: 2,
+      executionFingerprint: "not-a-fingerprint",
+      applicationState: "applied",
+    },
+    expectedCode: "hub_execution_contract_invalid",
+  },
+])(
+  "isolates a $name Hub contract before provider resume",
+  async ({ id, contract, expectedCode }) => {
+    const root = await mkdtemp(path.join(tmpdir(), "agent-loading-hub-isolation-"));
+    const logger = createTestLogger();
+    const storage = new AgentStorage(path.join(root, "agents"), logger);
+    let resumeCalls = 0;
+    const manager = new AgentManager({
+      clients: { codex: createResumeRecordingClient(() => resumeCalls++) },
+      registry: storage,
+      logger,
+    });
+
+    try {
+      await storage.upsert(storedHubAgentRecord({ id, cwd: root, hubExecutionContract: contract }));
+
+      await expect(
+        ensureAgentLoaded(id, { agentManager: manager, agentStorage: storage, logger }),
+      ).rejects.toMatchObject({
+        name: "HubExecutionContractError",
+        code: expectedCode,
+      });
+      expect(resumeCalls).toBe(0);
+      expect(manager.getAgent(id)).toBeNull();
+    } finally {
+      await manager.flush().catch(() => undefined);
+      await storage.flush().catch(() => undefined);
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test("restores an applied Hub contract onto the resumed ManagedAgent", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "agent-loading-hub-applied-"));
+  const logger = createTestLogger();
+  const storage = new AgentStorage(path.join(root, "agents"), logger);
+  const agentId = "00000000-0000-4000-8000-000000000306";
+  const contract = {
+    protocolVersion: 1 as const,
+    executionFingerprint: "c".repeat(64),
+    policyFingerprint: "d".repeat(64),
+    applicationState: "applied" as const,
+  };
+  let resumeCalls = 0;
+  const manager = new AgentManager({
+    clients: { codex: createResumeRecordingClient(() => resumeCalls++) },
+    registry: storage,
+    logger,
+  });
+
+  try {
+    await storage.upsert(
+      storedHubAgentRecord({ id: agentId, cwd: root, hubExecutionContract: contract }),
+    );
+
+    const loaded = await ensureAgentLoaded(agentId, {
+      agentManager: manager,
+      agentStorage: storage,
+      logger,
+    });
+
+    expect(resumeCalls).toBe(1);
+    expect(loaded.hubExecutionContract).toEqual(contract);
+  } finally {
     await manager.closeAgent(agentId).catch(() => undefined);
     await manager.flush().catch(() => undefined);
     await storage.flush().catch(() => undefined);

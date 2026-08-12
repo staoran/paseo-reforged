@@ -33,11 +33,11 @@ export const ScheduleTargetSchema = z.discriminatedUnion("type", [
       archiveOnFinish: z.boolean().optional(),
       isolation: z.enum(["local", "worktree"]).optional(),
       title: z.string().trim().min(1).nullable().optional(),
+      // COMPAT(scheduleAgentConfigV1): retain beta.5 legacy fields through 2027-08-10.
       approvalPolicy: z.string().trim().min(1).optional(),
       sandboxMode: z.string().trim().min(1).optional(),
       networkAccess: z.boolean().optional(),
       webSearch: z.boolean().optional(),
-      featureValues: z.record(z.string(), z.unknown()).optional(),
       extra: z
         .object({
           codex: z.record(z.string(), z.unknown()).optional(),
@@ -45,6 +45,22 @@ export const ScheduleTargetSchema = z.discriminatedUnion("type", [
         })
         .partial()
         .optional(),
+      providerOptions: z.record(z.string(), z.json()).optional(),
+      toolPolicy: z
+        .object({
+          preapproved: z.array(
+            z
+              .object({
+                kind: z.literal("mcp"),
+                server: z.string().trim().min(1),
+                tool: z.string().trim().min(1),
+              })
+              .strict(),
+          ),
+        })
+        .strict()
+        .optional(),
+      featureValues: z.record(z.string(), z.unknown()).optional(),
       systemPrompt: z.string().optional(),
       mcpServers: z.record(z.string(), z.unknown()).optional(),
     }),
@@ -106,6 +122,8 @@ export interface UpdateScheduleNewAgentConfig {
   archiveOnFinish?: boolean;
   isolation?: "local" | "worktree";
   cwd?: string;
+  providerOptions?: Extract<ScheduleTarget, { type: "new-agent" }>["config"]["providerOptions"];
+  toolPolicy?: Extract<ScheduleTarget, { type: "new-agent" }>["config"]["toolPolicy"];
 }
 
 export interface UpdateScheduleInput {

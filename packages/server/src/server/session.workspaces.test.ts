@@ -144,6 +144,17 @@ interface SessionTestAccess {
   };
   agentUpdates: AgentUpdatesService;
   workspaceUpdatesSubscription: unknown;
+  unarchiveAgentByHandle(handle: AgentPersistenceHandle): Promise<{
+    record: StoredAgentRecord;
+    didUnarchive: boolean;
+    originalArchivedAt: string | null;
+    hubExecutionContract?: {
+      protocolVersion: 1;
+      executionFingerprint: string;
+      policyFingerprint: string;
+      applicationState: "prepared" | "applied";
+    };
+  } | null>;
   interruptAgentIfRunning(agentId: string): unknown;
   reconcileWorkspaceRecord(workspaceId: string): Promise<{
     changed: boolean;
@@ -752,6 +763,80 @@ function createSessionForWorkspaceTests(
   );
   return session;
 }
+
+test.each([
+  {
+    name: "prepared",
+    contract: {
+      protocolVersion: 1,
+      executionFingerprint: "a".repeat(64),
+      policyFingerprint: "b".repeat(64),
+      applicationState: "prepared",
+    },
+    expectedCode: "hub_execution_contract_incomplete",
+  },
+  {
+    name: "malformed",
+    contract: {
+      protocolVersion: 2,
+      executionFingerprint: "invalid",
+      applicationState: "applied",
+    },
+    expectedCode: "hub_execution_contract_invalid",
+  },
+])("isolates a $name Hub contract before unarchive", async ({ contract, expectedCode }) => {
+  const handle = { provider: "codex", sessionId: `hub-${expectedCode}` };
+  const record = makeStoredAgent({
+    id: `agent-${expectedCode}`,
+    cwd: REPO_CWD,
+    updatedAt: "2026-08-10T00:00:00.000Z",
+  });
+  record.archivedAt = "2026-08-10T01:00:00.000Z";
+  record.persistence = handle;
+  record.hubExecutionContract = contract;
+  const unarchiveSnapshot = vi.fn(async () => true);
+  const session = createSessionForWorkspaceTests({
+    agentStorage: { list: async () => [record] },
+    agentManager: { unarchiveSnapshot },
+  });
+
+  await expect(session.unarchiveAgentByHandle(handle)).rejects.toMatchObject({
+    name: "HubExecutionContractError",
+    code: expectedCode,
+  });
+  expect(unarchiveSnapshot).not.toHaveBeenCalled();
+});
+
+test("retains an applied Hub contract while matching a resumable handle", async () => {
+  const handle = { provider: "codex", sessionId: "hub-applied" };
+  const contract = {
+    protocolVersion: 1 as const,
+    executionFingerprint: "c".repeat(64),
+    policyFingerprint: "d".repeat(64),
+    applicationState: "applied" as const,
+  };
+  const record = makeStoredAgent({
+    id: "agent-hub-applied",
+    cwd: REPO_CWD,
+    updatedAt: "2026-08-10T00:00:00.000Z",
+  });
+  record.archivedAt = "2026-08-10T01:00:00.000Z";
+  record.persistence = handle;
+  record.hubExecutionContract = contract;
+  const unarchiveSnapshot = vi.fn(async () => true);
+  const session = createSessionForWorkspaceTests({
+    agentStorage: { list: async () => [record] },
+    agentManager: { unarchiveSnapshot },
+  });
+
+  await expect(session.unarchiveAgentByHandle(handle)).resolves.toMatchObject({
+    record,
+    didUnarchive: true,
+    originalArchivedAt: record.archivedAt,
+    hubExecutionContract: contract,
+  });
+  expect(unarchiveSnapshot).toHaveBeenCalledWith(record.id, undefined);
+});
 
 test("agent updates preserve queued live transitions across stored metadata reads", async () => {
   const running = makeManagedAgent({
@@ -9402,9 +9487,12 @@ test("workspace auto-name keeps a manual title written before the scheduled titl
   const workspaceAutoName = new WorkspaceAutoName({
     agentManager: asAgentManager({}),
     workspaceRegistry: {
-      get: async (workspaceId) => stored.get(workspaceId) ?? null,
-      upsert: async (record) => {
-        stored.set(record.workspaceId, record);
+      update: async (workspaceId, updater) => {
+        const current = stored.get(workspaceId);
+        if (!current) return null;
+        const updated = updater(current);
+        stored.set(workspaceId, updated);
+        return updated;
       },
     },
     workspaceGitService: createNoopWorkspaceGitService(),
@@ -9455,9 +9543,12 @@ test("workspace auto-name replaces the unchanged prompt title", async () => {
   const workspaceAutoName = new WorkspaceAutoName({
     agentManager: asAgentManager({}),
     workspaceRegistry: {
-      get: async (workspaceId) => stored.get(workspaceId) ?? null,
-      upsert: async (record) => {
-        stored.set(record.workspaceId, record);
+      update: async (workspaceId, updater) => {
+        const current = stored.get(workspaceId);
+        if (!current) return null;
+        const updated = updater(current);
+        stored.set(workspaceId, updated);
+        return updated;
       },
     },
     workspaceGitService: createNoopWorkspaceGitService(),
@@ -9527,9 +9618,12 @@ test("workspace auto-name uses the backing root for a nested worktree", async ()
   const workspaceAutoName = new WorkspaceAutoName({
     agentManager: asAgentManager({}),
     workspaceRegistry: {
-      get: async (workspaceId) => stored.get(workspaceId) ?? null,
-      upsert: async (record) => {
-        stored.set(record.workspaceId, record);
+      update: async (workspaceId, updater) => {
+        const current = stored.get(workspaceId);
+        if (!current) return null;
+        const updated = updater(current);
+        stored.set(workspaceId, updated);
+        return updated;
       },
     },
     workspaceGitService: createNoopWorkspaceGitService(),

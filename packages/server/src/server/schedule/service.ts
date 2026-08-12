@@ -109,6 +109,12 @@ function applyNewAgentConfig(
   if (patch.isolation !== undefined) {
     config.isolation = patch.isolation;
   }
+  if (patch.providerOptions !== undefined) {
+    config.providerOptions = patch.providerOptions;
+  }
+  if (patch.toolPolicy !== undefined) {
+    config.toolPolicy = patch.toolPolicy;
+  }
   return { ...target, config };
 }
 
@@ -989,8 +995,10 @@ function buildScheduleAgentConfig(
     sandboxMode: config.sandboxMode,
     networkAccess: config.networkAccess,
     webSearch: config.webSearch,
-    featureValues: config.featureValues,
     extra: config.extra,
+    providerOptions: config.providerOptions,
+    toolPolicy: config.toolPolicy,
+    featureValues: config.featureValues,
     systemPrompt: config.systemPrompt,
     mcpServers: config.mcpServers as AgentSessionConfig["mcpServers"],
   };

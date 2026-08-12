@@ -246,8 +246,13 @@ function createFallbackWorkspaceGitService(): WorkspaceGitService {
       workingTreeWatchSetupInFlightCount: 0,
       workspaceRefreshInFlightCount: 0,
       workspaceRefreshQueuedCount: 0,
+      workspaceRefreshAdmissionActiveCount: 0,
+      workspaceRefreshAdmissionPendingCount: 0,
+      workspaceObservationSetupAdmissionActiveCount: 0,
+      workspaceObservationSetupAdmissionPendingCount: 0,
       fetchInFlightCount: 0,
       snapshotUpdatedListenerCount: 0,
+      watcherErrorCallbackCount: 0,
     }),
     dispose: () => {},
   };
@@ -1543,6 +1548,8 @@ export class VoiceAssistantWebSocketServer {
         "terminal-size-ownership": true,
         // COMPAT(rewind): added in v0.1.X, drop the gate when floor >= v0.1.X.
         rewind: true,
+        // COMPAT(inPlaceEditLastUserMessage): added in v0.2.5, remove gate after 2027-02-03.
+        inPlaceEditLastUserMessage: true,
         // COMPAT(agentTimelinePromptIndex): added in v0.2.X, drop the gate when floor >= v0.2.X.
         agentTimelinePromptIndex: true,
         // COMPAT(agentHistorySearch): added in v0.3.0, remove gate after 2027-02-07.
@@ -1612,6 +1619,10 @@ export class VoiceAssistantWebSocketServer {
         workspaceScriptManagement: true,
         // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
         projectCustomIcon: true,
+        // COMPAT(agentProviderOptions): added in v0.3.1, remove gate after 2027-08-10 once daemon floor >= v0.3.1.
+        agentProviderOptions: true,
+        // COMPAT(agentToolPolicy): added in v0.3.1, remove gate after 2027-08-10 once daemon floor >= v0.3.1.
+        agentToolPolicy: true,
       },
     };
   }

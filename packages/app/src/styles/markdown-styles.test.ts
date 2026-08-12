@@ -134,8 +134,8 @@ describe("createMarkdownStyles", () => {
     expect(styles.code_inline).toMatchObject({
       fontFamily: darkTheme.fontFamily.mono,
       fontSize: darkTheme.fontSize.code,
-      lineHeight: Math.round(darkTheme.fontSize.code * 1.45),
     });
+    expect(styles.code_inline).not.toHaveProperty("lineHeight");
     expect(styles.code_block).toMatchObject({
       fontFamily: darkTheme.fontFamily.mono,
       fontSize: darkTheme.fontSize.code,
@@ -149,7 +149,7 @@ describe("createMarkdownStyles", () => {
     expect(compactStyles.code_inline).toMatchObject({
       fontFamily: darkTheme.fontFamily.mono,
       fontSize: darkTheme.fontSize.code,
-      lineHeight: Math.round(darkTheme.fontSize.code * 1.45),
     });
+    expect(compactStyles.code_inline).not.toHaveProperty("lineHeight");
   });
 });

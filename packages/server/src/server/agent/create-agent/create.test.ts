@@ -9,6 +9,7 @@ import { createProviderSnapshotManagerStub } from "../../test-utils/session-stub
 import { AgentManager } from "../agent-manager.js";
 import { AgentStorage } from "../agent-storage.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../../worktree-session.js";
+import { resolveHubExecutionCreatePreflight } from "../agent-config-compat.js";
 import { createAgentCommand } from "./create.js";
 import type { ManagedAgent } from "../agent-manager.js";
 
@@ -20,6 +21,22 @@ function createRealAgentManager(storage: AgentStorage): AgentManager {
     registry: storage,
     logger,
   });
+}
+
+async function removeRealAgentManagerWorkdir({
+  agentManager,
+  storage,
+  workdir,
+}: {
+  agentManager: AgentManager;
+  storage: AgentStorage;
+  workdir: string;
+}): Promise<void> {
+  agentManager.prepareForShutdown();
+  await Promise.all(agentManager.listAgents().map((agent) => agentManager.closeAgent(agent.id)));
+  await agentManager.flushForShutdown();
+  await storage.flush();
+  rmSync(workdir, { recursive: true, force: true });
 }
 
 // Creates a worktree directory under repoRoot and reports it back as a fresh
@@ -285,7 +302,7 @@ test("session create stamps the requested workspaceId when no worktree setup run
     const stored = await storage.get(snapshot.id);
     expect(stored?.workspaceId).toBe("ws-source");
   } finally {
-    rmSync(workdir, { recursive: true, force: true });
+    await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
   }
 });
 
@@ -320,7 +337,7 @@ test("session create stamps the new worktree's workspaceId when a setup continua
     const stored = await storage.get(snapshot.id);
     expect(stored?.workspaceId).toBe("ws-new-worktree");
   } finally {
-    rmSync(workdir, { recursive: true, force: true });
+    await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
   }
 });
 
@@ -371,7 +388,71 @@ test("mcp create stamps the new worktree's workspaceId, not the parent's", async
     expect(storedChild?.workspaceId).toBe("ws-new-worktree");
     expect(child.cwd).toBe(join(workdir, "worktree", "packages", "app"));
   } finally {
-    rmSync(workdir, { recursive: true, force: true });
+    await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
+  }
+});
+
+test("Hub create finalizes a prepared request against the resolved worktree target", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "create-hub-agent-test-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const agentManager = createRealAgentManager(storage);
+  const resolvedCwd = join(workdir, "worktree", "packages", "app");
+  const resolvedInputs: Array<{
+    cwd?: string | null;
+    provider: string;
+    requestedMode: string | undefined;
+    unattended: boolean;
+  }> = [];
+  const prepared = await resolveHubExecutionCreatePreflight(
+    {
+      executionId: "hub-prepared-execution",
+      provider: "codex",
+      cwd: workdir,
+      prompt: "Run from the final worktree",
+      modeId: "read-only",
+      worktree: { mode: "branch-off", newBranch: "feature", base: "main" },
+    },
+    agentManager.getAgentConfigCompatibilityProvider("codex"),
+  );
+
+  try {
+    const { snapshot } = await createAgentCommand(
+      {
+        agentManager,
+        agentStorage: storage,
+        logger,
+        providerSnapshotManager: {
+          async resolveCreateConfig(input) {
+            resolvedInputs.push(input);
+            return { modeId: "read-only", featureValues: { fast_mode: false } };
+          },
+        },
+        createPaseoWorktree: fakeWorktreeCreator({
+          repoRoot: workdir,
+          createdWorkspaceId: "ws-hub-worktree",
+        }),
+      },
+      {
+        kind: "hub",
+        prepared,
+        owner: { kind: "daemon", daemonId: "daemon-hub", executionId: prepared.executionId },
+      },
+    );
+
+    expect(resolvedInputs).toEqual([
+      {
+        cwd: resolvedCwd,
+        provider: "codex",
+        requestedMode: "read-only",
+        featureValues: undefined,
+        parent: null,
+        unattended: true,
+      },
+    ]);
+    expect(snapshot.cwd).toBe(resolvedCwd);
+    expect(snapshot.workspaceId).toBe("ws-hub-worktree");
+  } finally {
+    await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
   }
 });
 
@@ -423,7 +504,7 @@ test("mcp create exposes the created worktree before dispatching the initial pro
 
     expect(observed).toEqual({ createdWorktree, lifecycle: "idle" });
   } finally {
-    rmSync(workdir, { recursive: true, force: true });
+    await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
   }
 });
 
@@ -461,7 +542,7 @@ test("session create keeps the prompt title after the initial prompt settles", a
     const settled = await storage.get(snapshot.id);
     expect(settled?.title).toBe(title);
   } finally {
-    rmSync(workdir, { recursive: true, force: true });
+    await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
   }
 });
 
@@ -499,6 +580,6 @@ test("session create keeps an explicit title after the initial prompt settles", 
     const settled = await storage.get(snapshot.id);
     expect(settled?.title).toBe(title);
   } finally {
-    rmSync(workdir, { recursive: true, force: true });
+    await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
   }
 });

@@ -101,6 +101,32 @@ describe("test-daemon-connection connectToDaemon", () => {
     expect(probe.clientIdsRequested).toBe(2);
   });
 
+  it("keeps headerless direct TCP probes on the app WebSocket without consulting the desktop bridge", async () => {
+    const { connectToDaemon } = await import("./test-daemon-connection");
+    const createWebSocketTransportFactory = vi.fn(() => {
+      throw new Error("Direct TCP without custom headers must not use the desktop bridge");
+    });
+    const deps = {
+      ...probe.deps,
+      createWebSocketTransportFactory,
+    };
+
+    const result = await connectToDaemon(
+      {
+        id: "direct:lan:6767",
+        type: "directTcp",
+        endpoint: "lan:6767",
+      },
+      undefined,
+      deps,
+    );
+    await result.client.close();
+
+    expect(probe.createdConfigs()[0]?.transportFactory).toBeUndefined();
+    expect(probe.createdConfigs()[0]?.webSocketFactory).toEqual(expect.any(Function));
+    expect(createWebSocketTransportFactory).not.toHaveBeenCalled();
+  });
+
   it("encodes the local socket target into the client config", async () => {
     const { connectToDaemon } = await import("./test-daemon-connection");
     const result = await connectToDaemon(
@@ -149,6 +175,7 @@ describe("test-daemon-connection connectToDaemon", () => {
     await result.client.close();
 
     expect(probe.createdConfigs()[0]?.headers).toEqual({ "X-Tenant": "acme" });
+    expect(probe.createdConfigs()[0]?.webSocketFactory).toEqual(expect.any(Function));
   });
 
   it("uses the Electron WebSocket transport for the initial probe", async () => {

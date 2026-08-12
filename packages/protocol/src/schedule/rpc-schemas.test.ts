@@ -48,6 +48,10 @@ describe("schedule RPC schemas", () => {
           thinkingOptionId: "think-hard",
           archiveOnFinish: false,
           isolation: "worktree",
+          providerOptions: { permissionMode: "bypassPermissions" },
+          toolPolicy: {
+            preapproved: [{ kind: "mcp", server: "docs", tool: "lookup" }],
+          },
         },
       }),
     ).toEqual({
@@ -58,6 +62,10 @@ describe("schedule RPC schemas", () => {
         thinkingOptionId: "think-hard",
         archiveOnFinish: false,
         isolation: "worktree",
+        providerOptions: { permissionMode: "bypassPermissions" },
+        toolPolicy: {
+          preapproved: [{ kind: "mcp", server: "docs", tool: "lookup" }],
+        },
       },
     });
   });

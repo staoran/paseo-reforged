@@ -98,6 +98,9 @@ export function toStoredAgentRecord(
       : null,
     internal: options?.internal,
     owner: agent.owner,
+    ...(agent.hubExecutionContract
+      ? { hubExecutionContract: structuredClone(agent.hubExecutionContract) }
+      : {}),
   } satisfies StoredAgentRecord;
 }
 
@@ -331,9 +334,32 @@ function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentC
       serializable.featureValues = featureValues;
     }
   }
+  if (config.approvalPolicy !== undefined) {
+    serializable.approvalPolicy = config.approvalPolicy;
+  }
+  if (config.sandboxMode !== undefined) {
+    serializable.sandboxMode = config.sandboxMode;
+  }
+  if (config.networkAccess !== undefined) {
+    serializable.networkAccess = config.networkAccess;
+  }
+  if (config.webSearch !== undefined) {
+    serializable.webSearch = config.webSearch;
+  }
   const extra = sanitizeMetadata(config.extra);
   if (extra !== undefined) {
     serializable.extra = extra;
+  }
+  if (config.providerOptions !== undefined) {
+    const providerOptions = sanitizeOptionalJson(config.providerOptions);
+    if (providerOptions && isJsonObject(providerOptions)) {
+      serializable.providerOptions = providerOptions;
+    }
+  }
+  if (config.toolPolicy) {
+    serializable.toolPolicy = {
+      preapproved: config.toolPolicy.preapproved.map((grant) => ({ ...grant })),
+    };
   }
   if (config.systemPrompt) {
     serializable.systemPrompt = config.systemPrompt;

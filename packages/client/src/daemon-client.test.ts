@@ -734,6 +734,30 @@ test("passes custom headers and keeps password authorization authoritative", asy
   });
 });
 
+test("keeps auth header authoritative over a custom authorization header", async () => {
+  const mock = createMockTransport();
+  const transportFactory = vi.fn(() => mock.transport);
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_auth_header_test",
+    authHeader: "Bearer managed-token",
+    headers: { "X-Tenant": "acme", Authorization: "Bearer ignored" },
+    reconnect: { enabled: false },
+    transportFactory,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  expect(transportFactory).toHaveBeenCalledWith({
+    url: "ws://test",
+    headers: { "X-Tenant": "acme", Authorization: "Bearer managed-token" },
+  });
+});
+
 test("advertises client capabilities in hello", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
@@ -804,14 +828,11 @@ test("allows callers to disable default client capabilities", async () => {
   expect(hello.capabilities[CLIENT_CAPS.projectUpdates]).toBe(false);
 });
 
-test("sends new-agent run options when creating schedules", async () => {
-  const logger = createMockLogger();
+test("rejects scheduled agent provider options before sending when the daemon lacks support", async () => {
   const mock = createMockTransport();
-
   const client = new DaemonClient({
     url: "ws://test",
-    clientId: "clsk_unit_test",
-    logger,
+    clientId: "clsk_schedule_provider_options_gate_test",
     reconnect: { enabled: false },
     transportFactory: () => mock.transport,
   });
@@ -819,6 +840,132 @@ test("sends new-agent run options when creating schedules", async () => {
 
   const connectPromise = client.connect();
   mock.triggerOpen();
+  await connectPromise;
+
+  const createPromise = client.scheduleCreate({
+    requestId: "request-provider-options-gate",
+    prompt: "Run the task",
+    cadence: { type: "cron", expression: "* * * * *" },
+    target: {
+      type: "new-agent",
+      config: {
+        provider: "claude",
+        cwd: "/tmp/project",
+        providerOptions: { permissionMode: "bypassPermissions" },
+      },
+    },
+  });
+  void createPromise.catch(() => undefined);
+
+  expect(mock.sent).toHaveLength(0);
+  await expect(createPromise).rejects.toThrow("Update the host to use agent provider options.");
+});
+
+test("rejects scheduled agent tool policy before sending when the daemon lacks support", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_schedule_tool_policy_gate_test",
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const createPromise = client.scheduleCreate({
+    requestId: "request-tool-policy-gate",
+    prompt: "Run the task",
+    cadence: { type: "cron", expression: "* * * * *" },
+    target: {
+      type: "new-agent",
+      config: {
+        provider: "claude",
+        cwd: "/tmp/project",
+        toolPolicy: {
+          preapproved: [{ kind: "mcp", server: "docs", tool: "lookup" }],
+        },
+      },
+    },
+  });
+
+  expect(mock.sent).toHaveLength(0);
+  await expect(createPromise).rejects.toThrow("Update the host to use agent tool policy.");
+});
+
+test("rejects scheduled agent provider option updates before sending when unsupported", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_schedule_update_provider_options_gate_test",
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const updatePromise = client.scheduleUpdate({
+    id: "schedule-1",
+    newAgentConfig: {
+      providerOptions: { permissionMode: "bypassPermissions" },
+    },
+  });
+  void updatePromise.catch(() => undefined);
+
+  expect(mock.sent).toHaveLength(0);
+  await expect(updatePromise).rejects.toThrow("Update the host to use agent provider options.");
+});
+
+test("rejects scheduled agent tool policy updates before sending when unsupported", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_schedule_update_tool_policy_gate_test",
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const updatePromise = client.scheduleUpdate({
+    id: "schedule-1",
+    newAgentConfig: {
+      toolPolicy: {
+        preapproved: [{ kind: "mcp", server: "docs", tool: "lookup" }],
+      },
+    },
+  });
+  void updatePromise.catch(() => undefined);
+
+  expect(mock.sent).toHaveLength(0);
+  await expect(updatePromise).rejects.toThrow("Update the host to use agent tool policy.");
+});
+
+test("sends new-agent run options when creating schedules", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_schedule_policy_supported_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen({
+    features: { agentProviderOptions: true, agentToolPolicy: true },
+  });
   await connectPromise;
 
   const createPromise = client.scheduleCreate({
@@ -833,6 +980,10 @@ test("sends new-agent run options when creating schedules", async () => {
         thinkingOptionId: "think-hard",
         archiveOnFinish: false,
         isolation: "worktree",
+        providerOptions: { permissionMode: "bypassPermissions" },
+        toolPolicy: {
+          preapproved: [{ kind: "mcp", server: "docs", tool: "lookup" }],
+        },
       },
     },
   });
@@ -851,6 +1002,10 @@ test("sends new-agent run options when creating schedules", async () => {
         thinkingOptionId: "think-hard",
         archiveOnFinish: false,
         isolation: "worktree",
+        providerOptions: { permissionMode: "bypassPermissions" },
+        toolPolicy: {
+          preapproved: [{ kind: "mcp", server: "docs", tool: "lookup" }],
+        },
       },
     },
   });
@@ -877,7 +1032,9 @@ test("sends new-agent run options when updating schedules", async () => {
   clients.push(client);
 
   const connectPromise = client.connect();
-  mock.triggerOpen();
+  mock.triggerOpen({
+    features: { agentProviderOptions: true, agentToolPolicy: true },
+  });
   await connectPromise;
 
   const updatePromise = client.scheduleUpdate({
@@ -887,6 +1044,10 @@ test("sends new-agent run options when updating schedules", async () => {
       thinkingOptionId: "think-hard",
       archiveOnFinish: false,
       isolation: "worktree",
+      providerOptions: { permissionMode: "bypassPermissions" },
+      toolPolicy: {
+        preapproved: [{ kind: "mcp", server: "docs", tool: "lookup" }],
+      },
     },
   });
 
@@ -899,6 +1060,10 @@ test("sends new-agent run options when updating schedules", async () => {
       thinkingOptionId: "think-hard",
       archiveOnFinish: false,
       isolation: "worktree",
+      providerOptions: { permissionMode: "bypassPermissions" },
+      toolPolicy: {
+        preapproved: [{ kind: "mcp", server: "docs", tool: "lookup" }],
+      },
     },
   });
 
@@ -2135,6 +2300,110 @@ test("normalizes workspace_setup_progress into a workspace-scoped daemon event",
       error: null,
     },
   });
+});
+
+test("rejects agent provider options before sending when the daemon lacks support", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_provider_options_gate_test",
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const createPromise = client.createAgent({
+    provider: "codex",
+    cwd: "/tmp/project",
+    providerOptions: { approvalPolicy: "never" },
+  });
+  void createPromise.catch(() => undefined);
+
+  expect(mock.sent).toHaveLength(0);
+  await expect(createPromise).rejects.toThrow("Update the host to use agent provider options.");
+});
+
+test("rejects agent tool policy before sending when the daemon lacks support", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_tool_policy_gate_test",
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const createPromise = client.createAgent({
+    provider: "codex",
+    cwd: "/tmp/project",
+    toolPolicy: {
+      preapproved: [{ kind: "mcp", server: "docs", tool: "lookup" }],
+    },
+  });
+  void createPromise.catch(() => undefined);
+
+  expect(mock.sent).toHaveLength(0);
+  await expect(createPromise).rejects.toThrow("Update the host to use agent tool policy.");
+});
+
+test("sends agent provider options and tool policy when the daemon advertises support", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_agent_policy_supported_test",
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen({
+    features: { agentProviderOptions: true, agentToolPolicy: true },
+  });
+  await connectPromise;
+
+  const createPromise = client.createAgent({
+    provider: "codex",
+    cwd: "/tmp/project",
+    requestId: "request-agent-policy-supported",
+    providerOptions: { approvalPolicy: "never" },
+    toolPolicy: {
+      preapproved: [{ kind: "mcp", server: "docs", tool: "lookup" }],
+    },
+  });
+
+  expect(parseSentFrame(mock.sent[0])).toMatchObject({
+    type: "create_agent_request",
+    requestId: "request-agent-policy-supported",
+    config: {
+      provider: "codex",
+      cwd: "/tmp/project",
+      providerOptions: { approvalPolicy: "never" },
+      toolPolicy: {
+        preapproved: [{ kind: "mcp", server: "docs", tool: "lookup" }],
+      },
+    },
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "status",
+      payload: {
+        status: "agent_create_failed",
+        requestId: "request-agent-policy-supported",
+        error: "wire test sentinel",
+      },
+    }),
+  );
+  await expect(createPromise).rejects.toThrow("wire test sentinel");
 });
 
 test("sends create_agent_request with workspace and caller identity", async () => {

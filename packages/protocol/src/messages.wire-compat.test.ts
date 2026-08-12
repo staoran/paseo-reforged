@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   AgentSnapshotPayloadSchema,
   AgentTimelineItemPayloadSchema,
+  CreateAgentRequestMessageSchema,
   ServerInfoStatusPayloadSchema,
   WSHelloMessageSchema,
 } from "./messages.js";
@@ -43,6 +44,34 @@ const LegacyAgentSnapshotPayloadSchema = AgentSnapshotPayloadSchema.extend({
 });
 
 describe("wire schema compatibility", () => {
+  test("new daemons retain beta.5 agent launch fields", () => {
+    const parsed = CreateAgentRequestMessageSchema.parse({
+      type: "create_agent_request",
+      config: {
+        provider: "codex",
+        cwd: "/tmp/project",
+        approvalPolicy: "never",
+        sandboxMode: "read-only",
+        networkAccess: false,
+        webSearch: false,
+        extra: {
+          codex: { web_search: "disabled", custom_legacy_flag: true },
+        },
+      },
+      requestId: "legacy-agent-config",
+    });
+
+    expect(parsed.config).toMatchObject({
+      approvalPolicy: "never",
+      sandboxMode: "read-only",
+      networkAccess: false,
+      webSearch: false,
+      extra: {
+        codex: { web_search: "disabled", custom_legacy_flag: true },
+      },
+    });
+  });
+
   test("hello parses with and without the project update capability", () => {
     const legacy = WSHelloMessageSchema.parse({
       type: "hello",

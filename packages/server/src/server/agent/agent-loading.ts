@@ -2,7 +2,7 @@ import type { Logger } from "pino";
 
 import type { AgentProvider } from "./agent-sdk-types.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
-import type { AgentStorage } from "./agent-storage.js";
+import { resolveLoadableHubExecutionContract, type AgentStorage } from "./agent-storage.js";
 import {
   buildConfigOverrides,
   buildSessionConfig,
@@ -73,6 +73,7 @@ export async function ensureAgentLoaded(
 
   const existing = deps.agentManager.getAgent(agentId);
   if (existing) {
+    resolveLoadableHubExecutionContract(agentId, existing.hubExecutionContract);
     return existing;
   }
 
@@ -95,6 +96,10 @@ export async function ensureAgentLoaded(
     if (!record) {
       throw new Error(`Agent not found: ${agentId}`);
     }
+    const hubExecutionContract = resolveLoadableHubExecutionContract(
+      agentId,
+      record.hubExecutionContract,
+    );
 
     const validProviders = deps.validProviders ?? deps.agentManager.getRegisteredProviderIds();
     if (!isStoredAgentProviderAvailable(record, validProviders)) {
@@ -109,7 +114,10 @@ export async function ensureAgentLoaded(
         handle,
         buildConfigOverrides(record),
         agentId,
-        extractTimestamps(record),
+        {
+          ...extractTimestamps(record),
+          ...(hubExecutionContract ? { hubExecutionContract } : {}),
+        },
         record.archivedAt ? { purpose: "history" } : undefined,
       );
       deps.logger.info({ agentId, provider: record.provider }, "Agent resumed from persistence");
@@ -124,6 +132,7 @@ export async function ensureAgentLoaded(
         labels: record.labels,
         workspaceId: record.workspaceId,
         owner: record.owner,
+        ...(hubExecutionContract ? { hubExecutionContract } : {}),
       });
       deps.logger.info({ agentId, provider: record.provider }, "Agent created from stored config");
     }

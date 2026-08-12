@@ -362,6 +362,22 @@ const McpServerConfigSchema = z.discriminatedUnion("type", [
   McpSseServerConfigSchema,
 ]);
 
+const ProviderOptionsSchema = z.record(z.string(), z.json());
+
+const McpToolRefSchema = z
+  .object({
+    kind: z.literal("mcp"),
+    server: z.string().trim().min(1),
+    tool: z.string().trim().min(1),
+  })
+  .strict();
+
+const ToolPolicySchema = z
+  .object({
+    preapproved: z.array(McpToolRefSchema),
+  })
+  .strict();
+
 const AgentSessionConfigSchema = z.object({
   provider: AgentProviderSchema,
   cwd: z.string(),
@@ -370,6 +386,7 @@ const AgentSessionConfigSchema = z.object({
   thinkingOptionId: z.string().optional(),
   featureValues: z.record(z.string(), z.unknown()).optional(),
   title: z.string().trim().min(1).max(MAX_EXPLICIT_AGENT_TITLE_CHARS).optional().nullable(),
+  // COMPAT(agentSessionConfigV1): retain beta.5 legacy fields through 2027-08-10.
   approvalPolicy: z.string().optional(),
   sandboxMode: z.string().optional(),
   networkAccess: z.boolean().optional(),
@@ -381,6 +398,8 @@ const AgentSessionConfigSchema = z.object({
     })
     .partial()
     .optional(),
+  providerOptions: ProviderOptionsSchema.optional(),
+  toolPolicy: ToolPolicySchema.optional(),
   systemPrompt: z.string().optional(),
   mcpServers: z.record(z.string(), McpServerConfigSchema).optional(),
 });
@@ -2555,17 +2574,34 @@ export const HubExecutionAgentCreateRequestSchema = z.object({
   provider: z.string(),
   cwd: z.string(),
   prompt: z.string(),
+  // COMPAT(hubExecutionWorkspaceSelection): semantics retired in v0.3.1; remove after 2027-08-08 once the Hub floor no longer sends it.
   workspaceId: z.string().optional(),
   model: z.string().optional(),
   modeId: z.string().optional(),
   thinkingOptionId: z.string().optional(),
   featureValues: z.record(z.string(), z.unknown()).optional(),
+  providerOptions: ProviderOptionsSchema.optional(),
+  toolPolicy: ToolPolicySchema.optional(),
   env: z.record(z.string(), z.string()).optional(),
   mcpServers: z.record(z.string(), McpServerConfigSchema).optional(),
   worktree: CreateAgentWorktreeTargetSchema.optional(),
 });
 
 export type HubExecutionAgentCreateRequest = z.infer<typeof HubExecutionAgentCreateRequestSchema>;
+
+export const HubExecutionAgentCreateErrorDetailsSchema = z
+  .object({
+    code: z.string().min(1),
+    message: z.string().min(1),
+  })
+  .passthrough();
+
+export type HubExecutionAgentCreateErrorDetails = z.infer<
+  typeof HubExecutionAgentCreateErrorDetailsSchema
+>;
+
+// COMPAT(hubExecutionStructuredError): retained for v0.3.1 source consumers; remove after 2027-08-10.
+export type HubExecutionAgentCreateError = HubExecutionAgentCreateErrorDetails;
 
 export const HubExecutionControlActionSchema = z.enum(["interrupt", "archive"]);
 export type HubExecutionControlAction = z.infer<typeof HubExecutionControlActionSchema>;
@@ -3006,6 +3042,10 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceScriptManagement: z.boolean().optional(),
         // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
         projectCustomIcon: z.boolean().optional(),
+        // COMPAT(agentProviderOptions): added in v0.3.1, remove gate after 2027-08-10 once daemon floor >= v0.3.1.
+        agentProviderOptions: z.boolean().optional(),
+        // COMPAT(agentToolPolicy): added in v0.3.1, remove gate after 2027-08-10 once daemon floor >= v0.3.1.
+        agentToolPolicy: z.boolean().optional(),
       })
       .optional(),
   })
@@ -5377,7 +5417,9 @@ export const HubExecutionAgentCreateResponseSchema = z.object({
     agentId: z.string().nullable(),
     agent: AgentSnapshotPayloadSchema.nullable(),
     success: z.boolean(),
+    toolPolicyApplied: z.literal(true).optional(),
     error: z.string().nullable(),
+    errorDetails: HubExecutionAgentCreateErrorDetailsSchema.optional(),
   }),
 });
 

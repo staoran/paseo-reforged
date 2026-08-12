@@ -8,6 +8,7 @@ import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentStorage } from "./agent-storage.js";
 import { buildConfigOverrides, buildSessionConfig } from "../persistence-hooks.js";
 import type { ManagedAgent } from "./agent-manager.js";
+import type { HubExecutionContract } from "./agent-config-compat.js";
 import type {
   AgentPermissionRequest,
   AgentProvider,
@@ -38,7 +39,14 @@ function buildManagedAgentConfig(
     title: configOverrides.title,
     modeId: configOverrides.modeId ?? "plan",
     model: configOverrides.model ?? "gpt-5.1",
-    extra: configOverrides.extra ?? { claude: { maxThinkingTokens: 1024 } },
+    thinkingOptionId: configOverrides.thinkingOptionId,
+    approvalPolicy: configOverrides.approvalPolicy,
+    sandboxMode: configOverrides.sandboxMode,
+    networkAccess: configOverrides.networkAccess,
+    webSearch: configOverrides.webSearch,
+    extra: configOverrides.extra,
+    providerOptions: configOverrides.providerOptions,
+    toolPolicy: configOverrides.toolPolicy,
     systemPrompt: configOverrides.systemPrompt,
     mcpServers: configOverrides.mcpServers,
   };
@@ -158,7 +166,7 @@ describe("AgentStorage", () => {
           modeId: "coding",
           model: "gpt-5.1",
           systemPrompt: "Be terse and explicit.",
-          extra: { claude: { maxThinkingTokens: 1024 } },
+          providerOptions: { allowedTools: ["Read"] },
           mcpServers: {
             paseo: {
               type: "stdio",
@@ -190,7 +198,52 @@ describe("AgentStorage", () => {
     const reloaded = new AgentStorage(storagePath, logger);
     const [persisted] = await reloaded.list();
     expect(persisted.cwd).toBe("/tmp/project");
-    expect(persisted.config?.extra?.claude).toMatchObject({ maxThinkingTokens: 1024 });
+    expect(persisted.config?.providerOptions).toEqual({ allowedTools: ["Read"] });
+  });
+
+  test("round-trips beta.5 and canonical launch config without losing either source", async () => {
+    await storage.applySnapshot(
+      createManagedAgent({
+        id: "agent-config-compat",
+        provider: "codex",
+        config: {
+          approvalPolicy: "never",
+          sandboxMode: "read-only",
+          networkAccess: false,
+          webSearch: false,
+          extra: {
+            codex: { web_search: "disabled", custom_legacy_flag: true },
+          },
+          providerOptions: {
+            approval_policy: "never",
+            sandbox_mode: "read-only",
+          },
+          toolPolicy: {
+            preapproved: [{ kind: "mcp", server: "custom", tool: "read" }],
+          },
+        },
+      }),
+    );
+
+    const reloaded = new AgentStorage(storagePath, logger);
+    const persisted = await reloaded.get("agent-config-compat");
+    expect(persisted?.config).toMatchObject({
+      approvalPolicy: "never",
+      sandboxMode: "read-only",
+      networkAccess: false,
+      webSearch: false,
+      extra: {
+        codex: { web_search: "disabled", custom_legacy_flag: true },
+      },
+      providerOptions: {
+        approval_policy: "never",
+        sandbox_mode: "read-only",
+      },
+      toolPolicy: {
+        preapproved: [{ kind: "mcp", server: "custom", tool: "read" }],
+      },
+    });
+    expect(buildSessionConfig(persisted!)).toMatchObject(persisted!.config!);
   });
 
   test("round-trips lastMessageAt while keeping legacy records without the field readable", async () => {
@@ -319,6 +372,41 @@ describe("AgentStorage", () => {
     expect(recordAfterSnapshot?.archivedAt).toBe(archivedAt);
   });
 
+  test("Hub execution contracts transition through prepared storage without ordinary-write loss", async () => {
+    const prepared = {
+      protocolVersion: 1,
+      executionFingerprint: "a".repeat(64),
+      policyFingerprint: "b".repeat(64),
+      applicationState: "prepared",
+    } satisfies HubExecutionContract;
+    const agent = createManagedAgent({
+      id: "agent-hub-contract",
+      workspaceId: "workspace-hub-contract",
+      owner: {
+        kind: "daemon",
+        daemonId: "daemon-hub-contract",
+        executionId: "execution-hub-contract",
+      },
+    });
+    agent.hubExecutionContract = prepared;
+
+    await storage.persistInitialHubExecutionSnapshot(agent, prepared);
+    const staleRecord = await storage.get(agent.id);
+    expect(staleRecord?.hubExecutionContract).toEqual(prepared);
+
+    agent.hubExecutionContract = undefined;
+    await storage.applySnapshot(agent);
+    await storage.upsert({ ...staleRecord!, hubExecutionContract: undefined });
+    expect((await storage.get(agent.id))?.hubExecutionContract).toEqual(prepared);
+
+    const applied = await storage.persistHubExecutionContractBeforePrompt(agent.id, prepared);
+    expect(applied.applicationState).toBe("applied");
+
+    agent.hubExecutionContract = prepared;
+    await storage.applySnapshot(agent);
+    expect((await storage.get(agent.id))?.hubExecutionContract).toEqual(applied);
+  });
+
   test("stores titles independently of snapshots", async () => {
     await storage.applySnapshot(
       createManagedAgent({
@@ -377,7 +465,7 @@ describe("AgentStorage", () => {
     expect(record?.lastStatus).toBe("running");
   });
 
-  test("applySnapshot waits for in-flight writes before reading existing title", async () => {
+  test("applySnapshot projects metadata after in-flight archival writes", async () => {
     const agentId = "agent-pending-write";
     await storage.applySnapshot(createManagedAgent({ id: agentId }));
     const initialRecord = await storage.get(agentId);
@@ -405,12 +493,14 @@ describe("AgentStorage", () => {
     storageInternals.cache.set(agentId, {
       ...initialRecord!,
       title: "Generated title",
+      archivedAt: "2025-01-03T00:00:00.000Z",
     });
     releasePendingWrite?.();
 
     await applySnapshotPromise;
     const record = await storage.get(agentId);
     expect(record?.title).toBe("Generated title");
+    expect(record?.archivedAt).toBe("2025-01-03T00:00:00.000Z");
   });
 
   test("list returns all agents including internal ones", async () => {

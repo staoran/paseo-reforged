@@ -36,6 +36,7 @@ import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech/speech
 import type { TurnDetectionProvider } from "./speech/turn-detection-provider.js";
 import {
   buildConfigOverrides,
+  extractTimestamps,
   isStoredAgentProviderAvailable,
   toAgentPersistenceHandle,
 } from "./persistence-hooks.js";
@@ -117,8 +118,12 @@ import {
   type AgentRunOptions,
   type AgentSessionConfig,
 } from "./agent/agent-sdk-types.js";
-import type { StoredAgentRecord } from "./agent/agent-storage.js";
-import type { AgentStorage } from "./agent/agent-storage.js";
+import {
+  resolveLoadableHubExecutionContract,
+  type AgentStorage,
+  type StoredAgentRecord,
+} from "./agent/agent-storage.js";
+import type { HubExecutionContract } from "./agent/agent-config-compat.js";
 import {
   ImportSessionsRequestError,
   importProviderSession,
@@ -2677,6 +2682,7 @@ export class Session {
     record: StoredAgentRecord;
     didUnarchive: boolean;
     originalArchivedAt: string | null;
+    hubExecutionContract?: HubExecutionContract;
   } | null> {
     const records = await this.agentStorage.list();
     const matched = records
@@ -2700,6 +2706,10 @@ export class Session {
     if (!matched) {
       return null;
     }
+    const hubExecutionContract = resolveLoadableHubExecutionContract(
+      matched.id,
+      matched.hubExecutionContract,
+    );
     const didUnarchive = await unarchiveAgentState(
       this.agentStorage,
       this.agentManager,
@@ -2709,6 +2719,7 @@ export class Session {
       record: matched,
       didUnarchive,
       originalArchivedAt: matched.archivedAt ?? null,
+      ...(hubExecutionContract ? { hubExecutionContract } : {}),
     };
   }
 
@@ -3484,9 +3495,22 @@ export class Session {
       const effectiveOverrides = matched
         ? { ...buildConfigOverrides(matched.record), ...overrides }
         : overrides;
+      const persistenceOptions = matched
+        ? {
+            ...extractTimestamps(matched.record),
+            ...(matched.hubExecutionContract
+              ? { hubExecutionContract: matched.hubExecutionContract }
+              : {}),
+          }
+        : undefined;
       let snapshot: ManagedAgent;
       try {
-        snapshot = await this.agentManager.resumeAgentFromPersistence(handle, effectiveOverrides);
+        snapshot = await this.agentManager.resumeAgentFromPersistence(
+          handle,
+          effectiveOverrides,
+          matched?.record.id,
+          persistenceOptions,
+        );
       } catch (error) {
         if (matched?.didUnarchive && matched.originalArchivedAt) {
           await this.agentManager.archiveSnapshot(matched.record.id, matched.originalArchivedAt);
