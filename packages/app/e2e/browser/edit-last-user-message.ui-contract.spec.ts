@@ -58,8 +58,7 @@ test.describe("Edit latest user message", () => {
   test.describe.configure({ timeout: 120_000 });
 
   test.beforeEach(async ({ page }) => {
-    const gate = await installDaemonWebSocketGate(page);
-    gate.setServerFeatureOverride("inPlaceEditLastUserMessage", true);
+    await installDaemonWebSocketGate(page);
   });
 
   test("regenerates from the latest idle text message without creating navigation or session state", async ({
