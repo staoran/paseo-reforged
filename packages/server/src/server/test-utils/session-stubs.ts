@@ -39,7 +39,18 @@ export function asAgentManager(stub: {
 export function asAgentStorage(stub: {
   [K in keyof SessionOptions["agentStorage"]]?: unknown;
 }): SessionOptions["agentStorage"] {
-  return createStub<SessionOptions["agentStorage"]>(stub);
+  return createStub<SessionOptions["agentStorage"]>({
+    listAllMetadata: async () => [],
+    getMetadataSnapshot: async () => ({ entries: [], generation: 0 }),
+    getCatalogGeneration: async () => 0,
+    materializeMetadata: async (agentIds: readonly string[], generation: number) => ({
+      records: agentIds.map(() => null),
+      generation,
+      retryRequired: agentIds.length > 0,
+    }),
+    findByPersistenceHandle: async () => [],
+    ...stub,
+  });
 }
 
 export function asDownloadTokenStore(): SessionOptions["downloadTokenStore"] {

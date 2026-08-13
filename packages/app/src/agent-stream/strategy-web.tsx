@@ -14,7 +14,8 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import type { Theme } from "@/styles/theme";
 import { WEB_SCROLLBAR_SIZE_PX } from "@/styles/web-scrollbar";
-import { estimateStreamItemHeight } from "./web-virtualization";
+import type { StreamRenderRow } from "./model";
+import { estimateStreamRenderRowHeight } from "./web-virtualization";
 import type { StreamRenderInput, StreamStrategy, StreamViewportHandle } from "./strategy";
 import { createStreamStrategy } from "./strategy";
 import {
@@ -97,6 +98,18 @@ function findFirstVisibleHistoryRowAnchor(
     };
   }
   return null;
+}
+
+export function findStreamRenderRowId(
+  rows: readonly StreamRenderRow[],
+  itemId: string,
+): string | null {
+  return (
+    rows.find(
+      (row) =>
+        row.id === itemId || (row.kind === "activity" && row.fold.memberIds.includes(itemId)),
+    )?.id ?? null
+  );
 }
 
 const historyStartSlotStyle: CSSProperties = {
@@ -336,7 +349,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     getItemKey: (index: number) => segments.historyVirtualized[index]?.id ?? index,
     estimateSize: (index: number) => {
       const row = segments.historyVirtualized[index];
-      return row ? estimateStreamItemHeight(row) : 120;
+      return row ? estimateStreamRenderRowHeight(row) : 120;
     },
     measureElement: measureVirtualElement,
     scrollMargin: VIRTUALIZER_SCROLL_MARGIN_PX,
@@ -744,11 +757,19 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     reportReadingPosition();
   }, [onNearBottomChange, reportReadingPosition]);
 
+  const resolveRowId = useCallback(
+    (itemId: string) =>
+      findStreamRenderRowId(segments.historyVirtualized, itemId) ??
+      findStreamRenderRowId(segments.historyMounted, itemId) ??
+      findStreamRenderRowId(segments.liveHead, itemId),
+    [segments.historyMounted, segments.historyVirtualized, segments.liveHead],
+  );
   const { isJumpSettling, scrollToMessage } = useScrollToMessage({
     active: isActive,
     scrollContainerRef,
     rowVirtualizer,
     historyVirtualized: segments.historyVirtualized,
+    resolveRowId,
     cancelPendingStickToBottom,
     setFollowOutput,
     onNearBottomChange,

@@ -163,6 +163,7 @@ interface LargeAgentStreamPayloadRequest {
 interface AgentStreamStressRequest {
   count: number;
   coalesced: boolean;
+  activity: boolean;
 }
 
 interface MockQuestionOption {
@@ -335,7 +336,7 @@ function parseLargeAgentStreamPayloadPrompt(
 
 function parseAgentStreamStressPrompt(prompt: AgentPromptInput): AgentStreamStressRequest | null {
   const text = promptToText(prompt);
-  const match = /emit\s+(\d+)\s+(coalesced\s+)?agent stream updates/i.exec(text);
+  const match = /emit\s+(\d+)\s+(coalesced\s+)?(activity\s+)?agent stream updates/i.exec(text);
   if (!match) {
     return null;
   }
@@ -346,6 +347,7 @@ function parseAgentStreamStressPrompt(prompt: AgentPromptInput): AgentStreamStre
   return {
     count: Math.min(count, 5_000),
     coalesced: Boolean(match[2]),
+    activity: Boolean(match[3]),
   };
 }
 
@@ -1207,6 +1209,17 @@ export class MockLoadTestAgentSession implements AgentSession {
     this.emitTurnStarted(turn);
 
     for (let index = 0; index < stress.count; index += 1) {
+      if (stress.activity) {
+        // Unique ids keep every synthetic activity row distinct through text coalescing
+        this.emitTimeline(turn.turnId, {
+          type: "assistant_message",
+          text: `stress-update-${index}`,
+          messageId: `${turn.assistantMessageId}:activity:${index}`,
+          phase: "commentary",
+        });
+        continue;
+      }
+
       this.emitTimeline(
         turn.turnId,
         stress.coalesced
@@ -1220,6 +1233,18 @@ export class MockLoadTestAgentSession implements AgentSession {
               items: [{ text: `stress-update-${index}`, completed: index % 2 === 0 }],
             },
       );
+    }
+
+    const finalText = stress.activity
+      ? "Synthetic activity stress complete"
+      : "Synthetic agent stream stress complete";
+    if (stress.activity) {
+      this.emitTimeline(turn.turnId, {
+        type: "assistant_message",
+        text: finalText,
+        messageId: `${turn.assistantMessageId}:final`,
+        phase: "final_answer",
+      });
     }
 
     this.activeTurn = null;
@@ -1237,7 +1262,7 @@ export class MockLoadTestAgentSession implements AgentSession {
     });
     turn.resolve({
       sessionId: this.id,
-      finalText: "Synthetic agent stream stress complete",
+      finalText,
       usage,
       timeline: [],
       canceled: false,

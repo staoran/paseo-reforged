@@ -3,7 +3,11 @@ import type {
   AgentSnapshotPayload,
   RecentProviderSessionDescriptorPayload,
 } from "../messages.js";
-import type { SerializableAgentConfig, StoredAgentRecord } from "./agent-storage.js";
+import type {
+  AgentMetadataEntry,
+  SerializableAgentConfig,
+  StoredAgentRecord,
+} from "./agent-storage.js";
 import type {
   AgentCapabilityFlags,
   AgentFeature,
@@ -206,18 +210,6 @@ export function buildStoredAgentPayload(
   record: StoredAgentRecord,
   validProviders: Iterable<AgentProvider>,
 ): AgentSnapshotPayload {
-  const defaultCapabilities = {
-    supportsStreaming: false,
-    supportsSessionPersistence: true,
-    supportsDynamicModes: false,
-    supportsMcpServers: false,
-    supportsReasoningStream: false,
-    supportsToolInvocations: true,
-    supportsRewindConversation: false,
-    supportsRewindFiles: false,
-    supportsRewindBoth: false,
-  } as const;
-
   const createdAt = new Date(record.createdAt);
   const updatedAt = new Date(resolveStoredAgentPayloadUpdatedAt(record));
   const lastUserMessageAt = record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null;
@@ -245,7 +237,7 @@ export function buildStoredAgentPayload(
     lastUserMessageAt: lastUserMessageAt ? lastUserMessageAt.toISOString() : null,
     lastMessageAt: record.lastMessageAt ?? null,
     status: record.lastStatus,
-    capabilities: defaultCapabilities,
+    capabilities: STORED_AGENT_CAPABILITIES,
     currentModeId: record.lastModeId ?? null,
     availableModes: [],
     pendingPermissions: [],
@@ -256,6 +248,42 @@ export function buildStoredAgentPayload(
     attentionTimestamp: record.attentionTimestamp ?? null,
     archivedAt: record.archivedAt ?? null,
     labels: normalizeLabels(record.labels),
+    ...(providerAvailable ? {} : { providerUnavailable: true }),
+  };
+}
+
+/** Lightweight stored-Agent projection for internal filtering/ranking only. */
+export function buildStoredAgentMetadataPayload(
+  entry: AgentMetadataEntry,
+  validProviders: Iterable<AgentProvider>,
+): AgentSnapshotPayload {
+  const providerAvailable = isStoredAgentProviderAvailable(entry, validProviders);
+  return {
+    id: entry.id,
+    provider: entry.provider as AgentProvider,
+    cwd: entry.cwd,
+    ...(entry.workspaceId ? { workspaceId: entry.workspaceId } : {}),
+    model: null,
+    thinkingOptionId: null,
+    effectiveThinkingOptionId: entry.effectiveThinkingOptionId,
+    createdAt: new Date(entry.createdAt).toISOString(),
+    updatedAt: new Date(resolveStoredAgentPayloadUpdatedAt(entry)).toISOString(),
+    lastUserMessageAt: entry.lastUserMessageAt
+      ? new Date(entry.lastUserMessageAt).toISOString()
+      : null,
+    lastMessageAt: entry.lastMessageAt,
+    status: entry.lastStatus,
+    capabilities: STORED_AGENT_CAPABILITIES,
+    currentModeId: entry.lastModeId,
+    availableModes: [],
+    pendingPermissions: [],
+    persistence: null,
+    title: entry.title,
+    requiresAttention: entry.requiresAttention,
+    attentionReason: entry.attentionReason,
+    attentionTimestamp: entry.attentionTimestamp,
+    archivedAt: entry.archivedAt,
+    labels: normalizeLabels(entry.labels),
     ...(providerAvailable ? {} : { providerUnavailable: true }),
   };
 }
@@ -300,7 +328,9 @@ export function toRecentProviderSessionDescriptorPayload(
   };
 }
 
-export function resolveStoredAgentPayloadUpdatedAt(record: StoredAgentRecord): string {
+export function resolveStoredAgentPayloadUpdatedAt(
+  record: Pick<StoredAgentRecord, "updatedAt" | "lastActivityAt">,
+): string {
   const timestamps = [record.updatedAt, record.lastActivityAt]
     .filter((value): value is string => typeof value === "string" && value.length > 0)
     .map((value) => ({
@@ -316,6 +346,18 @@ export function resolveStoredAgentPayloadUpdatedAt(record: StoredAgentRecord): s
   timestamps.sort((a, b) => b.parsed - a.parsed);
   return timestamps[0].raw;
 }
+
+const STORED_AGENT_CAPABILITIES = {
+  supportsStreaming: false,
+  supportsSessionPersistence: true,
+  supportsDynamicModes: false,
+  supportsMcpServers: false,
+  supportsReasoningStream: false,
+  supportsToolInvocations: true,
+  supportsRewindConversation: false,
+  supportsRewindFiles: false,
+  supportsRewindBoth: false,
+} as const;
 
 function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentConfig | null {
   const serializable: SerializableAgentConfig = {};

@@ -56,7 +56,7 @@ import { createMessageSubmissionWriter } from "@/composer/submission/writer";
 import { resolveComposerAttachmentSubmitFormat } from "@/composer/attachments/submit";
 import { encodeImages } from "@/utils/encode-images";
 import { DirectorySync, type RefreshAgentDirectoryResult } from "@/runtime/directory-sync";
-import { ReplicaCache } from "@/runtime/replica-cache";
+import { ReplicaCache, type ReplicaCacheFinalSource } from "@/runtime/replica-cache";
 import { nativePerformanceTrace } from "@/performance/native-trace";
 import { createAppWebSocketFactory } from "./websocket-factory";
 
@@ -1645,7 +1645,10 @@ export class HostRuntimeStore {
     this.directorySyncByServer.get(oldServerId)?.dispose();
     this.directorySyncByServer.delete(oldServerId);
     const directory = new DirectorySync(newServerId, {
-      onAgentStoppedRunning: (agentId) => this.drainQueuedAgentMessage(newServerId, agentId),
+      onAgentStoppedRunning: (agentId) => {
+        this.notifyReplicaCacheFinal(newServerId, agentId, "status");
+        this.drainQueuedAgentMessage(newServerId, agentId);
+      },
       markAgentLoading: () => controller.markAgentDirectorySyncLoading(),
       markAgentReady: () => controller.markAgentDirectorySyncReady(),
       markAgentError: (error) => controller.markAgentDirectorySyncError(error),
@@ -2033,7 +2036,10 @@ export class HostRuntimeStore {
       this.directorySyncByServer.set(
         host.serverId,
         new DirectorySync(host.serverId, {
-          onAgentStoppedRunning: (agentId) => this.drainQueuedAgentMessage(host.serverId, agentId),
+          onAgentStoppedRunning: (agentId) => {
+            this.notifyReplicaCacheFinal(host.serverId, agentId, "status");
+            this.drainQueuedAgentMessage(host.serverId, agentId);
+          },
           markAgentLoading: () => controller.markAgentDirectorySyncLoading(),
           markAgentReady: () => controller.markAgentDirectorySyncReady(),
           markAgentError: (error) => controller.markAgentDirectorySyncError(error),
@@ -2210,6 +2216,25 @@ export class HostRuntimeStore {
       .finally(() => {
         this.queuedAgentDrainInFlight.delete(drainKey);
       });
+  }
+
+  /** Requests a best-effort dirty-only cache flush for app background events */
+  flushReplicaCache(): Promise<void> {
+    return this.replicaCache.flushDirty();
+  }
+
+  /** Flushes dirty cache state and waits for the shared write loop to become idle */
+  drainReplicaCache(): Promise<void> {
+    return this.replicaCache.drain();
+  }
+
+  /** Reports one side of the focused Agent final-state handshake */
+  notifyReplicaCacheFinal(
+    serverId: string,
+    agentId: string,
+    source: ReplicaCacheFinalSource,
+  ): void {
+    this.replicaCache.notifyFinal(serverId, agentId, source);
   }
 
   getSnapshot(serverId: string): HostRuntimeSnapshot | null {

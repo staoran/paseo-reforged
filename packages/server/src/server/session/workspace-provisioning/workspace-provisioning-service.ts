@@ -35,6 +35,15 @@ export interface ImportWorkspaceResult<T> {
   createdWorkspace: PersistedWorkspaceRecord | null;
 }
 
+export interface ImportWorkspaceTransactionOptions {
+  plannedWorkspaceId?: string;
+  onWorkspacePrepared?: (context: {
+    workspace: PersistedWorkspaceRecord;
+    created: boolean;
+    previousProject: PersistedProjectRecord | null;
+  }) => Promise<void>;
+}
+
 export interface CreateWorktreeWorkspaceInput {
   sourceCwd: string;
   projectId?: string;
@@ -51,6 +60,7 @@ export interface WorkspaceProvisioningService {
   runInImportWorkspace<T>(
     input: ImportWorkspaceInput,
     operation: (workspace: PersistedWorkspaceRecord) => Promise<T>,
+    transaction?: ImportWorkspaceTransactionOptions,
   ): Promise<ImportWorkspaceResult<T>>;
   findOrCreateWorkspaceForDirectory(cwd: string): Promise<PersistedWorkspaceRecord>;
   resolveOrCreateWorkspaceIdForCreateAgent(input: ResolveOrCreateWorkspaceIdInput): Promise<string>;
@@ -58,7 +68,7 @@ export interface WorkspaceProvisioningService {
     cwd: string,
     title?: string | null,
     projectId?: string,
-    context?: { expectsInitialAgent?: boolean },
+    context?: { expectsInitialAgent?: boolean; workspaceId?: string },
   ): Promise<PersistedWorkspaceRecord>;
   createWorkspaceForWorktree(
     input: CreateWorktreeWorkspaceInput,
@@ -97,6 +107,7 @@ export function createWorkspaceProvisioningService(deps: {
   async function runInImportWorkspace<T>(
     input: ImportWorkspaceInput,
     operation: (workspace: PersistedWorkspaceRecord) => Promise<T>,
+    transaction?: ImportWorkspaceTransactionOptions,
   ): Promise<ImportWorkspaceResult<T>> {
     if (input.requestedWorkspaceId) {
       const workspace = await workspaceRegistry.get(input.requestedWorkspaceId);
@@ -110,6 +121,11 @@ export function createWorkspaceProvisioningService(deps: {
       if (!createRealpathAwarePathMatcher(workspace.cwd)(input.cwd)) {
         throw new Error(`Import cwd does not match workspace: ${workspace.workspaceId}`);
       }
+      await transaction?.onWorkspacePrepared?.({
+        workspace,
+        created: false,
+        previousProject: project,
+      });
       return {
         value: await operation(workspace),
         createdWorkspace: null,
@@ -117,17 +133,33 @@ export function createWorkspaceProvisioningService(deps: {
     }
 
     const projectsBeforeImport = await projectRegistry.list();
-    const workspace = await createWorkspaceForDirectory(input.cwd, input.initialTitle);
+    const workspace = await createWorkspaceForDirectory(
+      input.cwd,
+      input.initialTitle,
+      undefined,
+      transaction?.plannedWorkspaceId ? { workspaceId: transaction.plannedWorkspaceId } : undefined,
+    );
     const previousProject =
       projectsBeforeImport.find((project) => project.projectId === workspace.projectId) ?? null;
 
+    let workspaceOwnershipRecorded = transaction === undefined;
     try {
+      await transaction?.onWorkspacePrepared?.({
+        workspace,
+        created: true,
+        previousProject,
+      });
+      if (transaction?.onWorkspacePrepared) {
+        workspaceOwnershipRecorded = true;
+      }
       return {
         value: await operation(workspace),
         createdWorkspace: workspace,
       };
     } catch (error) {
-      await rollbackFailedImportWorkspace(workspace, previousProject);
+      if (!transaction || !workspaceOwnershipRecorded) {
+        await rollbackFailedImportWorkspace(workspace, previousProject);
+      }
       throw error;
     }
   }
@@ -187,7 +219,7 @@ export function createWorkspaceProvisioningService(deps: {
     cwd: string,
     title?: string | null,
     projectId?: string,
-    context?: { expectsInitialAgent?: boolean },
+    context?: { expectsInitialAgent?: boolean; workspaceId?: string },
   ): Promise<PersistedWorkspaceRecord> {
     const normalizedCwd = resolve(cwd);
     const checkout = await workspaceGitService.getCheckout(normalizedCwd);
@@ -196,15 +228,24 @@ export function createWorkspaceProvisioningService(deps: {
       : // COMPAT(workspaceCreateMissingProjectId): added in v0.1.107, remove after 2027-01-15.
         await findOrCreateProjectForDirectory(normalizedCwd);
     const timestamp = new Date().toISOString();
+    const workspaceId = context?.workspaceId ?? generateWorkspaceId();
+    if (context?.workspaceId && (await workspaceRegistry.get(workspaceId))) {
+      throw new Error(`Workspace already exists: ${workspaceId}`);
+    }
     const workspace = createPersistedWorkspaceRecord({
-      workspaceId: generateWorkspaceId(),
+      workspaceId,
       projectId: project.projectId,
       ...initialWorkspacePlacement({ source: "checkout", cwd: normalizedCwd, checkout }),
       title: title?.trim() || null,
       createdAt: timestamp,
       updatedAt: timestamp,
     });
-    await workspaceRegistry.upsert(workspace, context);
+    await workspaceRegistry.upsert(
+      workspace,
+      context?.expectsInitialAgent === undefined
+        ? undefined
+        : { expectsInitialAgent: context.expectsInitialAgent },
+    );
     return workspace;
   }
 

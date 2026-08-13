@@ -17,7 +17,7 @@ function getLogger(logger: LoggerLike): LoggerLike {
   return logger.child({ module: "persistence" });
 }
 
-type AgentStoragePersistence = Pick<AgentStorage, "applySnapshot" | "list">;
+type AgentStoragePersistence = Pick<AgentStorage, "applySnapshot">;
 type AgentManagerStateSource = Pick<AgentManager, "subscribe">;
 
 interface BuildSessionConfigOptions {
@@ -115,7 +115,7 @@ export function buildSessionConfig(
 }
 
 export function isStoredAgentProviderAvailable(
-  record: StoredAgentRecord,
+  record: Pick<StoredAgentRecord, "provider">,
   validProviders?: Iterable<AgentProvider>,
 ): boolean {
   return isProviderRegistered(validProviders, record.provider);

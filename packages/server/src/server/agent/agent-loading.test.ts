@@ -7,6 +7,7 @@ import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentManager } from "./agent-manager.js";
 import { ensureAgentLoaded } from "./agent-loading.js";
 import { AgentStorage, parseStoredAgentRecord } from "./agent-storage.js";
+import { InMemoryDurableAgentTimelineStore } from "./agent-timeline-store.js";
 import type { AgentTimelineRow, AgentTimelineStore } from "./agent-timeline-store-types.js";
 import type {
   AgentClient,
@@ -18,33 +19,18 @@ import type {
 } from "./agent-sdk-types.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 
-function createDurableTimelineStore(initialRows: readonly AgentTimelineRow[]): AgentTimelineStore {
-  const rows = initialRows.map((row) => ({ ...row }));
-  return {
-    appendCommitted: async (_agentId, item, options) => {
-      const row = {
-        seq: (rows.at(-1)?.seq ?? 0) + 1,
-        timestamp: options?.timestamp ?? new Date().toISOString(),
-        item,
-      };
-      rows.push(row);
-      return { ...row };
-    },
-    fetchCommitted: async () => {
-      throw new Error("fetchCommitted is not used by this test store");
-    },
-    getLatestCommittedSeq: async () => rows.at(-1)?.seq ?? 0,
-    getCommittedRows: async () => rows.map((row) => ({ ...row })),
-    getLastItem: async () => rows.at(-1)?.item ?? null,
-    getLastAssistantMessage: async () =>
-      rows.findLast((row) => row.item.type === "assistant_message")?.item.text ?? null,
-    deleteAgent: async () => {
-      rows.length = 0;
-    },
-    bulkInsert: async (_agentId, insertedRows) => {
-      rows.push(...insertedRows.map((row) => ({ ...row })));
-    },
-  };
+async function createDurableTimelineStore(
+  agentId: string,
+  initialRows: readonly AgentTimelineRow[],
+): Promise<AgentTimelineStore> {
+  const store = new InMemoryDurableAgentTimelineStore();
+  await store.stageRows(agentId, {
+    epoch: "legacy-timeline-epoch",
+    mode: "replace",
+    rows: initialRows,
+  });
+  await store.commit(agentId);
+  return store;
 }
 
 function storedHubAgentRecord(params: { id: string; cwd: string; hubExecutionContract: unknown }) {
@@ -164,7 +150,7 @@ test("recovers a legacy lastMessageAt from canonical durable rows without using 
   const assistantMessageAt = "2026-08-05T07:02:00.000Z";
   const laterActivityAt = "2026-08-05T07:03:00.000Z";
   const coldLoadAt = new Date("2026-08-05T07:04:00.000Z");
-  const durableTimelineStore = createDurableTimelineStore([
+  const durableTimelineStore = await createDurableTimelineStore(agentId, [
     {
       seq: 1,
       timestamp: userMessageAt,

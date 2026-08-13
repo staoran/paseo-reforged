@@ -1,7 +1,7 @@
 import equal from "fast-deep-equal";
 import { v4 as uuidv4 } from "uuid";
 import { lstat, mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
-import { basename, resolve, sep } from "path";
+import { basename, join, resolve, sep } from "path";
 import { homedir } from "node:os";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
 import {
@@ -94,8 +94,8 @@ import {
   updateAgentCommand,
 } from "./agent/lifecycle-command.js";
 import {
+  buildStoredAgentMetadataPayload,
   buildStoredAgentPayload,
-  resolveStoredAgentPayloadUpdatedAt,
   toAgentPayload,
 } from "./agent/agent-projections.js";
 import {
@@ -108,6 +108,11 @@ import {
   type TimelineProjectionEntry,
   type TimelineProjectionMode,
 } from "./agent/timeline-projection.js";
+import {
+  readTimelineActivityDetail,
+  readTimelineSummary,
+} from "./agent/timeline-summary-projection.js";
+import type { AgentTimelineCoverage } from "./agent/agent-timeline-store-types.js";
 import { buildAgentForkContextAttachment } from "./agent/activity-curator.js";
 import { buildAgentPrompt } from "./agent/prompt-attachments.js";
 import type { StructuredGenerationDaemonConfig } from "./agent/structured-generation-providers.js";
@@ -120,6 +125,7 @@ import {
 } from "./agent/agent-sdk-types.js";
 import {
   resolveLoadableHubExecutionContract,
+  type AgentMetadataEntry,
   type AgentStorage,
   type StoredAgentRecord,
 } from "./agent/agent-storage.js";
@@ -130,6 +136,7 @@ import {
   listImportableProviderSessions,
   normalizeImportAgentRequest,
 } from "./agent/import-sessions.js";
+import { FileProviderSessionImportTransactionStore } from "./agent/provider-session-import-transaction.js";
 import {
   checkoutLiteFromGitSnapshot,
   checkoutFromPersistedWorkspacePlacement,
@@ -327,6 +334,40 @@ function beginAgentDeleteIfSupported(agentStorage: AgentStorage, agentId: string
 }
 
 const FETCH_AGENTS_SORT_KEYS = ["status_priority", "created_at", "updated_at", "title"] as const;
+const AGENT_DIRECTORY_CURSOR_VERSION = 1 as const;
+
+interface AgentDirectoryCursorEnvelope {
+  version: typeof AGENT_DIRECTORY_CURSOR_VERSION;
+  catalogGeneration: number;
+  pageCursor: string;
+}
+
+function encodeAgentDirectoryCursor(envelope: AgentDirectoryCursorEnvelope): string {
+  return Buffer.from(JSON.stringify(envelope), "utf8").toString("base64url");
+}
+
+function decodeAgentDirectoryCursor(token: string): AgentDirectoryCursorEnvelope {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(token, "base64url").toString("utf8"));
+  } catch {
+    throw new CursorError("Invalid fetch_agents cursor");
+  }
+  if (!parsed || typeof parsed !== "object") {
+    throw new CursorError("Invalid fetch_agents cursor");
+  }
+  const candidate = parsed as Partial<AgentDirectoryCursorEnvelope>;
+  if (
+    candidate.version !== AGENT_DIRECTORY_CURSOR_VERSION ||
+    typeof candidate.catalogGeneration !== "number" ||
+    !Number.isInteger(candidate.catalogGeneration) ||
+    candidate.catalogGeneration < 0 ||
+    typeof candidate.pageCursor !== "string"
+  ) {
+    throw new CursorError("Invalid fetch_agents cursor");
+  }
+  return candidate as AgentDirectoryCursorEnvelope;
+}
 
 export function resolveWaitForFinishError(options: {
   status: "permission" | "error" | "idle";
@@ -474,6 +515,7 @@ export interface SessionOptions {
   tts: Resolvable<TextToSpeechProvider | null>;
   terminalManager: TerminalManager | null;
   providerSnapshotManager: ProviderSnapshotManager;
+  providerSessionImportTransactionStore?: FileProviderSessionImportTransactionStore;
   providerUsageService: ProviderUsageService;
   hubExecutionAgents?: HubExecutionAgents;
   hubRelationships?: HubRelationshipManagement;
@@ -578,6 +620,30 @@ interface AgentTimelineProjectionSelection {
   hasNewer: boolean;
 }
 
+type FetchAgentTimelineRequestMessage = Extract<
+  SessionInboundMessage,
+  { type: "fetch_agent_timeline_request" }
+>;
+type FetchAgentTimelineResponsePayload = Extract<
+  SessionOutboundMessage,
+  { type: "fetch_agent_timeline_response" }
+>["payload"];
+type AgentTimelineActivityDetailRequest = Extract<
+  NonNullable<FetchAgentTimelineRequestMessage["projectionRequest"]>,
+  { kind: "activity_detail" }
+>;
+type AgentTimelineProjectionPayload = NonNullable<
+  FetchAgentTimelineResponsePayload["projectionPayload"]
+>;
+
+interface StoredTimelineProjectionContext {
+  record: StoredTimelineProjectionRecord;
+  agent: AgentSnapshotPayload;
+  coverage: AgentTimelineCoverage & { active: NonNullable<AgentTimelineCoverage["active"]> };
+}
+
+type StoredTimelineProjectionRecord = StoredAgentRecord & { timelineRevision: string };
+
 type RegistryTransition = "created" | "unarchived" | "existing";
 
 interface ArchivedRecordSnapshot {
@@ -662,6 +728,7 @@ export class Session {
   } | null = null;
   private readonly terminalManager: TerminalManager | null;
   private readonly providerSnapshotManager: ProviderSnapshotManager;
+  private readonly providerSessionImportTransactionStore: FileProviderSessionImportTransactionStore;
   private readonly serviceProxy: ServiceProxySubsystem | null;
   private readonly scriptRuntimeStore: WorkspaceScriptRuntimeStore | null;
   private readonly getDaemonTcpPort: (() => number | null) | null;
@@ -687,6 +754,8 @@ export class Session {
   private readonly workspaceScripts: WorkspaceScriptsService;
   private readonly createAgentLifecycleDispatch: CreateAgentLifecycleDispatch;
 
+  // Session construction wires independent protocol subsystems and keeps their option gates centralized.
+  // eslint-disable-next-line complexity
   constructor(options: SessionOptions) {
     const {
       clientId,
@@ -724,6 +793,7 @@ export class Session {
       tts,
       terminalManager,
       providerSnapshotManager,
+      providerSessionImportTransactionStore,
       providerUsageService,
       serviceProxy,
       scriptRuntimeStore,
@@ -774,6 +844,9 @@ export class Session {
     });
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
+    this.providerSessionImportTransactionStore =
+      providerSessionImportTransactionStore ??
+      new FileProviderSessionImportTransactionStore(join(paseoHome, "provider-session-imports"));
     this.projectRegistry = projectRegistry;
     this.workspaceRegistry = workspaceRegistry;
     this.filesystem = filesystem ?? nodeSessionFileSystem;
@@ -842,7 +915,7 @@ export class Session {
     this.chatScheduleLoopSession = new ChatScheduleLoopSession({
       host: {
         emit: (msg) => this.emit(msg),
-        listStoredAgents: () => this.agentStorage.list(),
+        listStoredAgents: () => this.agentStorage.listAllMetadata(),
         listLiveAgents: () => this.agentManager.listAgents(),
         resolveAgentIdentifier: (identifier) => this.resolveAgentIdentifier(identifier),
         sendAgentMessage: async (agentId, text) => {
@@ -1739,6 +1812,20 @@ export class Session {
     }
 
     // A non-archived stored-only record has no provider runtime in this daemon
+    return { ...payload, status: "closed" };
+  }
+
+  private buildStoredAgentMetadataDirectoryPayload(
+    entry: AgentMetadataEntry,
+    registeredProviderIds = new Set(this.providerSnapshotManager.listRegisteredProviderIds()),
+  ): AgentSnapshotPayload {
+    const payload = buildStoredAgentMetadataPayload(entry, registeredProviderIds);
+    if (entry.archivedAt) {
+      return payload;
+    }
+
+    // Keep metadata-only directory candidates equivalent to the final stored
+    // projection: a persisted non-archived agent has no live provider runtime.
     return { ...payload, status: "closed" };
   }
 
@@ -2684,28 +2771,12 @@ export class Session {
     originalArchivedAt: string | null;
     hubExecutionContract?: HubExecutionContract;
   } | null> {
-    const records = await this.agentStorage.list();
-    const matched = records
-      .filter(
-        (record) =>
-          record.persistence?.provider === handle.provider &&
-          record.persistence?.sessionId === handle.sessionId,
-      )
-      .reduce<StoredAgentRecord | null>((latest, candidate) => {
-        if (!latest) {
-          return candidate;
-        }
-        const updatedDelta =
-          Date.parse(resolveStoredAgentPayloadUpdatedAt(candidate)) -
-          Date.parse(resolveStoredAgentPayloadUpdatedAt(latest));
-        if (updatedDelta !== 0) {
-          return updatedDelta > 0 ? candidate : latest;
-        }
-        return Date.parse(candidate.createdAt) > Date.parse(latest.createdAt) ? candidate : latest;
-      }, null);
-    if (!matched) {
+    const [matchedMetadata] = await this.agentStorage.findByPersistenceHandle(handle);
+    if (!matchedMetadata) {
       return null;
     }
+    const matched = await this.agentStorage.get(matchedMetadata.id);
+    if (!matched) return null;
     const hubExecutionContract = resolveLoadableHubExecutionContract(
       matched.id,
       matched.hubExecutionContract,
@@ -3590,6 +3661,9 @@ export class Session {
         workspaceProvisioning: this.workspaceProvisioning,
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
+        transactionStore: this.providerSessionImportTransactionStore,
+        workspaceRegistry: this.workspaceRegistry,
+        projectRegistry: this.projectRegistry,
         logger: this.sessionLogger,
       });
       const storedAgent = await this.agentStorage.get(snapshot.id);
@@ -4200,14 +4274,25 @@ export class Session {
     });
   }
 
-  /**
-   * Build the current agent list payload (live + persisted), optionally filtered by labels.
-   */
+  /** Build live payloads plus metadata-only stored candidates without full-record reads. */
   private async listAgentPayloads(filter?: {
     labels?: Record<string, string>;
     includeArchived?: boolean;
     includeUnavailablePersisted?: boolean;
   }): Promise<AgentSnapshotPayload[]> {
+    return (await this.listAgentDirectoryCandidates(filter)).agents;
+  }
+
+  /** Build live payloads plus metadata-only stored candidates without full-record reads. */
+  private async listAgentDirectoryCandidates(filter?: {
+    labels?: Record<string, string>;
+    includeArchived?: boolean;
+    includeUnavailablePersisted?: boolean;
+  }): Promise<{
+    agents: AgentSnapshotPayload[];
+    storedMetadataById: Map<string, AgentMetadataEntry>;
+    generation: number;
+  }> {
     const includeArchived = filter?.includeArchived === true;
     const labelEntries = filter?.labels ? Object.entries(filter.labels) : [];
 
@@ -4219,20 +4304,22 @@ export class Session {
 
     // Add persisted agents that have not been lazily initialized yet
     // (excluding internal agents which are for ephemeral system tasks)
-    const registryRecords = await this.agentStorage.list();
+    const registrySnapshot = await this.agentStorage.getMetadataSnapshot();
     const liveIds = new Set(agentSnapshots.map((a) => a.id));
     const registeredProviderIds = new Set(this.providerSnapshotManager.listRegisteredProviderIds());
-    const persistedAgents = registryRecords
+    const storedMetadata = registrySnapshot.entries
       .filter((record) => !liveIds.has(record.id) && !record.internal)
-      // Keep raw-record filters ahead of projection; seeded homes can carry thousands of archived agents.
       .filter((record) => includeArchived || !record.archivedAt)
       .filter((record) => labelEntries.every(([key, value]) => record.labels?.[key] === value))
       .filter(
         (record) =>
           filter?.includeUnavailablePersisted === true ||
-          isStoredAgentProviderAvailable(record, registeredProviderIds),
-      )
-      .map((record) => this.buildStoredAgentDirectoryPayload(record, registeredProviderIds));
+          registeredProviderIds.has(record.provider),
+      );
+    const storedMetadataById = new Map(storedMetadata.map((record) => [record.id, record]));
+    const persistedAgents = storedMetadata.map((record) =>
+      this.buildStoredAgentMetadataDirectoryPayload(record, registeredProviderIds),
+    );
 
     let agents = [...liveAgents, ...persistedAgents];
 
@@ -4248,7 +4335,7 @@ export class Session {
       );
     }
 
-    return agents;
+    return { agents, storedMetadataById, generation: registrySnapshot.generation };
   }
 
   private async resolveAgentIdentifier(
@@ -4259,7 +4346,7 @@ export class Session {
       return { ok: false, error: "Agent identifier cannot be empty" };
     }
 
-    const stored = await this.agentStorage.list();
+    const stored = await this.agentStorage.listAllMetadata();
     const storedRecords = stored.filter((record) => !record.internal);
     const knownIds = new Set<string>();
     for (const record of storedRecords) {
@@ -4426,6 +4513,57 @@ export class Session {
     pageInfo: FetchAgentsResponsePageInfo;
     searchTruncated?: boolean;
   }> {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const selected = await this.listFetchAgentsEntriesOnce(request);
+      const storedIds = selected.result.entries
+        .map((entry) => entry.agent.id)
+        .filter((agentId) => selected.storedMetadataById.has(agentId));
+      const materialized = await this.agentStorage.materializeMetadata(
+        storedIds,
+        selected.generation,
+      );
+      if (materialized.retryRequired) {
+        continue;
+      }
+
+      const storedPayloadById = new Map<string, AgentSnapshotPayload>();
+      const registeredProviderIds = new Set(
+        this.providerSnapshotManager.listRegisteredProviderIds(),
+      );
+      for (let index = 0; index < storedIds.length; index += 1) {
+        const record = materialized.records[index];
+        if (!record) {
+          continue;
+        }
+        storedPayloadById.set(
+          storedIds[index],
+          this.buildStoredAgentDirectoryPayload(record, registeredProviderIds),
+        );
+      }
+      return {
+        ...selected.result,
+        entries: selected.result.entries.map((entry) => {
+          const storedPayload = storedPayloadById.get(entry.agent.id);
+          return storedPayload ? Object.assign({}, entry, { agent: storedPayload }) : entry;
+        }),
+      };
+    }
+
+    throw new SessionRequestError(
+      "agent_catalog_unstable",
+      "Agent catalog changed repeatedly while building the directory page.",
+    );
+  }
+
+  private async listFetchAgentsEntriesOnce(request: AgentDirectoryRequestMessage): Promise<{
+    result: {
+      entries: FetchAgentsResponseEntry[];
+      pageInfo: FetchAgentsResponsePageInfo;
+      searchTruncated?: boolean;
+    };
+    storedMetadataById: Map<string, AgentMetadataEntry>;
+    generation: number;
+  }> {
     const filter =
       request.type === "fetch_agent_history_request" &&
       request.filter?.includeArchived === undefined
@@ -4434,11 +4572,12 @@ export class Session {
     const scope = request.type === "fetch_agents_request" ? request.scope : undefined;
     const sort = this.agentsPager.normalizeSort(request.sort);
 
-    let agents = await this.listAgentPayloads({
+    const directory = await this.listAgentDirectoryCandidates({
       labels: filter?.labels,
       includeArchived: filter?.includeArchived,
       includeUnavailablePersisted: request.type === "fetch_agent_history_request",
     });
+    let agents = directory.agents;
     const activePlacementsByWorkspaceId =
       scope === "active" ? await this.buildActiveProjectPlacementsByWorkspaceId() : null;
     if (activePlacementsByWorkspaceId) {
@@ -4471,7 +4610,7 @@ export class Session {
 
     const search = agentDirectorySearchQuery(request);
     if (search) {
-      return this.listRankedAgentHistoryEntries({
+      const result = await this.listRankedAgentHistoryEntries({
         search,
         agents,
         sort,
@@ -4479,13 +4618,18 @@ export class Session {
         getPlacement,
         page: request.page,
       });
+      return {
+        result,
+        storedMetadataById: directory.storedMetadataById,
+        generation: directory.generation,
+      };
     }
 
     let candidates = [...agents];
     candidates.sort((left, right) => this.agentsPager.compare(left, right, sort));
     const cursorToken = request.page?.cursor;
     if (cursorToken) {
-      const cursor = this.decodeAgentCursor(cursorToken, sort);
+      const cursor = this.decodeAgentCursor(cursorToken, sort, directory.generation);
       candidates = candidates.filter(
         (agent) => this.agentsPager.compareWithCursor(agent, cursor, sort) > 0,
       );
@@ -4504,16 +4648,24 @@ export class Session {
     const hasMore = matchedEntries.length > limit;
     const nextCursor =
       hasMore && pagedEntries.length > 0
-        ? this.agentsPager.encode(pagedEntries[pagedEntries.length - 1].agent, sort)
+        ? this.encodeAgentCursor(
+            pagedEntries[pagedEntries.length - 1].agent,
+            sort,
+            directory.generation,
+          )
         : null;
 
     return {
-      entries: pagedEntries,
-      pageInfo: {
-        nextCursor,
-        prevCursor: request.page?.cursor ?? null,
-        hasMore,
+      result: {
+        entries: pagedEntries,
+        pageInfo: {
+          nextCursor,
+          prevCursor: request.page?.cursor ?? null,
+          hasMore,
+        },
       },
+      storedMetadataById: directory.storedMetadataById,
+      generation: directory.generation,
     };
   }
 
@@ -4602,9 +4754,29 @@ export class Session {
     },
   });
 
-  private decodeAgentCursor(token: string, sort: SortSpec<FetchAgentsRequestSort["key"]>[]) {
+  private encodeAgentCursor(
+    agent: AgentSnapshotPayload,
+    sort: SortSpec<FetchAgentsRequestSort["key"]>[],
+    catalogGeneration: number,
+  ): string {
+    return encodeAgentDirectoryCursor({
+      version: AGENT_DIRECTORY_CURSOR_VERSION,
+      catalogGeneration,
+      pageCursor: this.agentsPager.encode(agent, sort),
+    });
+  }
+
+  private decodeAgentCursor(
+    token: string,
+    sort: SortSpec<FetchAgentsRequestSort["key"]>[],
+    catalogGeneration: number,
+  ) {
     try {
-      return this.agentsPager.decode(token, sort);
+      const envelope = decodeAgentDirectoryCursor(token);
+      if (envelope.catalogGeneration !== catalogGeneration) {
+        throw new CursorError("fetch_agents cursor is stale because the agent catalog changed");
+      }
+      return this.agentsPager.decode(envelope.pageCursor, sort);
     } catch (error) {
       if (error instanceof CursorError) {
         throw new SessionRequestError("invalid_cursor", error.message);
@@ -6339,7 +6511,9 @@ export class Session {
             !record ||
             record.internal ||
             record.archivedAt ||
-            record.requiresAttention !== true
+            record.workspaceId !== workspace.workspaceId ||
+            record.requiresAttention !== true ||
+            record.attentionReason === "permission"
           ) {
             continue;
           }
@@ -6533,8 +6707,324 @@ export class Session {
     return this.selectProjectedTimelineProjection(input);
   }
 
+  private serializeTimelineProjectionEntries(input: {
+    provider: AgentSnapshotPayload["provider"];
+    entries: readonly TimelineProjectionEntry[];
+    source?: object;
+  }): FetchAgentTimelineResponsePayload["entries"] {
+    const supportsReasoningMerge = input.source
+      ? this.supportsForSource(CLIENT_CAPS.reasoningMergeEnum, input.source)
+      : this.supports(CLIENT_CAPS.reasoningMergeEnum);
+    return input.entries.map((entry) => ({
+      provider: input.provider,
+      item: entry.item,
+      timestamp: entry.timestamp,
+      seqStart: entry.seqStart,
+      seqEnd: entry.seqEnd,
+      sourceSeqRanges: entry.sourceSeqRanges,
+      collapsed: supportsReasoningMerge
+        ? entry.collapsed
+        : entry.collapsed.filter((value) => value !== "reasoning_merge"),
+    }));
+  }
+
+  private isStoredTimelineProjectionRecordEligible(
+    record: StoredAgentRecord | null,
+  ): record is StoredTimelineProjectionRecord {
+    return (
+      record !== null &&
+      record.internal !== true &&
+      (record.lastStatus === "idle" || record.lastStatus === "closed") &&
+      typeof record.timelineRevision === "string" &&
+      !(typeof record.lastError === "string" && record.lastError.trim().length > 0) &&
+      record.attentionReason !== "permission"
+    );
+  }
+
+  private async readStoredTimelineProjectionContext(
+    agentId: string,
+  ): Promise<StoredTimelineProjectionContext | null> {
+    if (this.agentManager.getAgent(agentId)) return null;
+    const record = await this.agentStorage.get(agentId);
+    if (!this.isStoredTimelineProjectionRecordEligible(record)) {
+      return null;
+    }
+    const coverage = await this.agentManager.getDurableTimelineCoverage(agentId, {
+      expectedRevision: record.timelineRevision,
+    });
+    if (
+      !coverage.eligible ||
+      !coverage.active?.valid ||
+      coverage.working !== null ||
+      coverage.active.timelineRevision !== record.timelineRevision
+    ) {
+      return null;
+    }
+    const latestRecord = await this.agentStorage.get(agentId);
+    if (
+      this.agentManager.getAgent(agentId) ||
+      !this.isStoredTimelineProjectionRecordEligible(latestRecord) ||
+      latestRecord?.timelineRevision !== record.timelineRevision
+    ) {
+      return null;
+    }
+    return {
+      record: latestRecord,
+      agent: this.buildStoredAgentPayload(latestRecord),
+      coverage: { ...coverage, active: coverage.active },
+    };
+  }
+
+  private hasSameStoredTimelineProjectionIdentity(
+    before: StoredTimelineProjectionContext,
+    after: StoredTimelineProjectionContext,
+  ): boolean {
+    return (
+      before.record.timelineRevision === after.record.timelineRevision &&
+      before.coverage.active.generationId === after.coverage.active.generationId &&
+      before.coverage.active.timelineRevision === after.coverage.active.timelineRevision &&
+      before.coverage.active.epoch === after.coverage.active.epoch &&
+      equal(before.coverage.active.window, after.coverage.active.window)
+    );
+  }
+
+  private emitTimelineProjectionResponse(input: {
+    msg: FetchAgentTimelineRequestMessage;
+    source?: object;
+    context: StoredTimelineProjectionContext | null;
+    projectionPayload: AgentTimelineProjectionPayload;
+  }): void {
+    const window = input.context?.coverage.active.window ?? {
+      minSeq: 0,
+      maxSeq: 0,
+      nextSeq: 0,
+    };
+    this.emitForSource(
+      {
+        type: "fetch_agent_timeline_response",
+        payload: {
+          requestId: input.msg.requestId,
+          agentId: input.msg.agentId,
+          agent: input.context?.agent ?? null,
+          direction: "tail",
+          projection: "projected",
+          epoch: input.context?.coverage.active.epoch ?? input.projectionPayload.epoch,
+          reset: false,
+          staleCursor: false,
+          gap: false,
+          window,
+          startCursor: null,
+          endCursor: null,
+          hasOlder: false,
+          hasNewer: false,
+          entries: [],
+          projectionPayload: input.projectionPayload,
+          error: null,
+        },
+      },
+      input.source,
+    );
+  }
+
+  private async tryHandleTimelineSummaryRequest(
+    msg: FetchAgentTimelineRequestMessage,
+    source?: object,
+  ): Promise<boolean> {
+    const direction = msg.direction ?? (msg.cursor ? "after" : "tail");
+    if (
+      direction !== "tail" ||
+      msg.cursor ||
+      msg.limit !== undefined ||
+      (msg.projection ?? "projected") !== "projected" ||
+      msg.mergeWindow === true
+    ) {
+      return false;
+    }
+    try {
+      const before = await this.readStoredTimelineProjectionContext(msg.agentId);
+      if (!before) return false;
+      const summary = await readTimelineSummary({
+        agentId: msg.agentId,
+        epoch: before.coverage.active.epoch,
+        timelineRevision: before.coverage.active.timelineRevision,
+        window: before.coverage.active.window,
+        fetchPage: (agentId, options) =>
+          this.agentManager.fetchDurableTimelinePage(agentId, options),
+      });
+      if (!summary) return false;
+      const after = await this.readStoredTimelineProjectionContext(msg.agentId);
+      if (!after || !this.hasSameStoredTimelineProjectionIdentity(before, after)) return false;
+
+      this.emitTimelineProjectionResponse({
+        msg,
+        ...(source ? { source } : {}),
+        context: after,
+        projectionPayload: {
+          kind: "summary",
+          epoch: after.coverage.active.epoch,
+          timelineRevision: after.coverage.active.timelineRevision,
+          entries: this.serializeTimelineProjectionEntries({
+            provider: after.agent.provider,
+            entries: summary.entries,
+            ...(source ? { source } : {}),
+          }),
+          activities: summary.activities,
+          hasOlderTurns: summary.hasOlderTurns,
+        },
+      });
+      return true;
+    } catch (error) {
+      this.sessionLogger.warn(
+        { err: error, agentId: msg.agentId },
+        "Stored timeline summary is unavailable; using legacy projection",
+      );
+      return false;
+    }
+  }
+
+  private createTimelineActivityDetailError(
+    request: AgentTimelineActivityDetailRequest,
+    error: string,
+  ): AgentTimelineProjectionPayload {
+    return {
+      kind: "activity_detail",
+      epoch: request.epoch,
+      timelineRevision: request.timelineRevision,
+      activityId: request.activityId,
+      entries: [],
+      nextCursor: null,
+      hasMore: false,
+      error,
+    };
+  }
+
+  private async handleTimelineActivityDetailRequest(
+    msg: FetchAgentTimelineRequestMessage,
+    request: AgentTimelineActivityDetailRequest,
+    source?: object,
+  ): Promise<void> {
+    let before: StoredTimelineProjectionContext | null;
+    try {
+      before = await this.readStoredTimelineProjectionContext(msg.agentId);
+    } catch (error) {
+      this.sessionLogger.warn(
+        { err: error, agentId: msg.agentId },
+        "Stored timeline Activity context is unavailable",
+      );
+      before = null;
+    }
+    if (!before) {
+      this.emitTimelineProjectionResponse({
+        msg,
+        ...(source ? { source } : {}),
+        context: null,
+        projectionPayload: this.createTimelineActivityDetailError(
+          request,
+          "Stored completed timeline is unavailable",
+        ),
+      });
+      return;
+    }
+    if (before.coverage.active.timelineRevision !== request.timelineRevision) {
+      this.emitTimelineProjectionResponse({
+        msg,
+        ...(source ? { source } : {}),
+        context: before,
+        projectionPayload: this.createTimelineActivityDetailError(
+          request,
+          "Timeline revision changed",
+        ),
+      });
+      return;
+    }
+    if (before.coverage.active.epoch !== request.epoch) {
+      this.emitTimelineProjectionResponse({
+        msg,
+        ...(source ? { source } : {}),
+        context: before,
+        projectionPayload: this.createTimelineActivityDetailError(
+          request,
+          "Timeline epoch changed",
+        ),
+      });
+      return;
+    }
+
+    let detail: Awaited<ReturnType<typeof readTimelineActivityDetail>>;
+    try {
+      detail = await readTimelineActivityDetail({
+        agentId: msg.agentId,
+        epoch: request.epoch,
+        timelineRevision: request.timelineRevision,
+        window: before.coverage.active.window,
+        activityId: request.activityId,
+        sourceSeqRanges: request.sourceSeqRanges,
+        ...(request.cursor ? { cursor: request.cursor } : {}),
+        limit: request.limit,
+        fetchPage: (agentId, options) =>
+          this.agentManager.fetchDurableTimelinePage(agentId, options),
+      });
+    } catch (error) {
+      this.sessionLogger.warn(
+        { err: error, agentId: msg.agentId, activityId: request.activityId },
+        "Stored timeline Activity detail is unavailable",
+      );
+      this.emitTimelineProjectionResponse({
+        msg,
+        ...(source ? { source } : {}),
+        context: before,
+        projectionPayload: this.createTimelineActivityDetailError(
+          request,
+          "Activity detail is unavailable",
+        ),
+      });
+      return;
+    }
+    let after: StoredTimelineProjectionContext | null;
+    try {
+      after = await this.readStoredTimelineProjectionContext(msg.agentId);
+    } catch (error) {
+      this.sessionLogger.warn(
+        { err: error, agentId: msg.agentId },
+        "Stored timeline Activity context changed while loading",
+      );
+      after = null;
+    }
+    if (!after || !this.hasSameStoredTimelineProjectionIdentity(before, after)) {
+      this.emitTimelineProjectionResponse({
+        msg,
+        ...(source ? { source } : {}),
+        context: after ?? before,
+        projectionPayload: this.createTimelineActivityDetailError(
+          request,
+          "Timeline revision changed while loading Activity",
+        ),
+      });
+      return;
+    }
+    this.emitTimelineProjectionResponse({
+      msg,
+      ...(source ? { source } : {}),
+      context: after,
+      projectionPayload: {
+        kind: "activity_detail",
+        epoch: request.epoch,
+        timelineRevision: request.timelineRevision,
+        activityId: request.activityId,
+        entries: this.serializeTimelineProjectionEntries({
+          provider: after.agent.provider,
+          entries: detail.entries,
+          ...(source ? { source } : {}),
+        }),
+        nextCursor: detail.nextCursor,
+        hasMore: detail.hasMore,
+        error: detail.error,
+      },
+    });
+  }
+
   private async handleFetchAgentTimelineRequest(
-    msg: Extract<SessionInboundMessage, { type: "fetch_agent_timeline_request" }>,
+    msg: FetchAgentTimelineRequestMessage,
     source?: object,
   ): Promise<void> {
     const direction: AgentTimelineFetchDirection = msg.direction ?? (msg.cursor ? "after" : "tail");
@@ -6549,6 +7039,16 @@ export class Session {
       : undefined;
 
     try {
+      if (msg.projectionRequest?.kind === "activity_detail") {
+        await this.handleTimelineActivityDetailRequest(msg, msg.projectionRequest, source);
+        return;
+      }
+      if (
+        msg.projectionRequest?.kind === "summary" &&
+        (await this.tryHandleTimelineSummaryRequest(msg, source))
+      ) {
+        return;
+      }
       const snapshot = await ensureAgentLoaded(msg.agentId, {
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
@@ -6597,21 +7097,11 @@ export class Session {
             hasOlder: selectedTimeline.hasOlder,
             hasNewer: selectedTimeline.hasNewer,
             ...(msg.mergeWindow === true ? { mergeWindow: true } : {}),
-            entries: selectedTimeline.entries.map((entry) => ({
+            entries: this.serializeTimelineProjectionEntries({
               provider: snapshot.provider,
-              item: entry.item,
-              timestamp: entry.timestamp,
-              seqStart: entry.seqStart,
-              seqEnd: entry.seqEnd,
-              sourceSeqRanges: entry.sourceSeqRanges,
-              collapsed: (
-                source
-                  ? this.supportsForSource(CLIENT_CAPS.reasoningMergeEnum, source)
-                  : this.supports(CLIENT_CAPS.reasoningMergeEnum)
-              )
-                ? entry.collapsed
-                : entry.collapsed.filter((value) => value !== "reasoning_merge"),
-            })),
+              entries: selectedTimeline.entries,
+              ...(source ? { source } : {}),
+            }),
             error: null,
           },
         },

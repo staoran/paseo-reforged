@@ -27,6 +27,7 @@ export interface LoadOlderAgentHistoryLogger {
 }
 
 export interface LoadOlderAgentHistoryDeps {
+  active?: boolean;
   client: LoadOlderAgentHistoryClient | null;
   cursor: AgentTimelineCursorState | undefined;
   hasOlder: boolean;
@@ -43,6 +44,9 @@ export async function loadOlderAgentHistory(
 ): Promise<boolean> {
   const { client, cursor, hasOlder, isLoadingOlder, setInFlight, toast, logger, failedMessage } =
     deps;
+  if (deps.active === false) {
+    return false;
+  }
   if (isLoadingOlder) {
     return true;
   }
@@ -72,21 +76,25 @@ export function useLoadOlderAgentHistory({
   serverId,
   agentId,
   toast,
+  active = true,
 }: {
   serverId: string;
   agentId: string;
   toast?: ToastApi | null;
+  active?: boolean;
 }) {
   const { t } = useTranslation();
   const hasOlder = useSessionStore((state) => {
+    if (!active) return false;
     const timeline = selectAgentTimelineState(state.sessions[serverId], agentId);
     return timeline.status === "synced" && timeline.older === "available";
   });
   const isLoadingOlder =
     useSessionStore((state) =>
-      state.sessions[serverId]?.agentTimelineOlderFetchInFlight.get(agentId),
+      active ? state.sessions[serverId]?.agentTimelineOlderFetchInFlight.get(agentId) : false,
     ) === true;
   const progressKey = useSessionStore((state) => {
+    if (!active) return null;
     const timeline = selectAgentTimelineState(state.sessions[serverId], agentId);
     const cursor = timeline.status === "synced" ? timeline.range : null;
     return cursor ? `${cursor.epoch}:${cursor.startSeq}` : null;
@@ -110,9 +118,11 @@ export function useLoadOlderAgentHistory({
   );
 
   const loadOlder = useCallback(async (): Promise<boolean> => {
+    if (!active) return false;
     const session = useSessionStore.getState().sessions[serverId];
     const timeline = selectAgentTimelineState(session, agentId);
     return await loadOlderAgentHistory(agentId, {
+      active,
       client: session?.client
         ? {
             fetchAgentTimeline: (timelineAgentId, request) =>
@@ -126,7 +136,7 @@ export function useLoadOlderAgentHistory({
       toast,
       failedMessage: t("loadOlderHistory.failed"),
     });
-  }, [agentId, serverId, setInFlight, toast, t]);
+  }, [active, agentId, serverId, setInFlight, toast, t]);
 
   return {
     isLoadingOlder,

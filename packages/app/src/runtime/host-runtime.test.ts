@@ -1550,6 +1550,21 @@ describe("HostRuntimeController", () => {
 });
 
 describe("HostRuntimeStore", () => {
+  it("marks a stored host registry ready before its session exists", async () => {
+    const host = makeHost({ serverId: "srv_cold_start" });
+    const storage = createMemoryHostRuntimeStorage();
+    await storage.setItem("@paseo:daemon-registry", JSON.stringify([host]));
+    await storage.setItem("@paseo:e2e", "1");
+    useSessionStore.getState().clearSession(host.serverId);
+    const store = createAppearanceStore(storage);
+
+    await expect(store.boot()).resolves.toBeUndefined();
+
+    expect(store.getHostRegistryStatus()).toBe("ready");
+    store.syncHosts([]);
+    useSessionStore.getState().clearSession(host.serverId);
+  });
+
   it("restores the display replica before declaring the host registry loaded", async () => {
     const host = makeHost();
     const storage = createMemoryHostRuntimeStorage();

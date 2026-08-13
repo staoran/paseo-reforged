@@ -69,7 +69,7 @@ export async function backfillWorkspaceIdForLegacyAgents(options: {
   logger: Logger;
 }): Promise<number> {
   const workspaceRecords = await options.workspaceRegistry.list();
-  const records = await options.agentStorage.list();
+  const records = await options.agentStorage.listAllMetadata();
   let migrated = 0;
 
   for (const record of records) {
@@ -84,7 +84,11 @@ export async function backfillWorkspaceIdForLegacyAgents(options: {
       continue;
     }
 
-    await options.agentStorage.upsert({ ...record, workspaceId });
+    const storedRecord = await options.agentStorage.get(record.id);
+    if (!storedRecord) {
+      continue;
+    }
+    await options.agentStorage.upsert({ ...storedRecord, workspaceId });
     migrated += 1;
   }
 

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  getModifiedPanelTabReasons,
   getPanelInstanceAttributes,
   setPanelInstanceAttributes,
   subscribePanelInstanceAttributes,
@@ -31,5 +32,23 @@ describe("panel instance attributes", () => {
 
     expect(notifications).toBe(2);
     unsubscribe();
+  });
+
+  test("maps modified panels to the retained correctness exception reason", () => {
+    const modified = { serverId: "server", workspaceId: "workspace", tabId: "modified" };
+    const clean = { serverId: "server", workspaceId: "workspace", tabId: "clean" };
+    setPanelInstanceAttributes(modified, { modified: true });
+
+    expect(
+      Array.from(
+        getModifiedPanelTabReasons({
+          serverId: "server",
+          workspaceId: "workspace",
+          tabIds: [modified.tabId, clean.tabId],
+        }).entries(),
+      ),
+    ).toEqual([["modified", "modified-state-not-recoverable"]]);
+
+    setPanelInstanceAttributes(modified, { modified: false });
   });
 });

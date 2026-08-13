@@ -115,6 +115,22 @@ accept old daemons, while old clients can ignore the additive field. The App nor
 field to `null` and the sidebar takes the maximum non-null value across unarchived workspace root
 Agents without falling back to `updatedAt` or `lastUserMessageAt`.
 
+### Agent metadata catalog and prepared records
+
+The Agent JSON record remains authoritative. `AgentStorage` maintains a versioned, rebuildable
+catalog under `$PASEO_HOME/agents/.paseo-agent-storage/` so startup, directory pages, History
+ranking, daemon ownership, and persistence-handle lookup can operate on lightweight metadata.
+Normal startup reads the mutation marker and catalog; a missing, invalid, or interrupted catalog
+causes one serialized full-record scan and rebuild. Catalog generations bind cursors and lazy
+materialization, so a concurrent mutation retries or fails explicitly instead of returning a mixed
+page or partial ranking.
+
+Prepared Agent records live under the control directory's staging tree and are invisible to normal
+`list`, metadata, and `get` operations. Import recovery commits them through the same global
+record/catalog mutation boundary or discards them. The catalog and mutation marker are recovery
+indexes, not a second source of truth; corrupt records are quarantined and the remaining catalog is
+rebuilt from authoritative JSON files.
+
 ### Nested: SerializableConfig
 
 | Field              | Type                         | Description                                                           |

@@ -129,6 +129,11 @@ import type { RequestedSpeechProviders } from "./speech/speech-types.js";
 import { createSpeechService } from "./speech/speech-runtime.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
+import { FileAgentTimelineStore } from "./agent/file-agent-timeline-store.js";
+import {
+  FileProviderSessionImportTransactionStore,
+  recoverProviderSessionImportTransactions,
+} from "./agent/provider-session-import-transaction.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
 import {
@@ -790,6 +795,10 @@ export async function createPaseoDaemon(
   }
 
   const agentStorage = new AgentStorage(config.agentStoragePath, logger);
+  const durableTimelineStore = new FileAgentTimelineStore(path.join(config.paseoHome, "timelines"));
+  const providerSessionImportTransactionStore = new FileProviderSessionImportTransactionStore(
+    path.join(config.paseoHome, "provider-session-imports"),
+  );
   const projectRegistry = new FileBackedProjectRegistry(
     path.join(config.paseoHome, "projects", "projects.json"),
     logger,
@@ -833,6 +842,7 @@ export async function createPaseoDaemon(
     clients: initialAgentManagerState.clients,
     providerDefinitions: initialAgentManagerState.providerDefinitions,
     registry: agentStorage,
+    durableTimelineStore,
     appendSystemPrompt: config.appendSystemPrompt,
     onWorkspaceStateMayHaveChanged: ({ cwd }) => {
       workspaceGitService.onWorkspaceStateMayHaveChanged(cwd);
@@ -858,6 +868,17 @@ export async function createPaseoDaemon(
     logger,
   });
   logger.info({ elapsed: elapsed() }, "Workspace registries bootstrapped");
+  await recoverProviderSessionImportTransactions({
+    transactionStore: providerSessionImportTransactionStore,
+    agentManager,
+    archiveNativeSessionBestEffort: agentManager.archiveNativeSessionBestEffort.bind(agentManager),
+    agentStorage,
+    durableTimelineStore,
+    workspaceRegistry,
+    projectRegistry,
+    logger,
+  });
+  logger.info({ elapsed: elapsed() }, "Provider session import transactions recovered");
   const teardownArchivedWorkspaceRuntime = (workspaceId: string): void => {
     scriptRuntimeStore.removeForWorkspace(workspaceId);
     releaseWorkspaceServicePortPlan(workspaceId);
@@ -1232,10 +1253,10 @@ export async function createPaseoDaemon(
   });
   logger.info({ elapsed: elapsed() }, "Schedule service initialized");
   logger.info({ elapsed: elapsed() }, "Loading persisted agent registry");
-  const persistedRecords = await agentStorage.list();
+  const persistedRecordCount = await agentStorage.countMetadata();
   logger.info(
     { elapsed: elapsed() },
-    `Agent registry loaded (${persistedRecords.length} record${persistedRecords.length === 1 ? "" : "s"}); agents will initialize on demand`,
+    `Agent registry loaded (${persistedRecordCount} record${persistedRecordCount === 1 ? "" : "s"}); agents will initialize on demand`,
   );
   logger.info(
     "Voice mode configured for agent-scoped resume flow (no dedicated voice assistant provider)",
@@ -1570,6 +1591,7 @@ export async function createPaseoDaemon(
               browserToolsBroker,
               hubRelationships,
               workspaceSetupRuntime,
+              providerSessionImportTransactionStore,
             );
             relayRuntime = createRelayRuntime({
               config: {

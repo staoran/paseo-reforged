@@ -80,6 +80,24 @@ function createLogger(): FakeLogger {
 const someCursor: AgentTimelineCursorState = { epoch: "epoch-1", startSeq: 10, endSeq: 20 };
 
 describe("loadOlderAgentHistory", () => {
+  it("does not start pagination while its retained panel is inactive", async () => {
+    const client = createClient();
+    const inFlight = createInFlight();
+
+    const started = await loadOlderAgentHistory(agentId, {
+      active: false,
+      client,
+      cursor: someCursor,
+      hasOlder: true,
+      isLoadingOlder: false,
+      setInFlight: inFlight.setInFlight,
+    });
+
+    expect(started).toBe(false);
+    expect(client.calls).toEqual([]);
+    expect(inFlight.values).toEqual([false]);
+  });
+
   it("no-ops without a cursor", async () => {
     const client = createClient();
     const inFlight = createInFlight();

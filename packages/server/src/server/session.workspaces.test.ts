@@ -24,7 +24,11 @@ import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { createTerminalManager } from "../terminal/terminal-manager.js";
 import { AgentManager, type AgentManagerEvent, type ManagedAgent } from "./agent/agent-manager.js";
 import type { ProviderSubagentDescriptor } from "./agent/provider-subagents/store.js";
-import { AgentStorage, type StoredAgentRecord } from "./agent/agent-storage.js";
+import {
+  AgentStorage,
+  type AgentMetadataEntry,
+  type StoredAgentRecord,
+} from "./agent/agent-storage.js";
 import type {
   AgentClient,
   AgentCreateSessionOptions,
@@ -166,6 +170,11 @@ interface SessionTestAccess {
   handleMessage(message: unknown): Promise<unknown>;
   handleCreatePaseoWorktreeRequest(params: unknown): Promise<unknown>;
   listAgentPayloads(...args: unknown[]): Promise<unknown[]>;
+  listAgentDirectoryCandidates(...args: unknown[]): Promise<{
+    agents: AgentSnapshotPayload[];
+    storedMetadataById: Map<string, AgentMetadataEntry>;
+    generation: number;
+  }>;
   listFetchWorkspacesEntries(params: unknown): Promise<ListFetchResult>;
   listFetchAgentsEntries(params: unknown): Promise<ListFetchResult>;
   resolveAgentIdentifier(identifier: string): Promise<unknown>;
@@ -288,6 +297,7 @@ function makeAgent(input: {
 function makeStoredAgent(input: {
   id: string;
   cwd: string;
+  workspaceId?: string;
   updatedAt: string;
   requiresAttention?: boolean;
   attentionReason?: StoredAgentRecord["attentionReason"];
@@ -296,6 +306,7 @@ function makeStoredAgent(input: {
     id: input.id,
     provider: "codex",
     cwd: input.cwd,
+    ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
     createdAt: input.updatedAt,
     updatedAt: input.updatedAt,
     lastActivityAt: input.updatedAt,
@@ -314,6 +325,50 @@ function makeStoredAgent(input: {
     attentionTimestamp: input.requiresAttention ? input.updatedAt : null,
     internal: false,
     archivedAt: null,
+  };
+}
+
+function stubAgentDirectoryCandidates(session: TestSession, agents: AgentSnapshotPayload[]): void {
+  session.listAgentDirectoryCandidates = async () => ({
+    agents,
+    storedMetadataById: new Map(),
+    generation: 0,
+  });
+}
+
+function makeAgentMetadataEntry(record: StoredAgentRecord): AgentMetadataEntry {
+  const nativeHandle = record.persistence?.nativeHandle;
+  return {
+    id: record.id,
+    recordPath: `test/${record.id}.json`,
+    recordRevision: "0".repeat(64),
+    provider: record.provider,
+    cwd: record.cwd,
+    workspaceId: record.workspaceId,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    lastActivityAt: record.lastActivityAt,
+    lastUserMessageAt: record.lastUserMessageAt ?? null,
+    lastMessageAt: record.lastMessageAt ?? null,
+    title: record.title ?? null,
+    labels: { ...record.labels },
+    lastStatus: record.lastStatus,
+    lastModeId: record.lastModeId ?? null,
+    effectiveThinkingOptionId: null,
+    requiresAttention: record.requiresAttention ?? false,
+    attentionReason: record.attentionReason ?? null,
+    attentionTimestamp: record.attentionTimestamp ?? null,
+    internal: record.internal ?? false,
+    archivedAt: record.archivedAt ?? null,
+    timelineRevision: record.timelineRevision,
+    owner: record.owner,
+    persistenceIdentity: record.persistence
+      ? {
+          provider: record.persistence.provider,
+          sessionId: record.persistence.sessionId,
+          ...(typeof nativeHandle === "string" ? { nativeHandle } : {}),
+        }
+      : undefined,
   };
 }
 
@@ -670,29 +725,7 @@ function createSessionForWorkspaceTests(
         options.agentStorage instanceof AgentStorage
           ? options.agentStorage
           : asAgentStorage({
-              list: async () => [
-                createPersistedWorkspaceRecord({
-                  workspaceId: "ws-repo-running",
-                  projectId: "proj-repo-running",
-                  cwd: REPO_CWD,
-                  kind: "directory",
-                  displayName: "repo",
-                  createdAt: "2026-03-01T12:00:00.000Z",
-                  updatedAt: "2026-03-01T12:00:00.000Z",
-                }),
-              ],
-              get: async (workspaceId: string) =>
-                workspaceId === "ws-repo-running"
-                  ? createPersistedWorkspaceRecord({
-                      workspaceId: "ws-repo-running",
-                      projectId: "proj-repo-running",
-                      cwd: REPO_CWD,
-                      kind: "directory",
-                      displayName: "repo",
-                      createdAt: "2026-03-01T12:00:00.000Z",
-                      updatedAt: "2026-03-01T12:00:00.000Z",
-                    })
-                  : null,
+              get: async () => null,
               upsert: async () => {},
               ...options.agentStorage,
             }),
@@ -1813,7 +1846,9 @@ test("unsupported persisted agents are excluded from active lists but preserved 
     archivedAt: "2026-04-13T10:16:06.514Z",
   };
 
-  session.agentStorage.list = async () => [storedRecord];
+  const metadata = makeAgentMetadataEntry(storedRecord as StoredAgentRecord);
+  session.agentStorage.listAllMetadata = async () => [metadata];
+  session.agentStorage.getMetadataSnapshot = async () => ({ entries: [metadata], generation: 1 });
   session.agentStorage.get = async (agentId: string) =>
     agentId === storedRecord.id ? storedRecord : null;
 
@@ -2008,7 +2043,6 @@ test("archive emits an authoritative agent_update upsert for subscribed clients"
         notifyAgentState: () => {},
       }),
       agentStorage: asAgentStorage({
-        list: async () => [archivedRecord],
         get: async (agentId: string) => (agentId === archivedRecord.id ? archivedRecord : null),
         upsert: async (record: typeof archivedRecord) => {
           Object.assign(archivedRecord, record);
@@ -2126,6 +2160,7 @@ test("workspace clear attention clears stored-only agents and responds", async (
   let storedRecord = makeStoredAgent({
     id: "stored-agent-1",
     cwd: REPO_CWD,
+    workspaceId: workspace.workspaceId,
     updatedAt: "2026-03-30T15:00:00.000Z",
     requiresAttention: true,
     attentionReason: "finished",
@@ -2235,6 +2270,7 @@ test("workspace clear attention can clear multiple workspaces in one request", a
       makeStoredAgent({
         id: `stored-agent-${index + 1}`,
         cwd: workspace.cwd,
+        workspaceId: workspace.workspaceId,
         updatedAt: "2026-03-30T15:00:00.000Z",
         requiresAttention: true,
         attentionReason: "finished",
@@ -2366,7 +2402,6 @@ test("close_items_request archives agents and kills terminals in one batch", asy
         notifyAgentState: () => {},
       }),
       agentStorage: asAgentStorage({
-        list: async () => [],
         get: async (agentId: string) => {
           if (agentId !== "agent-1") {
             return null;
@@ -2551,7 +2586,6 @@ test("close_items_request archives stored agents that are not currently loaded",
         notifyAgentState: () => {},
       }),
       agentStorage: asAgentStorage({
-        list: async () => [],
         get: async (agentId: string) => {
           if (agentId === "agent-live") {
             return liveRecord;
@@ -2702,7 +2736,6 @@ test("close_items_request continues after an archive failure", async () => {
         notifyAgentState: () => {},
       }),
       agentStorage: asAgentStorage({
-        list: async () => [],
         get: async (agentId: string) => {
           if (agentId !== "agent-good") {
             return null;
@@ -2986,7 +3019,7 @@ test("active-scoped fetch_agents includes only unarchived agents in active works
     archivedWorkspace,
     workspaceInArchivedProject,
   ];
-  session.listAgentPayloads = async () => [
+  stubAgentDirectoryCandidates(session, [
     makeAgent({
       id: "agent-active",
       cwd: "/tmp/active",
@@ -3025,7 +3058,7 @@ test("active-scoped fetch_agents includes only unarchived agents in active works
       }),
       archivedAt,
     },
-  ];
+  ]);
 
   const result = await session.listFetchAgentsEntries({
     type: "fetch_agents_request",
@@ -3080,7 +3113,7 @@ test("active-scoped fetch_agents pages within active scope instead of global his
   session.projectRegistry.list = async () => [project];
   session.projectRegistry.get = async () => project;
   session.workspaceRegistry.list = async () => [activeOne, activeTwo, archivedWorkspace];
-  session.listAgentPayloads = async () => [
+  stubAgentDirectoryCandidates(session, [
     makeAgent({
       id: "active-one",
       cwd: "/tmp/pages/one",
@@ -3102,7 +3135,7 @@ test("active-scoped fetch_agents pages within active scope instead of global his
       status: "idle",
       updatedAt: "2026-03-01T12:01:00.000Z",
     }),
-  ];
+  ]);
 
   const firstPage = await session.listFetchAgentsEntries({
     type: "fetch_agents_request",
@@ -3162,7 +3195,7 @@ test("legacy unscoped fetch_agents keeps global workspace behavior", async () =>
     [activeWorkspace, archivedWorkspace].find(
       (workspace) => workspace.workspaceId === workspaceId,
     ) ?? null;
-  session.listAgentPayloads = async () => [
+  stubAgentDirectoryCandidates(session, [
     makeAgent({
       id: "legacy-active",
       cwd: activeCwd,
@@ -3177,7 +3210,7 @@ test("legacy unscoped fetch_agents keeps global workspace behavior", async () =>
       status: "idle",
       updatedAt: "2026-03-01T12:00:00.000Z",
     }),
-  ];
+  ]);
 
   const result = await session.listFetchAgentsEntries({
     type: "fetch_agents_request",
@@ -3219,7 +3252,7 @@ test("fetch_agent_history_request pages archived historical rows separately", as
   session.projectRegistry.get = async () => project;
   session.workspaceRegistry.list = async () => [workspace];
   session.workspaceRegistry.get = async () => workspace;
-  session.listAgentPayloads = async () => [
+  stubAgentDirectoryCandidates(session, [
     {
       ...makeAgent({
         id: "history-archived",
@@ -3230,7 +3263,7 @@ test("fetch_agent_history_request pages archived historical rows separately", as
       }),
       archivedAt: "2026-03-02T12:00:00.000Z",
     },
-  ];
+  ]);
 
   await session.handleMessage({
     type: "fetch_agent_history_request",
@@ -3287,7 +3320,7 @@ test("fetch_agent_history_request ranks a search across the whole history, not o
   session.projectRegistry.get = async () => project;
   session.workspaceRegistry.list = async () => [workspace];
   session.workspaceRegistry.get = async () => workspace;
-  session.listAgentPayloads = async () => [
+  stubAgentDirectoryCandidates(session, [
     // The strong match is the oldest row, so a chronological answer would rank
     // it last and a first-page-only search would not see it at all.
     {
@@ -3320,7 +3353,7 @@ test("fetch_agent_history_request ranks a search across the whole history, not o
       }),
       title: "Add Stripe billing",
     },
-  ];
+  ]);
 
   await session.handleMessage({
     type: "fetch_agent_history_request",
@@ -3388,7 +3421,7 @@ test("fetch_agent_history_request rejects a cursor on a searched request", async
   session.projectRegistry.get = async () => project;
   session.workspaceRegistry.list = async () => [workspace];
   session.workspaceRegistry.get = async () => workspace;
-  session.listAgentPayloads = async () => [
+  stubAgentDirectoryCandidates(session, [
     {
       ...makeAgent({
         id: "match",
@@ -3399,7 +3432,7 @@ test("fetch_agent_history_request rejects a cursor on a searched request", async
       }),
       title: "Add Stripe billing",
     },
-  ];
+  ]);
 
   // A ranked result set has no pages to walk. Answering with the ranked head
   // would let a caller believe it had paged, so this fails loudly instead.
@@ -3462,7 +3495,7 @@ test("fetch_agent_history_request skips rows whose workspace project record is m
   session.workspaceRegistry.get = async (workspaceId: string) =>
     [stableWorkspace, orphanWorkspace].find((workspace) => workspace.workspaceId === workspaceId) ??
     null;
-  session.listAgentPayloads = async () => [
+  stubAgentDirectoryCandidates(session, [
     makeAgent({
       id: "history-orphan",
       cwd: orphanCwd,
@@ -3477,7 +3510,7 @@ test("fetch_agent_history_request skips rows whose workspace project record is m
       status: "closed",
       updatedAt: "2026-03-01T12:00:00.000Z",
     }),
-  ];
+  ]);
 
   await session.handleMessage({
     type: "fetch_agent_history_request",
@@ -3515,16 +3548,6 @@ test("fetch_recent_provider_sessions_request lists importable provider sessions 
   const session = createSessionForWorkspaceTests();
 
   session.emit = (message) => emitted.push(message as { type: string; payload: unknown });
-  session.agentManager.listAgents = () => [
-    {
-      provider: "codex",
-      persistence: {
-        provider: "codex",
-        sessionId: "live-session",
-        nativeHandle: "live-handle",
-      },
-    },
-  ];
   const importableSessions = [
     makeImportableProviderSession({
       provider: "codex",
@@ -3604,23 +3627,41 @@ test("fetch_recent_provider_sessions_request lists importable provider sessions 
       ? importableSessions.filter((entry) => providerFilter.has(entry.provider))
       : importableSessions;
   };
-  session.agentStorage.list = async () => [
-    {
-      id: "stored-agent",
-      provider: "codex",
-      cwd: "/tmp/recent",
-      createdAt: "2026-04-30T00:00:00.000Z",
-      updatedAt: "2026-04-30T00:00:00.000Z",
-      title: "Stored",
-      labels: {},
-      lastStatus: "closed",
-      persistence: {
+  session.agentStorage.getMetadataSnapshot = async () => ({
+    generation: 1,
+    entries: [
+      makeAgentMetadataEntry({
+        id: "stored-agent",
         provider: "codex",
-        sessionId: "stored-session",
-        nativeHandle: "stored-handle",
-      },
-    },
-  ];
+        cwd: "/tmp/recent",
+        createdAt: "2026-04-30T00:00:00.000Z",
+        updatedAt: "2026-04-30T00:00:00.000Z",
+        title: "Stored",
+        labels: {},
+        lastStatus: "closed",
+        persistence: {
+          provider: "codex",
+          sessionId: "stored-session",
+          nativeHandle: "stored-handle",
+        },
+      } as StoredAgentRecord),
+      makeAgentMetadataEntry({
+        id: "live-agent",
+        provider: "codex",
+        cwd: "/tmp/recent",
+        createdAt: "2026-04-30T00:00:00.000Z",
+        updatedAt: "2026-04-30T00:01:00.000Z",
+        title: "Live",
+        labels: {},
+        lastStatus: "idle",
+        persistence: {
+          provider: "codex",
+          sessionId: "live-session",
+          nativeHandle: "live-handle",
+        },
+      } as StoredAgentRecord),
+    ],
+  });
 
   await session.handleMessage({
     type: "fetch_recent_provider_sessions_request",
@@ -3671,7 +3712,7 @@ test("fetch_recent_provider_sessions_request forwards providerFilter to agent ma
 
   session.emit = (message) => emitted.push(message as { type: string; payload: unknown });
   session.agentManager.listAgents = () => [];
-  session.agentStorage.list = async () => [];
+  session.agentStorage.listAllMetadata = async () => [];
   session.agentManager.listImportableSessions = async (options?: unknown) => {
     capturedOptions = options as { providerFilter?: Set<string>; limit?: number };
     return [];
@@ -3702,17 +3743,26 @@ test("fetch_recent_provider_sessions_request reports filteredAlreadyImportedCoun
   const session = createSessionForWorkspaceTests();
 
   session.emit = (message) => emitted.push(message as { type: string; payload: unknown });
-  session.agentManager.listAgents = () => [
-    {
-      provider: "codex",
-      persistence: {
+  session.agentStorage.getMetadataSnapshot = async () => ({
+    generation: 1,
+    entries: [
+      makeAgentMetadataEntry({
+        id: "live-agent",
         provider: "codex",
-        sessionId: "live-session",
-        nativeHandle: "live-handle",
-      },
-    },
-  ];
-  session.agentStorage.list = async () => [];
+        cwd: "/tmp/recent",
+        createdAt: "2026-04-30T00:00:00.000Z",
+        updatedAt: "2026-04-30T00:01:00.000Z",
+        title: "Live",
+        labels: {},
+        lastStatus: "idle",
+        persistence: {
+          provider: "codex",
+          sessionId: "live-session",
+          nativeHandle: "live-handle",
+        },
+      } as StoredAgentRecord),
+    ],
+  });
   session.agentManager.listImportableSessions = async () => [
     {
       provider: "codex",
@@ -3955,7 +4005,6 @@ test("workspace update stream keeps persisted workspace visible after agents sto
         getAgent: () => null,
       }),
       agentStorage: asAgentStorage({
-        list: async () => [],
         get: async () => null,
       }),
       projectRegistry: {
@@ -4676,17 +4725,32 @@ test("import_agent_request registers a workspace for a never-seen cwd", async ()
     },
   });
 
-  const managed = makeManagedAgent({
-    id: "imported-agent",
-    cwd: importedCwd,
-    lifecycle: "idle",
-    updatedAt: "2026-05-21T00:00:00.000Z",
-  });
-  session.agentManager.listAgents = () => [managed];
-  session.agentManager.importProviderSession = async () => managed;
+  let managed: ReturnType<typeof makeManagedAgent> | null = null;
+  session.agentManager.listAgents = () => (managed ? [managed] : []);
+  session.agentManager.getAgent = (agentId: string) => (managed?.id === agentId ? managed : null);
+  session.agentManager.importProviderSession = async (input: unknown) => {
+    const importInput = input as Parameters<AgentManager["importProviderSession"]>[0];
+    if (!importInput.agentId || !importInput.onPreparedRecord) {
+      throw new Error("Expected a transactional provider import");
+    }
+    managed = makeManagedAgent({
+      id: importInput.agentId,
+      cwd: importedCwd,
+      workspaceId: importInput.workspaceId,
+      lifecycle: "idle",
+      updatedAt: "2026-05-21T00:00:00.000Z",
+    });
+    await importInput.onPreparedRecord({
+      preparedId: "00000000-0000-4000-8000-000000000701",
+      agentId: importInput.agentId,
+      recordRevision: "0".repeat(64),
+      timelineRevision: "00000000-0000-4000-8000-000000000702",
+    });
+    return managed;
+  };
   session.agentManager.getTimeline = () => [];
   session.agentManager.setTitle = async () => undefined;
-  session.agentStorage.list = async () => [];
+  session.agentStorage.findByPersistenceHandle = async () => [];
   session.agentStorage.get = async () => null;
   session.agentUpdates.forwardLiveAgent = async () => undefined;
 
@@ -4762,6 +4826,8 @@ test("import_agent_request imports into the workspace that opened the import she
   });
   let importedWorkspaceId: string | undefined;
   let importedTitle: string | null | undefined;
+  let importedAgentId: string | undefined;
+  let managed: ReturnType<typeof makeManagedAgent> | null = null;
   let workspaceCreated = false;
 
   session.projectRegistry.get = async () =>
@@ -4784,23 +4850,35 @@ test("import_agent_request imports into the workspace that opened the import she
   };
 
   session.agentManager.importProviderSession = async (input: unknown) => {
-    const importInput = input as { workspaceId: string; title?: string | null };
+    const importInput = input as Parameters<AgentManager["importProviderSession"]>[0];
+    if (!importInput.agentId || !importInput.onPreparedRecord) {
+      throw new Error("Expected a transactional provider import");
+    }
     importedWorkspaceId = importInput.workspaceId;
     importedTitle = importInput.title;
-    return makeManagedAgent({
-      id: "imported-agent",
+    importedAgentId = importInput.agentId;
+    managed = makeManagedAgent({
+      id: importInput.agentId,
       cwd: REPO_CWD,
       workspaceId: importedWorkspaceId,
       lifecycle: "idle",
       updatedAt: "2026-05-21T00:00:00.000Z",
     });
+    await importInput.onPreparedRecord({
+      preparedId: "00000000-0000-4000-8000-000000000703",
+      agentId: importInput.agentId,
+      recordRevision: "1".repeat(64),
+      timelineRevision: "00000000-0000-4000-8000-000000000704",
+    });
+    return managed;
   };
+  session.agentManager.getAgent = (agentId: string) => (managed?.id === agentId ? managed : null);
   session.agentManager.getTimeline = () => [];
-  session.agentStorage.list = async () => [];
+  session.agentStorage.findByPersistenceHandle = async () => [];
   session.agentStorage.get = async (agentId: string) =>
-    agentId === "imported-agent"
+    agentId === importedAgentId
       ? {
-          id: "imported-agent",
+          id: importedAgentId,
           provider: "codex",
           cwd: REPO_CWD,
           workspaceId,
@@ -4828,13 +4906,16 @@ test("import_agent_request imports into the workspace that opened the import she
   expect(importedWorkspaceId).toBe(workspaceId);
   expect(importedTitle).toBe("Imported session title");
   expect(workspaceCreated).toBe(false);
-  expect(workspace.defaultAgentId).toBe("imported-agent");
+  expect(workspace.defaultAgentId).toBe(importedAgentId);
 });
 
 test("import_agent_request maps an import failure to agent_create_failed", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = createSessionForWorkspaceTests({
     onMessage: (message) => emitted.push(message),
+    agentManager: {
+      deleteAgentState: async () => {},
+    },
   });
   session.projectRegistry.get = async () =>
     createPersistedProjectRecord({
@@ -4845,7 +4926,7 @@ test("import_agent_request maps an import failure to agent_create_failed", async
       createdAt: "2026-03-01T12:00:00.000Z",
       updatedAt: "2026-03-01T12:00:00.000Z",
     });
-  session.agentStorage.list = async () => [];
+  session.agentStorage.findByPersistenceHandle = async () => [];
   session.agentManager.importProviderSession = async () => {
     throw new Error("provider session is unavailable");
   };

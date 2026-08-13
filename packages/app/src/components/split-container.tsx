@@ -55,7 +55,7 @@ import {
   getWorkspacePaneDescriptors,
 } from "@/screens/workspace/workspace-pane-state";
 import { useMountedTabSet } from "@/screens/workspace/use-mounted-tab-set";
-import { useModifiedPanelTabIds } from "@/panels/panel-instance-attributes";
+import { useModifiedPanelTabReasons } from "@/panels/panel-instance-attributes";
 import {
   WorkspacePaneContent,
   type WorkspacePaneContentModel,
@@ -942,7 +942,7 @@ function SplitPaneView({
   );
   const paneTabs = useMemo(() => paneState.tabs.map((tab) => tab.descriptor), [paneState.tabs]);
   const paneTabIds = useMemo(() => paneTabs.map((tab) => tab.tabId), [paneTabs]);
-  const modifiedPaneTabIds = useModifiedPanelTabIds({
+  const modifiedPaneTabReasons = useModifiedPanelTabReasons({
     serverId: normalizedServerId,
     workspaceId: normalizedWorkspaceId,
     tabIds: paneTabIds,
@@ -952,7 +952,7 @@ function SplitPaneView({
   const { mountedTabIds } = useMountedTabSet({
     activeTabId: activeTabDescriptor?.tabId ?? null,
     allTabIds: paneTabIds,
-    retainedTabIds: modifiedPaneTabIds,
+    retainedTabReasons: modifiedPaneTabReasons,
     cap: 3,
   });
   const mountedPaneTabIds = useMemo(

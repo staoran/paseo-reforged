@@ -48,6 +48,22 @@ the anchored page still leaves the viewport at history start, as with short or c
 that case pagination continues as one loading operation until the page fills the viewport or history
 is exhausted.
 
+## Committed timeline generations and summary projection
+
+The daemon persists canonical rows in immutable, checksummed segments under
+`$PASEO_HOME/timelines`. Each Agent has an active generation and an optional working generation.
+Only a complete active generation whose `timelineRevision` matches the Agent record is eligible for
+the stored-session fast path. A working or incomplete generation, checksum/range failure, revision
+mismatch, or stale cursor fails closed to the ordinary provider-backed path; it never publishes a
+partial canonical history as complete.
+
+Committed reads use positive bounded limits for `tail`, `before`, and `after`. An eligible summary
+response contains only user rows, final assistant rows, and Activity descriptors. Activity members
+remain canonical rows and are fetched later with an identity-, revision-, range-, and cursor-checked
+bounded detail request. The App installs this summary in a display-only projection lane. It does not
+advance the canonical timeline cursor, and a live event or ordinary canonical fetch supersedes it
+atomically.
+
 ## Durable item anchors
 
 Provider message IDs are not guaranteed for every displayed item. Paseo-generated system errors are one example. Rendered item indices are not durable either because pagination and projection can merge source rows.

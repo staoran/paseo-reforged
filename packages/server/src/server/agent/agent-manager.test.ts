@@ -12,8 +12,10 @@ import {
   commandMayHaveChangedExternalState,
   type AgentManagerEvent,
   type ManagedAgent,
+  type PreparedProviderSessionImportMetadata,
 } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
+import { InMemoryDurableAgentTimelineStore } from "./agent-timeline-store.js";
 import { toAgentListItemPayload, toAgentPayload } from "./agent-projections.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { formatSystemNotificationPrompt, startAgentRun } from "./agent-prompt.js";
@@ -2989,20 +2991,36 @@ test("importProviderSession imports the selected session without listing and pub
   }
 
   const client = new ImportClient();
+  const durableTimelineStore = new InMemoryDurableAgentTimelineStore();
   const manager = new AgentManager({
     clients: {
       codex: client,
     },
     registry: storage,
+    durableTimelineStore,
     logger,
   });
   manager.subscribe((event) => events.push(event), { replayState: false });
+  const importedAgentId = "00000000-0000-4000-8000-000000000641";
+  let preparedMetadata: PreparedProviderSessionImportMetadata | null = null;
 
   const imported = await manager.importProviderSession({
     provider: "codex",
     providerHandleId: "thread-selected",
     cwd: workdir,
     workspaceId: "ws-imported",
+    agentId: importedAgentId,
+    onPreparedRecord: async (metadata) => {
+      preparedMetadata = metadata;
+      expect(manager.listAgents()).toEqual([]);
+      expect(events).toEqual([]);
+      expect(await storage.get(importedAgentId)).toBeNull();
+      await expect(
+        durableTimelineStore.getCoverage(importedAgentId, {
+          expectedRevision: metadata.timelineRevision,
+        }),
+      ).resolves.toMatchObject({ eligible: true, working: null });
+    },
   });
 
   expect(client.listCalls).toBe(0);
@@ -3015,6 +3033,13 @@ test("importProviderSession imports the selected session without listing and pub
     },
   });
   expect(imported.lifecycle).toBe("idle");
+  expect(imported.id).toBe(importedAgentId);
+  expect(preparedMetadata).toMatchObject({
+    agentId: importedAgentId,
+    preparedId: expect.any(String),
+    recordRevision: expect.any(String),
+    timelineRevision: expect.any(String),
+  });
   expect(imported.historyPrimed).toBe(true);
   expect(imported.lastMessageAt).toEqual(new Date("2026-01-02T00:00:01.000Z"));
   expect(manager.getTimeline(imported.id)).toEqual([
@@ -3049,9 +3074,321 @@ test("importProviderSession imports the selected session without listing and pub
       persistence: { nativeHandle: "thread-selected" },
     },
   });
-  expect(await storage.get(imported.id)).toMatchObject({
+  const stored = await storage.get(imported.id);
+  expect(stored).toMatchObject({
     title: "Trace provider imports",
     lastMessageAt: "2026-01-02T00:00:01.000Z",
+    timelineRevision: expect.any(String),
+  });
+  expect((await storage.listAllMetadata()).find((entry) => entry.id === imported.id)).toMatchObject(
+    {
+      preparedCommitId: preparedMetadata?.preparedId,
+    },
+  );
+  if (!stored?.timelineRevision) throw new Error("expected imported timeline revision");
+  await expect(
+    durableTimelineStore.getCoverage(imported.id, {
+      expectedRevision: stored.timelineRevision,
+    }),
+  ).resolves.toMatchObject({ eligible: true, working: null });
+  await expect(
+    durableTimelineStore.fetchCommittedPage(imported.id, { direction: "tail", limit: 2 }),
+  ).resolves.toMatchObject({ rows: [{ seq: 2 }, { seq: 3 }] });
+});
+
+test("transactional import closes the provider session when durable storage is unavailable", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-import-preflight-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+
+  class CloseTrackingSession extends TestAgentSession {
+    closeCalls = 0;
+
+    override async close(): Promise<void> {
+      this.closeCalls += 1;
+    }
+  }
+
+  const session = new CloseTrackingSession({ provider: "codex", cwd: workdir });
+  class ImportClient extends TestAgentClient {
+    override async importSession(input: ImportProviderSessionInput) {
+      return {
+        session,
+        config: { provider: "codex" as const, cwd: workdir },
+        persistence: {
+          provider: "codex" as const,
+          sessionId: input.providerHandleId,
+          nativeHandle: input.providerHandleId,
+          metadata: { provider: "codex", cwd: workdir },
+        },
+        timeline: [],
+      };
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new ImportClient() },
+    registry: storage,
+    logger,
+  });
+
+  await expect(
+    manager.importProviderSession({
+      provider: "codex",
+      providerHandleId: "thread-preflight",
+      cwd: workdir,
+      workspaceId: "ws-imported",
+      agentId: "00000000-0000-4000-8000-000000000642",
+      onPreparedRecord: async () => {},
+    }),
+  ).rejects.toThrow("Durable timeline storage is required for transactional imports");
+  expect(session.closeCalls).toBe(1);
+  expect(manager.listAgents()).toEqual([]);
+});
+
+test("transactional import rejects a provider result with an unrelated persistence identity", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-import-identity-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const durableTimelineStore = new InMemoryDurableAgentTimelineStore();
+
+  class CloseTrackingSession extends TestAgentSession {
+    closeCalls = 0;
+
+    override async close(): Promise<void> {
+      this.closeCalls += 1;
+    }
+  }
+
+  const session = new CloseTrackingSession({ provider: "codex", cwd: workdir });
+  class ImportClient extends TestAgentClient {
+    override async importSession() {
+      return {
+        session,
+        config: { provider: "codex" as const, cwd: workdir },
+        persistence: {
+          provider: "codex" as const,
+          sessionId: "thread-unrelated",
+          nativeHandle: "thread-unrelated",
+          metadata: { provider: "codex", cwd: workdir },
+        },
+        timeline: [],
+      };
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new ImportClient() },
+    registry: storage,
+    durableTimelineStore,
+    logger,
+  });
+  const agentId = "00000000-0000-4000-8000-000000000645";
+  const onPreparedRecord = vi.fn(async () => {});
+
+  await expect(
+    manager.importProviderSession({
+      provider: "codex",
+      providerHandleId: "thread-requested",
+      cwd: workdir,
+      workspaceId: "ws-imported",
+      agentId,
+      onPreparedRecord,
+    }),
+  ).rejects.toThrow("Imported provider session identity does not match request: thread-requested");
+  expect(onPreparedRecord).not.toHaveBeenCalled();
+  expect(session.closeCalls).toBe(1);
+  expect(manager.listAgents()).toEqual([]);
+  await expect(storage.get(agentId)).resolves.toBeNull();
+  await expect(durableTimelineStore.getCoverage(agentId)).resolves.toEqual({
+    active: null,
+    working: null,
+    eligible: false,
+  });
+});
+
+test("transactional import compensates timeline and runtime when marker preparation fails", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-import-rollback-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const durableTimelineStore = new InMemoryDurableAgentTimelineStore();
+
+  class CloseTrackingSession extends TestAgentSession {
+    closeCalls = 0;
+
+    override async close(): Promise<void> {
+      this.closeCalls += 1;
+    }
+  }
+
+  const session = new CloseTrackingSession({ provider: "codex", cwd: workdir });
+  class ImportClient extends TestAgentClient {
+    override async importSession(input: ImportProviderSessionInput) {
+      return {
+        session,
+        config: { provider: "codex" as const, cwd: workdir },
+        persistence: {
+          provider: "codex" as const,
+          sessionId: input.providerHandleId,
+          nativeHandle: input.providerHandleId,
+          metadata: { provider: "codex", cwd: workdir },
+        },
+        timeline: [
+          {
+            item: { type: "user_message" as const, text: "transactional history" },
+            timestamp: "2026-08-09T00:00:00.000Z",
+          },
+        ],
+      };
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new ImportClient() },
+    registry: storage,
+    durableTimelineStore,
+    logger,
+  });
+  const agentId = "00000000-0000-4000-8000-000000000643";
+
+  await expect(
+    manager.importProviderSession({
+      provider: "codex",
+      providerHandleId: "thread-marker-failure",
+      cwd: workdir,
+      workspaceId: "ws-imported",
+      agentId,
+      onPreparedRecord: async () => {
+        throw new Error("marker update failed");
+      },
+    }),
+  ).rejects.toThrow("marker update failed");
+  expect(session.closeCalls).toBe(1);
+  expect(manager.getAgent(agentId)).toBeNull();
+  await expect(storage.get(agentId)).resolves.toBeNull();
+  await expect(durableTimelineStore.getCoverage(agentId)).resolves.toEqual({
+    active: null,
+    working: null,
+    eligible: false,
+  });
+});
+
+test("transactional import falls back to a durable closed agent when live subscribe fails", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-import-subscribe-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const durableTimelineStore = new InMemoryDurableAgentTimelineStore();
+
+  class SubscribeFailingSession extends TestAgentSession {
+    closeCalls = 0;
+
+    override subscribe(_callback: (event: AgentStreamEvent) => void): () => void {
+      throw new Error("subscribe failed");
+    }
+
+    override async close(): Promise<void> {
+      this.closeCalls += 1;
+    }
+  }
+
+  const session = new SubscribeFailingSession({ provider: "codex", cwd: workdir });
+  class ImportClient extends TestAgentClient {
+    override async importSession(input: ImportProviderSessionInput) {
+      return {
+        session,
+        config: { provider: "codex" as const, cwd: workdir },
+        persistence: {
+          provider: "codex" as const,
+          sessionId: input.providerHandleId,
+          nativeHandle: input.providerHandleId,
+          metadata: { provider: "codex", cwd: workdir },
+        },
+        timeline: [
+          {
+            item: { type: "user_message" as const, text: "durable fallback" },
+            timestamp: "2026-08-09T00:00:00.000Z",
+          },
+        ],
+      };
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new ImportClient() },
+    registry: storage,
+    durableTimelineStore,
+    logger,
+  });
+  const agentId = "00000000-0000-4000-8000-000000000644";
+  const imported = await manager.importProviderSession({
+    provider: "codex",
+    providerHandleId: "thread-subscribe-failure",
+    cwd: workdir,
+    workspaceId: "ws-imported",
+    agentId,
+    onPreparedRecord: async () => {},
+  });
+
+  expect(imported).toMatchObject({ id: agentId, lifecycle: "closed", session: null });
+  expect(session.closeCalls).toBe(1);
+  expect(manager.getAgent(agentId)).toBeNull();
+  expect(manager.listAgents()).toEqual([]);
+  const stored = await storage.get(agentId);
+  expect(stored).toMatchObject({ id: agentId, timelineRevision: expect.any(String) });
+  if (!stored?.timelineRevision) throw new Error("expected imported timeline revision");
+  await expect(
+    durableTimelineStore.getCoverage(agentId, {
+      expectedRevision: stored.timelineRevision,
+    }),
+  ).resolves.toMatchObject({ eligible: true, working: null });
+});
+
+test("transactional import stays committed when ready-state publication fails", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-import-publication-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const durableTimelineStore = new InMemoryDurableAgentTimelineStore();
+  const session = new TestAgentSession({ provider: "codex", cwd: workdir });
+
+  class ImportClient extends TestAgentClient {
+    override async importSession(input: ImportProviderSessionInput) {
+      return {
+        session,
+        config: { provider: "codex" as const, cwd: workdir },
+        persistence: {
+          provider: "codex" as const,
+          sessionId: input.providerHandleId,
+          nativeHandle: input.providerHandleId,
+          metadata: { provider: "codex", cwd: workdir },
+        },
+        timeline: [],
+      };
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new ImportClient() },
+    registry: storage,
+    durableTimelineStore,
+    logger,
+  });
+  manager.subscribe(
+    () => {
+      throw new Error("subscriber failed");
+    },
+    { replayState: false },
+  );
+  const agentId = "00000000-0000-4000-8000-000000000646";
+
+  const imported = await manager.importProviderSession({
+    provider: "codex",
+    providerHandleId: "thread-publication-failure",
+    cwd: workdir,
+    workspaceId: "ws-imported",
+    agentId,
+    onPreparedRecord: async () => {},
+  });
+
+  expect(imported).toMatchObject({ id: agentId, lifecycle: "idle" });
+  expect(manager.getAgent(agentId)).toMatchObject({ id: agentId, lifecycle: "idle" });
+  await expect(storage.get(agentId)).resolves.toMatchObject({
+    id: agentId,
+    timelineRevision: expect.any(String),
   });
 });
 
@@ -4662,6 +4999,60 @@ test("coalesces assistant chunks and persists the canonical row", async () => {
   });
 });
 
+test("keeps a completed durable generation through archive until physical timeline deletion", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-durable-turn-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const durableTimelineStore = new InMemoryDurableAgentTimelineStore();
+  const manager = new AgentManager({
+    clients: { codex: new StreamingAssistantClient() },
+    registry: storage,
+    durableTimelineStore,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000142",
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+
+  const stream = manager.streamAgent(agent.id, "hello");
+  while (!(await stream.next()).done) {
+    // Drain the foreground stream through its terminal event.
+  }
+  await manager.flush();
+  await storage.flush();
+
+  const stored = await storage.get(agent.id);
+  if (!stored?.timelineRevision) throw new Error("expected completed timeline revision");
+  await expect(
+    manager.getDurableTimelineCoverage(agent.id, {
+      expectedRevision: stored.timelineRevision,
+    }),
+  ).resolves.toMatchObject({ eligible: true, working: null });
+  await expect(
+    manager.fetchDurableTimelinePage(agent.id, { direction: "tail", limit: 1 }),
+  ).resolves.toMatchObject({ rows: [{ seq: 1, item: { text: "final reply" } }] });
+  await expect(manager.getTimelineRows(agent.id)).resolves.toMatchObject([
+    { seq: 1, item: { text: "final reply" } },
+  ]);
+
+  await manager.archiveAgent(agent.id);
+  const archived = await storage.get(agent.id);
+  if (!archived?.timelineRevision) throw new Error("expected archived timeline revision");
+  await expect(
+    manager.getDurableTimelineCoverage(agent.id, {
+      expectedRevision: archived.timelineRevision,
+    }),
+  ).resolves.toMatchObject({ eligible: true, working: null });
+
+  await manager.deleteAgentState(agent.id);
+  await expect(manager.getDurableTimelineCoverage(agent.id)).resolves.toEqual({
+    active: null,
+    working: null,
+    eligible: false,
+  });
+  expect(await storage.get(agent.id)).not.toHaveProperty("timelineRevision");
+});
+
 test("fetchTimeline supports older-history pagination with before seq", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-timeline-before-"));
   const storagePath = join(workdir, "agents");
@@ -6121,7 +6512,7 @@ test("subscribe error isolation: throwing subscriber does not break event flow",
 
   expect(receivedEvents).toContain("turn_started");
   expect(receivedEvents).toContain("timeline");
-  expect(receivedEvents).toContain("turn_completed");
+  await vi.waitFor(() => expect(receivedEvents).toContain("turn_completed"));
   expect(manager.getTimeline(snapshot.id)).toContainEqual({
     type: "assistant_message",
     text: "EVENT_AFTER_ERROR",
@@ -6832,10 +7223,14 @@ test("archiveAgent persists archivedAt and updatedAt before emitting closed stat
   );
 
   const lifecycles: string[] = [];
+  let emittedClosedUpdatedAt: string | null = null;
   manager.subscribe(
     (event) => {
       if (event.type === "agent_state" && event.agent.id === agent.id) {
         lifecycles.push(event.agent.lifecycle);
+        if (event.agent.lifecycle === "closed") {
+          emittedClosedUpdatedAt = event.agent.updatedAt.toISOString();
+        }
       }
     },
     { agentId: agent.id, replayState: false },
@@ -6852,9 +7247,10 @@ test("archiveAgent persists archivedAt and updatedAt before emitting closed stat
     attentionReason: null,
     attentionTimestamp: null,
   });
-  expect(
-    Math.abs(new Date(stored!.updatedAt).getTime() - new Date(archivedAt).getTime()),
-  ).toBeLessThanOrEqual(5);
+  expect(stored!.updatedAt).toBe(emittedClosedUpdatedAt);
+  expect(new Date(stored!.updatedAt).getTime()).toBeGreaterThanOrEqual(
+    new Date(archivedAt).getTime(),
+  );
   expect(lifecycles.slice(-2)).toEqual(["idle", "closed"]);
 });
 
@@ -9263,6 +9659,46 @@ class RecordingPersistedAgentsClient implements AgentClient {
     ];
   }
 }
+
+class TiedPersistedAgentsClient extends RecordingPersistedAgentsClient {
+  constructor(
+    provider: AgentProvider,
+    private readonly handles: readonly string[],
+  ) {
+    super(provider);
+  }
+
+  override async listImportableSessions() {
+    this.calls += 1;
+    return this.handles.map((providerHandleId) => ({
+      providerHandleId,
+      cwd: "/tmp/recent",
+      title: null,
+      lastActivityAt: new Date("2026-01-01T00:00:00Z"),
+      firstPromptPreview: null,
+      lastPromptPreview: null,
+    }));
+  }
+}
+
+test("listImportableSessions uses deterministic provider and handle tie-breakers before limiting", async () => {
+  const codex = new TiedPersistedAgentsClient("codex", ["zeta"]);
+  const claude = new TiedPersistedAgentsClient("claude", ["beta", "alpha"]);
+  const manager = new AgentManager({
+    clients: { codex, claude },
+    providerDefinitions: {
+      codex: { enabled: true, derivedFromProviderId: null },
+      claude: { enabled: true, derivedFromProviderId: null },
+    },
+    logger,
+  });
+
+  const result = await manager.listImportableSessions({ limit: 2 });
+
+  expect(result.map(({ provider, providerHandleId }) => `${provider}:${providerHandleId}`)).toEqual(
+    ["claude:alpha", "claude:beta"],
+  );
+});
 
 test.each([
   [

@@ -1472,6 +1472,26 @@ export interface AgentStreamReducerQueue {
   dispose: (options?: { flush?: boolean }) => void;
 }
 
+/** Commits a terminal reducer batch before notifying final-state observers */
+export function enqueueAgentStreamEventAndNotifyTerminal(input: {
+  queue: AgentStreamReducerQueue;
+  agentId: string;
+  event: AgentStreamReducerEvent;
+  notifyTerminal: () => void;
+}): void {
+  input.queue.enqueue(input.agentId, input.event);
+  const eventType = input.event.event.type;
+  if (
+    eventType !== "turn_completed" &&
+    eventType !== "turn_failed" &&
+    eventType !== "turn_canceled"
+  ) {
+    return;
+  }
+  input.queue.flushAgent(input.agentId);
+  input.notifyTerminal();
+}
+
 export interface CreateAgentStreamReducerQueueInput {
   getSnapshot: (agentId: string) => AgentStreamReducerSnapshot;
   commit: (

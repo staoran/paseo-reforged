@@ -103,6 +103,7 @@ import {
   useHostRuntimeClient,
   useHosts,
 } from "@/runtime/host-runtime";
+import { registerReplicaCacheLifecycle } from "@/runtime/replica-cache/lifecycle";
 import { getDaemonStartService } from "@/runtime/daemon-start-service";
 import { applyAppearance } from "@/screens/settings/appearance/apply-appearance";
 import { selectIsAgentListOpen, usePanelStore } from "@/stores/panel-store";
@@ -992,12 +993,29 @@ function RootAppTree() {
 export default function RootLayout() {
   useEffect(() => installWebScrollbarStyles(), []);
   useEffect(() => {
-    const subscription = AppState.addEventListener("change", (nextState) => {
-      if (nextState !== "active") {
-        void flushDraftPersistStorage();
-      }
-    });
-    return () => subscription.remove();
+    const flushBackgroundState = () => {
+      void flushDraftPersistStorage();
+      void getHostRuntimeStore().flushReplicaCache();
+    };
+
+    if (isNative) {
+      return registerReplicaCacheLifecycle({
+        platform: "native",
+        appState: AppState,
+        flush: flushBackgroundState,
+      });
+    }
+
+    if (isWeb && typeof document !== "undefined" && typeof window !== "undefined") {
+      return registerReplicaCacheLifecycle({
+        platform: "web",
+        document,
+        window,
+        flush: flushBackgroundState,
+      });
+    }
+
+    return undefined;
   }, []);
 
   return (

@@ -21,8 +21,9 @@ import {
 import { isSessionRpcAllowed, Session } from "./session.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
-import type { StoredAgentRecord } from "./agent/agent-storage.js";
+import type { AgentMetadataEntry, StoredAgentRecord } from "./agent/agent-storage.js";
 import type { AgentManagerEvent } from "./agent/agent-manager.js";
+import type { AgentTimelineFetchResult } from "./agent/agent-timeline-store-types.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { createPersistedProjectRecord } from "./workspace-registry.js";
 import { deriveProjectKey } from "./project-key.js";
@@ -376,7 +377,15 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     }),
     agentStorage: asAgentStorage({
       get: vi.fn().mockResolvedValue(undefined),
-      list: vi.fn().mockResolvedValue([]),
+      listAllMetadata: vi.fn().mockResolvedValue([]),
+      getMetadataSnapshot: vi.fn().mockResolvedValue({ entries: [], generation: 0 }),
+      getCatalogGeneration: vi.fn().mockResolvedValue(0),
+      materializeMetadata: vi.fn(async (agentIds: readonly string[], generation: number) => ({
+        records: agentIds.map(() => null),
+        generation,
+        retryRequired: agentIds.length > 0,
+      })),
+      findByPersistenceHandle: vi.fn().mockResolvedValue([]),
       ...options.agentStorage,
     }),
     projectRegistry: {
@@ -1055,6 +1064,42 @@ function createStoredAgentRecord(
   };
 }
 
+function createAgentMetadataEntry(record: StoredAgentRecord): AgentMetadataEntry {
+  const nativeHandle = record.persistence?.nativeHandle;
+  return {
+    id: record.id,
+    recordPath: `test/${record.id}.json`,
+    recordRevision: "0".repeat(64),
+    provider: record.provider,
+    cwd: record.cwd,
+    workspaceId: record.workspaceId,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    lastActivityAt: record.lastActivityAt,
+    lastUserMessageAt: record.lastUserMessageAt ?? null,
+    lastMessageAt: record.lastMessageAt ?? null,
+    title: record.title ?? null,
+    labels: { ...record.labels },
+    lastStatus: record.lastStatus,
+    lastModeId: record.lastModeId ?? null,
+    effectiveThinkingOptionId: null,
+    requiresAttention: record.requiresAttention ?? false,
+    attentionReason: record.attentionReason ?? null,
+    attentionTimestamp: record.attentionTimestamp ?? null,
+    internal: record.internal ?? false,
+    archivedAt: record.archivedAt ?? null,
+    timelineRevision: record.timelineRevision,
+    owner: record.owner,
+    persistenceIdentity: record.persistence
+      ? {
+          provider: record.persistence.provider,
+          sessionId: record.persistence.sessionId,
+          ...(typeof nativeHandle === "string" ? { nativeHandle } : {}),
+        }
+      : undefined,
+  };
+}
+
 test("fetch_agents_request reports a stored-only idle agent as closed after daemon startup", async () => {
   const messages: SessionOutboundMessage[] = [];
   const agent = createStoredAgentRecord({
@@ -1088,11 +1133,19 @@ test("fetch_agents_request reports a stored-only idle agent as closed after daem
   };
   const providerSnapshotManager = createProviderSnapshotManagerStub();
   providerSnapshotManager.listRegisteredProviderIds.mockReturnValue(["codex"]);
+  const metadata = createAgentMetadataEntry(agent);
   const session = createSessionForTest({
     messages,
     providerSnapshotManager: providerSnapshotManager.manager,
     agentStorage: {
-      list: vi.fn().mockResolvedValue([agent]),
+      get: vi.fn(async (agentId: string) => (agentId === agent.id ? agent : null)),
+      listAllMetadata: vi.fn().mockResolvedValue([metadata]),
+      getMetadataSnapshot: vi.fn().mockResolvedValue({ entries: [metadata], generation: 1 }),
+      materializeMetadata: vi.fn(async (agentIds: readonly string[], generation: number) => ({
+        records: agentIds.map((agentId) => (agentId === agent.id ? agent : null)),
+        generation,
+        retryRequired: false,
+      })),
     },
     workspaceRegistry: {
       get: vi.fn().mockResolvedValue(workspace),
@@ -1107,6 +1160,7 @@ test("fetch_agents_request reports a stored-only idle agent as closed after daem
   await session.handleMessage({
     type: "fetch_agents_request",
     requestId: "cold-start-agents",
+    filter: { statuses: ["closed"] },
   });
 
   const response = messages.find((message) => message.type === "fetch_agents_response");
@@ -1122,6 +1176,219 @@ test("fetch_agents_request reports a stored-only idle agent as closed after daem
       ],
     },
   });
+});
+
+test("fetch_agents_request materializes only the selected page and rejects a stale catalog cursor", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const records = [
+    createStoredAgentRecord({
+      id: "page-newest",
+      cwd: "/tmp/catalog-page",
+      workspaceId: "catalog-page-workspace",
+      updatedAt: "2026-01-03T00:00:00.000Z",
+    }),
+    createStoredAgentRecord({
+      id: "page-middle",
+      cwd: "/tmp/catalog-page",
+      workspaceId: "catalog-page-workspace",
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    }),
+    createStoredAgentRecord({
+      id: "page-oldest",
+      cwd: "/tmp/catalog-page",
+      workspaceId: "catalog-page-workspace",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    }),
+  ];
+  const metadata = records.map(createAgentMetadataEntry);
+  const recordsById = new Map(records.map((record) => [record.id, record]));
+  let generation = 7;
+  const materializeMetadata = vi.fn(
+    async (agentIds: readonly string[], expectedGeneration: number) => ({
+      records: agentIds.map((agentId) => recordsById.get(agentId) ?? null),
+      generation,
+      retryRequired: generation !== expectedGeneration,
+    }),
+  );
+  const workspace = {
+    workspaceId: "catalog-page-workspace",
+    projectId: "catalog-page-project",
+    cwd: "/tmp/catalog-page",
+    kind: "directory" as const,
+    displayName: "Catalog page workspace",
+    title: null,
+    branch: null,
+    baseBranch: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    archivedAt: null,
+  };
+  const project = {
+    projectId: "catalog-page-project",
+    rootPath: "/tmp/catalog-page",
+    kind: "non_git" as const,
+    displayName: "Catalog page project",
+    customName: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    archivedAt: null,
+  };
+  const providerSnapshotManager = createProviderSnapshotManagerStub();
+  providerSnapshotManager.listRegisteredProviderIds.mockReturnValue(["codex"]);
+  const session = createSessionForTest({
+    messages,
+    providerSnapshotManager: providerSnapshotManager.manager,
+    agentStorage: {
+      getMetadataSnapshot: vi.fn(async () => ({ entries: metadata, generation })),
+      materializeMetadata,
+    },
+    workspaceRegistry: {
+      get: vi.fn().mockResolvedValue(workspace),
+      list: vi.fn().mockResolvedValue([workspace]),
+    },
+    projectRegistry: {
+      get: vi.fn().mockResolvedValue(project),
+      list: vi.fn().mockResolvedValue([project]),
+    },
+  });
+
+  await session.handleMessage({
+    type: "fetch_agents_request",
+    requestId: "catalog-page-1",
+    page: { limit: 1 },
+  });
+
+  const firstResponse = messages.find(
+    (message) =>
+      message.type === "fetch_agents_response" && message.payload.requestId === "catalog-page-1",
+  );
+  if (firstResponse?.type !== "fetch_agents_response") {
+    throw new Error("Expected fetch_agents_response");
+  }
+  expect(firstResponse.payload.entries.map((entry) => entry.agent.id)).toEqual(["page-newest"]);
+  expect(materializeMetadata).toHaveBeenCalledWith(["page-newest"], 7);
+  expect(firstResponse.payload.pageInfo.nextCursor).toBeTypeOf("string");
+
+  const cursor = firstResponse.payload.pageInfo.nextCursor;
+  generation = 8;
+  await session.handleMessage({
+    type: "fetch_agents_request",
+    requestId: "catalog-page-stale",
+    page: { limit: 1, cursor: cursor ?? undefined },
+  });
+
+  expect(messages).toContainEqual({
+    type: "rpc_error",
+    payload: expect.objectContaining({
+      requestId: "catalog-page-stale",
+      requestType: "fetch_agents_request",
+      code: "invalid_cursor",
+    }),
+  });
+});
+
+test("fetch_agent_history_request reranks metadata after generation change and materializes only Top K", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const oldRecord = createStoredAgentRecord({
+    id: "history-old",
+    cwd: "/tmp/catalog-history",
+    workspaceId: "catalog-history-workspace",
+    title: "Needle result",
+  });
+  const newRecord = createStoredAgentRecord({
+    id: "history-new",
+    cwd: "/tmp/catalog-history",
+    workspaceId: "catalog-history-workspace",
+    title: "Needle result",
+    updatedAt: "2026-01-02T00:00:00.000Z",
+  });
+  const distractor = createStoredAgentRecord({
+    id: "history-distractor",
+    cwd: "/tmp/catalog-history",
+    workspaceId: "catalog-history-workspace",
+    title: "Unrelated session",
+  });
+  let snapshotCall = 0;
+  const getMetadataSnapshot = vi.fn(async () => {
+    snapshotCall += 1;
+    return snapshotCall === 1
+      ? {
+          entries: [oldRecord, distractor].map(createAgentMetadataEntry),
+          generation: 1,
+        }
+      : {
+          entries: [newRecord, distractor].map(createAgentMetadataEntry),
+          generation: 2,
+        };
+  });
+  const recordsById = new Map([
+    [oldRecord.id, oldRecord],
+    [newRecord.id, newRecord],
+  ]);
+  const materializeMetadata = vi.fn(
+    async (agentIds: readonly string[], expectedGeneration: number) => ({
+      records: agentIds.map((agentId) => recordsById.get(agentId) ?? null),
+      generation: 2,
+      retryRequired: expectedGeneration === 1,
+    }),
+  );
+  const workspace = {
+    workspaceId: "catalog-history-workspace",
+    projectId: "catalog-history-project",
+    cwd: "/tmp/catalog-history",
+    kind: "directory" as const,
+    displayName: "Catalog history workspace",
+    title: null,
+    branch: null,
+    baseBranch: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    archivedAt: null,
+  };
+  const project = {
+    projectId: "catalog-history-project",
+    rootPath: "/tmp/catalog-history",
+    kind: "non_git" as const,
+    displayName: "Catalog history project",
+    customName: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    archivedAt: null,
+  };
+  const providerSnapshotManager = createProviderSnapshotManagerStub();
+  providerSnapshotManager.listRegisteredProviderIds.mockReturnValue(["codex"]);
+  const session = createSessionForTest({
+    messages,
+    providerSnapshotManager: providerSnapshotManager.manager,
+    agentStorage: { getMetadataSnapshot, materializeMetadata },
+    workspaceRegistry: {
+      get: vi.fn().mockResolvedValue(workspace),
+      list: vi.fn().mockResolvedValue([workspace]),
+    },
+    projectRegistry: {
+      get: vi.fn().mockResolvedValue(project),
+      list: vi.fn().mockResolvedValue([project]),
+    },
+  });
+
+  await session.handleMessage({
+    type: "fetch_agent_history_request",
+    requestId: "catalog-history",
+    search: "needle",
+    page: { limit: 1 },
+  });
+
+  const response = messages.find(
+    (message) =>
+      message.type === "fetch_agent_history_response" &&
+      message.payload.requestId === "catalog-history",
+  );
+  if (response?.type !== "fetch_agent_history_response") {
+    throw new Error("Expected fetch_agent_history_response");
+  }
+  expect(response.payload.entries.map((entry) => entry.agent.id)).toEqual(["history-new"]);
+  expect(materializeMetadata).toHaveBeenNthCalledWith(1, ["history-old"], 1);
+  expect(materializeMetadata).toHaveBeenNthCalledWith(2, ["history-new"], 2);
 });
 
 describe("agent detach RPC", () => {
@@ -1179,7 +1446,7 @@ describe("agent detach RPC", () => {
         detachAgent,
       },
       agentStorage: {
-        list: vi.fn().mockResolvedValue([]),
+        listAllMetadata: vi.fn().mockResolvedValue([]),
         get: vi.fn().mockResolvedValue(null),
       },
       workspaceRegistry: {
@@ -5306,5 +5573,211 @@ describe("agent config setters", () => {
         error: "thinking boom",
       },
     });
+  });
+});
+
+describe("stored timeline summary/detail fast path", () => {
+  const agentId = "agent-summary-1";
+  const revision = "43a2674e-081c-4f20-8bca-9de7699dc419";
+  const staleRevision = "53a2674e-081c-4f20-8bca-9de7699dc419";
+  const storedRecord: StoredAgentRecord = {
+    id: agentId,
+    provider: "mock",
+    cwd: "/tmp/paseo-summary",
+    createdAt: "2026-08-09T00:00:00.000Z",
+    updatedAt: "2026-08-09T00:00:04.000Z",
+    lastStatus: "closed",
+    labels: {},
+    persistence: { provider: "mock", sessionId: "provider-session" },
+    timelineRevision: revision,
+  };
+  const active = {
+    generationId: "generation-1",
+    timelineRevision: revision,
+    epoch: "epoch-1",
+    window: { minSeq: 1, maxSeq: 4, nextSeq: 5 },
+    valid: true,
+  } as const;
+  const rows = [
+    {
+      seq: 1,
+      timestamp: "2026-08-09T00:00:01.000Z",
+      item: { type: "user_message" as const, text: "Question", messageId: "user-1" },
+    },
+    {
+      seq: 2,
+      timestamp: "2026-08-09T00:00:02.000Z",
+      item: { type: "reasoning" as const, text: "private" },
+    },
+    {
+      seq: 3,
+      timestamp: "2026-08-09T00:00:03.000Z",
+      item: { type: "reasoning" as const, text: "tool details" },
+    },
+    {
+      seq: 4,
+      timestamp: "2026-08-09T00:00:04.000Z",
+      item: {
+        type: "assistant_message" as const,
+        text: "Answer",
+        messageId: "assistant-1",
+        phase: "final_answer" as const,
+      },
+    },
+  ];
+  const tailPage: AgentTimelineFetchResult = {
+    epoch: active.epoch,
+    direction: "tail",
+    reset: false,
+    staleCursor: false,
+    gap: false,
+    window: active.window,
+    hasOlder: false,
+    hasNewer: false,
+    rows,
+  };
+
+  function eligibleCoverage() {
+    return { active, working: null, eligible: true };
+  }
+
+  test("serves eligible stored summary without resuming the provider", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const resumeAgentFromPersistence = vi.fn();
+    const fetchTimeline = vi.fn();
+    const session = createSessionForTest({
+      messages,
+      agentStorage: {
+        get: vi.fn().mockResolvedValue(storedRecord),
+      },
+      agentManager: {
+        getAgent: vi.fn(() => null),
+        getDurableTimelineCoverage: vi.fn().mockResolvedValue(eligibleCoverage()),
+        fetchDurableTimelinePage: vi.fn().mockResolvedValue(tailPage),
+        fetchTimeline,
+        resumeAgentFromPersistence,
+      },
+    });
+
+    await session.handleMessage({
+      type: "fetch_agent_timeline_request",
+      agentId,
+      requestId: "summary-request",
+      projectionRequest: { kind: "summary" },
+    });
+
+    const response = messages.find((message) => message.type === "fetch_agent_timeline_response");
+    expect(response).toMatchObject({
+      type: "fetch_agent_timeline_response",
+      payload: {
+        requestId: "summary-request",
+        agentId,
+        entries: [],
+        startCursor: null,
+        endCursor: null,
+        projectionPayload: {
+          kind: "summary",
+          epoch: active.epoch,
+          timelineRevision: revision,
+          entries: [
+            expect.objectContaining({ item: expect.objectContaining({ type: "user_message" }) }),
+            expect.objectContaining({
+              item: expect.objectContaining({ type: "assistant_message", phase: "final_answer" }),
+            }),
+          ],
+          activities: [expect.objectContaining({ sourceSeqRanges: [{ startSeq: 2, endSeq: 3 }] })],
+        },
+      },
+    });
+    expect(fetchTimeline).not.toHaveBeenCalled();
+    expect(resumeAgentFromPersistence).not.toHaveBeenCalled();
+  });
+
+  test("keeps stale Activity detail local and never falls back to the provider", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const fetchDurableTimelinePage = vi.fn().mockResolvedValue(tailPage);
+    const resumeAgentFromPersistence = vi.fn();
+    const session = createSessionForTest({
+      messages,
+      agentStorage: {
+        get: vi.fn().mockResolvedValue(storedRecord),
+      },
+      agentManager: {
+        getAgent: vi.fn(() => null),
+        getDurableTimelineCoverage: vi.fn().mockResolvedValue(eligibleCoverage()),
+        fetchDurableTimelinePage,
+        resumeAgentFromPersistence,
+      },
+    });
+
+    await session.handleMessage({
+      type: "fetch_agent_timeline_request",
+      agentId,
+      requestId: "detail-request",
+      projectionRequest: {
+        kind: "activity_detail",
+        epoch: active.epoch,
+        timelineRevision: staleRevision,
+        activityId: "activity:stale",
+        sourceSeqRanges: [{ startSeq: 2, endSeq: 3 }],
+        limit: 20,
+      },
+    });
+
+    const response = messages.find((message) => message.type === "fetch_agent_timeline_response");
+    expect(response).toMatchObject({
+      payload: {
+        requestId: "detail-request",
+        entries: [],
+        error: null,
+        projectionPayload: {
+          kind: "activity_detail",
+          activityId: "activity:stale",
+          entries: [],
+          nextCursor: null,
+          hasMore: false,
+          error: "Timeline revision changed",
+        },
+      },
+    });
+    expect(fetchDurableTimelinePage).not.toHaveBeenCalled();
+    expect(resumeAgentFromPersistence).not.toHaveBeenCalled();
+  });
+
+  test("falls back to the legacy path when durable coverage is incomplete", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const resumeAgentFromPersistence = vi.fn().mockRejectedValue(new Error("resume fallback"));
+    const session = createSessionForTest({
+      messages,
+      agentStorage: {
+        get: vi.fn().mockResolvedValue(storedRecord),
+      },
+      agentManager: {
+        getAgent: vi.fn(() => null),
+        getDurableTimelineCoverage: vi.fn().mockResolvedValue({
+          active: null,
+          working: { generationId: "working-1", epoch: active.epoch, status: "building" },
+          eligible: false,
+        }),
+        getRegisteredProviderIds: vi.fn(() => ["mock"]),
+        waitForAgentClose: vi.fn().mockResolvedValue(undefined),
+        resumeAgentFromPersistence,
+      },
+    });
+
+    await session.handleMessage({
+      type: "fetch_agent_timeline_request",
+      agentId,
+      requestId: "summary-fallback",
+      projectionRequest: { kind: "summary" },
+    });
+
+    expect(resumeAgentFromPersistence).toHaveBeenCalled();
+    expect(messages).toContainEqual(
+      expect.objectContaining({
+        type: "fetch_agent_timeline_response",
+        payload: expect.objectContaining({ error: "resume fallback" }),
+      }),
+    );
   });
 });

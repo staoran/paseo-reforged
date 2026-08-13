@@ -25,7 +25,7 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { MAX_CONTENT_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
 import { useMutation } from "@tanstack/react-query";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
-import { Brain, Check, ChevronDown, ChevronRight, X } from "lucide-react-native";
+import { Brain, Check, ChevronDown, ChevronRight, RotateCcw, X } from "lucide-react-native";
 import { usePanelStore } from "@/stores/panel-store";
 import {
   AssistantMessage,
@@ -65,7 +65,13 @@ import {
   projectToolCallDetailLevel,
 } from "@/tool-calls/detail-level/projection";
 import { OverviewToolCallGroupView } from "@/tool-calls/detail-level/overview/view";
-import { type AgentStreamRenderModel, buildAgentStreamRenderModel } from "./model";
+import {
+  type ActivityFold,
+  type AgentStreamRenderModel,
+  type StreamRenderRow,
+  buildAgentStreamRenderModel,
+} from "./model";
+import type { ProjectionDisplay } from "@/timeline/projection-lane";
 import { resolveStreamRenderStrategy } from "./strategy-resolver";
 import { type StreamSegmentRenderers, type StreamViewportHandle } from "./strategy";
 import { ChatOutlineRail } from "@/agent-stream/chat-outline/rail";
@@ -79,7 +85,7 @@ import {
   type InFlightTurnForkHandler,
   type TurnContentStrategy,
 } from "./turn-footer";
-import { layoutStream, type ActivityFold, type StreamLayoutItem } from "./layout";
+import { layoutActivityFoldMembers, layoutStream, type StreamLayoutItem } from "./layout";
 import {
   type BottomAnchorLocalRequest,
   type BottomAnchorRouteRequest,
@@ -106,6 +112,14 @@ import type { Theme } from "@/styles/theme";
 import { WORKSPACE_SURFACE_DATASET } from "@/styles/workspace-surface";
 import { recordRenderProfileReasons } from "@/utils/render-profiler";
 import { useRetainedPanelActive } from "@/components/retained-panel";
+import {
+  INACTIVE_AGENT_STREAM_ITEMS,
+  selectRetainedAgentPresentationFeature,
+  selectRetainedAgentStreamHead,
+  selectRetainedAgentTimelineDetached,
+  selectRetainedAgentTimelineEpoch,
+} from "./retained-session-selectors";
+import { requestIdleProjectionActivityDetails } from "./projection-detail-prefetch";
 import { useTurnChanges } from "./use-turn-changes";
 import {
   getEditableLastUserMessageId,
@@ -172,25 +186,46 @@ function ActivityFoldHeader({
   fold,
   expanded,
   onToggle,
+  onRequestDetail,
 }: {
   fold: ActivityFold;
   expanded: boolean;
   onToggle: (foldId: string, expanded: boolean) => void;
+  onRequestDetail?: (activityId: string) => void;
 }) {
   const { t } = useTranslation();
-  const handleToggle = useCallback(
-    () => onToggle(fold.id, expanded),
-    [expanded, fold.id, onToggle],
-  );
+  const handleToggle = useCallback(() => {
+    if (fold.detailStatus === "error") {
+      if (!expanded) onToggle(fold.id, expanded);
+      onRequestDetail?.(fold.id);
+      return;
+    }
+    onToggle(fold.id, expanded);
+    if (!expanded && fold.detailStatus === "idle") {
+      onRequestDetail?.(fold.id);
+    }
+  }, [expanded, fold.detailStatus, fold.id, onRequestDetail, onToggle]);
   const accessibilityState = useMemo(() => ({ expanded }), [expanded]);
   if (fold.completed) {
-    const label =
-      fold.durationMs === undefined
-        ? t("message.activity.completed")
-        : t("message.activity.completedWithDuration", {
-            duration: formatDurationWithSeconds(fold.durationMs),
-          });
+    let label: string;
+    if (fold.detailStatus === "loading") {
+      label = t("common.loading");
+    } else if (fold.detailStatus === "error") {
+      label = t("common.actions.retry");
+    } else if (fold.durationMs === undefined) {
+      label = t("message.activity.completed");
+    } else {
+      label = t("message.activity.completedWithDuration", {
+        duration: formatDurationWithSeconds(fold.durationMs),
+      });
+    }
     const Chevron = expanded ? ChevronDown : ChevronRight;
+    let statusIcon = <Chevron size={14} color={stylesheet.activityFoldHeaderIcon.color} />;
+    if (fold.detailStatus === "loading") {
+      statusIcon = <LoadingSpinner size="small" color={stylesheet.activityFoldHeaderIcon.color} />;
+    } else if (fold.detailStatus === "error") {
+      statusIcon = <RotateCcw size={14} color={stylesheet.activityFoldHeaderIcon.color} />;
+    }
     return (
       <Pressable
         testID={`activity-fold-${fold.id}`}
@@ -202,7 +237,7 @@ function ActivityFoldHeader({
         <Text style={stylesheet.activityFoldHeaderText} numberOfLines={1}>
           {label}
         </Text>
-        <Chevron size={14} color={stylesheet.activityFoldHeaderIcon.color} />
+        {statusIcon}
       </Pressable>
     );
   }
@@ -286,11 +321,11 @@ function renderListEmptyComponent(input: {
 }
 
 function renderHistoryStreamItem(input: {
-  item: StreamItem;
+  row: StreamRenderRow;
   layoutItemById: Map<string, StreamLayoutItem>;
   renderStreamItem: (layoutItem: StreamLayoutItem) => ReactNode;
 }): ReactNode {
-  const layoutItem = input.layoutItemById.get(input.item.id);
+  const layoutItem = input.layoutItemById.get(input.row.id);
   if (!layoutItem) {
     return null;
   }
@@ -298,11 +333,11 @@ function renderHistoryStreamItem(input: {
 }
 
 function renderLiveHeadStreamItem(input: {
-  item: StreamItem;
+  row: StreamRenderRow;
   layoutItemById: Map<string, StreamLayoutItem>;
   renderStreamItem: (layoutItem: StreamLayoutItem) => ReactNode;
 }): ReactNode {
-  const layoutItem = input.layoutItemById.get(input.item.id);
+  const layoutItem = input.layoutItemById.get(input.row.id);
   if (!layoutItem) {
     return null;
   }
@@ -320,6 +355,8 @@ export interface AgentStreamViewProps {
   context: AgentScreenAgent;
   streamItems: StreamItem[];
   streamHead?: StreamItem[];
+  projectionDisplay?: ProjectionDisplay | null;
+  onRequestActivityDetail?: (activityId: string) => void;
   pendingPermissions: Map<string, PendingPermission>;
   pendingMessageSubmissions?: readonly PendingMessageSubmission[];
   turnPresentation: TurnPresentation;
@@ -352,7 +389,8 @@ const AGENT_CAPABILITY_FLAG_KEYS: (keyof AgentCapabilityFlags)[] = [
   "supportsInPlaceEditLastUserMessage",
 ];
 
-const EMPTY_STREAM_HEAD: StreamItem[] = [];
+const EMPTY_STREAM_HEAD = INACTIVE_AGENT_STREAM_ITEMS;
+const EMPTY_ACTIVITY_FOLDS: readonly ActivityFold[] = [];
 
 function useRetainedValue<T>(value: T, active: boolean): T {
   const retainedRef = useRef(value);
@@ -365,6 +403,8 @@ const EMPTY_PENDING_MESSAGE_SUBMISSIONS: readonly PendingMessageSubmission[] = [
 const GROUPED_TOOL_CALL_DETAIL_MAX_HEIGHT = 200;
 
 const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamViewProps>(
+  // Stream rendering coordinates cross-platform layout, selection, pagination, and live updates.
+  // eslint-disable-next-line complexity
   function AgentStreamView(
     {
       agentId,
@@ -372,6 +412,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       context,
       streamItems,
       streamHead: providedStreamHead,
+      projectionDisplay = null,
+      onRequestActivityDetail,
       pendingPermissions,
       pendingMessageSubmissions = EMPTY_PENDING_MESSAGE_SUBMISSIONS,
       turnPresentation,
@@ -388,6 +430,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     ref,
   ) {
     const { t } = useTranslation();
+    const isActive = useRetainedPanelActive();
     const autoExpandActivity = useSettings((settings) => settings.autoExpandActivity);
     const autoExpandReasoning = useSettings((settings) => settings.autoExpandReasoning);
     const toolCallDetailLevel = useSettings((settings) => settings.toolCallDetailLevel);
@@ -424,27 +467,45 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
     const client = useSessionStore((state) => state.sessions[resolvedServerId]?.client ?? null);
     const sessionStreamHead = useSessionStore((state) =>
-      state.sessions[resolvedServerId]?.agentStreamHead?.get(agentId),
+      selectRetainedAgentStreamHead(
+        state,
+        isActive,
+        providedStreamHead === undefined,
+        resolvedServerId,
+        agentId,
+      ),
     );
     const streamHead = providedStreamHead ?? sessionStreamHead;
     const forkAgent = useForkAgent({ serverId: resolvedServerId, toast, readOnly });
-    const supportsAgentForkContextCursor = useSessionStore(
-      (state) =>
-        state.sessions[resolvedServerId]?.serverInfo?.features?.agentForkContextCursor === true,
+    const supportsAgentForkContextCursor = useSessionStore((state) =>
+      selectRetainedAgentPresentationFeature(
+        state,
+        isActive,
+        resolvedServerId,
+        "agentForkContextCursor",
+      ),
     );
-    const supportsInPlaceEditLastUserMessage = useSessionStore(
-      (state) =>
-        state.sessions[resolvedServerId]?.serverInfo?.features?.inPlaceEditLastUserMessage === true,
+    const supportsInPlaceEditLastUserMessage = useSessionStore((state) =>
+      selectRetainedAgentPresentationFeature(
+        state,
+        isActive,
+        resolvedServerId,
+        "inPlaceEditLastUserMessage",
+      ),
     );
-    const supportsChatOutline = useSessionStore(
-      (state) =>
-        state.sessions[resolvedServerId]?.serverInfo?.features?.agentTimelinePromptIndex === true,
+    const supportsChatOutline = useSessionStore((state) =>
+      selectRetainedAgentPresentationFeature(
+        state,
+        isActive,
+        resolvedServerId,
+        "agentTimelinePromptIndex",
+      ),
     );
-    const timelineEpoch = useSessionStore(
-      (state) => state.sessions[resolvedServerId]?.agentTimelineCursor.get(agentId)?.epoch ?? null,
+    const timelineEpoch = useSessionStore((state) =>
+      selectRetainedAgentTimelineEpoch(state, isActive, resolvedServerId, agentId),
     );
-    const isTimelineDetached = useSessionStore(
-      (state) => state.sessions[resolvedServerId]?.agentTimelineHasNewer.get(agentId) === true,
+    const isTimelineDetached = useSessionStore((state) =>
+      selectRetainedAgentTimelineDetached(state, isActive, resolvedServerId, agentId),
     );
 
     const workspaceRoot = context.cwd?.trim() || "";
@@ -457,13 +518,15 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       serverId: resolvedServerId,
       agentId,
       toast,
+      active: isActive,
     });
-    const { isLoadingOlder, hasOlder, progressKey, loadOlder } = historyPagination
+    const activeHistoryPagination = isActive ? historyPagination : undefined;
+    const { isLoadingOlder, hasOlder, progressKey, loadOlder } = activeHistoryPagination
       ? {
-          isLoadingOlder: historyPagination.isLoadingOlder,
-          hasOlder: historyPagination.hasOlder,
-          progressKey: historyPagination.progressKey,
-          loadOlder: historyPagination.onLoadOlder,
+          isLoadingOlder: activeHistoryPagination.isLoadingOlder,
+          hasOlder: activeHistoryPagination.hasOlder,
+          progressKey: activeHistoryPagination.progressKey,
+          loadOlder: activeHistoryPagination.onLoadOlder,
         }
       : agentHistoryPagination;
     // Keep entry/exit animations off on Android due to RN dispatchDraw crashes
@@ -576,14 +639,21 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     // cell-window and turn-lifecycle renders from background agents.
     // When isActive flips back to true, the context change triggers a re-render and
     // the component reads the current (fresh) streamItems/streamHead from props.
-    const isActive = useRetainedPanelActive();
     useEffect(() => {
       if (!isActive) {
         setActivityFoldOverrides(new Map());
       }
     }, [isActive]);
-    const effectiveStreamItems = useRetainedValue(streamItems, isActive);
+    const effectiveStreamItems = useRetainedValue(
+      projectionDisplay?.items ?? streamItems,
+      isActive,
+    );
     const effectiveStreamHead = useRetainedValue(streamHead, isActive);
+    const effectiveProjectionFolds = useRetainedValue(
+      projectionDisplay?.activityFolds ?? EMPTY_ACTIVITY_FOLDS,
+      isActive,
+    );
+    const activeRequestActivityDetail = isActive ? onRequestActivityDetail : undefined;
     const effectiveTurnPresentation = useRetainedValue(turnPresentation, isActive);
     const isTurnActive = effectiveTurnPresentation.isActive;
     const editableLastUserMessageId = useMemo(
@@ -639,6 +709,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         head: projectedToolCalls.head,
         platform: isWeb ? "web" : "native",
         isMobileBreakpoint: isMobile,
+        activityFolds: effectiveProjectionFolds,
       });
     }, [
       isMobile,
@@ -646,13 +717,13 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       projectedToolCalls.head,
       projectedToolCalls.tail,
       effectiveTurnPresentation.startedAt,
+      effectiveProjectionFolds,
     ]);
     const streamLayout = useMemo(
       () =>
         layoutStream({
           strategy: streamRenderStrategy,
           isTurnActive,
-          agentStatus: context.status,
           history: baseRenderModel.history,
           liveHead: baseRenderModel.segments.liveHead,
           timingByAssistantId: baseRenderModel.turnTiming.byAssistantId,
@@ -661,7 +732,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         baseRenderModel.history,
         baseRenderModel.segments.liveHead,
         baseRenderModel.turnTiming.byAssistantId,
-        context.status,
         isTurnActive,
         streamRenderStrategy,
       ],
@@ -675,7 +745,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       timelineEpoch,
       tail: effectiveStreamItems,
       head: effectiveStreamHead,
-      enabled: supportsChatOutline && chatOutlineEnabled,
+      enabled: isActive && supportsChatOutline && chatOutlineEnabled,
       viewportRef,
       onJumpError: handleTimelineHistoryLoadError,
     });
@@ -694,6 +764,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     );
 
     const scrollToBottom = useCallback(() => {
+      if (!isActive) {
+        return;
+      }
       if (!isTimelineDetached) {
         viewportRef.current?.scrollToBottom("jump-to-bottom");
         return;
@@ -706,7 +779,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         scrollToBottom: () => viewportRef.current?.scrollToBottom("jump-to-bottom"),
         onError: handleTimelineHistoryLoadError,
       });
-    }, [agentId, handleTimelineHistoryLoadError, isTimelineDetached, resolvedServerId]);
+    }, [agentId, handleTimelineHistoryLoadError, isActive, isTimelineDetached, resolvedServerId]);
 
     const setInlineDetailsExpanded = useCallback(
       (itemId: string, expanded: boolean) => {
@@ -745,6 +818,15 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         return next;
       });
     }, []);
+
+    useEffect(() => {
+      requestIdleProjectionActivityDetails({
+        active: isActive,
+        autoExpand: autoExpandActivity,
+        folds: effectiveProjectionFolds,
+        requestDetail: activeRequestActivityDetail,
+      });
+    }, [activeRequestActivityDetail, autoExpandActivity, effectiveProjectionFolds, isActive]);
 
     const renderUserMessageItem = useCallback(
       (layoutItem: StreamLayoutItem, item: Extract<StreamItem, { kind: "user_message" }>) => {
@@ -987,22 +1069,45 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const renderStreamItem = useCallback(
       (layoutItem: StreamLayoutItem) => {
         const fold = layoutItem.activityFold;
-        const expanded = fold
-          ? isActivityFoldExpanded(fold, activityFoldOverrides, autoExpandActivity)
-          : true;
-        if (fold && !expanded && !layoutItem.isActivityFoldHost) {
-          return null;
+        if (!fold) {
+          return renderStreamItemWithTurnFooter({
+            content: renderStreamItemContent(layoutItem),
+            layoutItem,
+            strategy: streamRenderStrategy,
+            supportsTimelineCursor: supportsAgentForkContextCursor,
+            onForkAssistantTurn: readOnly ? undefined : handleForkAssistantTurn,
+          });
         }
-        const itemContent = expanded ? renderStreamItemContent(layoutItem) : null;
-        const content =
-          fold && layoutItem.isActivityFoldHost ? (
-            <>
-              <ActivityFoldHeader fold={fold} expanded={expanded} onToggle={toggleActivityFold} />
-              {itemContent}
-            </>
-          ) : (
-            itemContent
-          );
+        const expanded = isActivityFoldExpanded(fold, activityFoldOverrides, autoExpandActivity);
+        const memberDetails = expanded
+          ? layoutActivityFoldMembers({
+              strategy: streamRenderStrategy,
+              fold,
+              aboveItem: layoutItem.aboveItem,
+              belowItem: layoutItem.belowItem,
+            }).map((memberLayoutItem) => (
+              <React.Fragment key={memberLayoutItem.item.id}>
+                {renderStreamItemWithTurnFooter({
+                  content: renderStreamItemContent(memberLayoutItem),
+                  layoutItem: memberLayoutItem,
+                  strategy: streamRenderStrategy,
+                  supportsTimelineCursor: supportsAgentForkContextCursor,
+                  onForkAssistantTurn: readOnly ? undefined : handleForkAssistantTurn,
+                })}
+              </React.Fragment>
+            ))
+          : null;
+        const content = (
+          <>
+            <ActivityFoldHeader
+              fold={fold}
+              expanded={expanded}
+              onToggle={toggleActivityFold}
+              onRequestDetail={activeRequestActivityDetail}
+            />
+            {memberDetails}
+          </>
+        );
         return renderStreamItemWithTurnFooter({
           content,
           layoutItem,
@@ -1020,6 +1125,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         streamRenderStrategy,
         supportsAgentForkContextCursor,
         toggleActivityFold,
+        activeRequestActivityDetail,
       ],
     );
 
@@ -1094,7 +1200,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const layoutHistoryItemById = useMemo(() => {
       const itemById = new Map<string, StreamLayoutItem>();
       for (const item of streamLayout.history) {
-        itemById.set(item.item.id, item);
+        itemById.set(item.row.id, item);
       }
       return itemById;
     }, [streamLayout.history]);
@@ -1102,15 +1208,15 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const layoutLiveHeadItemById = useMemo(() => {
       const itemById = new Map<string, StreamLayoutItem>();
       for (const item of streamLayout.liveHead) {
-        itemById.set(item.item.id, item);
+        itemById.set(item.row.id, item);
       }
       return itemById;
     }, [streamLayout.liveHead]);
 
     const renderHistoryRow = useCallback(
-      (item: StreamItem) =>
+      (row: StreamRenderRow) =>
         renderHistoryStreamItem({
-          item,
+          row,
           layoutItemById: layoutHistoryItemById,
           renderStreamItem,
         }),
@@ -1119,9 +1225,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
     const renderHistoryVirtualizedRow = useCallback<
       StreamSegmentRenderers["renderHistoryVirtualizedRow"]
-    >((item) => renderHistoryRow(item), [renderHistoryRow]);
+    >((row) => renderHistoryRow(row), [renderHistoryRow]);
     const renderHistoryMountedRow = useCallback<StreamSegmentRenderers["renderHistoryMountedRow"]>(
-      (item) => renderHistoryRow(item),
+      (row) => renderHistoryRow(row),
       [renderHistoryRow],
     );
     // useStableEvent keeps the function reference stable across flushes.
@@ -1129,9 +1235,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     // so the live-head render always uses the latest layout without causing renderers
     // to be a new object on every text-chunk flush.
     const renderLiveHeadRow: StreamSegmentRenderers["renderLiveHeadRow"] = useStableEvent(
-      (item: StreamItem) =>
+      (row: StreamRenderRow) =>
         renderLiveHeadStreamItem({
-          item,
+          row,
           layoutItemById: layoutLiveHeadItemById,
           renderStreamItem,
         }),
@@ -1341,6 +1447,10 @@ function agentStreamViewPropsEqual(
   reasons.push(...collectAgentScreenAgentDiffs(left.context, right.context));
   if (left.streamItems !== right.streamItems) reasons.push("streamItems");
   if (left.streamHead !== right.streamHead) reasons.push("streamHead");
+  if (left.projectionDisplay !== right.projectionDisplay) reasons.push("projectionDisplay");
+  if (left.onRequestActivityDetail !== right.onRequestActivityDetail) {
+    reasons.push("onRequestActivityDetail");
+  }
   if (left.pendingPermissions !== right.pendingPermissions) reasons.push("pendingPermissions");
   if (left.pendingMessageSubmissions !== right.pendingMessageSubmissions) {
     reasons.push("pendingMessageSubmissions");

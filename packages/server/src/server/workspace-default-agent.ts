@@ -3,7 +3,15 @@ import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import type { WorkspaceRegistry } from "./workspace-registry.js";
 
-function isEligibleWorkspaceDefaultAgent(workspaceId: string, agent: StoredAgentRecord): boolean {
+export type WorkspaceDefaultAgentCandidate = Pick<
+  StoredAgentRecord,
+  "id" | "workspaceId" | "archivedAt" | "internal" | "labels" | "createdAt"
+>;
+
+function isEligibleWorkspaceDefaultAgent(
+  workspaceId: string,
+  agent: WorkspaceDefaultAgentCandidate,
+): boolean {
   return (
     agent.workspaceId === workspaceId &&
     !agent.archivedAt &&
@@ -14,7 +22,7 @@ function isEligibleWorkspaceDefaultAgent(workspaceId: string, agent: StoredAgent
 
 export function selectWorkspaceDefaultAgentId(
   workspaceId: string,
-  agents: Iterable<StoredAgentRecord>,
+  agents: Iterable<WorkspaceDefaultAgentCandidate>,
 ): string | null {
   const eligible = Array.from(agents).filter((agent) =>
     isEligibleWorkspaceDefaultAgent(workspaceId, agent),
@@ -29,7 +37,7 @@ export function selectWorkspaceDefaultAgentId(
 export async function setWorkspaceDefaultAgentIfAbsent(options: {
   workspaceRegistry: WorkspaceRegistry;
   workspaceId: string;
-  agent: StoredAgentRecord;
+  agent: WorkspaceDefaultAgentCandidate;
 }): Promise<string | null> {
   if (!isEligibleWorkspaceDefaultAgent(options.workspaceId, options.agent)) {
     return null;

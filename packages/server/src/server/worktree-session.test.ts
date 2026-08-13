@@ -31,7 +31,7 @@ import {
 } from "../utils/worktree.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type { TerminalSession } from "../terminal/terminal.js";
-import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
+import type { AgentStorage } from "./agent/agent-storage.js";
 import {
   createPersistedProjectRecord,
   type PersistedProjectRecord,
@@ -526,9 +526,9 @@ describe("create-agent worktree setup boundary", () => {
   });
 });
 
-function createAgentStorageStub(): Pick<AgentStorage, "list"> {
+function createAgentStorageStub(): Pick<AgentStorage, "listAllMetadata"> {
   return {
-    list: async (): Promise<StoredAgentRecord[]> => [],
+    listAllMetadata: async () => [],
   };
 }
 

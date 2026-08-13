@@ -21,6 +21,14 @@ import { shallow, useShallow } from "zustand/shallow";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { AgentStreamView, type AgentStreamViewHandle } from "@/agent-stream/view";
 import {
+  selectRetainedAgentMessageSubmissions,
+  selectRetainedAgentPendingPermissions,
+  selectRetainedAgentProjectionLane,
+  selectRetainedAgentStreamTail,
+  selectRetainedAgentTurnPresentation,
+  selectRetainedViewedTimelineSync,
+} from "@/agent-stream/retained-session-selectors";
+import {
   createLastUserMessageEditController,
   type LastUserMessageEditController,
   type LastUserMessageEditEffect,
@@ -33,7 +41,6 @@ import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { SidebarCallout } from "@/components/sidebar-callout";
 import { Composer } from "@/composer";
-import { getActiveMessageSubmissions } from "@/composer/submission/model";
 import { RewindComposerRestoreProvider } from "@/components/rewind/composer-restore";
 import { getProviderIcon } from "@/components/provider-icons";
 import {
@@ -80,6 +87,10 @@ import {
 } from "@/runtime/host-runtime";
 import { planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
 import {
+  buildProjectionDisplay,
+  getActivityDetailPageValidationError,
+} from "@/timeline/projection-lane";
+import {
   deriveRouteBottomAnchorIntent,
   deriveRouteBottomAnchorRequest,
 } from "@/screens/agent/agent-ready-screen-bottom-anchor";
@@ -104,7 +115,6 @@ import {
 } from "@/subagents";
 import { SubagentsTrack } from "@/subagents/track";
 import type { PendingPermission } from "@/types/shared";
-import type { StreamItem } from "@/types/stream";
 import { getInitDeferred, getInitKey } from "@/utils/agent-initialization";
 import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { applyLegacyDaemonWorkspaceOwnership } from "@/workspace/legacy-daemon-workspaces";
@@ -472,10 +482,9 @@ export function useDraftPanelDescriptor(
   });
 }
 
-const EMPTY_STREAM_ITEMS: StreamItem[] = [];
-const EMPTY_MESSAGE_SUBMISSIONS = [] as const;
+const PROJECTION_ACTIVITY_DETAIL_LIMIT = 200;
+const MAX_PROJECTION_DETAIL_PAGES = 32;
 const EMPTY_PENDING_PERMISSIONS = new Map<string, PendingPermission>();
-const EMPTY_PENDING_PERMISSION_LIST: PendingPermission[] = [];
 
 type RouteBottomAnchorRequest = ReturnType<typeof deriveRouteBottomAnchorRequest>;
 
@@ -768,6 +777,8 @@ function AgentPanelBody({
   );
 }
 
+// This component coordinates retained state, composer actions, projections, and route recovery.
+// eslint-disable-next-line complexity
 function ChatAgentContent({
   serverId,
   agentId,
@@ -827,6 +838,14 @@ function ChatAgentContent({
       ? selectAgentTimelineState(state.sessions[serverId], agentId).status
       : ("cold" as const),
   );
+  const projectionTimelineIdentity = useSessionStore(
+    useShallow((state) => {
+      if (!agentId) return null;
+      const lane = state.sessions[serverId]?.agentTimelineProjectionLanes.get(agentId);
+      return lane ? { epoch: lane.epoch, timelineRevision: lane.timelineRevision } : null;
+    }),
+  );
+  const hasProjectionTimeline = projectionTimelineIdentity !== null;
   const hasAppliedAuthoritativeHistory = replicaTimelineStatus === "synced";
   const agentHistorySyncGeneration = useSessionStore((state) =>
     agentId ? (state.sessions[serverId]?.agentHistorySyncGeneration?.get(agentId) ?? -1) : -1,
@@ -864,7 +883,7 @@ function ChatAgentContent({
   });
 
   const hasHydratedHistoryBefore =
-    hasAppliedAuthoritativeHistory || replicaTimelineStatus === "painted";
+    hasAppliedAuthoritativeHistory || replicaTimelineStatus === "painted" || hasProjectionTimeline;
 
   const attentionController = useAgentAttentionClear({
     agentId,
@@ -980,6 +999,28 @@ function ChatAgentContent({
     return agentHistorySyncGeneration < historySyncGeneration;
   }, [agentHistorySyncGeneration, agentId, historySyncGeneration]);
 
+  useEffect(() => {
+    if (
+      !agentId ||
+      !hasProjectionTimeline ||
+      !needsAuthoritativeSync ||
+      !isPaneVisible ||
+      !isConnected
+    ) {
+      return;
+    }
+    viewedTimelineSync?.refreshAgent(agentId);
+  }, [
+    agentId,
+    hasProjectionTimeline,
+    isConnected,
+    isPaneVisible,
+    needsAuthoritativeSync,
+    projectionTimelineIdentity?.epoch,
+    projectionTimelineIdentity?.timelineRevision,
+    viewedTimelineSync,
+  ]);
+
   const agent = useMemo<AgentScreenAgent | null>(
     () => buildChatAgentFromState(agentState, projectPlacement),
     [agentState, projectPlacement],
@@ -1061,7 +1102,7 @@ function ChatAgentContent({
     if (agentState.archivedAt) {
       return;
     }
-    if (agentState.id && hasAppliedAuthoritativeHistory) {
+    if (agentState.id && (hasAppliedAuthoritativeHistory || hasProjectionTimeline)) {
       if (
         missingAgentState.kind === "resolving" ||
         missingAgentState.kind === "not_found" ||
@@ -1128,6 +1169,7 @@ function ChatAgentContent({
     agentState.id,
     agentState.archivedAt,
     hasAppliedAuthoritativeHistory,
+    hasProjectionTimeline,
     agentId,
     client,
     ensureAgentIsInitialized,
@@ -1135,6 +1177,8 @@ function ChatAgentContent({
     isConnected,
     isPaneVisible,
     missingAgentState.kind,
+    projectionTimelineIdentity?.epoch,
+    projectionTimelineIdentity?.timelineRevision,
     serverId,
   ]);
 
@@ -1153,6 +1197,7 @@ function ChatAgentContent({
   invariant(effectiveAgent, "effectiveAgent is defined when the non-ready view is absent");
   const agentCwd = agentState.cwd;
   invariant(agentCwd, "agent cwd is defined when agent content is ready");
+  const hasRenderableHistory = hasAppliedAuthoritativeHistory || hasProjectionTimeline;
   const showHistorySyncOverlay =
     viewState.tag === "ready" &&
     viewState.sync.status === "catching_up" &&
@@ -1169,7 +1214,7 @@ function ChatAgentContent({
       agentState={agentState}
       effectiveAgent={effectiveAgent}
       routeBottomAnchorRequest={routeBottomAnchorRequest}
-      hasAppliedAuthoritativeHistory={hasAppliedAuthoritativeHistory}
+      hasAppliedAuthoritativeHistory={hasRenderableHistory}
       toastApi={toastApi}
       toast={toastState}
       dismiss={dismissToast}
@@ -1467,6 +1512,7 @@ const AgentStreamSection = memo(function AgentStreamSection({
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
 }) {
   const { openTab } = usePaneContext();
+  const isActive = useRetainedPanelActive();
   const workingDiffFocusRequestRef = useRef(0);
   const handleOpenWorkingDiffFile = useCallback(
     (path: string, disposition: OpenFileDisposition) => {
@@ -1476,42 +1522,137 @@ const AgentStreamSection = memo(function AgentStreamSection({
     },
     [openTab],
   );
-  const streamItemsRaw = useSessionStore((state) =>
-    agentId ? state.sessions[serverId]?.agentStreamTail?.get(agentId) : undefined,
+  const streamItems = useSessionStore((state) =>
+    selectRetainedAgentStreamTail(state, isActive, serverId, agentId),
   );
+  const projectionLane = useSessionStore((state) =>
+    selectRetainedAgentProjectionLane(state, isActive, serverId, agentId),
+  );
+  const projectionDisplay = useMemo(
+    () => (projectionLane ? buildProjectionDisplay(projectionLane) : null),
+    [projectionLane],
+  );
+  const beginProjectionDetail = useSessionStore(
+    (state) => state.beginAgentTimelineProjectionActivityDetail,
+  );
+  const applyProjectionDetail = useSessionStore(
+    (state) => state.applyAgentTimelineProjectionActivityDetail,
+  );
+  const failProjectionDetail = useSessionStore(
+    (state) => state.failAgentTimelineProjectionActivityDetail,
+  );
+  const markProjectionCanonicalReplacementPending = useSessionStore(
+    (state) => state.markAgentTimelineProjectionCanonicalReplacementPending,
+  );
+  const viewedTimelineSync = useSessionStore((state) =>
+    selectRetainedViewedTimelineSync(state, isActive, serverId),
+  );
+  const requestProjectionActivityDetail = useCallback(
+    (activityId: string) => {
+      if (!isActive || !agentId) return;
+      const request = beginProjectionDetail(
+        serverId,
+        agentId,
+        activityId,
+        PROJECTION_ACTIVITY_DETAIL_LIMIT,
+      );
+      if (!request) return;
+      const currentClient = useSessionStore.getState().sessions[serverId]?.client;
+      if (!currentClient) {
+        failProjectionDetail(serverId, agentId, {
+          activityId,
+          generation: request.generation,
+          error: "Daemon unavailable",
+        });
+        return;
+      }
+
+      void (async () => {
+        let nextRequest = request;
+        try {
+          for (let pageIndex = 0; pageIndex < MAX_PROJECTION_DETAIL_PAGES; pageIndex += 1) {
+            const response = await currentClient.fetchAgentTimelineActivityDetail(agentId, {
+              epoch: nextRequest.epoch,
+              timelineRevision: nextRequest.timelineRevision,
+              activityId: nextRequest.activityId,
+              sourceSeqRanges: nextRequest.sourceSeqRanges,
+              ...(nextRequest.cursor ? { cursor: nextRequest.cursor } : {}),
+              limit: nextRequest.limit,
+            });
+            const payload = response.projectionPayload;
+            if (!payload || payload.kind !== "activity_detail") {
+              throw new Error("Activity detail projection was not returned");
+            }
+            const validationError = getActivityDetailPageValidationError(nextRequest, payload);
+            if (validationError) {
+              throw new Error(validationError);
+            }
+            const applied = applyProjectionDetail(serverId, agentId, {
+              activityId,
+              generation: request.generation,
+              payload,
+            });
+            if (!applied) return;
+            if (payload.error) return;
+            if (!payload.hasMore) return;
+            if (!payload.nextCursor) {
+              throw new Error("Activity detail projection cursor did not advance");
+            }
+            nextRequest = Object.assign({}, nextRequest, { cursor: payload.nextCursor });
+          }
+          throw new Error("Activity detail projection exceeded its page bound");
+        } catch (error) {
+          failProjectionDetail(serverId, agentId, {
+            activityId,
+            generation: request.generation,
+            error: toErrorMessage(error),
+          });
+        }
+      })();
+    },
+    [
+      agentId,
+      applyProjectionDetail,
+      beginProjectionDetail,
+      failProjectionDetail,
+      isActive,
+      serverId,
+    ],
+  );
+  const projectionHistoryPagination = useMemo(() => {
+    if (!isActive || !projectionLane) return undefined;
+    return {
+      hasOlder: projectionLane.hasOlderTurns && !projectionLane.canonicalReplacementPending,
+      isLoadingOlder: projectionLane.canonicalReplacementPending,
+      progressKey: projectionLane.canonicalReplacementPending
+        ? "projection-canonical-replacement"
+        : "projection-history",
+      onLoadOlder: () => {
+        if (!isActive || !agentId || projectionLane.canonicalReplacementPending) return false;
+        const marked = markProjectionCanonicalReplacementPending(serverId, agentId);
+        if (marked) viewedTimelineSync?.refreshAgent(agentId);
+        return marked;
+      },
+    };
+  }, [
+    agentId,
+    isActive,
+    markProjectionCanonicalReplacementPending,
+    projectionLane,
+    serverId,
+    viewedTimelineSync,
+  ]);
   const pendingMessageSubmissions = useSessionStore(
     useShallow((state) =>
-      agentId
-        ? getActiveMessageSubmissions(state.sessions[serverId]?.messageSubmissions.get(agentId))
-        : EMPTY_MESSAGE_SUBMISSIONS,
+      selectRetainedAgentMessageSubmissions(state, isActive, serverId, agentId),
     ),
   );
   const turnPresentation = useSessionStore(
-    useShallow((state) =>
-      agentId
-        ? selectAgentTurnPresentation(state.sessions[serverId], agentId)
-        : { isActive: false, isCancelling: false, startedAt: null, turnId: null },
-    ),
+    useShallow((state) => selectRetainedAgentTurnPresentation(state, isActive, serverId, agentId)),
   );
-  const streamItems = streamItemsRaw ?? EMPTY_STREAM_ITEMS;
   const pendingPermissionList = useStoreWithEqualityFn(
     useSessionStore,
-    (state) => {
-      if (!agentId) {
-        return EMPTY_PENDING_PERMISSION_LIST;
-      }
-      const allPendingPermissions = state.sessions[serverId]?.pendingPermissions;
-      if (!allPendingPermissions) {
-        return EMPTY_PENDING_PERMISSION_LIST;
-      }
-      const filtered: PendingPermission[] = [];
-      for (const permission of allPendingPermissions.values()) {
-        if (permission.agentId === agentId) {
-          filtered.push(permission);
-        }
-      }
-      return filtered.length > 0 ? filtered : EMPTY_PENDING_PERMISSION_LIST;
-    },
+    (state) => selectRetainedAgentPendingPermissions(state, isActive, serverId, agentId),
     shallow,
   );
   const pendingPermissions = useMemo(() => {
@@ -1528,6 +1669,8 @@ const AgentStreamSection = memo(function AgentStreamSection({
       serverId={serverId}
       context={agent}
       streamItems={streamItems}
+      projectionDisplay={projectionDisplay}
+      onRequestActivityDetail={isActive ? requestProjectionActivityDetail : undefined}
       pendingPermissions={pendingPermissions}
       routeBottomAnchorRequest={routeBottomAnchorRequest}
       isAuthoritativeHistoryReady={hasAppliedAuthoritativeHistory}
@@ -1536,6 +1679,7 @@ const AgentStreamSection = memo(function AgentStreamSection({
       onEditLastUserMessageEffect={onEditLastUserMessageEffect}
       pendingMessageSubmissions={pendingMessageSubmissions}
       turnPresentation={turnPresentation}
+      historyPagination={projectionHistoryPagination}
       onOpenWorkspaceFile={onOpenWorkspaceFile}
       onOpenWorkingDiffFile={handleOpenWorkingDiffFile}
     />

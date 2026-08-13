@@ -246,6 +246,22 @@ describe("AgentStorage", () => {
     expect(buildSessionConfig(persisted!)).toMatchObject(persisted!.config!);
   });
 
+  test("conditional upsert refuses to overwrite a newer record revision", async () => {
+    const agentId = "agent-conditional-upsert";
+    await storage.applySnapshot(createManagedAgent({ id: agentId }));
+    const originalRecord = (await storage.get(agentId))!;
+    const originalEntry = (await storage.listAllMetadata()).find((entry) => entry.id === agentId)!;
+
+    await storage.upsert({ ...originalRecord, title: "Newer title" });
+    await expect(
+      storage.upsert(
+        { ...originalRecord, title: "Stale rollback" },
+        { expectedRecordRevision: originalEntry.recordRevision },
+      ),
+    ).rejects.toThrow(`Agent record revision changed: ${agentId}`);
+    await expect(storage.get(agentId)).resolves.toMatchObject({ title: "Newer title" });
+  });
+
   test("round-trips lastMessageAt while keeping legacy records without the field readable", async () => {
     const agentId = "agent-last-message-at";
     const messageAt = new Date("2026-08-05T07:02:00.000Z");
@@ -405,6 +421,43 @@ describe("AgentStorage", () => {
     agent.hubExecutionContract = prepared;
     await storage.applySnapshot(agent);
     expect((await storage.get(agent.id))?.hubExecutionContract).toEqual(applied);
+  });
+
+  test("only the dedicated timeline revision mutation changes the stored revision", async () => {
+    const agentId = "agent-timeline-revision";
+    await storage.applySnapshot(createManagedAgent({ id: agentId }), { title: "Original" });
+    await storage.setTimelineRevision(agentId, "00000000-0000-4000-8000-000000000042");
+
+    await storage.applySnapshot(
+      createManagedAgent({
+        id: agentId,
+        updatedAt: new Date("2025-01-02T00:00:00.000Z"),
+      }),
+    );
+    await storage.setTitle(agentId, "Updated title");
+
+    expect(await storage.get(agentId)).toMatchObject({
+      title: "Updated title",
+      timelineRevision: "00000000-0000-4000-8000-000000000042",
+    });
+    const restarted = new AgentStorage(storagePath, logger);
+    await restarted.initialize();
+    expect(await restarted.get(agentId)).toMatchObject({
+      timelineRevision: "00000000-0000-4000-8000-000000000042",
+    });
+  });
+
+  test("clears timeline eligibility without ordinary snapshots restoring the revision", async () => {
+    const agentId = "agent-cleared-timeline-revision";
+    await storage.applySnapshot(createManagedAgent({ id: agentId }));
+    await storage.setTimelineRevision(agentId, "00000000-0000-4000-8000-000000000043");
+    await storage.setTimelineRevision(agentId, null);
+    await storage.applySnapshot(createManagedAgent({ id: agentId }));
+
+    expect(await storage.get(agentId)).not.toHaveProperty("timelineRevision");
+    const restarted = new AgentStorage(storagePath, logger);
+    await restarted.initialize();
+    expect(await restarted.get(agentId)).not.toHaveProperty("timelineRevision");
   });
 
   test("stores titles independently of snapshots", async () => {
@@ -575,7 +628,7 @@ describe("AgentStorage", () => {
     expect(record).not.toBeNull();
 
     // The persisted directory must not contain a colon (invalid on Windows)
-    const dirs = readdirSync(storagePath);
+    const dirs = readdirSync(storagePath).filter((entry) => entry !== ".paseo-agent-storage");
     expect(dirs).toHaveLength(1);
     expect(dirs[0]).not.toContain(":");
     expect(dirs[0]).toBe("D-Users-dev-MyProject");
@@ -641,5 +694,305 @@ describe("AgentStorage", () => {
     const afterReload = new AgentStorage(storagePath, logger);
     const after = await afterReload.list();
     expect(after.some((r) => r.id === agentId)).toBe(false);
+  });
+
+  test("initializes from a valid lightweight catalog without parsing full records", async () => {
+    const agentId = "agent-catalog-startup";
+    await storage.applySnapshot(createManagedAgent({ id: agentId, cwd: "/tmp/catalog-startup" }), {
+      title: "Catalog title",
+    });
+    await storage.flush();
+
+    const metadata = await storage.listAllMetadata();
+    expect(metadata).toHaveLength(1);
+    expect(metadata[0]).toMatchObject({ id: agentId, title: "Catalog title" });
+    expect(metadata[0]).not.toHaveProperty("config");
+    expect(metadata[0]).not.toHaveProperty("runtimeInfo");
+
+    const recordPath = path.join(storagePath, ...metadata[0].recordPath.split("/"));
+    await fs.writeFile(recordPath, "{ definitely not valid json", "utf8");
+
+    const restarted = new AgentStorage(storagePath, logger);
+    await restarted.initialize();
+    expect(await restarted.countMetadata()).toBe(1);
+    expect(await restarted.listAllMetadata()).toMatchObject([{ id: agentId }]);
+
+    expect(await restarted.get(agentId)).toBeNull();
+    expect(await restarted.countMetadata()).toBe(0);
+  });
+
+  test("rebuilds once from a mutation marker and excludes the reserved control tree", async () => {
+    const agentId = "agent-marker-recovery";
+    await storage.applySnapshot(createManagedAgent({ id: agentId, cwd: "/tmp/marker" }));
+    const [metadata] = await storage.listAllMetadata();
+    const recordPath = path.join(storagePath, ...metadata.recordPath.split("/"));
+    const record = JSON.parse(await fs.readFile(recordPath, "utf8"));
+    await fs.writeFile(recordPath, JSON.stringify({ ...record, title: "Recovered" }, null, 2));
+    await fs.writeFile(
+      path.join(storagePath, ".paseo-agent-storage", "mutation.json"),
+      JSON.stringify({ interrupted: true }),
+    );
+
+    const restarted = new AgentStorage(storagePath, logger);
+    await restarted.initialize();
+    expect(await restarted.listAllMetadata()).toMatchObject([{ id: agentId, title: "Recovered" }]);
+    expect(
+      await fs
+        .access(path.join(storagePath, ".paseo-agent-storage", "mutation.json"))
+        .then(() => true)
+        .catch(() => false),
+    ).toBe(false);
+  });
+
+  test("binds metadata cursors to the catalog generation", async () => {
+    await storage.applySnapshot(
+      createManagedAgent({ id: "agent-page-a", updatedAt: new Date("2025-01-02T00:00:00Z") }),
+    );
+    await storage.applySnapshot(
+      createManagedAgent({ id: "agent-page-b", updatedAt: new Date("2025-01-01T00:00:00Z") }),
+    );
+
+    const first = await storage.listMetadataPage({
+      limit: 1,
+      sort: [{ key: "updated_at", direction: "desc" }],
+    });
+    expect(first.entries.map((entry) => entry.id)).toEqual(["agent-page-a"]);
+    expect(first.nextCursor).toBeTypeOf("string");
+
+    await storage.applySnapshot(
+      createManagedAgent({ id: "agent-page-c", updatedAt: new Date("2025-01-03T00:00:00Z") }),
+    );
+    await expect(
+      storage.listMetadataPage({
+        limit: 1,
+        sort: [{ key: "updated_at", direction: "desc" }],
+        cursor: first.nextCursor ?? undefined,
+      }),
+    ).rejects.toThrow("stale metadata cursor");
+  });
+
+  test("returns all persistence handle conflicts without indexing non-string native handles", async () => {
+    const baseRecord = await (async () => {
+      await storage.applySnapshot(createManagedAgent({ id: "agent-handle-template" }));
+      return (await storage.get("agent-handle-template"))!;
+    })();
+    await storage.upsert({
+      ...baseRecord,
+      id: "agent-handle-old",
+      createdAt: "2025-01-01T00:00:00.000Z",
+      updatedAt: "2025-01-01T00:00:00.000Z",
+      lastActivityAt: "2025-01-03T00:00:00.000Z",
+      persistence: {
+        provider: "codex",
+        sessionId: "shared-session",
+        nativeHandle: { legacy: true },
+      },
+    });
+    await storage.upsert({
+      ...baseRecord,
+      id: "agent-handle-new",
+      createdAt: "2025-01-02T00:00:00.000Z",
+      updatedAt: "2025-01-02T00:00:00.000Z",
+      persistence: {
+        provider: "codex",
+        sessionId: "shared-session",
+        nativeHandle: "native-session",
+      },
+    });
+
+    expect(
+      (
+        await storage.findByPersistenceHandle({
+          provider: "codex",
+          sessionId: "shared-session",
+        })
+      ).map((entry) => entry.id),
+    ).toEqual(["agent-handle-new", "agent-handle-old"]);
+    expect(
+      (
+        await storage.findByPersistenceHandle({
+          provider: "codex",
+          sessionId: "missing",
+          nativeHandle: "native-session",
+        })
+      ).map((entry) => entry.id),
+    ).toEqual(["agent-handle-new"]);
+    expect(
+      await storage.findByPersistenceHandle({
+        provider: "codex",
+        sessionId: "missing",
+        nativeHandle: "[object Object]",
+      }),
+    ).toEqual([]);
+  });
+
+  test("keeps catalog generations monotonic when a recovery marker is newer than the catalog", async () => {
+    const agentId = "agent-generation-recovery";
+    await storage.applySnapshot(createManagedAgent({ id: agentId, cwd: "/tmp/generation" }));
+    const [metadata] = await storage.listAllMetadata();
+    const controlDir = path.join(storagePath, ".paseo-agent-storage");
+
+    await fs.writeFile(path.join(controlDir, "catalog.json"), "{ invalid", "utf8");
+    await fs.writeFile(
+      path.join(controlDir, "mutation.json"),
+      JSON.stringify({
+        version: 1,
+        operationId: "11111111-1111-4111-8111-111111111111",
+        operation: "upsert",
+        baseGeneration: 7,
+        nextGeneration: 8,
+        affectedIds: [agentId],
+        oldPaths: [],
+        newPaths: [metadata.recordPath],
+        recordRevision: metadata.recordRevision,
+        createdAt: "2026-08-09T00:00:00.000Z",
+      }),
+      "utf8",
+    );
+
+    const restarted = new AgentStorage(storagePath, logger);
+    await restarted.initialize();
+    expect((await restarted.getMetadataSnapshot()).generation).toBe(9);
+  });
+
+  test("keeps prepared records invisible and commits them idempotently", async () => {
+    await storage.applySnapshot(createManagedAgent({ id: "agent-prepared-template" }));
+    const template = (await storage.get("agent-prepared-template"))!;
+    const prepared = await storage.prepareRecord(
+      {
+        ...template,
+        id: "agent-prepared",
+        cwd: "/tmp/prepared",
+        persistence: {
+          provider: "codex",
+          sessionId: "prepared-session",
+        },
+      },
+      { kind: "absent" },
+    );
+
+    expect(await storage.get("agent-prepared")).toBeNull();
+    expect((await storage.listAllMetadata()).map((entry) => entry.id)).not.toContain(
+      "agent-prepared",
+    );
+
+    const firstCommit = await storage.commitPreparedRecord(prepared.preparedId);
+    const repeatedCommit = await storage.commitPreparedRecord(prepared.preparedId);
+    expect(repeatedCommit).toEqual(firstCommit);
+    expect(firstCommit).toMatchObject({
+      id: "agent-prepared",
+      recordRevision: prepared.recordRevision,
+      preparedCommitId: prepared.preparedId,
+    });
+    expect(await storage.get("agent-prepared")).toMatchObject({
+      id: "agent-prepared",
+      cwd: "/tmp/prepared",
+    });
+
+    await storage.discardPreparedRecord(prepared.preparedId);
+    expect(await storage.get("agent-prepared")).not.toBeNull();
+  });
+
+  test("preserves prepared commit identity when recovery is interrupted", async () => {
+    await storage.applySnapshot(createManagedAgent({ id: "agent-recovery-template" }));
+    const template = (await storage.get("agent-recovery-template"))!;
+    const prepared = await storage.prepareRecord(
+      {
+        ...template,
+        id: "agent-recovery-prepared",
+        cwd: "/tmp/recovery-prepared",
+      },
+      { kind: "absent" },
+    );
+
+    const interruptedCommit = new AgentStorage(storagePath, logger, {
+      faultInjector(point) {
+        if (point === "record_write") throw new Error("interrupt prepared commit");
+      },
+    });
+    await expect(interruptedCommit.commitPreparedRecord(prepared.preparedId)).rejects.toThrow(
+      "interrupt prepared commit",
+    );
+
+    const interruptedRecovery = new AgentStorage(storagePath, logger, {
+      faultInjector(point) {
+        if (point === "mutation_marker") throw new Error("interrupt recovery marker");
+      },
+    });
+    await expect(interruptedRecovery.initialize()).rejects.toThrow("interrupt recovery marker");
+
+    const recovered = new AgentStorage(storagePath, logger);
+    await recovered.initialize();
+    await expect(recovered.commitPreparedRecord(prepared.preparedId)).resolves.toMatchObject({
+      id: "agent-recovery-prepared",
+      recordRevision: prepared.recordRevision,
+      preparedCommitId: prepared.preparedId,
+    });
+    await expect(
+      fs.access(
+        path.join(storagePath, ".paseo-agent-storage", "staging", `${prepared.preparedId}.json`),
+      ),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  test("preserves prepared commit lineage across later record revisions", async () => {
+    await storage.applySnapshot(createManagedAgent({ id: "agent-prepared-update-template" }));
+    const template = (await storage.get("agent-prepared-update-template"))!;
+    const prepared = await storage.prepareRecord(
+      {
+        ...template,
+        id: "agent-prepared-update",
+        cwd: "/tmp/prepared-update",
+      },
+      { kind: "absent" },
+    );
+    await storage.commitPreparedRecord(prepared.preparedId);
+    const committed = (await storage.get("agent-prepared-update"))!;
+    await storage.upsert({ ...committed, title: "Changed after import" });
+
+    const metadataAfterUpdate = (await storage.listAllMetadata()).find(
+      (entry) => entry.id === "agent-prepared-update",
+    );
+    expect(metadataAfterUpdate).toMatchObject({
+      preparedCommitId: prepared.preparedId,
+    });
+    await expect(storage.commitPreparedRecord(prepared.preparedId)).resolves.toEqual(
+      metadataAfterUpdate,
+    );
+  });
+
+  test("preserves prepared commit lineage when a later record revision is recovered", async () => {
+    await storage.applySnapshot(createManagedAgent({ id: "agent-prepared-recovery-template" }));
+    const template = (await storage.get("agent-prepared-recovery-template"))!;
+    const prepared = await storage.prepareRecord(
+      {
+        ...template,
+        id: "agent-prepared-recovery-update",
+        cwd: "/tmp/prepared-recovery-update",
+      },
+      { kind: "absent" },
+    );
+    await storage.commitPreparedRecord(prepared.preparedId);
+    const committed = (await storage.get("agent-prepared-recovery-update"))!;
+
+    const interruptedUpdate = new AgentStorage(storagePath, logger, {
+      faultInjector(point) {
+        if (point === "record_write") throw new Error("interrupt later record update");
+      },
+    });
+    await expect(
+      interruptedUpdate.upsert({ ...committed, title: "Recovered update" }),
+    ).rejects.toThrow("interrupt later record update");
+
+    const recovered = new AgentStorage(storagePath, logger);
+    await recovered.initialize();
+    expect(await recovered.get("agent-prepared-recovery-update")).toMatchObject({
+      title: "Recovered update",
+    });
+    expect(
+      (await recovered.listAllMetadata()).find(
+        (entry) => entry.id === "agent-prepared-recovery-update",
+      ),
+    ).toMatchObject({ preparedCommitId: prepared.preparedId });
   });
 });

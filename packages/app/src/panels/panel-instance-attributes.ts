@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 import { usePaneContext } from "@/panels/pane-context";
+import {
+  MODIFIED_STATE_NOT_RECOVERABLE_RETENTION_REASON,
+  type RetainedTabReason,
+} from "@/workspace-tabs/retention";
 
 export interface PanelInstanceIdentity {
   serverId: string;
@@ -11,6 +15,9 @@ export interface PanelInstanceAttributes {
   modified: boolean;
   suspendPendingSave?: () => () => void;
 }
+
+export const MODIFIED_PANEL_RETAINED_REASON: RetainedTabReason =
+  MODIFIED_STATE_NOT_RECOVERABLE_RETENTION_REASON;
 
 const DEFAULT_ATTRIBUTES: PanelInstanceAttributes = { modified: false };
 const attributesByPanel = new Map<string, PanelInstanceAttributes>();
@@ -52,6 +59,16 @@ export function useModifiedPanelTabIds(input: {
   workspaceId: string;
   tabIds: string[];
 }): Set<string> {
+  const reasons = useModifiedPanelTabReasons(input);
+  return useMemo(() => new Set(reasons.keys()), [reasons]);
+}
+
+export function useModifiedPanelTabReasons(input: {
+  serverId: string;
+  workspaceId: string;
+  tabIds: string[];
+}): ReadonlyMap<string, RetainedTabReason> {
+  const { serverId, workspaceId, tabIds } = input;
   const revision = useSyncExternalStore(
     useCallback((listener: () => void) => {
       allListeners.add(listener);
@@ -62,17 +79,28 @@ export function useModifiedPanelTabIds(input: {
   );
   return useMemo(() => {
     void revision;
-    return new Set(
-      input.tabIds.filter(
-        (tabId) =>
-          getPanelInstanceAttributes({
-            serverId: input.serverId,
-            workspaceId: input.workspaceId,
-            tabId,
-          }).modified,
-      ),
-    );
-  }, [input.serverId, input.tabIds, input.workspaceId, revision]);
+    return getModifiedPanelTabReasons({ serverId, workspaceId, tabIds });
+  }, [revision, serverId, tabIds, workspaceId]);
+}
+
+export function getModifiedPanelTabReasons(input: {
+  serverId: string;
+  workspaceId: string;
+  tabIds: string[];
+}): ReadonlyMap<string, RetainedTabReason> {
+  const reasons = new Map<string, RetainedTabReason>();
+  for (const tabId of input.tabIds) {
+    if (
+      getPanelInstanceAttributes({
+        serverId: input.serverId,
+        workspaceId: input.workspaceId,
+        tabId,
+      }).modified
+    ) {
+      reasons.set(tabId, MODIFIED_PANEL_RETAINED_REASON);
+    }
+  }
+  return reasons;
 }
 
 export function subscribePanelInstanceAttributes(

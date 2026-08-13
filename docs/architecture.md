@@ -70,7 +70,7 @@ not retain non-Git directories.
 | `server/websocket-server.ts`    | WebSocket connection management, hello handshake, binary frame routing        |
 | `server/session.ts`             | Per-client session state, timeline subscriptions, terminal operations         |
 | `server/agent/agent-manager.ts` | Agent lifecycle state machine, timeline tracking, subscriber management       |
-| `server/agent/agent-storage.ts` | File-backed JSON persistence at `$PASEO_HOME/agents/`                         |
+| `server/agent/agent-storage.ts` | Authoritative Agent JSON plus rebuildable metadata catalog and lazy reads     |
 | `server/agent/tools/`           | Transport-neutral catalog for workspaces, agents, permissions, and automation |
 | `server/agent/mcp-server.ts`    | Thin MCP adapter that registers the Paseo tool catalog with the MCP SDK       |
 | `server/agent/providers/`       | Provider adapters (see "Agent providers" below)                               |
@@ -112,6 +112,12 @@ not restored from it. AsyncStorage is not encrypted, so the cached timeline tail
 code, prompts, and tool output; encrypted-at-rest storage is a separate product/security decision.
 Its serialized payload has a 1 MiB byte budget and evicts whole host snapshots in least-recently-
 written order; a single oversized host is omitted rather than partially restored.
+
+Cache writes are tracked per host and per agent/workspace/timeline domain. Streaming updates use a
+trailing debounce instead of periodic full serialization; final-answer, focus, app-background, and
+runtime-close boundaries request an earlier flush. A successful write clears only the captured
+revision, while a failed write or a mutation during I/O remains dirty for retry. None of these
+flushes make the cache authoritative.
 
 ### `packages/cli` — Command-line client
 
@@ -301,10 +307,10 @@ initializing → idle ⇄ running
 `ManagedAgent` is a discriminated union over those lifecycle tags. Notes:
 
 - **AgentManager** is the source of truth for agent state and broadcasts updates to all subscribers
-- Timeline is append-only with epochs (each run starts a new epoch). Storage uses sequence numbers for client-side dedup; the default fetch page is 200 items
+- Timeline is append-only with epochs (each run starts a new epoch). Live storage uses sequence numbers for client-side dedup; committed generations persist immutable checked segments and bounded pages under `$PASEO_HOME/timelines`.
 - Timeline row `timestamp` values are canonical daemon-owned timestamps. Providers may supply original replay timestamps, but clients must not guess timestamp trust or hide time UI based on local clock heuristics.
 - Events stream to connected clients in real time; correctness is backed by authoritative timeline fetches and paged-to-completion catch-up.
-- Agent state persists to `$PASEO_HOME/agents/{cwd-with-dashes}/{agent-id}.json` (timeline rows live alongside the record). That storage path is derived from `cwd`, not from workspace id.
+- Agent state persists to `$PASEO_HOME/agents/{cwd-with-dashes}/{agent-id}.json`. The record path is derived from `cwd`, not from workspace id; a rebuildable catalog under `$PASEO_HOME/agents/.paseo-agent-storage/` indexes lightweight metadata without replacing the JSON record as authority.
 
 Closing any Paseo-managed root or subagent tab uses the same close-only RPC. The daemon closes the
 provider session, preserves `archivedAt: null`, and persists `closed`; the app removes the tab only
@@ -396,7 +402,10 @@ Providers that can accept native tool definitions should set `supportsNativePase
 
 ```
 $PASEO_HOME/
-├── agents/{cwd-with-dashes}/{agent-id}.json   # Agent record + persisted timeline rows
+├── agents/{cwd-with-dashes}/{agent-id}.json   # Authoritative Agent record
+├── agents/.paseo-agent-storage/                # Rebuildable catalog, mutation marker, staging
+├── timelines/                                  # Committed canonical generation manifests + segments
+├── provider-session-imports/                   # Recoverable import transaction markers
 ├── projects/projects.json                      # Project registry
 ├── projects/workspaces.json                    # Workspace registry, including stable defaultAgentId
 ├── projects/icons/                             # Custom project icon images
