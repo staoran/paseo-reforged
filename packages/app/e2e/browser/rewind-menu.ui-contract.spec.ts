@@ -46,7 +46,7 @@ async function rewriteCachedMessageAsLegacyRow(page: Page, prompt: string): Prom
     )
     .toBe(true);
 
-  await page.evaluate((messageText) => {
+  await page.addInitScript((messageText) => {
     const key = "@paseo:replica-cache";
     const raw = localStorage.getItem(key);
     if (!raw) throw new Error("Replica cache was not persisted");

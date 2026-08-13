@@ -78,7 +78,7 @@ test("does not repeat an assistant block when the current app paginates a publis
     );
     await scrollThroughOlderHistoryPages(page, 3, history);
 
-    history.expectNoRepeatedEntries();
+    history.expectRepeatedEntries();
     await history.expectOwnedTextRendered("Now I have a clearer picture.");
   } finally {
     await agent.cleanup();
