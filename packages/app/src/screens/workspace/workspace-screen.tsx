@@ -178,7 +178,7 @@ import {
 import { useHostFeature } from "@/runtime/host-features";
 import {
   getPanelInstanceAttributes,
-  useModifiedPanelTabIds,
+  useModifiedPanelTabReasons,
 } from "@/panels/panel-instance-attributes";
 import { findAdjacentPane } from "@/utils/split-navigation";
 import { useIsCompactFormFactor, supportsDesktopPaneSplits } from "@/constants/layout";
@@ -3480,7 +3480,7 @@ function WorkspaceScreenContent({
     [focusedPaneTabState.pane],
   );
   const focusedPaneTabIds = useMemo(() => tabs.map((tab) => tab.tabId), [tabs]);
-  const modifiedFocusedPaneTabIds = useModifiedPanelTabIds({
+  const modifiedFocusedPaneTabReasons = useModifiedPanelTabReasons({
     serverId: normalizedServerId,
     workspaceId: normalizedWorkspaceId,
     tabIds: focusedPaneTabIds,
@@ -3489,7 +3489,7 @@ function WorkspaceScreenContent({
   const { mountedTabIds: mountedFocusedPaneTabIdsSet } = useMountedTabSet({
     activeTabId,
     allTabIds: focusedPaneTabIds,
-    retainedTabIds: modifiedFocusedPaneTabIds,
+    retainedTabReasons: modifiedFocusedPaneTabReasons,
     cap: 3,
   });
   const mountedFocusedPaneTabIds = useMemo(
