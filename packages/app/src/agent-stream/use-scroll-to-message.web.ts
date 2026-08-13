@@ -8,6 +8,7 @@ interface UseScrollToMessageInput {
   scrollContainerRef: React.RefObject<HTMLElement | null>;
   rowVirtualizer: Virtualizer<HTMLElement, Element>;
   historyVirtualized: readonly { id: string }[];
+  resolveRowId: (itemId: string) => string | null;
   cancelPendingStickToBottom: () => void;
   setFollowOutput: (value: boolean) => boolean;
   onNearBottomChange: (value: boolean) => void;
@@ -28,6 +29,7 @@ export function useScrollToMessage({
   scrollContainerRef,
   rowVirtualizer,
   historyVirtualized,
+  resolveRowId,
   cancelPendingStickToBottom,
   setFollowOutput,
   onNearBottomChange,
@@ -92,11 +94,12 @@ export function useScrollToMessage({
       if (!active) return;
       const container = scrollContainerRef.current;
       if (!container) return;
+      const rowId = resolveRowId(itemId) ?? itemId;
       cancelPendingStickToBottom();
       setFollowOutput(false);
 
       const mounted = container.querySelector<HTMLElement>(
-        `[data-history-row-id="${CSS.escape(itemId)}"]`,
+        `[data-history-row-id="${CSS.escape(rowId)}"]`,
       );
       if (mounted) {
         const delta =
@@ -104,15 +107,15 @@ export function useScrollToMessage({
           container.getBoundingClientRect().top -
           PROMPT_JUMP_TOP_INSET_PX;
         container.scrollTop += delta;
-        settleController.start(itemId);
+        settleController.start(rowId);
         onNearBottomChange(false);
         return;
       }
 
-      const index = historyVirtualized.findIndex((item) => item.id === itemId);
+      const index = historyVirtualized.findIndex((item) => item.id === rowId);
       if (index >= 0) {
         rowVirtualizer.scrollToIndex(index, { align: "start" });
-        settleController.start(itemId);
+        settleController.start(rowId);
         onNearBottomChange(false);
       }
     },
@@ -122,6 +125,7 @@ export function useScrollToMessage({
       historyVirtualized,
       onNearBottomChange,
       rowVirtualizer,
+      resolveRowId,
       scrollContainerRef,
       settleController,
       setFollowOutput,

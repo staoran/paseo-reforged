@@ -1,13 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { TurnTiming } from "@/timeline/turn-time";
 import type { StreamItem } from "@/types/stream";
-import {
-  orderHeadForStreamRenderStrategy,
-  orderTailForStreamRenderStrategy,
-  type StreamStrategy,
-} from "./strategy";
+import type { StreamStrategy } from "./strategy";
 import { resolveStreamRenderStrategy } from "./strategy-resolver";
-import { layoutStream, type StreamLayout, type StreamLayoutItem } from "./layout";
+import { buildAgentStreamRenderModel } from "./model";
+import {
+  layoutActivityFoldMembers,
+  layoutStream,
+  type StreamLayout,
+  type StreamLayoutItem,
+} from "./layout";
 
 function timestamp(seed: number): Date {
   return new Date(`2026-01-01T00:00:${seed.toString().padStart(2, "0")}.000Z`);
@@ -85,24 +87,24 @@ function strategyFor(platform: "web" | "android"): StreamStrategy {
 function layoutFor(input: {
   platform: "web" | "android";
   isTurnActive?: boolean;
-  agentStatus?: string;
   tail: StreamItem[];
   head?: StreamItem[];
   timingIds?: string[];
 }): StreamLayout {
   const strategy = strategyFor(input.platform);
+  const model = buildAgentStreamRenderModel({
+    isTurnActive: input.isTurnActive ?? false,
+    activeTurnStartedAt: null,
+    tail: input.tail,
+    head: input.head ?? [],
+    platform: input.platform === "web" ? "web" : "native",
+    isMobileBreakpoint: false,
+  });
   return layoutStream({
     strategy,
     isTurnActive: input.isTurnActive ?? false,
-    agentStatus: input.agentStatus ?? "idle",
-    history: orderTailForStreamRenderStrategy({
-      strategy,
-      streamItems: input.tail,
-    }),
-    liveHead: orderHeadForStreamRenderStrategy({
-      strategy,
-      streamHead: input.head ?? [],
-    }),
+    history: model.history,
+    liveHead: model.segments.liveHead,
     timingByAssistantId: timingFor(...(input.timingIds ?? [])),
   });
 }
@@ -138,7 +140,9 @@ function inlineFooterPlacementByItemId(layout: StreamLayout): Record<string, str
 
 function findLayoutItem(layout: StreamLayout, id: string): StreamLayoutItem {
   const item = [...layout.history, ...layout.liveHead].find(
-    (candidate) => candidate.item.id === id,
+    (candidate) =>
+      candidate.item.id === id ||
+      (candidate.row.kind === "activity" && candidate.row.fold.memberIds.includes(id)),
   );
   if (!item) {
     throw new Error(`Missing layout item ${id}`);
@@ -164,24 +168,36 @@ describe("layoutStream", () => {
       const trailingTool = toolCall("tool-after-final", 7);
       const layout = layoutFor({
         platform,
-        agentStatus: "idle",
         tail: [userMessage("u1", 1), reasoning, commentary],
         head: [tool, todo, finalAnswer, trailingTool],
         timingIds: [finalAnswer.id],
       });
 
       for (const item of [reasoning, commentary, tool, todo]) {
-        expect(findLayoutItem(layout, item.id).activityFold).toEqual({
+        expect(findLayoutItem(layout, item.id).activityFold).toMatchObject({
           id: "activity:u1",
           completed: true,
           hostItemId: reasoning.id,
-          durationMs: 8000,
         });
       }
       expect(findLayoutItem(layout, reasoning.id).isActivityFoldHost).toBe(true);
-      expect(findLayoutItem(layout, commentary.id).isActivityFoldHost).toBe(false);
+      expect([...layout.history, ...layout.liveHead]).toHaveLength(4);
+      expect(
+        [...layout.history, ...layout.liveHead].some((item) => item.item.id === commentary.id),
+      ).toBe(false);
       expect(findLayoutItem(layout, finalAnswer.id).activityFold).toBeNull();
       expect(findLayoutItem(layout, trailingTool.id).activityFold).toBeNull();
+
+      const host = findLayoutItem(layout, reasoning.id);
+      const details = layoutActivityFoldMembers({
+        strategy: strategyFor(platform),
+        fold: host.activityFold!,
+        aboveItem: host.aboveItem,
+        belowItem: host.belowItem,
+      });
+      expect(details.map((item) => item.item.id).sort()).toEqual(
+        [reasoning, commentary, tool, todo].map((item) => item.id).sort(),
+      );
     },
   );
 
@@ -193,7 +209,7 @@ describe("layoutStream", () => {
       const finalAnswer = assistantMessage("final-1", 4, undefined, "final_answer");
       const layout = layoutFor({
         platform,
-        agentStatus: "running",
+        isTurnActive: true,
         tail: [userMessage("u1", 1)],
         head: [reasoning, commentary, finalAnswer],
       });
@@ -220,7 +236,6 @@ describe("layoutStream", () => {
       };
       const layout = layoutFor({
         platform,
-        agentStatus: "error",
         tail: [userMessage("u1", 1)],
         head: [reasoning, commentary, systemError],
       });
@@ -266,7 +281,7 @@ describe("layoutStream", () => {
       const liveCommentary = assistantMessage("commentary-live", 7, undefined, "commentary");
       const layout = layoutFor({
         platform,
-        agentStatus: "running",
+        isTurnActive: true,
         tail: [userMessage("u1", 1), historicalActivity, historicalCommentary, historicalFinal],
         head: [userMessage("u2", 5), liveActivity, liveCommentary],
       });
@@ -455,7 +470,6 @@ describe("layoutStream", () => {
       const assistant = assistantMessage("system-error", 2);
       const layout = layoutFor({
         platform,
-        agentStatus: "error",
         tail: [userMessage("u1", 1), assistant],
         timingIds: [assistant.id],
       });

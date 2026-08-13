@@ -1,4 +1,4 @@
-import { test, expect } from "../support/fixtures";
+import { test, expect, type Page } from "../support/fixtures";
 import {
   awaitAssistantMessage,
   expandCompletedActivity,
@@ -30,6 +30,10 @@ import {
   expectReconnectingToastGone,
   expectReconnectingToastVisible,
 } from "../support/helpers/workspace-ui";
+
+async function readSelectedText(page: Page): Promise<string> {
+  return await page.evaluate(() => window.getSelection()?.toString() ?? "");
+}
 
 const SCROLL_AWAY_MIN_SCROLLABLE_DISTANCE = 360;
 
@@ -122,6 +126,66 @@ test.describe("Agent stream UI", () => {
       await page.reload();
 
       await expectRunningAgentChrome(page, title);
+    } finally {
+      await agent.cleanup();
+    }
+  });
+
+  test("expands only the target activity row and preserves selection", async ({ page }) => {
+    test.setTimeout(120_000);
+    const agent = await seedMockAgentWorkspace({
+      repoPrefix: "stream-activity-expand-",
+      title: "Activity expansion",
+      model: "ten-second-stream",
+    });
+    const finalText = "Synthetic activity stress complete";
+    try {
+      await openAgentRoute(page, agent);
+      await expectComposerVisible(page);
+
+      await agent.client.sendAgentMessage(agent.agentId, "emit 1 activity agent stream updates");
+      await agent.client.waitForFinish(agent.agentId, 30_000);
+      await expectAgentIdle(page);
+      await agent.client.sendAgentMessage(agent.agentId, "emit 3 activity agent stream updates");
+      await agent.client.waitForFinish(agent.agentId, 30_000);
+      await expectAgentIdle(page);
+
+      const timeline = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
+      const rows = timeline.locator("[data-history-row-id]");
+      const folds = timeline.locator('[data-testid^="activity-fold-"]:visible');
+      const fold = folds.last();
+      const hiddenLastActivity = timeline.getByText("stress-update-2", { exact: true });
+      const firstActivity = timeline.getByText("stress-update-0", { exact: true });
+      const final = timeline.getByText(finalText, { exact: true }).last();
+      await expect(rows).toHaveCount(6, { timeout: 30_000 });
+      await expect(folds).toHaveCount(2);
+      await expect(hiddenLastActivity).toHaveCount(0);
+      await expect(firstActivity).toHaveCount(0);
+      const foldRow = rows.filter({ has: fold });
+      await expect(foldRow).toHaveCount(1);
+      const hostRowId = await foldRow.getAttribute("data-history-row-id");
+      expect(hostRowId).toBeTruthy();
+
+      await fold.click();
+      await expect(hiddenLastActivity).toBeVisible({ timeout: 30_000 });
+      await expect(firstActivity).toHaveCount(1);
+      await expect(rows).toHaveCount(6);
+      await expect(foldRow).toHaveAttribute("data-history-row-id", hostRowId!);
+
+      await final.evaluate((element) => {
+        const textNode = document.createTreeWalker(element, NodeFilter.SHOW_TEXT).nextNode();
+        if (!textNode) throw new Error("Final answer text node was not found");
+        const range = document.createRange();
+        range.selectNodeContents(textNode);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+      });
+      await fold.evaluate((element) => (element as HTMLElement).click());
+      await expect(hiddenLastActivity).toHaveCount(0);
+      await expect(firstActivity).toHaveCount(0);
+      await expect(rows).toHaveCount(6);
+      await expect.poll(() => readSelectedText(page)).toBe(finalText);
     } finally {
       await agent.cleanup();
     }

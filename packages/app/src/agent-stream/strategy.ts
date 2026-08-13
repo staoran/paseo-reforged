@@ -1,7 +1,7 @@
 import type { ComponentType, ReactElement, ReactNode, RefObject } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
 import type { StreamItem } from "@/types/stream";
-import type { StreamHistoryBoundary, StreamRenderSegments } from "./model";
+import type { StreamHistoryBoundary, StreamRenderRow, StreamRenderSegments } from "./model";
 import type {
   BottomAnchorLocalRequest,
   BottomAnchorRouteRequest,
@@ -46,9 +46,17 @@ export interface StreamViewportHandle {
 }
 
 export interface StreamSegmentRenderers {
-  renderHistoryVirtualizedRow: (item: StreamItem, index: number, items: StreamItem[]) => ReactNode;
-  renderHistoryMountedRow: (item: StreamItem, index: number, items: StreamItem[]) => ReactNode;
-  renderLiveHeadRow: (item: StreamItem, index: number, items: StreamItem[]) => ReactNode;
+  renderHistoryVirtualizedRow: (
+    row: StreamRenderRow,
+    index: number,
+    rows: StreamRenderRow[],
+  ) => ReactNode;
+  renderHistoryMountedRow: (
+    row: StreamRenderRow,
+    index: number,
+    rows: StreamRenderRow[],
+  ) => ReactNode;
+  renderLiveHeadRow: (row: StreamRenderRow, index: number, rows: StreamRenderRow[]) => ReactNode;
   renderLiveAuxiliary: () => ReactNode;
 }
 
@@ -90,14 +98,10 @@ export interface ResolveStreamRenderStrategyInput {
 
 export interface StreamStrategy {
   render: (input: StreamRenderInput) => ReactNode;
-  orderTail: (streamItems: StreamItem[]) => StreamItem[];
-  orderHead: (streamHead: StreamItem[]) => StreamItem[];
+  orderTail: <T>(streamItems: T[]) => T[];
+  orderHead: <T>(streamHead: T[]) => T[];
   getNeighborIndex: (index: number, relation: NeighborRelation) => number;
-  getNeighborItem: (
-    items: StreamItem[],
-    index: number,
-    relation: NeighborRelation,
-  ) => StreamItem | undefined;
+  getNeighborItem: <T>(items: T[], index: number, relation: NeighborRelation) => T | undefined;
   collectAssistantTurnContent: (items: StreamItem[], startIndex: number) => string;
   isNearBottom: (input: StreamNearBottomInput) => boolean;
   getBottomOffset: (metrics: StreamViewportMetrics) => number;
@@ -107,9 +111,9 @@ export interface StreamStrategy {
   ) => StreamEdgeSlotProps;
   getMaintainVisibleContentPosition: () => MaintainVisibleContentPositionConfig | undefined;
   getBottomAnchorTransportBehavior: () => BottomAnchorTransportBehavior;
-  getHistoryLiveBoundaryIndex: (history: StreamItem[]) => number | null;
-  getLiveHeadHistoryBoundaryIndex: (liveHead: StreamItem[]) => number | null;
-  getLatestItemIndex: (items: StreamItem[]) => number | null;
+  getHistoryLiveBoundaryIndex: (history: readonly unknown[]) => number | null;
+  getLiveHeadHistoryBoundaryIndex: (liveHead: readonly unknown[]) => number | null;
+  getLatestItemIndex: (items: readonly unknown[]) => number | null;
   getFrameChildOrder: () => StreamFrameChildOrder;
   getFlatListInverted: () => boolean;
   getOverlayScrollbarInverted: () => boolean;
@@ -242,17 +246,17 @@ export function resolveBottomAnchorTransportBehavior(input: {
   };
 }
 
-export function orderTailForStreamRenderStrategy(params: {
+export function orderTailForStreamRenderStrategy<T>(params: {
   strategy: StreamStrategy;
-  streamItems: StreamItem[];
-}): StreamItem[] {
+  streamItems: T[];
+}): T[] {
   return params.strategy.orderTail(params.streamItems);
 }
 
-export function orderHeadForStreamRenderStrategy(params: {
+export function orderHeadForStreamRenderStrategy<T>(params: {
   strategy: StreamStrategy;
-  streamHead: StreamItem[];
-}): StreamItem[] {
+  streamHead: T[];
+}): T[] {
   return params.strategy.orderHead(params.streamHead);
 }
 
@@ -264,12 +268,12 @@ export function getStreamNeighborIndex(params: {
   return params.strategy.getNeighborIndex(params.index, params.relation);
 }
 
-export function getStreamNeighborItem(params: {
+export function getStreamNeighborItem<T>(params: {
   strategy: StreamStrategy;
-  items: StreamItem[];
+  items: T[];
   index: number;
   relation: NeighborRelation;
-}): StreamItem | undefined {
+}): T | undefined {
   return params.strategy.getNeighborItem(params.items, params.index, params.relation);
 }
 
@@ -313,14 +317,14 @@ export function getStreamEdgeSlotProps(params: {
 
 export function getHistoryLiveBoundaryIndexForStreamRenderStrategy(params: {
   strategy: StreamStrategy;
-  history: StreamItem[];
+  history: readonly unknown[];
 }): number | null {
   return params.strategy.getHistoryLiveBoundaryIndex(params.history);
 }
 
 export function getLiveHeadHistoryBoundaryIndexForStreamRenderStrategy(params: {
   strategy: StreamStrategy;
-  liveHead: StreamItem[];
+  liveHead: readonly unknown[];
 }): number | null {
   return params.strategy.getLiveHeadHistoryBoundaryIndex(params.liveHead);
 }

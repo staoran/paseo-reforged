@@ -20,9 +20,9 @@ import {
 } from "react-native";
 import { withUnistyles } from "react-native-unistyles";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import type { StreamItem } from "@/types/stream";
 import type { Theme } from "@/styles/theme";
 import { useStableEvent } from "@/hooks/use-stable-event";
+import type { StreamRenderRow } from "./model";
 import { useBottomAnchorController } from "./bottom-anchor-controller";
 import { useScrollKeyboardDismiss } from "./scroll-keyboard-dismiss/use-scroll-keyboard-dismiss";
 import type { StreamRenderInput, StreamStrategy, StreamViewportHandle } from "./strategy";
@@ -64,21 +64,31 @@ const historyStartSlotStyle: ViewStyle = {
 const HISTORY_START_SETTLE_FRAMES = 2;
 
 interface HistoryRowDisplayVariants {
-  regular?: StreamItem;
-  compact?: StreamItem;
+  regular?: StreamRenderRow;
+  compact?: StreamRenderRow;
 }
 
-const historyRowDisplayVariants = new WeakMap<StreamItem, HistoryRowDisplayVariants>();
+const historyRowDisplayVariants = new WeakMap<StreamRenderRow, HistoryRowDisplayVariants>();
 
-function getHistoryRowDisplayVariant(item: StreamItem, compact: boolean): StreamItem {
-  let variants = historyRowDisplayVariants.get(item);
+function getHistoryRowDisplayVariant(row: StreamRenderRow, compact: boolean): StreamRenderRow {
+  let variants = historyRowDisplayVariants.get(row);
   if (!variants) {
     variants = {};
-    historyRowDisplayVariants.set(item, variants);
+    historyRowDisplayVariants.set(row, variants);
   }
   const key = compact ? "compact" : "regular";
-  variants[key] ??= { ...item };
+  variants[key] ??= { ...row };
   return variants[key];
+}
+
+function revisionIncludesRow(
+  revision: { has(id: string): boolean },
+  row: StreamRenderRow,
+): boolean {
+  return (
+    revision.has(row.id) ||
+    (row.kind === "activity" && row.fold.memberIds.some((memberId) => revision.has(memberId)))
+  );
 }
 
 function keyExtractor(item: { id: string }): string {
@@ -108,7 +118,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     strategy,
   } = props;
   const { renderHistoryMountedRow, renderLiveHeadRow, renderLiveAuxiliary } = renderers;
-  const flatListRef = useRef<FlatList<StreamItem>>(null);
+  const flatListRef = useRef<FlatList<StreamRenderRow>>(null);
   const streamViewportMetricsRef = useRef({
     containerKey: "native-virtualized",
     contentHeight: 0,
@@ -145,19 +155,23 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     const globalDisplayState = historyRowRevision?.globalDisplayState ?? false;
     return historyItems.map((item) => getHistoryRowDisplayVariant(item, globalDisplayState));
   }, [historyItems, historyRowRevision?.globalDisplayState]);
+  const historyDisplayStateById = historyRowRevision?.displayStateById;
+  const historyContentById = historyRowRevision?.contentById;
   const displayStateHistoryRows = useMemo(
     () =>
       globallyRevisedHistoryRows.map((item) =>
-        historyRowRevision?.displayStateById.has(item.id) ? { ...item } : item,
+        historyDisplayStateById && revisionIncludesRow(historyDisplayStateById, item)
+          ? { ...item }
+          : item,
       ),
-    [globallyRevisedHistoryRows, historyRowRevision?.displayStateById],
+    [globallyRevisedHistoryRows, historyDisplayStateById],
   );
   const historyRows = useMemo(
     () =>
       displayStateHistoryRows.map((item) =>
-        historyRowRevision?.contentById.has(item.id) ? { ...item } : item,
+        historyContentById && revisionIncludesRow(historyContentById, item) ? { ...item } : item,
       ),
-    [displayStateHistoryRows, historyRowRevision?.contentById],
+    [displayStateHistoryRows, historyContentById],
   );
   const getHistoryStartPaginationInput = useStableEvent((): HistoryStartPaginationInput => {
     const metrics = streamViewportMetricsRef.current;
@@ -543,8 +557,8 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   ]);
 
   const renderItem = useStableEvent(
-    ({ item, index }: ListRenderItemInfo<StreamItem>): ReactElement | null => {
-      const rendered = renderHistoryMountedRow(item, index, historyItems);
+    ({ item, index }: ListRenderItemInfo<StreamRenderRow>): ReactElement | null => {
+      const rendered = renderHistoryMountedRow(item, index, historyRows);
       return (rendered ?? null) as ReactElement | null;
     },
   );

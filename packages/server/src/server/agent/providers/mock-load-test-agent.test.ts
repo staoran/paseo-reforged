@@ -321,6 +321,38 @@ describe("MockLoadTestAgentClient", () => {
     expect(events).toHaveLength(eventCountAfterInterrupt);
   });
 
+  test("emits a phased final answer after bounded activity stress rows", async () => {
+    vi.useFakeTimers();
+    const client = new MockLoadTestAgentClient();
+    const session = await client.createSession({
+      provider: "mock",
+      cwd: process.cwd(),
+      model: "ten-second-stream",
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    const run = session.run("emit 3 activity agent stream updates");
+    await vi.advanceTimersByTimeAsync(0);
+    const result = await run;
+    const timeline = events.flatMap((event) => (event.type === "timeline" ? [event.item] : []));
+
+    expect(
+      timeline.filter(
+        (item) =>
+          item.type === "assistant_message" &&
+          item.phase === "commentary" &&
+          item.text.startsWith("stress-update-"),
+      ),
+    ).toHaveLength(3);
+    expect(timeline.at(-1)).toMatchObject({
+      type: "assistant_message",
+      text: "Synthetic activity stress complete",
+      phase: "final_answer",
+    });
+    expect(result.finalText).toBe("Synthetic activity stress complete");
+  });
+
   test("rewinds the latest user message without changing the mock session identity", async () => {
     vi.useFakeTimers();
     const client = new MockLoadTestAgentClient();

@@ -7,8 +7,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RetainedPanelActivity } from "@/components/retained-panel";
 import type { StreamItem } from "@/types/stream";
+import { createItemStreamRenderRow, type StreamRenderRow } from "./model";
 import type { StreamRenderInput, StreamSegmentRenderers, StreamViewportHandle } from "./strategy";
-import { createWebStreamStrategy } from "./strategy-web";
+import { createWebStreamStrategy, findStreamRenderRowId } from "./strategy-web";
 
 vi.hoisted(() => {
   Object.defineProperty(window, "matchMedia", {
@@ -30,13 +31,14 @@ vi.mock("react-native-unistyles", () => ({
   withUnistyles: (Component: React.ComponentType) => Component,
 }));
 
-function userMessage(index: number): StreamItem {
-  return {
+function userMessage(index: number): StreamRenderRow {
+  const item: StreamItem = {
     kind: "user_message",
     id: `message-${index}`,
     text: `Message ${index}`,
     timestamp: new Date(`2026-04-20T00:00:${String(index % 60).padStart(2, "0")}.000Z`),
   };
+  return createItemStreamRenderRow(item);
 }
 
 const VIRTUAL_ROW_STYLE = { height: 24 };
@@ -150,6 +152,37 @@ describe("createWebStreamStrategy", () => {
 
     expect(rowRenderCount.mock.calls.length).toBeGreaterThan(0);
     expect(rowRenderCount.mock.calls.length).toBeLessThanOrEqual(historyVirtualized.length);
+  });
+
+  it("resolves a hidden activity member to its host row", () => {
+    const host: StreamItem = {
+      kind: "thought",
+      id: "activity-host",
+      text: "host",
+      timestamp: new Date("2026-04-20T00:00:00.000Z"),
+      status: "ready",
+    };
+    const hidden: StreamItem = {
+      kind: "thought",
+      id: "activity-hidden",
+      text: "hidden",
+      timestamp: new Date("2026-04-20T00:00:01.000Z"),
+      status: "ready",
+    };
+    const row: StreamRenderRow = {
+      kind: "activity",
+      id: host.id,
+      item: host,
+      fold: {
+        id: "activity:user-1",
+        completed: true,
+        hostItemId: host.id,
+        memberIds: [host.id, hidden.id],
+        members: [host, hidden],
+      },
+    };
+
+    expect(findStreamRenderRowId([row], hidden.id)).toBe(host.id);
   });
 
   it("rerenders a stable live-head row when its revision changes", () => {

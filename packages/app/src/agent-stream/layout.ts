@@ -1,7 +1,10 @@
 import type { TurnTiming } from "@/timeline/turn-time";
 import type { StreamItem } from "@/types/stream";
 import { getAssistantBlockSpacing, getGapBetweenStreamItems } from "./spacing";
+import { createItemStreamRenderRow, type ActivityFold, type StreamRenderRow } from "./model";
 import type { StreamFrameChildOrder, StreamStrategy } from "./strategy";
+
+export type { ActivityFold } from "./model";
 
 export type StreamToolSequence = "single" | "first" | "middle" | "last" | "none";
 
@@ -12,14 +15,8 @@ export interface TurnFooterHost {
   startIndex: number;
 }
 
-export interface ActivityFold {
-  id: string;
-  completed: boolean;
-  hostItemId: string;
-  durationMs?: number;
-}
-
 export interface StreamLayoutItem {
+  row: StreamRenderRow;
   item: StreamItem;
   index: number;
   items: StreamItem[];
@@ -46,19 +43,19 @@ export interface StreamLayout {
 export interface StreamLayoutInput {
   strategy: StreamStrategy;
   isTurnActive: boolean;
-  agentStatus: string;
-  history: StreamItem[];
-  liveHead: StreamItem[];
+  history: StreamRenderRow[];
+  liveHead: StreamRenderRow[];
   timingByAssistantId: Map<string, TurnTiming>;
 }
 
 interface LayoutSegmentInput {
   strategy: StreamStrategy;
+  rows: StreamRenderRow[];
   items: StreamItem[];
+  itemIndexById: ReadonlyMap<string, number>;
   timingByAssistantId: Map<string, TurnTiming>;
   auxiliaryTurnFooter: TurnFooterHost | null;
   completedTurnItemIds: Set<string>;
-  activityFoldByItemId: ReadonlyMap<string, ActivityFold>;
   frameOrder: StreamFrameChildOrder;
   boundaryIndex: number | null;
   boundaryAboveItem: StreamItem | null;
@@ -128,7 +125,13 @@ function findLatestAssistantInTurn(input: {
   }
 }
 
-function resolveAuxiliaryTurnFooter(input: StreamLayoutInput): TurnFooterHost | null {
+function resolveAuxiliaryTurnFooter(input: {
+  strategy: StreamStrategy;
+  isTurnActive: boolean;
+  history: StreamItem[];
+  liveHead: StreamItem[];
+  timingByAssistantId: Map<string, TurnTiming>;
+}): TurnFooterHost | null {
   if (input.isTurnActive) {
     return null;
   }
@@ -230,163 +233,6 @@ function projectSegmentCompletedTurnItemIds(input: {
   return { itemIds: completed, boundaryTurnCompleted: isTurnCompleted };
 }
 
-interface ActivityFoldProjection {
-  foldByItemId: ReadonlyMap<string, ActivityFold>;
-  historyFoldKey: string;
-}
-
-interface ActivityTurn {
-  userId: string | null;
-  items: StreamItem[];
-}
-
-const activityFoldProjectionCache = new WeakMap<
-  StreamItem[],
-  Map<string, ActivityFoldProjection>
->();
-
-function collectChronologicalItems(input: StreamLayoutInput): StreamItem[] {
-  const newestToOldest: StreamItem[] = [];
-  const appendSegment = (items: StreamItem[], startIndex: number | null) => {
-    for (
-      let index = startIndex;
-      index !== null && index >= 0 && index < items.length;
-      index = input.strategy.getNeighborIndex(index, "above")
-    ) {
-      const item = items[index];
-      if (item) {
-        newestToOldest.push(item);
-      }
-    }
-  };
-
-  if (input.liveHead.length > 0) {
-    appendSegment(input.liveHead, input.strategy.getLatestItemIndex(input.liveHead));
-    appendSegment(input.history, input.strategy.getHistoryLiveBoundaryIndex(input.history));
-  } else {
-    appendSegment(input.history, input.strategy.getLatestItemIndex(input.history));
-  }
-  return newestToOldest.toReversed();
-}
-
-function collectActivityTurns(items: StreamItem[]): ActivityTurn[] {
-  const turns: ActivityTurn[] = [];
-  let turn: ActivityTurn = { userId: null, items: [] };
-  for (const item of items) {
-    if (item.kind === "user_message") {
-      if (turn.userId !== null || turn.items.length > 0) {
-        turns.push(turn);
-      }
-      turn = { userId: item.id, items: [] };
-    } else {
-      turn.items.push(item);
-    }
-  }
-  if (turn.userId !== null || turn.items.length > 0) {
-    turns.push(turn);
-  }
-  return turns;
-}
-
-function createActivityFoldForTurn(input: {
-  turn: ActivityTurn;
-  isLatestTurn: boolean;
-  agentStatus: string;
-  timingByAssistantId: Map<string, TurnTiming>;
-}): { fold: ActivityFold; items: StreamItem[] } | null {
-  const hasPhase = input.turn.items.some(
-    (item) => item.kind === "assistant_message" && item.phase !== undefined,
-  );
-  if (!hasPhase) {
-    return null;
-  }
-
-  const finalAnswerIndex = input.turn.items.findIndex(
-    (item) => item.kind === "assistant_message" && item.phase === "final_answer",
-  );
-  const finalAnswer = finalAnswerIndex >= 0 ? input.turn.items[finalAnswerIndex] : undefined;
-  const durationMs = finalAnswer
-    ? input.timingByAssistantId.get(finalAnswer.id)?.durationMs
-    : undefined;
-  const items =
-    finalAnswerIndex >= 0 ? input.turn.items.slice(0, finalAnswerIndex) : input.turn.items;
-  const host = items[0];
-  if (!host) {
-    return null;
-  }
-
-  return {
-    fold: {
-      id: `activity:${input.turn.userId ?? host.id}`,
-      completed: finalAnswerIndex >= 0 && (!input.isLatestTurn || input.agentStatus !== "running"),
-      hostItemId: host.id,
-      ...(durationMs === undefined ? {} : { durationMs }),
-    },
-    items,
-  };
-}
-
-function projectActivityFolds(input: StreamLayoutInput): ActivityFoldProjection {
-  const cacheKey = JSON.stringify([
-    input.strategy.getFrameChildOrder(),
-    input.agentStatus === "running",
-    input.liveHead.map((item) => [
-      item.id,
-      item.kind,
-      item.kind === "assistant_message" ? (item.phase ?? null) : null,
-    ]),
-  ]);
-  let byKey = activityFoldProjectionCache.get(input.history);
-  if (!byKey) {
-    byKey = new Map();
-    activityFoldProjectionCache.set(input.history, byKey);
-  }
-  const cached = byKey.get(cacheKey);
-  if (cached) {
-    return cached;
-  }
-
-  const turns = collectActivityTurns(collectChronologicalItems(input));
-
-  const foldByItemId = new Map<string, ActivityFold>();
-  for (const [turnIndex, projectedTurn] of turns.entries()) {
-    const projection = createActivityFoldForTurn({
-      turn: projectedTurn,
-      isLatestTurn: turnIndex === turns.length - 1,
-      agentStatus: input.agentStatus,
-      timingByAssistantId: input.timingByAssistantId,
-    });
-    if (!projection) {
-      continue;
-    }
-    for (const item of projection.items) {
-      foldByItemId.set(item.id, projection.fold);
-    }
-  }
-
-  let latestHistoryFold: ActivityFold | null = null;
-  for (
-    let index = input.strategy.getLatestItemIndex(input.history);
-    index !== null && index >= 0 && index < input.history.length;
-    index = input.strategy.getNeighborIndex(index, "above")
-  ) {
-    const item = input.history[index];
-    const fold = item ? foldByItemId.get(item.id) : undefined;
-    if (fold) {
-      latestHistoryFold = fold;
-      break;
-    }
-  }
-  const projection = {
-    foldByItemId,
-    historyFoldKey: latestHistoryFold
-      ? `${latestHistoryFold.id}:${latestHistoryFold.completed}:${latestHistoryFold.hostItemId}:${latestHistoryFold.durationMs ?? "unknown"}`
-      : "none",
-  };
-  byKey.set(cacheKey, projection);
-  return projection;
-}
-
 function isToolSequenceItem(
   item: StreamItem | null,
 ): item is Extract<StreamItem, { kind: "tool_call" | "thought" | "todo_list" }> {
@@ -416,17 +262,27 @@ function getToolSequence(input: {
   return "single";
 }
 
+function getRowAboveEdgeItem(row: StreamRenderRow): StreamItem {
+  return row.kind === "activity" ? (row.fold.members[0] ?? row.item) : row.item;
+}
+
+function getRowBelowEdgeItem(row: StreamRenderRow): StreamItem {
+  return row.kind === "activity" ? (row.fold.members.at(-1) ?? row.item) : row.item;
+}
+
 function getSegmentNeighbor(input: {
   strategy: StreamStrategy;
-  items: StreamItem[];
+  rows: StreamRenderRow[];
   index: number;
   relation: "above" | "below";
   boundaryIndex: number | null;
   boundaryItem: StreamItem | null;
 }): StreamItem | null {
-  const neighbor = input.strategy.getNeighborItem(input.items, input.index, input.relation);
+  const neighbor = input.strategy.getNeighborItem(input.rows, input.index, input.relation);
   if (neighbor) {
-    return neighbor;
+    return input.relation === "above"
+      ? getRowBelowEdgeItem(neighbor)
+      : getRowAboveEdgeItem(neighbor);
   }
   if (input.index === input.boundaryIndex) {
     return input.boundaryItem;
@@ -434,92 +290,155 @@ function getSegmentNeighbor(input: {
   return null;
 }
 
+function getOrderedRowItems(row: StreamRenderRow, strategy: StreamStrategy): StreamItem[] {
+  return row.kind === "activity" ? strategy.orderTail(row.fold.members) : [row.item];
+}
+
+function flattenRows(rows: StreamRenderRow[], strategy: StreamStrategy): StreamItem[] {
+  return rows.flatMap((row) => getOrderedRowItems(row, strategy));
+}
+
+function indexItemsById(items: StreamItem[]): Map<string, number> {
+  return new Map(items.map((item, index) => [item.id, index]));
+}
+
 function layoutSegment(input: LayoutSegmentInput): StreamLayoutItem[] {
-  return input.items.map((item, index) => {
+  return input.rows.map((row, rowIndex) => {
     const aboveItem = getSegmentNeighbor({
       strategy: input.strategy,
-      items: input.items,
-      index,
+      rows: input.rows,
+      index: rowIndex,
       relation: "above",
       boundaryIndex: input.boundaryIndex,
       boundaryItem: input.boundaryAboveItem,
     });
     const belowItem = getSegmentNeighbor({
       strategy: input.strategy,
-      items: input.items,
-      index,
+      rows: input.rows,
+      index: rowIndex,
       relation: "below",
       boundaryIndex: input.boundaryIndex,
       boundaryItem: input.boundaryBelowItem,
     });
-    const assistantSpacing = getAssistantBlockSpacing({
-      item,
-      aboveItem,
-      belowItem,
-    });
-    const completedFooter = resolveCompletedFooter({
-      strategy: input.strategy,
-      items: input.items,
-      index,
-      item,
-      belowItem,
-      timingByAssistantId: input.timingByAssistantId,
-      auxiliaryTurnFooter: input.auxiliaryTurnFooter,
-      completedTurnItemIds: input.completedTurnItemIds,
-      boundaryAboveItems: input.boundaryAboveItems,
-      boundaryAboveIndex: input.boundaryAboveIndex,
-    });
-    const activityFold = input.activityFoldByItemId.get(item.id) ?? null;
+    const footerItem = getRowBelowEdgeItem(row);
+    const footerIndex = input.itemIndexById.get(footerItem.id) ?? -1;
+    const completedFooter =
+      footerIndex < 0
+        ? null
+        : resolveCompletedFooter({
+            strategy: input.strategy,
+            items: input.items,
+            index: footerIndex,
+            item: footerItem,
+            belowItem,
+            timingByAssistantId: input.timingByAssistantId,
+            auxiliaryTurnFooter: input.auxiliaryTurnFooter,
+            completedTurnItemIds: input.completedTurnItemIds,
+            boundaryAboveItems: input.boundaryAboveItems,
+            boundaryAboveIndex: input.boundaryAboveIndex,
+          });
+    const item = row.item;
+    const itemIndex = input.itemIndexById.get(item.id) ?? footerIndex;
 
     return {
+      row,
       item,
-      index,
+      index: itemIndex,
       items: input.items,
       aboveItem,
       belowItem,
-      gapBelow: completedFooter ? 0 : getGapBetweenStreamItems(item, belowItem),
-      assistantSpacing,
+      gapBelow: completedFooter ? 0 : getGapBetweenStreamItems(footerItem, belowItem),
+      assistantSpacing:
+        row.kind === "activity"
+          ? "default"
+          : getAssistantBlockSpacing({ item, aboveItem, belowItem }),
       completedFooter,
-      activityFold,
-      isActivityFoldHost: activityFold?.hostItemId === item.id,
-      toolSequence: getToolSequence({ item, aboveItem, belowItem }),
-      isFirstInUserGroup: item.kind === "user_message" && aboveItem?.kind !== "user_message",
-      isLastInUserGroup: item.kind === "user_message" && belowItem?.kind !== "user_message",
-      isLastInToolSequence: isToolSequenceItem(item) && !isToolSequenceItem(belowItem),
+      activityFold: row.kind === "activity" ? row.fold : null,
+      isActivityFoldHost: row.kind === "activity",
+      toolSequence:
+        row.kind === "activity" ? "none" : getToolSequence({ item, aboveItem, belowItem }),
+      isFirstInUserGroup:
+        row.kind === "item" && item.kind === "user_message" && aboveItem?.kind !== "user_message",
+      isLastInUserGroup:
+        row.kind === "item" && item.kind === "user_message" && belowItem?.kind !== "user_message",
+      isLastInToolSequence:
+        row.kind === "item" && isToolSequenceItem(item) && !isToolSequenceItem(belowItem),
       frameOrder: input.frameOrder,
     };
   });
 }
 
-// Keyed by history array identity; inner key encodes the inputs that affect history layout.
-// History layout is stable across text-chunk flushes because the liveHead boundary item's
-// kind and id don't change when only its text grows.
-const historyLayoutCache = new WeakMap<StreamItem[], Map<string, StreamLayoutItem[]>>();
+const historyLayoutCache = new WeakMap<StreamRenderRow[], Map<string, StreamLayoutItem[]>>();
 
+/** Produces member layout only for the activity row currently being expanded. */
+export function layoutActivityFoldMembers(input: {
+  strategy: StreamStrategy;
+  fold: ActivityFold;
+  aboveItem: StreamItem | null;
+  belowItem: StreamItem | null;
+}): StreamLayoutItem[] {
+  const items = input.strategy.orderTail(input.fold.members);
+  const frameOrder = input.strategy.getFrameChildOrder();
+  return items.map((item, index) => {
+    const aboveItem = input.strategy.getNeighborItem(items, index, "above") ?? input.aboveItem;
+    const internalBelowItem = input.strategy.getNeighborItem(items, index, "below") ?? null;
+    const belowItem = internalBelowItem ?? input.belowItem;
+    return {
+      row: createItemStreamRenderRow(item),
+      item,
+      index,
+      items,
+      aboveItem,
+      belowItem,
+      gapBelow: internalBelowItem ? getGapBetweenStreamItems(item, internalBelowItem) : 0,
+      assistantSpacing: getAssistantBlockSpacing({ item, aboveItem, belowItem }),
+      completedFooter: null,
+      activityFold: null,
+      isActivityFoldHost: false,
+      toolSequence: getToolSequence({ item, aboveItem, belowItem }),
+      isFirstInUserGroup: item.kind === "user_message" && aboveItem?.kind !== "user_message",
+      isLastInUserGroup: item.kind === "user_message" && belowItem?.kind !== "user_message",
+      isLastInToolSequence: isToolSequenceItem(item) && !isToolSequenceItem(belowItem),
+      frameOrder,
+    };
+  });
+}
+
+/** Lays out only top-level rows; activity members stay as lightweight fold references. */
 export function layoutStream(input: StreamLayoutInput): StreamLayout {
-  const activityProjection = projectActivityFolds(input);
-  const auxiliaryTurnFooter = resolveAuxiliaryTurnFooter(input);
+  const historyItems = flattenRows(input.history, input.strategy);
+  const liveHeadItems = flattenRows(input.liveHead, input.strategy);
+  const historyItemIndexById = indexItemsById(historyItems);
+  const liveHeadItemIndexById = indexItemsById(liveHeadItems);
+  const auxiliaryTurnFooter = resolveAuxiliaryTurnFooter({
+    strategy: input.strategy,
+    isTurnActive: input.isTurnActive,
+    history: historyItems,
+    liveHead: liveHeadItems,
+    timingByAssistantId: input.timingByAssistantId,
+  });
   const historyBoundaryIndex = input.strategy.getHistoryLiveBoundaryIndex(input.history);
   const liveHeadBoundaryIndex = input.strategy.getLiveHeadHistoryBoundaryIndex(input.liveHead);
-  const historyBoundaryItem =
+  const historyBoundaryRow =
     historyBoundaryIndex === null ? null : (input.history[historyBoundaryIndex] ?? null);
-  const liveHeadBoundaryItem =
+  const liveHeadBoundaryRow =
     liveHeadBoundaryIndex === null ? null : (input.liveHead[liveHeadBoundaryIndex] ?? null);
+  const historyBoundaryItem = historyBoundaryRow ? getRowBelowEdgeItem(historyBoundaryRow) : null;
+  const liveHeadBoundaryItem = liveHeadBoundaryRow
+    ? getRowAboveEdgeItem(liveHeadBoundaryRow)
+    : null;
   const frameOrder = input.strategy.getFrameChildOrder();
   const liveCompletion = projectSegmentCompletedTurnItemIds({
     strategy: input.strategy,
-    items: input.liveHead,
+    items: liveHeadItems,
     latestTurnCompleted: auxiliaryTurnFooter !== null,
     boundaryAboveItem: historyBoundaryItem,
   });
   const historyLatestTurnCompleted =
-    input.liveHead.length > 0 ? liveCompletion.boundaryTurnCompleted : auxiliaryTurnFooter !== null;
+    liveHeadItems.length > 0 ? liveCompletion.boundaryTurnCompleted : auxiliaryTurnFooter !== null;
 
   let history: StreamLayoutItem[];
   if (input.history.length > 0) {
-    // The cache key encodes every input that can change history layout. liveHeadBoundaryItem.id
-    // and .kind are stable across text-only flushes (text growth doesn't change what kind of
-    // item borders history), so cached layout stays valid between flushes.
     const historyCacheKey = [
       frameOrder,
       historyBoundaryIndex ?? "null",
@@ -527,7 +446,6 @@ export function layoutStream(input: StreamLayoutInput): StreamLayout {
       liveHeadBoundaryItem?.kind ?? "null",
       auxiliaryTurnFooter?.itemId ?? "null",
       historyLatestTurnCompleted,
-      activityProjection.historyFoldKey,
     ].join(":");
     let byKey = historyLayoutCache.get(input.history);
     if (!byKey) {
@@ -540,17 +458,18 @@ export function layoutStream(input: StreamLayoutInput): StreamLayout {
     } else {
       const historyCompletion = projectSegmentCompletedTurnItemIds({
         strategy: input.strategy,
-        items: input.history,
+        items: historyItems,
         latestTurnCompleted: historyLatestTurnCompleted,
         boundaryAboveItem: null,
       });
       history = layoutSegment({
         strategy: input.strategy,
-        items: input.history,
+        rows: input.history,
+        items: historyItems,
+        itemIndexById: historyItemIndexById,
         timingByAssistantId: input.timingByAssistantId,
         auxiliaryTurnFooter,
         completedTurnItemIds: historyCompletion.itemIds,
-        activityFoldByItemId: activityProjection.foldByItemId,
         frameOrder,
         boundaryIndex: historyBoundaryIndex,
         boundaryAboveItem: null,
@@ -566,17 +485,18 @@ export function layoutStream(input: StreamLayoutInput): StreamLayout {
 
   const liveHead = layoutSegment({
     strategy: input.strategy,
-    items: input.liveHead,
+    rows: input.liveHead,
+    items: liveHeadItems,
+    itemIndexById: liveHeadItemIndexById,
     timingByAssistantId: input.timingByAssistantId,
     auxiliaryTurnFooter,
     completedTurnItemIds: liveCompletion.itemIds,
-    activityFoldByItemId: activityProjection.foldByItemId,
     frameOrder,
     boundaryIndex: liveHeadBoundaryIndex,
     boundaryAboveItem: historyBoundaryItem,
     boundaryBelowItem: null,
-    boundaryAboveItems: input.history,
-    boundaryAboveIndex: historyBoundaryIndex,
+    boundaryAboveItems: historyItems,
+    boundaryAboveIndex: input.strategy.getHistoryLiveBoundaryIndex(historyItems),
   });
 
   return {
