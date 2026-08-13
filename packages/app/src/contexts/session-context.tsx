@@ -14,12 +14,14 @@ import { generateMessageId, type StreamItem } from "@/types/stream";
 import {
   createSessionAgentStreamReducerQueue,
   deriveAgentStreamTurnLiveness,
+  enqueueAgentStreamEventAndNotifyTerminal,
   processTimelineResponse,
   type ProcessTimelineResponseOutput,
   type TimelineReducerSideEffect,
 } from "@/timeline/session-stream-reducers";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { isTimelineResumeSnapshotAuthoritative } from "@/timeline/timeline-sync-plan";
+import { isTimelineProjectionAgentStateCompatible } from "@/timeline/projection-lane";
 import {
   createViewedTimelineSync,
   type TimelineDeliveryMode,
@@ -213,6 +215,14 @@ function clearAgentInitializingFlag(
   });
 }
 
+function isAgentLiveForProjection(session: SessionState | undefined, agentId: string): boolean {
+  const agent = session?.agents.get(agentId) ?? session?.agentDetails.get(agentId);
+  return (
+    !isTimelineProjectionAgentStateCompatible(agent) ||
+    session?.agentTurnLiveness.get(agentId)?.phase === "open"
+  );
+}
+
 function handleTimelineError(input: {
   result: ProcessTimelineResponseOutput;
   agentId: string;
@@ -360,6 +370,15 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const applyAgentTimelineResponseState = useSessionStore(
     (state) => state.applyAgentTimelineResponseState,
   );
+  const installAgentTimelineProjectionSummary = useSessionStore(
+    (state) => state.installAgentTimelineProjectionSummary,
+  );
+  const markAgentTimelineProjectionCanonicalReplacementPending = useSessionStore(
+    (state) => state.markAgentTimelineProjectionCanonicalReplacementPending,
+  );
+  const clearAgentTimelineProjectionLane = useSessionStore(
+    (state) => state.clearAgentTimelineProjectionLane,
+  );
   const setAgents = useSessionStore((state) => state.setAgents);
   const setWorkspaces = useSessionStore((state) => state.setWorkspaces);
   const flushAgentLastActivity = useSessionStore((state) => state.flushAgentLastActivity);
@@ -379,6 +398,8 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const attentionNotifiedRef = useRef<Map<string, number>>(new Map());
   const appStateRef = useRef(AppState.currentState);
   const viewedTimelineSyncRef = useRef<ViewedTimelineSync | null>(null);
+  const projectionSummaryGenerationsRef = useRef<Map<string, number>>(new Map());
+  const projectionSummaryInFlightRef = useRef<Map<string, number>>(new Map());
   const audioOutputBuffersRef = useRef<Map<string, BufferedAudioChunk[]>>(new Map());
   const activeAudioGroupsRef = useRef<Set<string>>(new Set());
   const isAppVisible = useAppVisible();
@@ -402,6 +423,31 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       viewedTimelineSyncRef.current?.recoverGap(agentId, cursor);
     },
     [],
+  );
+
+  const invalidateProjectionSummaryRequests = useCallback(() => {
+    const generations = projectionSummaryGenerationsRef.current;
+    const agentIds = new Set([
+      ...generations.keys(),
+      ...projectionSummaryInFlightRef.current.keys(),
+    ]);
+    for (const agentId of agentIds) {
+      generations.set(agentId, (generations.get(agentId) ?? 0) + 1);
+    }
+    projectionSummaryInFlightRef.current.clear();
+  }, []);
+
+  const supersedeProjectionForAgent = useCallback(
+    (agentId: string) => {
+      const generations = projectionSummaryGenerationsRef.current;
+      generations.set(agentId, (generations.get(agentId) ?? 0) + 1);
+      const hadSummaryRequest = projectionSummaryInFlightRef.current.has(agentId);
+      const marked = markAgentTimelineProjectionCanonicalReplacementPending(serverId, agentId);
+      if (marked || hadSummaryRequest) {
+        viewedTimelineSyncRef.current?.refreshAgent(agentId);
+      }
+    },
+    [markAgentTimelineProjectionCanonicalReplacementPending, serverId],
   );
 
   const handleAppResumed = useCallback(
@@ -536,8 +582,15 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     if (!isConnected) {
       flushAgentLastActivity();
       setInitializingAgents(serverId, new Map());
+      invalidateProjectionSummaryRequests();
     }
-  }, [flushAgentLastActivity, serverId, isConnected, setInitializingAgents]);
+  }, [
+    flushAgentLastActivity,
+    invalidateProjectionSummaryRequests,
+    serverId,
+    isConnected,
+    setInitializingAgents,
+  ]);
 
   useEffect(
     () =>
@@ -562,6 +615,11 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         { type: "fetch_agent_timeline_response" }
       >["payload"],
     ) => {
+      // Projection responses are owned by their initiating await path. They
+      // never enter the canonical reducer or cursor state.
+      if (payload.projectionPayload) {
+        return;
+      }
       const agentId = payload.agentId;
       const initKey = getInitKey(serverId, agentId);
       const shouldMarkAuthoritativeHistoryApplied = isTimelineResumeSnapshotAuthoritative({
@@ -608,6 +666,9 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       }
 
       if (result.commit === "discard") {
+        // A successful canonical response supersedes the display lane even
+        // when its page is already covered by the installed canonical range.
+        clearAgentTimelineProjectionLane(serverId, agentId);
         if (result.acknowledgedClientMessageIds.length > 0) {
           setAgentStreamState(serverId, agentId, {
             acknowledgedClientMessageIds: result.acknowledgedClientMessageIds,
@@ -653,6 +714,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     },
     [
       applyAgentTimelineResponseState,
+      clearAgentTimelineProjectionLane,
       markAgentHistorySynchronized,
       recoverTimelineGap,
       serverId,
@@ -670,6 +732,8 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     const sync = createViewedTimelineSync({
       initialDeliveryMode,
       setSubscription: (agentIds) => client.setAgentTimelineSubscription(agentIds),
+      // Initial canonical fetch, summary installation, and race fallback share one request boundary.
+      // eslint-disable-next-line complexity
       fetchPage: async (agentId, request) => {
         const session = useSessionStore.getState().sessions[serverId];
         const initKey = getInitKey(serverId, agentId);
@@ -687,7 +751,61 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
           setAgentInitializing(agentId, true);
         }
         try {
-          const page = await getHostRuntimeStore().fetchAgentTimeline(serverId, agentId, request);
+          const currentSession = useSessionStore.getState().sessions[serverId];
+          const currentLane = currentSession?.agentTimelineProjectionLanes.get(agentId);
+          const canTrySummary =
+            request.direction === "tail" &&
+            currentLane?.canonicalReplacementPending !== true &&
+            !isAgentLiveForProjection(currentSession, agentId);
+
+          let page: Awaited<ReturnType<DaemonClient["fetchAgentTimeline"]>>;
+          if (canTrySummary) {
+            const generations = projectionSummaryGenerationsRef.current;
+            const generation = (generations.get(agentId) ?? 0) + 1;
+            generations.set(agentId, generation);
+            projectionSummaryInFlightRef.current.set(agentId, generation);
+            try {
+              page = await client.fetchAgentTimelineSummary(agentId);
+            } finally {
+              if (projectionSummaryInFlightRef.current.get(agentId) === generation) {
+                projectionSummaryInFlightRef.current.delete(agentId);
+              }
+            }
+
+            const projection = page.projectionPayload;
+            if (!projection) {
+              // Capability fallback and summary eligibility misses are normal
+              // timeline pages. The generic listener has already applied them.
+              return page;
+            }
+            if (projection.kind !== "summary") {
+              throw new Error("Timeline summary projection was not returned");
+            }
+            const latestSession = useSessionStore.getState().sessions[serverId];
+            const canInstall =
+              generations.get(agentId) === generation &&
+              !isAgentLiveForProjection(latestSession, agentId) &&
+              latestSession?.agentTimelineProjectionLanes.get(agentId)
+                ?.canonicalReplacementPending !== true;
+            if (!canInstall) {
+              // A live event, newer summary, or superseding canonical request won the race.
+              return page;
+            }
+            const installed = installAgentTimelineProjectionSummary(serverId, agentId, projection);
+            if (!installed) return page;
+            clearAgentInitializingFlag(setInitializingAgents, serverId, agentId);
+            markAgentHistorySynchronized(serverId, agentId);
+            useCreateFlowStore.getState().clearByAgent({ serverId, agentId });
+            const installedAgent =
+              latestSession?.agents.get(agentId) ?? latestSession?.agentDetails.get(agentId);
+            if (installedAgent && installedAgent.status !== "running") {
+              getHostRuntimeStore().drainQueuedAgentMessage(serverId, agentId);
+            }
+            resolveInitDeferred(initKey);
+            return page;
+          } else {
+            page = await getHostRuntimeStore().fetchAgentTimeline(serverId, agentId, request);
+          }
           if (shouldInitialize && getInitDeferred(initKey)) {
             refreshAgentInitializationTimeout({ key: initKey, agentId, setAgentInitializing });
           }
@@ -713,13 +831,22 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     sync.setActive(getIsAppVisible(appStateRef.current));
 
     return () => {
+      invalidateProjectionSummaryRequests();
       if (viewedTimelineSyncRef.current === sync) {
         viewedTimelineSyncRef.current = null;
       }
       setViewedTimelineSync(serverId, null);
       sync.dispose();
     };
-  }, [client, serverId, setInitializingAgents, setViewedTimelineSync]);
+  }, [
+    client,
+    invalidateProjectionSummaryRequests,
+    installAgentTimelineProjectionSummary,
+    markAgentHistorySynchronized,
+    serverId,
+    setInitializingAgents,
+    setViewedTimelineSync,
+  ]);
 
   useEffect(() => {
     viewedTimelineSyncRef.current?.setConnected(isConnected);
@@ -737,6 +864,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     const unsubAgentStream = client.on("agent_stream", (message) => {
       if (message.type !== "agent_stream") return;
       const { agentId, event, timestamp, seq, epoch } = message.payload;
+      supersedeProjectionForAgent(agentId);
       const parsedTimestamp = new Date(timestamp);
       const streamEvent = event;
       if (
@@ -753,11 +881,17 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       if (turnLiveness.length > 0) {
         applyAgentTurnLiveness(serverId, agentId, turnLiveness);
       }
-      agentStreamReducerQueue.enqueue(agentId, {
-        event: streamEvent,
-        seq,
-        epoch,
-        timestamp: parsedTimestamp,
+      enqueueAgentStreamEventAndNotifyTerminal({
+        queue: agentStreamReducerQueue,
+        agentId,
+        event: {
+          event: streamEvent,
+          seq,
+          epoch,
+          timestamp: parsedTimestamp,
+        },
+        notifyTerminal: () =>
+          getHostRuntimeStore().notifyReplicaCacheFinal(serverId, agentId, "stream"),
       });
 
       // NOTE: We don't update lastActivityAt on every stream event to prevent
@@ -773,8 +907,19 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
 
     const unsubAgentTimeline = client.on("fetch_agent_timeline_response", (message) => {
       if (message.type !== "fetch_agent_timeline_response") return;
+      if (message.payload.projectionPayload) return;
       agentStreamReducerQueue.flushAgent(message.payload.agentId);
       applyTimelineResponse(message.payload);
+    });
+
+    const unsubAgentUpdate = client.on("agent_update", (message) => {
+      if (message.type !== "agent_update") return;
+      if (
+        message.payload.kind === "upsert" &&
+        !isTimelineProjectionAgentStateCompatible(message.payload.agent)
+      ) {
+        supersedeProjectionForAgent(message.payload.agent.id);
+      }
     });
 
     const unsubProviderSubagentUpdate = client.on("agent.provider_subagents.update", (message) => {
@@ -1070,6 +1215,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     return () => {
       unsubAgentStream();
       unsubAgentTimeline();
+      unsubAgentUpdate();
       unsubProviderSubagentUpdate();
       unsubAgentAttention();
       unsubScriptStatusUpdate();
@@ -1106,6 +1252,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     setPendingPermissions,
     notifyAgentAttention,
     recoverTimelineGap,
+    supersedeProjectionForAgent,
     applyWorkspaceSetupProgress,
     applyTimelineResponse,
     updateSessionServerInfo,

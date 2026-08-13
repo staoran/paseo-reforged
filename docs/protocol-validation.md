@@ -40,3 +40,18 @@ Message schemas are structural declarations. Do not put `.transform()`, `.catch(
 Use `z.discriminatedUnion()` when every branch has a shared literal tag. Plain `z.union()` is acceptable only when there is no shared literal discriminator or when a generated-code regression test proves that specific shape is miscompiled.
 
 Defaults are allowed only on primitive leaves. Do not place `.default()` on large arrays, item schemas, or big containers in inbound message schemas.
+
+## Timeline summary/detail compatibility
+
+`server_info.features.agentTimelineSummaryDetail` is the single capability gate for the stored
+timeline projection fast path. Supporting clients may add optional `projectionRequest` to the
+existing `fetch_agent_timeline_request` and consume optional `projectionPayload` from the existing
+response. These fields do not replace the ordinary `projection`, entries, cursor, or paging
+envelope. Clients connected to an older daemon omit the request and use the canonical bounded-tail
+path; newer clients continue to accept responses without a projection payload as an ordinary
+eligibility miss or compatibility fallback.
+
+The projection payload is a discriminated union of `summary` and `activity_detail`. Detail errors
+stay inside the detail payload so retry state remains local to one Activity; transport/schema
+failures still use the surrounding RPC error behavior. The optional fields retain their dated
+`COMPAT(agentTimelineSummaryDetail)` markers until the registered removal date.
