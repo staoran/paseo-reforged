@@ -6834,7 +6834,6 @@ export class Session {
     if (
       direction !== "tail" ||
       msg.cursor ||
-      msg.limit !== undefined ||
       (msg.projection ?? "projected") !== "projected" ||
       msg.mergeWindow === true
     ) {

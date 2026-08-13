@@ -415,7 +415,10 @@ describe("Hub relationship", () => {
     await relationship.restartDaemon();
     await relationship.socketDialed();
     relationship.connectLatestSocket();
-    relationship.beginOwnedCreate("running-duplicate", "execution-running", { prompt });
+    relationship.beginOwnedCreate("running-duplicate", "execution-running", {
+      prompt,
+      modeId: "full-access",
+    });
     const duplicate = await relationship.ownedCreateResult("running-duplicate");
     expect(duplicate).toMatchObject({
       payload: {

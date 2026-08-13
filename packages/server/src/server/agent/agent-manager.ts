@@ -2679,7 +2679,11 @@ export class AgentManager {
           return true;
         }
 
-        if (current.lifecycle === "error" && !currentPendingRun?.started) {
+        if (
+          current.lifecycle === "error" &&
+          current.lastError !== undefined &&
+          !currentPendingRun?.started
+        ) {
           finishErr(new Error(current.lastError ?? `Agent ${agentId} failed to start`));
           return true;
         }

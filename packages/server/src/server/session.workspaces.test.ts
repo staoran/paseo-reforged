@@ -829,7 +829,10 @@ test.each([
   record.hubExecutionContract = contract;
   const unarchiveSnapshot = vi.fn(async () => true);
   const session = createSessionForWorkspaceTests({
-    agentStorage: { list: async () => [record] },
+    agentStorage: {
+      findByPersistenceHandle: async () => [makeAgentMetadataEntry(record)],
+      get: async (agentId: string) => (agentId === record.id ? record : null),
+    },
     agentManager: { unarchiveSnapshot },
   });
 
@@ -858,7 +861,10 @@ test("retains an applied Hub contract while matching a resumable handle", async 
   record.hubExecutionContract = contract;
   const unarchiveSnapshot = vi.fn(async () => true);
   const session = createSessionForWorkspaceTests({
-    agentStorage: { list: async () => [record] },
+    agentStorage: {
+      findByPersistenceHandle: async () => [makeAgentMetadataEntry(record)],
+      get: async (agentId: string) => (agentId === record.id ? record : null),
+    },
     agentManager: { unarchiveSnapshot },
   });
 

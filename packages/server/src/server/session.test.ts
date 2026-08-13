@@ -5780,4 +5780,85 @@ describe("stored timeline summary/detail fast path", () => {
       }),
     );
   });
+
+  test("keeps the requested canonical page bound when summary eligibility misses", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const fallbackPage: AgentTimelineFetchResult = {
+      ...tailPage,
+      hasOlder: true,
+      rows: rows.slice(-2),
+    };
+    const fetchTimeline = vi.fn().mockReturnValue(fallbackPage);
+    const liveAgent = {
+      id: agentId,
+      provider: "mock",
+      cwd: storedRecord.cwd,
+      config: { provider: "mock", cwd: storedRecord.cwd, modeId: "default" },
+      lifecycle: "idle",
+      createdAt: new Date(storedRecord.createdAt),
+      updatedAt: new Date(storedRecord.updatedAt),
+      activeTurnId: null,
+      activeTurnStartedAt: null,
+      capabilities: {},
+      currentModeId: "default",
+      availableModes: [],
+      features: [],
+      pendingPermissions: new Map(),
+      persistence: storedRecord.persistence,
+      providerRetryMessage: null,
+      labels: {},
+      lastUserMessageAt: null,
+      lastMessageAt: null,
+      attention: { requiresAttention: false },
+    };
+    const session = createSessionForTest({
+      messages,
+      agentStorage: {
+        get: vi.fn().mockResolvedValue(storedRecord),
+      },
+      agentManager: {
+        waitForAgentClose: vi.fn().mockResolvedValue(undefined),
+        getAgent: vi.fn(() => liveAgent),
+        getDurableTimelineCoverage: vi.fn().mockResolvedValue({
+          active: null,
+          working: null,
+          eligible: false,
+        }),
+        fetchTimeline,
+      },
+    });
+
+    await session.handleMessage({
+      type: "fetch_agent_timeline_request",
+      agentId,
+      requestId: "summary-bounded-fallback",
+      direction: "tail",
+      limit: 2,
+      projection: "projected",
+      projectionRequest: { kind: "summary" },
+    });
+
+    expect(messages).toEqual([
+      expect.objectContaining({
+        type: "fetch_agent_timeline_response",
+      }),
+    ]);
+    expect((messages[0] as { payload: unknown }).payload).toEqual(
+      expect.objectContaining({ requestId: "summary-bounded-fallback", error: null }),
+    );
+    expect(fetchTimeline).toHaveBeenCalledWith(agentId, {
+      direction: "tail",
+      cursor: undefined,
+      limit: 2,
+    });
+    const response = messages.find((message) => message.type === "fetch_agent_timeline_response");
+    expect(response).toMatchObject({
+      type: "fetch_agent_timeline_response",
+      payload: {
+        requestId: "summary-bounded-fallback",
+        hasOlder: true,
+      },
+    });
+    expect(response?.payload).not.toHaveProperty("projectionPayload");
+  });
 });

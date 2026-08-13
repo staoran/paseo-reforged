@@ -447,6 +447,7 @@ describe("WorkspaceGitService checkout observation", () => {
 
   test("a loose remote-ref watcher echo during fetch coalesces into the narrow refresh", async () => {
     const watcher = createWatcherHarness();
+    const fetchWindowOpen = createDeferred<void>();
     const releaseFetch = createDeferred<void>();
     const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => ({
       ...createCheckoutFacts(cwd),
@@ -473,6 +474,7 @@ describe("WorkspaceGitService checkout observation", () => {
       hasOriginRemote: vi.fn(async () => true),
       runGitFetch: vi.fn(async (_cwd, observer) => {
         observer?.onRefSnapshot("before");
+        fetchWindowOpen.resolve();
         await releaseFetch.promise;
         observer?.onRefSnapshot("after");
         return {
@@ -484,9 +486,10 @@ describe("WorkspaceGitService checkout observation", () => {
     const listener = vi.fn();
     const subscription = service.registerWorkspace({ cwd: REPO_CWD }, listener);
     await vi.waitFor(() => {
-      expect(service.getMetrics().fetchInFlightCount).toBe(1);
-      expect(service.getMetrics().workspaceRefreshInFlightCount).toBe(0);
+      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(1);
+      expect(listener).toHaveBeenCalledTimes(1);
     });
+    await fetchWindowOpen.promise;
     listener.mockClear();
 
     watcher.records

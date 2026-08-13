@@ -183,6 +183,7 @@ export function createMarkdownStyles(theme: Theme) {
       borderWidth: 0,
       fontFamily: theme.fontFamily.mono,
       fontSize: theme.fontSize.code,
+      lineHeight: theme.lineHeight.diff,
       letterSpacing: 0,
     },
 

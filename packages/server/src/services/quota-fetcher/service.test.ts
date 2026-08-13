@@ -1776,7 +1776,8 @@ describe("KimiQuotaProvider usage windows", () => {
 
   it("keeps valid windows when another limits entry is malformed", async () => {
     process.env["KIMI_TOKEN"] = "kimi_test_token";
-    const logger = createLogger() as unknown as { debug: ReturnType<typeof vi.fn> };
+    const logger = createLogger();
+    const debug = vi.spyOn(logger, "debug").mockImplementation(() => undefined);
     const fetchApi = vi.fn(async () =>
       jsonResponse({
         usage: {
@@ -1803,10 +1804,7 @@ describe("KimiQuotaProvider usage windows", () => {
       usedPct: 50,
       remainingPct: 50,
     });
-    expect(logger.debug).toHaveBeenCalledWith(
-      { index: 0 },
-      "Ignoring malformed Kimi usage limit window",
-    );
+    expect(debug).toHaveBeenCalledWith({ index: 0 }, "Ignoring malformed Kimi usage limit window");
   });
 
   it("accepts direct limit fields, alternate reset keys, and provider labels", async () => {

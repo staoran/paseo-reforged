@@ -3704,6 +3704,58 @@ describe("processAgentStreamEvent", () => {
     expect(result.sideEffects).toEqual([]);
   });
 
+  it("preserves a submitted prompt while its canonical row starts a new epoch", () => {
+    const submittedAt = new Date(1000);
+    const image = {
+      id: "submitted-image",
+      mimeType: "image/png",
+      storageType: "web-indexeddb" as const,
+      storageKey: "submitted-image",
+      createdAt: submittedAt.getTime(),
+    };
+    const attachment = {
+      type: "text" as const,
+      mimeType: "text/plain" as const,
+      text: "attached context",
+      title: "context.txt",
+    };
+    const submitted = createUserMessage({
+      clientMessageId: "submitted-new-epoch",
+      text: "local presentation",
+      timestamp: submittedAt,
+      images: [image],
+      attachments: [attachment],
+    });
+
+    const result = processAgentStreamEvent({
+      ...baseStreamInput,
+      event: {
+        type: "timeline",
+        provider: "claude",
+        item: {
+          type: "user_message",
+          text: "provider presentation",
+          clientMessageId: "submitted-new-epoch",
+          messageId: "provider-new-epoch",
+        },
+      },
+      seq: 1,
+      epoch: "epoch-2",
+      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 5 },
+      currentTail: [makeAssistantItem("old timeline"), submitted],
+    });
+
+    expect(result.tail).toEqual([
+      {
+        ...submitted,
+        messageId: "provider-new-epoch",
+        timelineCursor: { epoch: "epoch-2", seq: 1 },
+      },
+    ]);
+    expect(result.head).toEqual([]);
+    expect(result.acknowledgedClientMessageIds).toEqual(["submitted-new-epoch"]);
+  });
+
   it("initializes cursor when none exists", () => {
     const result = processAgentStreamEvent({
       ...baseStreamInput,

@@ -765,7 +765,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
             generations.set(agentId, generation);
             projectionSummaryInFlightRef.current.set(agentId, generation);
             try {
-              page = await client.fetchAgentTimelineSummary(agentId);
+              page = await client.fetchAgentTimelineSummary(agentId, { limit: request.limit });
             } finally {
               if (projectionSummaryInFlightRef.current.get(agentId) === generation) {
                 projectionSummaryInFlightRef.current.delete(agentId);

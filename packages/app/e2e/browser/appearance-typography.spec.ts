@@ -521,7 +521,15 @@ test("keeps interface, workspace, and code typography independent", async ({ pag
     await commitAppearanceField(page, "Code font family", "monoFontFamily", "", "");
     await commitAppearanceField(page, "Code font size", "codeFontSize", "12", 12);
     await returnToWorkspace(page);
-    expect(await readWorkspaceTypography(page, prompt)).toEqual(initialWorkspace);
+    const resetWorkspace = await readWorkspaceTypography(page, prompt);
+    expect(resetWorkspace.user).toEqual(initialWorkspace.user);
+    expect(resetWorkspace.assistant).toEqual(initialWorkspace.assistant);
+    expect(resetWorkspace.composer).toEqual(initialWorkspace.composer);
+    expect(resetWorkspace.code).toEqual({
+      fontFamily: initialWorkspace.code.fontFamily,
+      fontSize: 12,
+      lineHeight: 18,
+    });
 
     await page.setViewportSize({ width: 390, height: 844 });
     for (const size of [24, 11]) {

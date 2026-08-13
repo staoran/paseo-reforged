@@ -7,6 +7,7 @@ import {
   flushHeadToTail,
   hydrateStreamState,
   isAgentToolCallItem,
+  isUnreconciledLocalUserMessage,
   mergeAgentToolCallItem,
   replaceWithCanonicalStream,
   reduceStreamUpdate,
@@ -1643,8 +1644,13 @@ export function processAgentStreamEvent(
       };
     }
   } else {
+    const resetTail = sequencing.resetLiveTimeline
+      ? [...currentTail, ...currentHead].filter(
+          (item) => item.kind === "user_message" && isUnreconciledLocalUserMessage(item),
+        )
+      : currentTail;
     streamResult = applyStreamEvent({
-      tail: sequencing.resetLiveTimeline ? [] : currentTail,
+      tail: resetTail,
       head: sequencing.resetLiveTimeline ? [] : currentHead,
       event,
       timestamp,

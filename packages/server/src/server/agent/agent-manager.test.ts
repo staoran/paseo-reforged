@@ -7816,6 +7816,67 @@ test("turn_failed emits a system error assistant timeline message and keeps erro
   expect(systemErrors[0]?.text).toContain("invalid model id");
 });
 
+test("waitForAgentRunStart ignores a previous start failure while a retry is pending", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-start-retry-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const retryStart = deferred<{ turnId: string }>();
+
+  class StartRetrySession extends TestAgentSession {
+    private startCount = 0;
+
+    override async startTurn(): Promise<{ turnId: string }> {
+      this.startCount += 1;
+      if (this.startCount === 1) {
+        throw new Error("first start rejected");
+      }
+      return await retryStart.promise;
+    }
+  }
+
+  class StartRetryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new StartRetrySession(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new StartRetryClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000152",
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await expect(manager.runAgent(agent.id, "reject first start")).rejects.toThrow(
+      "first start rejected",
+    );
+
+    const retry = manager.runAgent(agent.id, "accept retry");
+    const retryStarted = manager.waitForAgentRunStart(agent.id);
+    const prematureResult = await Promise.race([
+      retryStarted.then(
+        () => "resolved",
+        (error: unknown) => (error instanceof Error ? error.message : String(error)),
+      ),
+      new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 25)),
+    ]);
+    expect(prematureResult).toBe("pending");
+
+    retryStart.resolve({ turnId: "retry-turn" });
+    await expect(retryStarted).resolves.toBeUndefined();
+    await manager.cancelAgentRun(agent.id);
+    await retry;
+  } finally {
+    await manager.closeAgent("00000000-0000-4000-8000-000000000152").catch(() => undefined);
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("turn_failed surfaces provider code and diagnostic in system error message", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-turn-failed-detail-"));
   const storagePath = join(workdir, "agents");

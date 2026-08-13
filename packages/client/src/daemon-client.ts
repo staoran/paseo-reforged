@@ -580,10 +580,10 @@ export interface FetchAgentTimelineOptions {
   timeout?: number;
 }
 
-export interface FetchAgentTimelineSummaryOptions {
-  requestId?: string;
-  timeout?: number;
-}
+export interface FetchAgentTimelineSummaryOptions extends Pick<
+  FetchAgentTimelineOptions,
+  "limit" | "requestId" | "timeout"
+> {}
 
 export interface FetchAgentTimelineActivityDetailOptions {
   epoch: string;
@@ -2891,17 +2891,17 @@ export class DaemonClient {
     agentId: string,
     options: FetchAgentTimelineSummaryOptions = {},
   ): Promise<FetchAgentTimelinePayload> {
+    const fallbackOptions: FetchAgentTimelineOptions = {
+      direction: "tail",
+      limit: options.limit,
+      projection: "projected",
+      requestId: options.requestId,
+      timeout: options.timeout,
+    };
     if (this.lastServerInfoMessage?.features?.agentTimelineSummaryDetail !== true) {
-      return await this.fetchAgentTimeline(agentId, {
-        requestId: options.requestId,
-        timeout: options.timeout,
-      });
+      return await this.fetchAgentTimeline(agentId, fallbackOptions);
     }
-    return await this.requestAgentTimeline(
-      agentId,
-      { requestId: options.requestId, timeout: options.timeout },
-      { kind: "summary" },
-    );
+    return await this.requestAgentTimeline(agentId, fallbackOptions, { kind: "summary" });
   }
 
   async fetchAgentTimelineActivityDetail(

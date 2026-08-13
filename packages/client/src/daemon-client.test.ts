@@ -1364,11 +1364,17 @@ test("gates timeline summary/detail requests on the single server capability", a
 
   const summaryPromise = client.fetchAgentTimelineSummary("agent-1", {
     requestId: "req-summary-1",
+    direction: "tail",
+    limit: 40,
+    projection: "projected",
   });
   expect(parseSentFrame(mock.sent[0])).toEqual({
     type: "fetch_agent_timeline_request",
     agentId: "agent-1",
     requestId: "req-summary-1",
+    direction: "tail",
+    limit: 40,
+    projection: "projected",
     projectionRequest: { kind: "summary" },
   });
   mock.triggerMessage(
@@ -1508,11 +1514,15 @@ test("uses the ordinary tail when timeline summary/detail capability is absent",
 
   const summaryPromise = client.fetchAgentTimelineSummary("agent-1", {
     requestId: "req-summary-legacy",
+    limit: 40,
   });
   expect(parseSentFrame(mock.sent[0])).toEqual({
     type: "fetch_agent_timeline_request",
     agentId: "agent-1",
     requestId: "req-summary-legacy",
+    direction: "tail",
+    limit: 40,
+    projection: "projected",
   });
   respondWithTail("req-summary-legacy");
   await expect(summaryPromise).resolves.not.toHaveProperty("projectionPayload");

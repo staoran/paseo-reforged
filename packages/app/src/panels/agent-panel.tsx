@@ -1511,6 +1511,7 @@ const AgentStreamSection = memo(function AgentStreamSection({
   onEditLastUserMessageEffect: (effect: LastUserMessageEditEffect) => Promise<void> | void;
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
 }) {
+  const { t } = useTranslation();
   const { openTab } = usePaneContext();
   const isActive = useRetainedPanelActive();
   const workingDiffFocusRequestRef = useRef(0);
@@ -1562,7 +1563,7 @@ const AgentStreamSection = memo(function AgentStreamSection({
         failProjectionDetail(serverId, agentId, {
           activityId,
           generation: request.generation,
-          error: "Daemon unavailable",
+          error: t("common.errors.daemonUnavailable"),
         });
         return;
       }
@@ -1617,6 +1618,7 @@ const AgentStreamSection = memo(function AgentStreamSection({
       failProjectionDetail,
       isActive,
       serverId,
+      t,
     ],
   );
   const projectionHistoryPagination = useMemo(() => {

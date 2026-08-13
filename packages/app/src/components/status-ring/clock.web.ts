@@ -20,7 +20,7 @@ export function useStatusRingAnimationRef(): RefCallback<NativeView> {
 
   useLayoutEffect(() => {
     const element = arcElement.current;
-    if (!element) {
+    if (!element || typeof element.animate !== "function") {
       return;
     }
 

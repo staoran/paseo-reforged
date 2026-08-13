@@ -2426,6 +2426,8 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
   },
   formStackDesktop: {
+    flex: 1,
+    minWidth: 0,
     flexDirection: "row",
     alignItems: "center",
     // The badge adds its own left padding; offset it so the project icon's left

@@ -163,7 +163,7 @@ test.describe("Agent stream UI", () => {
       await expect(folds).toHaveCount(2);
       await expect(hiddenLastActivity).toHaveCount(0);
       await expect(firstActivity).toHaveCount(0);
-      const foldRow = rows.filter({ has: fold });
+      const foldRow = fold.locator("xpath=ancestor::*[@data-history-row-id][1]");
       await expect(foldRow).toHaveCount(1);
       const hostRowId = await foldRow.getAttribute("data-history-row-id");
       expect(hostRowId).toBeTruthy();

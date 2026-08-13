@@ -287,7 +287,7 @@ function buildAgentRecord(params: {
     lastStatus: "closed" as const,
     lastModeId: "default",
     config: { modeId: "default" },
-    runtimeInfo: null,
+    runtimeInfo: { provider: "claude", sessionId: null },
     features: [],
     persistence: null,
     requiresAttention: false,
@@ -2120,7 +2120,7 @@ describe("ScheduleService", () => {
       config: {
         modeId: "default",
       },
-      runtimeInfo: null,
+      runtimeInfo: { provider: "claude", sessionId: null },
       features: [],
       persistence: null,
       requiresAttention: false,
