@@ -701,6 +701,79 @@ test("runInImportWorkspace creates one fresh workspace for an untargeted import"
   expect(await workspaceRegistry.list()).toEqual([result.createdWorkspace]);
 });
 
+test("runInImportWorkspace persists a planned workspace before starting an import", async () => {
+  const cwd = path.join(tmpDir, "transactional-import");
+  const plannedWorkspaceId = "00000000-0000-4000-8000-000000000645";
+  mkdirSync(cwd);
+  const prepared: unknown[] = [];
+
+  const result = await provisioning.runInImportWorkspace(
+    { cwd },
+    async (workspace) => {
+      expect(prepared).toHaveLength(1);
+      expect(await workspaceRegistry.get(plannedWorkspaceId)).toEqual(workspace);
+      return workspace.workspaceId;
+    },
+    {
+      plannedWorkspaceId,
+      onWorkspacePrepared: async (context) => {
+        prepared.push(context);
+      },
+    },
+  );
+
+  expect(result.value).toBe(plannedWorkspaceId);
+  expect(prepared).toEqual([
+    {
+      workspace: expect.objectContaining({ workspaceId: plannedWorkspaceId, cwd }),
+      created: true,
+      previousProject: null,
+    },
+  ]);
+});
+
+test("runInImportWorkspace leaves transactional workspace cleanup to import recovery", async () => {
+  const cwd = path.join(tmpDir, "failed-transactional-import");
+  const plannedWorkspaceId = "00000000-0000-4000-8000-000000000646";
+  mkdirSync(cwd);
+
+  await expect(
+    provisioning.runInImportWorkspace(
+      { cwd },
+      async () => {
+        throw new Error("provider session is unavailable");
+      },
+      {
+        plannedWorkspaceId,
+        onWorkspacePrepared: async () => {},
+      },
+    ),
+  ).rejects.toThrow("provider session is unavailable");
+
+  expect(await workspaceRegistry.get(plannedWorkspaceId)).toEqual(
+    expect.objectContaining({ workspaceId: plannedWorkspaceId, cwd }),
+  );
+  expect(await projectRegistry.list()).toHaveLength(1);
+});
+
+test("runInImportWorkspace rolls back when transaction ownership cannot be recorded", async () => {
+  const cwd = path.join(tmpDir, "failed-transaction-marker");
+  const plannedWorkspaceId = "00000000-0000-4000-8000-000000000647";
+  mkdirSync(cwd);
+
+  await expect(
+    provisioning.runInImportWorkspace({ cwd }, async () => "unreachable", {
+      plannedWorkspaceId,
+      onWorkspacePrepared: async () => {
+        throw new Error("transaction marker unavailable");
+      },
+    }),
+  ).rejects.toThrow("transaction marker unavailable");
+
+  expect(await workspaceRegistry.list()).toEqual([]);
+  expect(await projectRegistry.list()).toEqual([]);
+});
+
 test.each(["missing", "archived"] as const)(
   "runInImportWorkspace restores the exact %s project state when an untargeted import fails",
   async (state) => {

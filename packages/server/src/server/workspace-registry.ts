@@ -103,6 +103,14 @@ const PersistedWorkspaceRecordSchema = z.object({
 export type PersistedProjectRecord = z.infer<typeof PersistedProjectRecordSchema>;
 export type PersistedWorkspaceRecord = z.infer<typeof PersistedWorkspaceRecordSchema>;
 
+export function parsePersistedProjectRecord(value: unknown): PersistedProjectRecord {
+  return PersistedProjectRecordSchema.parse(value);
+}
+
+export function parsePersistedWorkspaceRecord(value: unknown): PersistedWorkspaceRecord {
+  return PersistedWorkspaceRecordSchema.parse(value);
+}
+
 export interface WorkspaceMutation {
   kind: "upsert" | "archive" | "remove";
   workspaceId: string;

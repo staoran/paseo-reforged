@@ -7,7 +7,7 @@ import type {
   ManagedAgent,
   ManagedImportableProviderSession,
 } from "./agent-manager.js";
-import { AgentStorage, type StoredAgentRecord } from "./agent-storage.js";
+import { AgentStorage, type AgentMetadataEntry, type StoredAgentRecord } from "./agent-storage.js";
 import type { FetchRecentProviderSessionsRequestMessage } from "@getpaseo/protocol/messages";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import type { AgentTimelineItem } from "./agent-sdk-types.js";
@@ -144,6 +144,37 @@ function makeRequest(
   };
 }
 
+function makeAgentMetadataEntry(input: {
+  id?: string;
+  provider: string;
+  archivedAt?: string | null;
+  persistenceIdentity: NonNullable<AgentMetadataEntry["persistenceIdentity"]>;
+}): AgentMetadataEntry {
+  const timestamp = "2026-04-30T00:00:00.000Z";
+  return {
+    id: input.id ?? `stored-${input.persistenceIdentity.sessionId}`,
+    recordPath: `test/${input.id ?? input.persistenceIdentity.sessionId}.json`,
+    recordRevision: "0".repeat(64),
+    provider: input.provider,
+    cwd: "/tmp/project",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    lastUserMessageAt: null,
+    lastMessageAt: null,
+    title: null,
+    labels: {},
+    lastStatus: "closed",
+    lastModeId: null,
+    effectiveThinkingOptionId: null,
+    requiresAttention: false,
+    attentionReason: null,
+    attentionTimestamp: null,
+    internal: false,
+    archivedAt: input.archivedAt ?? null,
+    persistenceIdentity: input.persistenceIdentity,
+  };
+}
+
 test("listImportableProviderSessions filters, sorts, limits, and projects importable sessions", async () => {
   const cwd = "/tmp/project";
   const sessions = [
@@ -205,31 +236,32 @@ test("listImportableProviderSessions filters, sorts, limits, and projects import
   ];
   const listImportableSessions = vi.fn(async () => sessions);
   const agentManager = {
-    listAgents: () =>
-      [
-        {
+    listImportableSessions,
+  } satisfies Pick<AgentManager, "listImportableSessions">;
+  const agentStorage = {
+    getMetadataSnapshot: async () => ({
+      generation: 1,
+      entries: [
+        makeAgentMetadataEntry({
           provider: "codex",
-          persistence: {
+          persistenceIdentity: {
+            provider: "codex",
+            sessionId: "stored-session",
+            nativeHandle: "stored-handle",
+          },
+        }),
+        makeAgentMetadataEntry({
+          id: "live-agent",
+          provider: "codex",
+          persistenceIdentity: {
             provider: "codex",
             sessionId: "live-session",
             nativeHandle: "live-handle",
           },
-        },
-      ] as ManagedAgent[],
-    listImportableSessions,
-  } satisfies Pick<AgentManager, "listAgents" | "listImportableSessions">;
-  const agentStorage = {
-    list: async () => [
-      {
-        provider: "codex",
-        persistence: {
-          provider: "codex",
-          sessionId: "stored-session",
-          nativeHandle: "stored-handle",
-        },
-      } as StoredAgentRecord,
-    ],
-  } satisfies Pick<AgentStorage, "list">;
+        }),
+      ],
+    }),
+  } satisfies Pick<AgentStorage, "getMetadataSnapshot">;
 
   const result = await listImportableProviderSessions({
     request: makeRequest({
@@ -244,7 +276,7 @@ test("listImportableProviderSessions filters, sorts, limits, and projects import
   });
 
   expect(listImportableSessions).toHaveBeenCalledWith({
-    limit: 4,
+    limit: 2,
     providerFilter: new Set(["codex"]),
     cwd,
   });
@@ -275,7 +307,7 @@ test("listImportableProviderSessions filters, sorts, limits, and projects import
   });
 });
 
-test("listImportableProviderSessions looks past already-imported rows to fill the requested limit", async () => {
+test("listImportableProviderSessions keeps the provider snapshot bounded after filtering", async () => {
   const cwd = "/tmp/project";
   const imported = makeImportableSession({
     provider: "claude",
@@ -296,27 +328,152 @@ test("listImportableProviderSessions looks past already-imported rows to fill th
   const result = await listImportableProviderSessions({
     request: makeRequest({ cwd, providers: ["claude"], limit: 1 }),
     agentManager: {
-      listAgents: () => [],
       listImportableSessions,
     },
     agentStorage: {
-      list: async () => [
-        {
-          provider: "claude",
-          persistence: { provider: "claude", sessionId: "already-imported" },
-        } as StoredAgentRecord,
-      ],
+      getMetadataSnapshot: async () => ({
+        generation: 1,
+        entries: [
+          makeAgentMetadataEntry({
+            provider: "claude",
+            persistenceIdentity: { provider: "claude", sessionId: "already-imported" },
+          }),
+        ],
+      }),
     },
     providerSnapshotManager: { getProviderLabel: () => "Claude Code" },
   });
 
   expect(listImportableSessions).toHaveBeenCalledWith({
-    limit: 2,
+    limit: 1,
     providerFilter: new Set(["claude"]),
     cwd,
   });
-  expect(result.entries.map((entry) => entry.providerHandleId)).toEqual(["available"]);
+  expect(result.entries).toEqual([]);
   expect(result.filteredAlreadyImportedCount).toBe(1);
+});
+
+test("listImportableProviderSessions does not scale provider limit with imported metadata", async () => {
+  const cwd = "/tmp/project";
+  const listImportableSessions = vi.fn(async () => []);
+  const entries = Array.from({ length: 1_000 }, (_, index) =>
+    makeAgentMetadataEntry({
+      id: `stored-${index}`,
+      provider: "codex",
+      persistenceIdentity: {
+        provider: "codex",
+        sessionId: `session-${index}`,
+      },
+    }),
+  );
+
+  await listImportableProviderSessions({
+    request: makeRequest({ cwd, providers: ["codex"], limit: 20 }),
+    agentManager: { listImportableSessions },
+    agentStorage: {
+      getMetadataSnapshot: async () => ({ generation: 42, entries }),
+    },
+    providerSnapshotManager: { getProviderLabel: () => "Codex" },
+  });
+
+  expect(listImportableSessions).toHaveBeenCalledWith({
+    limit: 20,
+    providerFilter: new Set(["codex"]),
+    cwd,
+  });
+});
+
+test("listImportableProviderSessions shares in-flight work and invalidates by generation and TTL", async () => {
+  const cwd = "/tmp/project";
+  let generation = 1;
+  let now = 10_000;
+  const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => now);
+  const listImportableSessions = vi.fn(async () => [
+    makeImportableSession({
+      sessionId: "available",
+      cwd,
+      lastActivityAt: "2026-04-30T12:00:00.000Z",
+    }),
+  ]);
+  const input = {
+    request: makeRequest({ cwd, providers: ["codex"], limit: 20 }),
+    agentManager: { listImportableSessions },
+    agentStorage: {
+      getMetadataSnapshot: async () => ({ generation, entries: [] }),
+    },
+    providerSnapshotManager: { getProviderLabel: () => "Codex" },
+  } satisfies Parameters<typeof listImportableProviderSessions>[0];
+
+  try {
+    const [first, concurrent] = await Promise.all([
+      listImportableProviderSessions(input),
+      listImportableProviderSessions(input),
+    ]);
+    expect(listImportableSessions).toHaveBeenCalledTimes(1);
+    expect(concurrent).toEqual(first);
+    concurrent.entries[0].title = "caller mutation";
+
+    const cached = await listImportableProviderSessions(input);
+    expect(listImportableSessions).toHaveBeenCalledTimes(1);
+    expect(cached.entries[0].title).not.toBe("caller mutation");
+
+    generation = 2;
+    await listImportableProviderSessions(input);
+    expect(listImportableSessions).toHaveBeenCalledTimes(2);
+
+    now += 1_001;
+    await listImportableProviderSessions(input);
+    expect(listImportableSessions).toHaveBeenCalledTimes(3);
+  } finally {
+    nowSpy.mockRestore();
+  }
+});
+
+test("listImportableProviderSessions does not cache provider failures", async () => {
+  const listImportableSessions = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("provider listing failed"))
+    .mockResolvedValueOnce([]);
+  const input = {
+    request: makeRequest({ providers: ["codex"] }),
+    agentManager: { listImportableSessions },
+    agentStorage: {
+      getMetadataSnapshot: async () => ({ generation: 1, entries: [] }),
+    },
+    providerSnapshotManager: { getProviderLabel: () => "Codex" },
+  } satisfies Parameters<typeof listImportableProviderSessions>[0];
+
+  await expect(listImportableProviderSessions(input)).rejects.toThrow("provider listing failed");
+  await expect(listImportableProviderSessions(input)).resolves.toEqual({
+    entries: [],
+    filteredAlreadyImportedCount: 0,
+  });
+  expect(listImportableSessions).toHaveBeenCalledTimes(2);
+});
+
+test("listImportableProviderSessions bounds settled query cache entries", async () => {
+  const listImportableSessions = vi.fn(async () => []);
+  const agentStorage = {
+    getMetadataSnapshot: async () => ({ generation: 1, entries: [] }),
+  } satisfies Pick<AgentStorage, "getMetadataSnapshot">;
+
+  for (let index = 0; index < 66; index += 1) {
+    await listImportableProviderSessions({
+      request: makeRequest({ cwd: `/tmp/project-${index}`, providers: ["codex"] }),
+      agentManager: { listImportableSessions },
+      agentStorage,
+      providerSnapshotManager: { getProviderLabel: () => "Codex" },
+    });
+  }
+  expect(listImportableSessions).toHaveBeenCalledTimes(66);
+
+  await listImportableProviderSessions({
+    request: makeRequest({ cwd: "/tmp/project-0", providers: ["codex"] }),
+    agentManager: { listImportableSessions },
+    agentStorage,
+    providerSnapshotManager: { getProviderLabel: () => "Codex" },
+  });
+  expect(listImportableSessions).toHaveBeenCalledTimes(67);
 });
 
 test("listImportableProviderSessions includes a provider session after its Paseo agent is archived", async () => {
@@ -333,20 +490,22 @@ test("listImportableProviderSessions includes a provider session after its Paseo
   const result = await listImportableProviderSessions({
     request: makeRequest({ cwd, providers: ["claude"] }),
     agentManager: {
-      listAgents: () => [],
       listImportableSessions: async () => [archivedSession],
     },
     agentStorage: {
-      list: async () => [
-        {
-          provider: "claude",
-          archivedAt: "2026-04-30T12:01:00.000Z",
-          persistence: {
+      getMetadataSnapshot: async () => ({
+        generation: 1,
+        entries: [
+          makeAgentMetadataEntry({
             provider: "claude",
-            sessionId: "archived-session",
-          },
-        } as StoredAgentRecord,
-      ],
+            archivedAt: "2026-04-30T12:01:00.000Z",
+            persistenceIdentity: {
+              provider: "claude",
+              sessionId: "archived-session",
+            },
+          }),
+        ],
+      }),
     },
     providerSnapshotManager: { getProviderLabel: () => "Claude" },
   });
@@ -370,28 +529,23 @@ test("listImportableProviderSessions includes an archived provider session still
   const result = await listImportableProviderSessions({
     request: makeRequest({ cwd, providers: ["claude"] }),
     agentManager: {
-      listAgents: () => [
-        makeManagedAgent({
-          id: agentId,
-          provider: "claude",
-          cwd,
-          sessionId: "archived-live-session",
-        }),
-      ],
       listImportableSessions: async () => [archivedSession],
     },
     agentStorage: {
-      list: async () => [
-        {
-          id: agentId,
-          provider: "claude",
-          archivedAt: "2026-04-30T12:01:00.000Z",
-          persistence: {
+      getMetadataSnapshot: async () => ({
+        generation: 1,
+        entries: [
+          makeAgentMetadataEntry({
+            id: agentId,
             provider: "claude",
-            sessionId: "archived-live-session",
-          },
-        } as StoredAgentRecord,
-      ],
+            archivedAt: "2026-04-30T12:01:00.000Z",
+            persistenceIdentity: {
+              provider: "claude",
+              sessionId: "archived-live-session",
+            },
+          }),
+        ],
+      }),
     },
     providerSnapshotManager: { getProviderLabel: () => "Claude" },
   });
@@ -425,12 +579,11 @@ test("listImportableProviderSessions filters out metadata generation sessions", 
   const result = await listImportableProviderSessions({
     request: makeRequest({ cwd, providers: ["codex"] }),
     agentManager: {
-      listAgents: () => [],
       listImportableSessions: async () => sessions,
-    } satisfies Pick<AgentManager, "listAgents" | "listImportableSessions">,
+    } satisfies Pick<AgentManager, "listImportableSessions">,
     agentStorage: {
-      list: async () => [],
-    } satisfies Pick<AgentStorage, "list">,
+      getMetadataSnapshot: async () => ({ generation: 1, entries: [] }),
+    } satisfies Pick<AgentStorage, "getMetadataSnapshot">,
     providerSnapshotManager: { getProviderLabel: () => "Codex" },
   });
 
@@ -450,7 +603,6 @@ test("listImportableProviderSessions keeps realpath-equivalent cwd matches", asy
   const result = await listImportableProviderSessions({
     request: makeRequest({ cwd: linkedCwd, providers: ["pi"] }),
     agentManager: {
-      listAgents: () => [],
       listImportableSessions: async () => [
         makeImportableSession({
           provider: "pi",
@@ -462,10 +614,10 @@ test("listImportableProviderSessions keeps realpath-equivalent cwd matches", asy
           firstPrompt: "remember this",
         }),
       ],
-    } satisfies Pick<AgentManager, "listAgents" | "listImportableSessions">,
+    } satisfies Pick<AgentManager, "listImportableSessions">,
     agentStorage: {
-      list: async () => [],
-    } satisfies Pick<AgentStorage, "list">,
+      getMetadataSnapshot: async () => ({ generation: 1, entries: [] }),
+    } satisfies Pick<AgentStorage, "getMetadataSnapshot">,
     providerSnapshotManager: { getProviderLabel: () => "Pi" },
   });
 
@@ -477,12 +629,11 @@ test("listImportableProviderSessions rejects invalid since values", async () => 
     listImportableProviderSessions({
       request: makeRequest({ since: "not-a-date" }),
       agentManager: {
-        listAgents: () => [],
         listImportableSessions: async () => [],
-      } satisfies Pick<AgentManager, "listAgents" | "listImportableSessions">,
+      } satisfies Pick<AgentManager, "listImportableSessions">,
       agentStorage: {
-        list: async () => [],
-      } satisfies Pick<AgentStorage, "list">,
+        getMetadataSnapshot: async () => ({ generation: 1, entries: [] }),
+      } satisfies Pick<AgentStorage, "getMetadataSnapshot">,
       providerSnapshotManager: { getProviderLabel: () => "" },
     }),
   ).rejects.toMatchObject(
@@ -596,8 +747,14 @@ class ProviderImportHarness {
   activeAgent: ManagedAgent | null = null;
   resumeError: Error | null = null;
   resumeAttempts = 0;
+  unarchiveAttempts = 0;
+  freshImportError: Error | null = null;
+  keepFreshImportLive = true;
+  durableTimelineSize: number | null = null;
   private unarchiveWait: Promise<void> | null = null;
   private releaseUnarchive: (() => void) | null = null;
+  private freshImportWait: Promise<void> | null = null;
+  private releaseFreshImport: (() => void) | null = null;
 
   private constructor(input: { storage: AgentStorage; snapshot: ManagedAgent }) {
     this.storage = input.storage;
@@ -605,13 +762,16 @@ class ProviderImportHarness {
     this.manager = {
       importProviderSession: async (request: unknown) => {
         this.freshImports.push(request);
-        this.activeAgent = this.snapshot;
+        if (this.freshImportWait) await this.freshImportWait;
+        if (this.freshImportError) throw this.freshImportError;
+        if (this.keepFreshImportLive) this.activeAgent = this.snapshot;
         return this.snapshot;
       },
       unarchiveSnapshot: async (
         agentId: string,
         updates?: { workspaceId?: string; labels?: Record<string, string | null> },
       ) => {
+        this.unarchiveAttempts += 1;
         if (this.unarchiveWait) {
           await this.unarchiveWait;
         }
@@ -657,6 +817,27 @@ class ProviderImportHarness {
       },
       hydrateTimelineFromProvider: async () => {},
       getTimeline: () => this.timeline,
+      getDurableTimelineCoverage: async () =>
+        this.durableTimelineSize === null
+          ? { active: null, working: null, eligible: false }
+          : {
+              active: {
+                generationId: "00000000-0000-4000-8000-000000000633",
+                timelineRevision: "00000000-0000-4000-8000-000000000634",
+                epoch: "00000000-0000-4000-8000-000000000635",
+                window: {
+                  minSeq: this.durableTimelineSize === 0 ? 0 : 1,
+                  maxSeq: this.durableTimelineSize,
+                  nextSeq: this.durableTimelineSize + 1,
+                },
+                valid: true,
+              },
+              working: null,
+              eligible: true,
+            },
+      deleteAgentState: async (agentId: string) => {
+        if (this.activeAgent?.id === agentId) this.activeAgent = null;
+      },
       closeAgent: async (agentId: string) => {
         this.closedAgentIds.push(agentId);
         this.activeAgent = null;
@@ -670,6 +851,7 @@ class ProviderImportHarness {
         await this.storage.upsert(archived);
         return archived;
       },
+      archiveNativeSessionBestEffort: async () => {},
     } satisfies ImportSessionAgentManager;
   }
 
@@ -709,6 +891,17 @@ class ProviderImportHarness {
       this.releaseUnarchive?.();
       this.unarchiveWait = null;
       this.releaseUnarchive = null;
+    };
+  }
+
+  blockFreshImport(): () => void {
+    this.freshImportWait = new Promise<void>((resolve) => {
+      this.releaseFreshImport = resolve;
+    });
+    return () => {
+      this.releaseFreshImport?.();
+      this.freshImportWait = null;
+      this.releaseFreshImport = null;
     };
   }
 
@@ -784,7 +977,7 @@ test.each([
   },
 );
 
-test("importProviderSession rejects a provider session with an active stored owner", async () => {
+test("importProviderSession returns the existing agent for an active stored owner", async () => {
   const harness = await ProviderImportHarness.create({ sessionId: "thread-active" });
   await harness.seed(
     makeStoredProviderSession({
@@ -797,8 +990,89 @@ test("importProviderSession rejects a provider session with an active stored own
 
   await expect(
     harness.import({ providerHandleId: "thread-active", cwd: harness.snapshot.cwd }),
-  ).rejects.toThrow("Provider session is already imported: thread-active");
+  ).resolves.toMatchObject({
+    snapshot: { id: harness.snapshot.id },
+    createdWorkspace: null,
+  });
   expect(harness.freshImports).toEqual([]);
+});
+
+test("importProviderSession shares one in-flight import for matching parameters", async () => {
+  const harness = await ProviderImportHarness.create({ sessionId: "thread-shared" });
+  const releaseImport = harness.blockFreshImport();
+
+  const first = harness.import({
+    providerHandleId: "thread-shared",
+    cwd: harness.snapshot.cwd,
+    labels: { source: "shared" },
+  });
+  const second = harness.import({
+    providerHandleId: "thread-shared",
+    cwd: harness.snapshot.cwd,
+    labels: { source: "shared" },
+  });
+  await vi.waitFor(() => expect(harness.freshImports).toHaveLength(1));
+  releaseImport();
+
+  await expect(Promise.all([first, second])).resolves.toEqual([
+    expect.objectContaining({ snapshot: expect.objectContaining({ id: harness.snapshot.id }) }),
+    expect.objectContaining({ snapshot: expect.objectContaining({ id: harness.snapshot.id }) }),
+  ]);
+  expect(harness.freshImports).toHaveLength(1);
+});
+
+test("importProviderSession rejects conflicting parameters while an import is in flight", async () => {
+  const harness = await ProviderImportHarness.create({ sessionId: "thread-conflict" });
+  const releaseImport = harness.blockFreshImport();
+
+  const first = harness.import({
+    providerHandleId: "thread-conflict",
+    cwd: harness.snapshot.cwd,
+    workspaceTitle: "First title",
+  });
+  await vi.waitFor(() => expect(harness.freshImports).toHaveLength(1));
+  const conflicting = harness.import({
+    providerHandleId: "thread-conflict",
+    cwd: harness.snapshot.cwd,
+    workspaceTitle: "Different title",
+  });
+
+  await expect(conflicting).rejects.toThrow(
+    "Provider session import is already running with different parameters",
+  );
+  releaseImport();
+  await expect(first).resolves.toMatchObject({ snapshot: { id: harness.snapshot.id } });
+  expect(harness.freshImports).toHaveLength(1);
+});
+
+test("importProviderSession evicts a settled failure so the same handle can retry", async () => {
+  const harness = await ProviderImportHarness.create({ sessionId: "thread-retry" });
+  harness.freshImportError = new Error("provider import failed");
+
+  await expect(
+    harness.import({ providerHandleId: "thread-retry", cwd: harness.snapshot.cwd }),
+  ).rejects.toThrow("provider import failed");
+  harness.freshImportError = null;
+  await expect(
+    harness.import({ providerHandleId: "thread-retry", cwd: harness.snapshot.cwd }),
+  ).resolves.toMatchObject({ snapshot: { id: harness.snapshot.id } });
+  expect(harness.freshImports).toHaveLength(2);
+});
+
+test("importProviderSession reports durable timeline size after live registration falls back", async () => {
+  const harness = await ProviderImportHarness.create({ sessionId: "thread-durable-fallback" });
+  harness.keepFreshImportLive = false;
+  harness.durableTimelineSize = 3;
+
+  await expect(
+    harness.import({
+      providerHandleId: "thread-durable-fallback",
+      cwd: harness.snapshot.cwd,
+    }),
+  ).resolves.toMatchObject({
+    snapshot: { id: harness.snapshot.id },
+    timelineSize: 3,
+  });
 });
 
 test("importProviderSession restores an archived session as the same standalone agent", async () => {
@@ -847,11 +1121,12 @@ test("importProviderSession rejects an archived session from a different cwd bef
     sessionId: "thread-other-cwd",
   });
   await harness.seed(archived);
+  const persistedArchived = await harness.storage.get(harness.snapshot.id);
 
   await expect(
     harness.import({ providerHandleId: "thread-other-cwd", cwd: "/tmp/target-agent" }),
   ).rejects.toThrow("Provider session cwd does not match import cwd: thread-other-cwd");
-  expect(await harness.storage.get(harness.snapshot.id)).toEqual(archived);
+  expect(await harness.storage.get(harness.snapshot.id)).toEqual(persistedArchived);
   expect(harness.resumeAttempts).toBe(0);
 });
 
@@ -863,13 +1138,14 @@ test("importProviderSession restores storage and closes a partial runtime when l
     sessionId: "thread-stale",
   });
   await harness.seed(archived);
+  const persistedArchived = await harness.storage.get(harness.snapshot.id);
   harness.resumeError = new Error("provider session is unavailable");
 
   await expect(
     harness.import({ providerHandleId: "thread-stale", cwd: harness.snapshot.cwd }),
   ).rejects.toThrow("provider session is unavailable");
 
-  expect(await harness.storage.get(harness.snapshot.id)).toEqual(archived);
+  expect(await harness.storage.get(harness.snapshot.id)).toEqual(persistedArchived);
   expect(harness.activeAgent).toBeNull();
   expect(harness.closedAgentIds).toEqual([harness.snapshot.id]);
 });
@@ -903,11 +1179,47 @@ test("importProviderSession serializes legacy and native aliases for one archive
     snapshot: { id: harness.snapshot.id },
     timelineSize: 0,
   });
-  await expect(duplicateRestore).rejects.toThrow(
-    "Provider session is already imported: legacy-thread",
-  );
+  await expect(duplicateRestore).resolves.toMatchObject({
+    snapshot: { id: harness.snapshot.id },
+    timelineSize: 0,
+  });
   expect(harness.resumeAttempts).toBe(1);
   expect(harness.closedAgentIds).toEqual([]);
+});
+
+test("importProviderSession rejects conflicting parameters across archived handle aliases", async () => {
+  const harness = await ProviderImportHarness.create({
+    sessionId: "legacy-conflict",
+    nativeHandle: "native-conflict",
+  });
+  await harness.seed(
+    makeStoredProviderSession({
+      id: harness.snapshot.id,
+      cwd: harness.snapshot.cwd,
+      sessionId: "legacy-conflict",
+      nativeHandle: "native-conflict",
+    }),
+  );
+  const releaseUnarchive = harness.blockUnarchive();
+
+  const first = harness.import({
+    providerHandleId: "native-conflict",
+    cwd: harness.snapshot.cwd,
+    workspaceTitle: "First title",
+  });
+  await vi.waitFor(() => expect(harness.unarchiveAttempts).toBe(1));
+  const conflicting = harness.import({
+    providerHandleId: "legacy-conflict",
+    cwd: harness.snapshot.cwd,
+    workspaceTitle: "Different title",
+  });
+
+  await expect(conflicting).rejects.toThrow(
+    "Provider session import is already running with different parameters",
+  );
+  releaseUnarchive();
+  await expect(first).resolves.toMatchObject({ snapshot: { id: harness.snapshot.id } });
+  expect(harness.resumeAttempts).toBe(1);
 });
 
 test("importProviderSession requires cwd from the selected provider row", async () => {
