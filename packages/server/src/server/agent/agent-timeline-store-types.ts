@@ -43,21 +43,61 @@ export interface AgentTimelineFetchResult {
   rows: AgentTimelineRow[];
 }
 
+export type AgentTimelineGenerationStatus = "building" | "incomplete";
+
+export interface CommittedAgentTimelineGeneration {
+  generationId: string;
+  timelineRevision: string;
+  epoch: string;
+  window: AgentTimelineWindow;
+  valid: boolean;
+}
+
+export interface WorkingAgentTimelineGeneration {
+  generationId: string;
+  epoch: string;
+  status: AgentTimelineGenerationStatus;
+}
+
+export interface AgentTimelineCoverage {
+  active: CommittedAgentTimelineGeneration | null;
+  working: WorkingAgentTimelineGeneration | null;
+  eligible: boolean;
+}
+
+export interface AgentTimelineStageInput {
+  epoch: string;
+  mode: "append" | "replace";
+  rows: readonly AgentTimelineRow[];
+}
+
+export interface AgentTimelineStagedRowUpdate {
+  epoch: string;
+  row: AgentTimelineRow;
+}
+
+export interface AgentTimelineCommittedFetchOptions extends Omit<
+  AgentTimelineFetchOptions,
+  "limit"
+> {
+  /** Positive upper bound. Durable reads never use the live store's limit=0 convention. */
+  limit: number;
+}
+
 export interface AgentTimelineStore {
-  appendCommitted(
+  stageRows(agentId: string, input: AgentTimelineStageInput): Promise<void>;
+  updateStagedRow(agentId: string, input: AgentTimelineStagedRowUpdate): Promise<void>;
+  commit(agentId: string): Promise<CommittedAgentTimelineGeneration>;
+  markIncomplete(agentId: string): Promise<void>;
+  getCoverage(
     agentId: string,
-    item: AgentTimelineItem,
-    options?: { timestamp?: string },
-  ): Promise<AgentTimelineRow>;
-  fetchCommitted(
+    options?: { expectedRevision?: string },
+  ): Promise<AgentTimelineCoverage>;
+  fetchCommittedPage(
     agentId: string,
-    options?: AgentTimelineFetchOptions,
-  ): Promise<AgentTimelineFetchResult>;
-  getLatestCommittedSeq(agentId: string): Promise<number>;
-  getCommittedRows(agentId: string): Promise<AgentTimelineRow[]>;
-  getLastItem(agentId: string): Promise<AgentTimelineItem | null>;
-  getLastAssistantMessage(agentId: string): Promise<string | null>;
+    options: AgentTimelineCommittedFetchOptions,
+  ): Promise<AgentTimelineFetchResult | null>;
+  flush(agentId?: string): Promise<void>;
+  cleanup(agentId: string): Promise<void>;
   deleteAgent(agentId: string): Promise<void>;
-  bulkInsert(agentId: string, rows: readonly AgentTimelineRow[]): Promise<void>;
-  updateCommittedRow(agentId: string, row: AgentTimelineRow): Promise<void>;
 }
