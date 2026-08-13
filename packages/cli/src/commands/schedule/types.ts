@@ -33,6 +33,14 @@ export type ScheduleTarget =
         sandboxMode?: string;
         networkAccess?: boolean;
         webSearch?: boolean;
+        extra?: {
+          codex?: Record<string, unknown>;
+          claude?: Record<string, unknown>;
+        };
+        providerOptions?: Record<string, unknown>;
+        toolPolicy?: {
+          preapproved: Array<{ kind: "mcp"; server: string; tool: string }>;
+        };
       };
     };
 

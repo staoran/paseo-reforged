@@ -479,10 +479,7 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
   return {
     createClient: ({ host, connection, clientId, runtimeGeneration }) => {
       const localTransportFactory = createDesktopLocalDaemonTransportFactory();
-      const webSocketTransportFactory = createDesktopWebSocketTransportFactory();
-      const webSocketConfig = webSocketTransportFactory
-        ? { transportFactory: webSocketTransportFactory }
-        : { webSocketFactory: createAppWebSocketFactory() };
+      const appWebSocketConfig = { webSocketFactory: createAppWebSocketFactory() };
       const base = {
         suppressSendErrors: true,
         clientId,
@@ -503,9 +500,15 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
         });
       }
       if (connection.type === "directTcp") {
+        const hasCustomHeaders = Object.keys(connection.headers ?? {}).length > 0;
+        const desktopWebSocketTransportFactory = hasCustomHeaders
+          ? createDesktopWebSocketTransportFactory()
+          : null;
         return new DaemonClient({
           ...base,
-          ...webSocketConfig,
+          ...(desktopWebSocketTransportFactory
+            ? { transportFactory: desktopWebSocketTransportFactory }
+            : appWebSocketConfig),
           url: buildDaemonWebSocketUrl(connection.endpoint, {
             useTls: connection.useTls ?? false,
           }),
@@ -515,7 +518,7 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
       }
       return new DaemonClient({
         ...base,
-        ...webSocketConfig,
+        ...appWebSocketConfig,
         url: buildRelayWebSocketUrl({
           endpoint: connection.relayEndpoint,
           useTls: connection.useTls ?? shouldUseTlsForDefaultHostedRelay(connection.relayEndpoint),

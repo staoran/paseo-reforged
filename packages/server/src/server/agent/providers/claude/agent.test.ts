@@ -6,6 +6,7 @@ import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import * as executableUtils from "../../../../executable-resolution/executable-resolution.js";
+import { buildAgentAttentionNotificationPayload } from "@getpaseo/protocol/agent-attention-notification";
 import {
   ClaudeAgentClient,
   convertClaudeHistoryEntry,
@@ -543,6 +544,45 @@ describe("ClaudeAgentClient binary resolution", () => {
     await session.close();
   });
 
+  test("applies legacy Claude env before the launch environment", async () => {
+    const queryReturn = vi.fn();
+    queryReturn.mockResolvedValue(undefined);
+    const queryFactory = vi.fn(() => ({
+      close: vi.fn(),
+      return: queryReturn,
+    }));
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession(
+      {
+        provider: "claude",
+        cwd: process.cwd(),
+        resolvedProviderOptions: {
+          env: { CLAUDE_LEGACY_TOKEN: "legacy", CLAUDE_ENV_PRIORITY: "legacy" },
+        },
+      },
+      { agentId: "agent-legacy-env", env: { CLAUDE_ENV_PRIORITY: "launch" } },
+    );
+
+    await expect(
+      (
+        session as unknown as {
+          ensureQuery(): Promise<unknown>;
+        }
+      ).ensureQuery(),
+    ).resolves.toBeDefined();
+
+    expect(queryFactory.mock.calls[0]?.[0].options.env).toMatchObject({
+      CLAUDE_LEGACY_TOKEN: "legacy",
+      CLAUDE_ENV_PRIORITY: "launch",
+    });
+
+    await session.close();
+  });
+
   test("uses the replace-command override binary when claude is not on PATH", async () => {
     const customClaudePath = "/path/to/custom-claude";
     vi.spyOn(executableUtils, "findExecutable").mockImplementation(async (name: string) => {
@@ -649,6 +689,42 @@ describe("ClaudeAgentSession features", () => {
 
     await session.setModel?.("claude-fable-5[1m]");
     expect(queryMock.setModel).toHaveBeenCalledWith("claude-fable-5[1m]");
+    await session.close();
+  });
+
+  test("preapproves only granted Hub MCP tools while preserving Claude denies", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      providerOptions: {
+        allowedTools: ["Read"],
+        disallowedTools: ["Bash", "mcp__hub__reply"],
+        sandbox: { enabled: true, failIfUnavailable: true },
+      },
+      mcpServers: { hub: { type: "http", url: "http://127.0.0.1/hub" } },
+      toolPolicy: {
+        preapproved: [{ kind: "mcp", server: "hub", tool: "finish_execution" }],
+      },
+    });
+
+    await (
+      session as unknown as {
+        ensureQuery(): Promise<unknown>;
+      }
+    ).ensureQuery();
+
+    expect(queryFactory.mock.calls[0]?.[0].options).toMatchObject({
+      allowedTools: ["Read", "mcp__hub__finish_execution"],
+      disallowedTools: ["Bash", "mcp__hub__reply"],
+      sandbox: { enabled: true, failIfUnavailable: true },
+    });
+    expect(queryFactory.mock.calls[0]?.[0].options.allowedTools).not.toContain("mcp__hub__reply");
     await session.close();
   });
 
@@ -2612,5 +2688,118 @@ describe("toClaudeSdkMcpConfig", () => {
     });
     expect(result.type).toBe("stdio");
     expect(result.alwaysLoad).toBeUndefined();
+  });
+});
+
+describe("Claude question permission notifications", () => {
+  // Regression for #2612: the attention notification serialized the raw
+  // AskUserQuestion input, so both the iOS push and the desktop app showed
+  // JSON instead of the question.
+  async function requestPermission(
+    toolName: string,
+    input: Record<string, unknown>,
+  ): Promise<Extract<AgentStreamEvent, { type: "permission_requested" }>["request"]> {
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    try {
+      const internal = session as unknown as {
+        handlePermissionRequest: (
+          toolName: string,
+          input: Record<string, unknown>,
+          options: Record<string, unknown>,
+        ) => Promise<unknown>;
+      };
+      void internal.handlePermissionRequest(toolName, input, {}).catch(() => undefined);
+
+      const requested = events.find(
+        (event): event is Extract<AgentStreamEvent, { type: "permission_requested" }> =>
+          event.type === "permission_requested",
+      );
+      if (!requested) {
+        throw new Error(`no permission was requested for ${toolName}`);
+      }
+      return requested.request;
+    } finally {
+      await session.close();
+    }
+  }
+
+  test("renders the notification as the question and its options", async () => {
+    const request = await requestPermission("AskUserQuestion", {
+      questions: [
+        {
+          question: "Which library should we use?",
+          header: "Library",
+          options: [{ label: "date-fns" }, { label: "Luxon" }],
+          multiSelect: false,
+        },
+      ],
+    });
+
+    const payload = buildAgentAttentionNotificationPayload({
+      reason: "permission",
+      serverId: "srv-2612",
+      workspaceId: "workspace-2612",
+      agentId: "agent-2612",
+      permissionRequest: request,
+    });
+
+    expect(payload.body).toBe("Which library should we use? - date-fns / Luxon");
+    expect(payload.body).not.toContain('"questions"');
+  });
+
+  test("keeps the full question payload for the permission UI", async () => {
+    const request = await requestPermission("AskUserQuestion", {
+      questions: [
+        {
+          question: "Which library should we use?",
+          header: "Library",
+          options: [{ label: "date-fns" }, { label: "Luxon" }],
+          multiSelect: false,
+        },
+      ],
+    });
+
+    expect(request.input).toEqual(
+      normalizeClaudeAskUserQuestionRequestInput("AskUserQuestion", {
+        questions: [
+          {
+            question: "Which library should we use?",
+            header: "Library",
+            options: [{ label: "date-fns" }, { label: "Luxon" }],
+            multiSelect: false,
+          },
+        ],
+      }),
+    );
+  });
+
+  test("falls back to the question alone when it has no options", async () => {
+    const request = await requestPermission("AskUserQuestion", {
+      questions: [{ question: "Ready to deploy?", header: "Deploy", options: [] }],
+    });
+
+    const payload = buildAgentAttentionNotificationPayload({
+      reason: "permission",
+      serverId: "srv-2612",
+      workspaceId: "workspace-2612",
+      agentId: "agent-2612",
+      permissionRequest: request,
+    });
+
+    expect(payload.body).toBe("Ready to deploy?");
+  });
+
+  test("leaves other tools unsummarised", async () => {
+    const request = await requestPermission("Bash", { command: "ls" });
+
+    expect(request.title).toBeUndefined();
+    expect(request.description).toBeUndefined();
   });
 });

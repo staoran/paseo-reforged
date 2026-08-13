@@ -4,27 +4,34 @@ import type {
   CreateAgentWorktreeTarget,
   HubExecutionControlAction,
 } from "@getpaseo/protocol/messages";
+import type { ProviderOptions, ToolPolicy } from "@getpaseo/protocol/agent-types";
 
 import type { AgentManager, AgentManagerEvent, ManagedAgent } from "../agent/agent-manager.js";
 import type { McpServerConfig } from "../agent/agent-sdk-types.js";
 import type { AgentStorage, StoredAgentRecord } from "../agent/agent-storage.js";
 import type { BoundCreateAgentCommand } from "../agent/create-agent/create.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../worktree-session.js";
-import type { ActiveWorkspaceRef } from "../workspace-archive-service.js";
 import { buildStoredAgentPayload } from "../agent/agent-projections.js";
 import { serializeAgentSnapshot, serializeAgentStreamEvent } from "../messages.js";
 import { daemonExecutionKey, type DaemonAgentOwner } from "../agent/agent-owner.js";
+import {
+  HubExecutionContractError,
+  resolveHubExecutionCreatePreflight,
+  type PreparedHubExecutionCreate,
+} from "../agent/agent-config-compat.js";
+import { classifyStoredHubExecutionContract } from "../agent/agent-storage.js";
 
 export interface HubExecutionAgentCreateInput {
   executionId: string;
   provider: string;
   cwd: string;
-  workspaceId?: string;
   prompt: string;
   model?: string;
   modeId?: string;
   thinkingOptionId?: string;
   featureValues?: Record<string, unknown>;
+  providerOptions?: ProviderOptions;
+  toolPolicy?: ToolPolicy;
   env?: Record<string, string>;
   mcpServers?: Record<string, McpServerConfig>;
   worktree?: CreateAgentWorktreeTarget;
@@ -39,6 +46,7 @@ export interface HubExecutionControlInput {
 export interface OwnedAgentSnapshot {
   executionId: string;
   agent: AgentSnapshotPayload;
+  toolPolicyApplied?: true;
 }
 
 export type OwnedAgentEvent =
@@ -50,14 +58,17 @@ export type OwnedAgentEvent =
       event: AgentStreamEventPayload;
     };
 
+interface PendingExecutionCreate {
+  prepared: Promise<PreparedHubExecutionCreate>;
+  result: Promise<OwnedAgentSnapshot>;
+}
+
 interface DaemonExecutionsOptions {
   daemonId: string;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   createAgent: BoundCreateAgentCommand;
   interruptAgent: (agentId: string) => Promise<unknown>;
-  archiveAgent: (agentId: string) => Promise<unknown>;
-  listActiveWorkspaces: () => Promise<ActiveWorkspaceRef[]>;
   archiveWorkspace: (workspaceId: string, requestId: string) => Promise<unknown>;
   cleanupFailedCreate?: (input: {
     createdWorktree: CreatePaseoWorktreeWorkflowResult | null;
@@ -77,7 +88,7 @@ export class DaemonExecutions implements HubExecutionAgents {
   private readonly agentManager: AgentManager;
   private readonly agentStorage: AgentStorage;
   private readonly createAgentCommand: BoundCreateAgentCommand;
-  private readonly pendingCreates = new Map<string, Promise<OwnedAgentSnapshot>>();
+  private readonly pendingCreates = new Map<string, PendingExecutionCreate>();
   private readonly pendingControlActions = new Map<string, Promise<void>>();
   private readonly controlTails = new Map<string, Promise<void>>();
   private authorityGeneration = 0;
@@ -100,17 +111,24 @@ export class DaemonExecutions implements HubExecutionAgents {
     const key = daemonExecutionKey(owner);
     const pending = this.pendingCreates.get(key);
     if (pending) {
-      return pending;
+      return this.resolvePendingCreate(input, pending, this.authorityGeneration);
     }
 
     const authorityGeneration = this.authorityGeneration;
-    const create = this.createOrResolve(owner, input, authorityGeneration).finally(() => {
-      if (this.pendingCreates.get(key) === create) {
-        this.pendingCreates.delete(key);
-      }
-    });
-    this.pendingCreates.set(key, create);
-    return create;
+    const prepared = this.prepareCreate(input);
+    let pendingCreate: PendingExecutionCreate;
+    const result = prepared
+      .then((preparedInput) =>
+        this.createOrResolvePrepared(owner, preparedInput, authorityGeneration),
+      )
+      .finally(() => {
+        if (this.pendingCreates.get(key) === pendingCreate) {
+          this.pendingCreates.delete(key);
+        }
+      });
+    pendingCreate = { prepared, result };
+    this.pendingCreates.set(key, pendingCreate);
+    return result;
   }
 
   control(input: HubExecutionControlInput): Promise<void> {
@@ -125,7 +143,7 @@ export class DaemonExecutions implements HubExecutionAgents {
 
     const previous =
       this.controlTails.get(executionKey) ??
-      this.pendingCreates.get(executionKey)?.then(() => undefined) ??
+      this.pendingCreates.get(executionKey)?.result.then(() => undefined) ??
       Promise.resolve();
     const authorityGeneration = this.authorityGeneration;
     const control = previous
@@ -149,7 +167,7 @@ export class DaemonExecutions implements HubExecutionAgents {
     this.authorityActive = false;
     this.authorityGeneration++;
     await Promise.allSettled([
-      ...this.pendingCreates.values(),
+      ...Array.from(this.pendingCreates.values(), (pending) => pending.result),
       ...this.pendingControlActions.values(),
     ]);
   }
@@ -166,51 +184,71 @@ export class DaemonExecutions implements HubExecutionAgents {
     );
   }
 
-  private async createOrResolve(
-    owner: DaemonAgentOwner,
+  private async prepareCreate(
     input: HubExecutionAgentCreateInput,
+  ): Promise<PreparedHubExecutionCreate> {
+    requireHubMcpNamespace(input.mcpServers);
+    return resolveHubExecutionCreatePreflight(
+      input,
+      this.agentManager.getAgentConfigCompatibilityProvider(input.provider),
+    );
+  }
+
+  private async resolvePendingCreate(
+    input: HubExecutionAgentCreateInput,
+    pending: PendingExecutionCreate,
+    authorityGeneration: number,
+  ): Promise<OwnedAgentSnapshot> {
+    const [incoming, original] = await Promise.all([this.prepareCreate(input), pending.prepared]);
+    requireMatchingPreparedExecutionContract(original, incoming);
+    this.requireAuthority(authorityGeneration);
+    return pending.result;
+  }
+
+  private async createOrResolvePrepared(
+    owner: DaemonAgentOwner,
+    prepared: PreparedHubExecutionCreate,
     authorityGeneration: number,
   ): Promise<OwnedAgentSnapshot> {
     const existing = await this.agentStorage.findByDaemonExecution(owner);
     if (existing) {
+      requireExecutionWorkspaceId(existing);
       this.requireAuthority(authorityGeneration);
-      return this.resolveRecord(existing);
+      requireMatchingPersistedExecutionContract(existing, prepared);
+      return this.resolveRecord(existing, prepared);
     }
     this.requireAuthority(authorityGeneration);
-    requireHubMcpNamespace(input.mcpServers);
 
     let createdWorktree: CreatePaseoWorktreeWorkflowResult | null = null;
     let createdAgentId: string | null = null;
-    let result: Awaited<ReturnType<BoundCreateAgentCommand>>;
     try {
-      result = await this.createAgentCommand({
-        kind: "mcp",
-        provider: input.model ? `${input.provider}/${input.model}` : input.provider,
-        title: input.prompt,
-        initialPrompt: input.prompt,
-        promptFailure: "throw",
-        cwd: input.cwd,
-        workspaceId: input.workspaceId,
-        mode: input.modeId,
-        thinking: input.thinkingOptionId,
-        features: input.featureValues,
-        env: input.env,
-        ...(input.mcpServers ? { config: { mcpServers: input.mcpServers } } : {}),
-        worktree: toCreateAgentWorktree(input.worktree),
-        background: true,
-        notifyOnFinish: false,
+      const result = await this.createAgentCommand({
+        kind: "hub",
+        prepared,
         owner,
         onWorktreeCreated: (worktree) => {
           createdWorktree = worktree;
-          if (worktree.created) {
-            owner.createdWorkspaceId = worktree.workspace.workspaceId;
-          }
         },
         onCreated: (created) => {
           createdAgentId = created.agentId;
         },
       });
       this.requireAuthority(authorityGeneration);
+      requireExecutionWorkspaceId(result.liveSnapshot);
+
+      const durableRecord = await this.agentStorage.get(result.liveSnapshot.id);
+      if (!durableRecord) {
+        throw new HubExecutionContractError(
+          "hub_execution_contract_incomplete",
+          `Hub execution agent ${result.liveSnapshot.id} has no durable record`,
+        );
+      }
+      requireMatchingPersistedExecutionContract(durableRecord, prepared);
+      return {
+        executionId: owner.executionId,
+        agent: serializeAgentSnapshot(result.liveSnapshot),
+        ...durableToolPolicyAcknowledgement(durableRecord, prepared),
+      };
     } catch (error) {
       try {
         if (createdAgentId && this.agentManager.getAgent(createdAgentId)) {
@@ -234,11 +272,6 @@ export class DaemonExecutions implements HubExecutionAgents {
       }
       throw error;
     }
-
-    return {
-      executionId: owner.executionId,
-      agent: serializeAgentSnapshot(result.liveSnapshot),
-    };
   }
 
   private async controlOwnedExecution(
@@ -252,7 +285,7 @@ export class DaemonExecutions implements HubExecutionAgents {
     if (!record) {
       return;
     }
-    const storedOwner = this.requireOwner(record);
+    this.requireOwner(record);
 
     if (input.action === "interrupt") {
       if (!record.archivedAt && this.agentManager.getAgent(record.id)) {
@@ -261,24 +294,17 @@ export class DaemonExecutions implements HubExecutionAgents {
       return;
     }
 
-    const workspace = storedOwner.createdWorkspaceId
-      ? (await this.options.listActiveWorkspaces()).find(
-          (candidate) => candidate.workspaceId === storedOwner.createdWorkspaceId,
-        )
-      : undefined;
-
-    if (!record.archivedAt) {
-      this.requireAuthority(authorityGeneration, "execution control");
-      await this.options.archiveAgent(record.id);
-    }
-    if (workspace?.isPaseoOwnedWorktree) {
-      this.requireAuthority(authorityGeneration, "execution control");
-      await this.options.archiveWorkspace(workspace.workspaceId, input.requestId);
-    }
+    const workspaceId = requireExecutionWorkspaceId(record);
+    this.requireAuthority(authorityGeneration, "execution control");
+    await this.options.archiveWorkspace(workspaceId, input.requestId);
   }
 
-  private resolveRecord(record: StoredAgentRecord): OwnedAgentSnapshot {
-    return this.projectRecord(record);
+  private resolveRecord(
+    record: StoredAgentRecord,
+    prepared: PreparedHubExecutionCreate,
+  ): OwnedAgentSnapshot {
+    requireExecutionWorkspaceId(record);
+    return { ...this.projectRecord(record), ...durableToolPolicyAcknowledgement(record, prepared) };
   }
 
   private requireAuthority(authorityGeneration: number, operation = "agent creation"): void {
@@ -352,6 +378,82 @@ export class DaemonExecutions implements HubExecutionAgents {
   }
 }
 
+function requireMatchingPersistedExecutionContract(
+  record: StoredAgentRecord,
+  prepared: PreparedHubExecutionCreate,
+): void {
+  const stored = classifyStoredHubExecutionContract(record.hubExecutionContract);
+  if (stored.kind === "invalid") {
+    throw new HubExecutionContractError(
+      "hub_execution_contract_invalid",
+      `Hub execution agent ${record.id} has a malformed contract`,
+    );
+  }
+  if (stored.kind === "legacy") {
+    if (
+      prepared.config.resolvedProviderOptions !== undefined ||
+      prepared.config.toolPolicy !== undefined
+    ) {
+      throw new HubExecutionContractError(
+        "execution_contract_mismatch",
+        `Legacy Hub execution agent ${record.id} cannot prove policy application`,
+      );
+    }
+    return;
+  }
+  if (stored.contract.applicationState === "prepared") {
+    throw new HubExecutionContractError(
+      "hub_execution_contract_incomplete",
+      `Hub execution agent ${record.id} did not complete policy application`,
+    );
+  }
+  if (
+    stored.contract.protocolVersion !== prepared.protocolVersion ||
+    stored.contract.executionFingerprint !== prepared.executionFingerprint ||
+    stored.contract.policyFingerprint !== prepared.policyFingerprint
+  ) {
+    throw new HubExecutionContractError(
+      "execution_contract_mismatch",
+      `Hub execution agent ${record.id} belongs to a different request intent`,
+    );
+  }
+}
+
+function requireMatchingPreparedExecutionContract(
+  original: PreparedHubExecutionCreate,
+  incoming: PreparedHubExecutionCreate,
+): void {
+  if (
+    original.protocolVersion !== incoming.protocolVersion ||
+    original.executionFingerprint !== incoming.executionFingerprint ||
+    original.policyFingerprint !== incoming.policyFingerprint
+  ) {
+    throw new HubExecutionContractError(
+      "execution_contract_mismatch",
+      `Hub execution ${incoming.executionId} already has a different in-flight request intent`,
+    );
+  }
+}
+
+function durableToolPolicyAcknowledgement(
+  record: StoredAgentRecord,
+  prepared: PreparedHubExecutionCreate,
+): Pick<OwnedAgentSnapshot, "toolPolicyApplied"> {
+  if (!prepared.config.toolPolicy) return {};
+  const stored = classifyStoredHubExecutionContract(record.hubExecutionContract);
+  if (
+    stored.kind !== "valid" ||
+    stored.contract.applicationState !== "applied" ||
+    stored.contract.policyFingerprint !== prepared.policyFingerprint
+  ) {
+    throw new HubExecutionContractError(
+      "hub_execution_contract_incomplete",
+      `Hub execution agent ${record.id} has no matching durable policy acknowledgement`,
+    );
+  }
+  return { toolPolicyApplied: true };
+}
+
 function requireHubMcpNamespace(mcpServers: Record<string, McpServerConfig> | undefined): void {
   if (mcpServers && Object.hasOwn(mcpServers, "paseo")) {
     throw new Error('Hub execution MCP server name "paseo" is reserved by the daemon');
@@ -364,17 +466,11 @@ function ownedCreatedWorktree(
   return worktree?.created === true ? worktree : null;
 }
 
-function toCreateAgentWorktree(target: CreateAgentWorktreeTarget | undefined) {
-  if (!target) return undefined;
-  if (target.mode === "branch-off") {
-    return {
-      worktreeName: target.newBranch,
-      baseBranch: target.base,
-      action: "branch-off" as const,
-    };
+function requireExecutionWorkspaceId(
+  record: Pick<StoredAgentRecord, "id" | "workspaceId">,
+): string {
+  if (!record.workspaceId) {
+    throw new Error(`Hub execution agent ${record.id} has no workspaceId`);
   }
-  if (target.mode === "checkout-branch") {
-    return { refName: target.branch, action: "checkout" as const };
-  }
-  return { githubPrNumber: target.prNumber, action: "checkout" as const };
+  return record.workspaceId;
 }

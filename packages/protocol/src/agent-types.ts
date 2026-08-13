@@ -467,6 +467,26 @@ export interface AgentRunResult {
   canceled?: boolean;
 }
 
+export type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
+export type ProviderOptions = Record<string, JsonValue>;
+
+export interface McpToolRef {
+  kind: "mcp";
+  server: string;
+  tool: string;
+}
+
+export interface ToolPolicy {
+  preapproved: McpToolRef[];
+}
+
 export interface AgentSessionConfig {
   provider: AgentProvider;
   cwd: string;
@@ -480,14 +500,22 @@ export interface AgentSessionConfig {
   thinkingOptionId?: string;
   featureValues?: Record<string, unknown>;
   title?: string | null;
+  // COMPAT(agentSessionConfigV1): retain beta.5 legacy fields through 2027-08-10.
+  /** @deprecated Use providerOptions for new requests. */
   approvalPolicy?: string;
+  /** @deprecated Use providerOptions for new requests. */
   sandboxMode?: string;
+  /** @deprecated Use providerOptions for new requests. */
   networkAccess?: boolean;
+  /** @deprecated Use providerOptions for new requests. */
   webSearch?: boolean;
+  /** @deprecated Use providerOptions for new requests. */
   extra?: {
     codex?: AgentMetadata;
     claude?: AgentMetadata;
   };
+  providerOptions?: ProviderOptions;
+  toolPolicy?: ToolPolicy;
   mcpServers?: Record<string, McpServerConfig>;
   /**
    * Internal agents are hidden from listings and don't trigger notifications.

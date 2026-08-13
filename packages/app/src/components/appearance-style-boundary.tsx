@@ -13,8 +13,17 @@ function AppearanceStyleBoundaryBase({ appearanceKey, children }: AppearanceStyl
 
 const appearanceStyleBoundaryMapping = (theme: Theme): Partial<AppearanceStyleBoundaryProps> => ({
   appearanceKey: [
+    theme.fontFamily.ui,
     theme.fontFamily.workspace,
     theme.fontFamily.mono,
+    theme.fontSize.xs,
+    theme.fontSize.sm,
+    theme.fontSize.base,
+    theme.fontSize.lg,
+    theme.fontSize.xl,
+    theme.fontSize["2xl"],
+    theme.fontSize["3xl"],
+    theme.fontSize["4xl"],
     theme.workspaceFontSize.xs,
     theme.workspaceFontSize.sm,
     theme.workspaceFontSize.base,

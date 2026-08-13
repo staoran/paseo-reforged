@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
-import { once } from "node:events";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -24,6 +23,7 @@ import {
 import { selectSidebarStatusGrouping } from "../support/helpers/sidebar";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 import { getVisibleWorkspaceAgentTabIds } from "../support/helpers/workspace-tabs";
+import { terminateWithTreeKill } from "../../../server/src/utils/tree-kill.js";
 
 const LEGACY_AGENT_ID = "10000000-0000-4000-8000-000000000001";
 const SERVER_ID = `srv_restart_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
@@ -226,18 +226,7 @@ async function waitForServer(port: number, child: ChildProcess): Promise<void> {
 }
 
 async function stopProcess(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  child.kill("SIGTERM");
-  const timeout = setTimeout(() => {
-    if (child.exitCode === null && child.signalCode === null) {
-      child.kill("SIGKILL");
-    }
-  }, 5000);
-  try {
-    await once(child, "exit");
-  } finally {
-    clearTimeout(timeout);
-  }
+  await terminateWithTreeKill(child, { gracefulTimeoutMs: 5000, forceTimeoutMs: 5000 });
 }
 
 async function startRestartDaemon(input: {
@@ -506,11 +495,16 @@ test.describe("Workspace model restart regressions", () => {
             createdWorkspaceId,
           ]),
         )
-        .toEqual({
+        .toMatchObject({
           [seeded.workspaceA]: "done",
           [seeded.workspaceB]: "done",
           [createdWorkspaceId]: "done",
         });
+
+      // The restarted provider session may settle while the browser creates the sibling. Its
+      // initial running status is asserted above; this phase verifies that ownership never moves.
+      const workspaceStatuses = await fetchWorkspaceStatuses(client, [seeded.workspaceA]);
+      expect(["running", "done"]).toContain(workspaceStatuses[seeded.workspaceA]);
 
       await expectWorkspaceRowDoesNotShowIndicator(page, {
         serverId,

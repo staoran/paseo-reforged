@@ -25,7 +25,58 @@ test("sequential replay after reconstruction keeps one durable owned agent", asy
   expect(reconstructed.replay.agent.id).toBe(created.first.agentId);
   expect(reconstructed.replay.agent.status).toBe("closed");
   expect(reconstructed.durableAgentCount).toBe(1);
-});
+}, 20_000);
+
+test("persisted replay rejects a different execution intent without new side effects", async () => {
+  const hub = await launchRelationship();
+  hub.beginOwnedCreate("original-intent", "execution-intent-mismatch", {
+    prompt: "Original execution prompt",
+  });
+  const original = await hub.ownedCreateResult("original-intent");
+  expect(original).toMatchObject({
+    type: "hub.execution.agent.create.response",
+    payload: { success: true },
+  });
+  const providerCreations = hub.providerCreations();
+  const promptCount = hub.providerPromptTexts().length;
+
+  hub.beginOwnedCreate("changed-intent", "execution-intent-mismatch", {
+    prompt: "Different execution prompt",
+  });
+  const replay = await hub.ownedCreateResult("changed-intent");
+
+  expect(replay).toMatchObject({
+    type: "hub.execution.agent.create.response",
+    payload: { success: false, executionId: "execution-intent-mismatch" },
+  });
+  expect(hub.providerCreations()).toBe(providerCreations);
+  expect(hub.providerPromptTexts()).toHaveLength(promptCount);
+  expect(await hub.durableOwnedAgentIds()).toHaveLength(1);
+}, 20_000);
+
+test("in-flight replay shares work only when the complete execution contract matches", async () => {
+  const hub = await launchRelationship();
+  hub.holdAgentCreation();
+  hub.beginOwnedCreate("pending-original", "execution-pending-contract", {
+    prompt: "Original in-flight prompt",
+  });
+  await hub.agentCreationAttempts(1);
+
+  hub.closeLatestSocket(1006);
+  await hub.retry();
+  hub.connectLatestSocket();
+  hub.beginOwnedCreate("pending-mismatch", "execution-pending-contract", {
+    prompt: "Different in-flight prompt",
+  });
+  hub.finishAgentCreation();
+  const mismatch = await hub.ownedCreateResult("pending-mismatch");
+
+  expect(mismatch).toMatchObject({
+    type: "hub.execution.agent.create.response",
+    payload: { success: false, executionId: "execution-pending-contract" },
+  });
+  expect(hub.providerCreations()).toBe(1);
+}, 20_000);
 
 test("Hub MCP configuration reaches the provider alongside Paseo MCP without entering snapshots", async () => {
   const hub = await HubRelationshipHarness.startWithAgentMcp();
@@ -34,6 +85,10 @@ test("Hub MCP configuration reaches the provider alongside Paseo MCP without ent
   relationship = hub;
   const bearer = "hub-execution-bearer";
   hub.beginOwnedCreate("mcp-create", "mcp-execution", {
+    providerOptions: {
+      sandbox_mode: "workspace-write",
+      sandbox_workspace_write: { writable_roots: ["/var/cache/private-build"] },
+    },
     mcpServers: {
       hub: {
         type: "http",
@@ -41,10 +96,22 @@ test("Hub MCP configuration reaches the provider alongside Paseo MCP without ent
         headers: { Authorization: `Bearer ${bearer}` },
       },
     },
+    toolPolicy: {
+      preapproved: [{ kind: "mcp", server: "hub", tool: "finish_execution" }],
+    },
   });
 
   const response = await hub.ownedCreateResult("mcp-create");
 
+  expect(response).toMatchObject({
+    type: "hub.execution.agent.create.response",
+    payload: {
+      success: true,
+      agent: { provider: "codex" },
+      toolPolicyApplied: true,
+      error: null,
+    },
+  });
   expect(hub.latestProviderCreateConfig()?.mcpServers).toMatchObject({
     paseo: { type: "http" },
     hub: {
@@ -53,9 +120,12 @@ test("Hub MCP configuration reaches the provider alongside Paseo MCP without ent
       headers: { Authorization: `Bearer ${bearer}` },
     },
   });
-  expect(response).toMatchObject({
-    type: "hub.execution.agent.create.response",
-    payload: { success: true, agent: { provider: "codex" } },
+  expect(hub.latestProviderCreateConfig()?.providerOptions).toEqual({
+    sandbox_mode: "workspace-write",
+    sandbox_workspace_write: { writable_roots: ["/var/cache/private-build"] },
+  });
+  expect(hub.latestProviderCreateConfig()?.toolPolicy).toEqual({
+    preapproved: [{ kind: "mcp", server: "hub", tool: "finish_execution" }],
   });
   expect(response.payload.agent).not.toHaveProperty("config");
   expect(response.payload.agent).not.toHaveProperty("mcpServers");
@@ -64,6 +134,8 @@ test("Hub MCP configuration reaches the provider alongside Paseo MCP without ent
     cwd: response.payload.agent.cwd,
   });
   expect(JSON.stringify(response.payload.agent)).not.toContain(bearer);
+  expect(JSON.stringify(response.payload.agent)).not.toContain("private-build");
+  expect(JSON.stringify(response.payload.agent)).not.toContain("finish_execution");
 
   const update = hub.hubMessages().find((message) => message.type === "hub.execution.agent.update");
   expect(update).toMatchObject({
@@ -80,7 +152,92 @@ test("Hub MCP configuration reaches the provider alongside Paseo MCP without ent
     cwd: update.payload.agent.cwd,
   });
   expect(JSON.stringify(update.payload.agent)).not.toContain(bearer);
-});
+  expect(JSON.stringify(update.payload.agent)).not.toContain("private-build");
+  expect(JSON.stringify(update.payload.agent)).not.toContain("finish_execution");
+}, 20_000);
+
+test("Hub persists an applied execution contract before the initial prompt starts", async () => {
+  const hub = await launchRelationship();
+  hub.beginOwnedCreate("durable-contract-create", "durable-contract-execution");
+
+  const response = await hub.ownedCreateResult("durable-contract-create");
+
+  expect(response).toMatchObject({
+    type: "hub.execution.agent.create.response",
+    payload: { success: true, agentId: expect.any(String) },
+  });
+  if (response.type !== "hub.execution.agent.create.response" || !response.payload.agentId) {
+    throw new Error("Expected a successful Hub execution create response");
+  }
+  expect(hub.observedHubExecutionContractsAtPromptStart()).toEqual([
+    {
+      protocolVersion: 1,
+      executionFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      policyFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      applicationState: "applied",
+    },
+  ]);
+  expect(await hub.durableHubExecutionContract(response.payload.agentId)).toMatchObject({
+    applicationState: "applied",
+  });
+}, 20_000);
+
+test("Hub can preapprove only tools on MCP servers injected in the same request", async () => {
+  const hub = await launchRelationship();
+  hub.beginOwnedCreate("foreign-grant", "foreign-grant-execution", {
+    mcpServers: {
+      hub: { type: "http", url: "https://hub.test/mcp/executions/foreign-grant" },
+    },
+    toolPolicy: {
+      preapproved: [{ kind: "mcp", server: "unrelated", tool: "dangerous_tool" }],
+    },
+  });
+
+  const response = await hub.ownedCreateResult("foreign-grant");
+
+  expect(response).toMatchObject({
+    type: "hub.execution.agent.create.response",
+    payload: {
+      success: false,
+      agentId: null,
+      error: "Hub execution could not be created",
+    },
+  });
+  expect(response.payload).not.toHaveProperty("errorDetails");
+  expect(hub.providerCreations()).toBe(0);
+}, 20_000);
+
+test("Hub rejects invalid provider options before workspace or Provider side effects", async () => {
+  const hub = await launchRelationship();
+  const workspaceIdsBeforeCreate = hub.durableWorkspaceIds();
+  hub.beginOwnedCreate("invalid-options", "invalid-options-execution", {
+    providerOptions: {
+      sandbox_workspace_write: { writable_roots: ["/tmp", 42] },
+    },
+  });
+
+  const response = await hub.ownedCreateResult("invalid-options");
+
+  expect(response).toMatchObject({
+    type: "hub.execution.agent.create.response",
+    payload: {
+      success: false,
+      error: "Hub execution provider options are invalid",
+      errorDetails: {
+        code: "provider_options_invalid",
+        provider: "codex",
+        issues: [
+          {
+            path: ["sandbox_workspace_write", "writable_roots", 1],
+            message: expect.any(String),
+          },
+        ],
+      },
+    },
+  });
+  expect(hub.durableWorkspaceIds()).toEqual(workspaceIdsBeforeCreate);
+  expect(hub.providerCreations()).toBe(0);
+}, 20_000);
 
 test("new Hub executions cannot override the daemon-owned Paseo MCP server", async () => {
   const hub = await launchRelationship();
@@ -104,9 +261,9 @@ test("new Hub executions cannot override the daemon-owned Paseo MCP server", asy
   expect(hub.providerCreations()).toBe(0);
   expect(hub.activeOwnedAgentIds()).toEqual([]);
   expect(await hub.durableOwnedAgentIds()).toEqual([]);
-});
+}, 20_000);
 
-test("reserved Paseo MCP input does not invalidate replay of an owned execution", async () => {
+test("reserved Paseo MCP input cannot bypass preflight during replay", async () => {
   const hub = await launchRelationship();
   hub.beginOwnedCreate("original-create", "replayed-execution");
   const original = await hub.ownedCreateResult("original-create");
@@ -126,14 +283,17 @@ test("reserved Paseo MCP input does not invalidate replay of an owned execution"
   expect(replay).toMatchObject({
     type: "hub.execution.agent.create.response",
     payload: {
-      success: true,
+      success: false,
       executionId: "replayed-execution",
-      agentId: original.payload.agentId,
+      agentId: null,
+      agent: null,
+      error: "Hub execution could not be created",
     },
   });
+  expect(replay.payload).not.toHaveProperty("errorDetails");
   expect(hub.providerCreations()).toBe(providerCreations);
   expect(await hub.durableOwnedAgentIds()).toEqual([original.payload.agentId]);
-});
+}, 20_000);
 
 test("removing a daemon-owned agent removes its execution association", async () => {
   const hub = await launchRelationship();
@@ -142,7 +302,7 @@ test("removing a daemon-owned agent removes its execution association", async ()
   const removed = await hub.removeOwnedAgent(created.first.agentId);
 
   expect(removed.durableAgentCount).toBe(0);
-});
+}, 20_000);
 
 test("a failed Hub create removes its auto-created worktree", async () => {
   const hub = await launchRelationship();
@@ -159,7 +319,7 @@ test("a failed Hub create removes its auto-created worktree", async () => {
   });
   expect(await hub.listedWorktrees()).toHaveLength(1);
   expect(await hub.durableOwnedAgentIds()).toEqual([]);
-});
+}, 20_000);
 
 test("failed Hub creates release their lifecycle subscriptions", async () => {
   const hub = await launchRelationship();
@@ -181,9 +341,7 @@ test("failed Hub creates release their lifecycle subscriptions", async () => {
   expect(hub.agentSubscriptionCount()).toBe(subscriptionBaseline);
 
   hub.failProviderPromptStart();
-  hub.beginOwnedCreate("failed-prompt-create-2", "failed-prompt-execution-2", {
-    worktree: { mode: "branch-off", newBranch: "failed-prompt-2" },
-  });
+  hub.beginOwnedCreate("failed-prompt-create-2", "failed-prompt-execution-2");
   const second = await hub.ownedCreateResult("failed-prompt-create-2");
 
   expect(second).toMatchObject({
@@ -194,7 +352,7 @@ test("failed Hub creates release their lifecycle subscriptions", async () => {
   expect(await hub.durableOwnedAgentIds()).toEqual([]);
   expect(await hub.listedWorktrees()).toHaveLength(1);
   expect(hub.agentSubscriptionCount()).toBe(subscriptionBaseline);
-});
+}, 20_000);
 
 test("failed Hub create cleans durable state when provider close rejects", async () => {
   const hub = await launchRelationship();
@@ -213,7 +371,31 @@ test("failed Hub create cleans durable state when provider close rejects", async
   expect(hub.activeOwnedAgentIds()).toEqual([]);
   expect(await hub.durableOwnedAgentIds()).toEqual([]);
   expect(await hub.listedWorktrees()).toHaveLength(1);
-});
+}, 20_000);
+
+test("post-create durable verification failure removes the Agent and created worktree", async () => {
+  const hub = await launchRelationship();
+  hub.failPostCreateDurableRead();
+  hub.beginOwnedCreate("missing-durable-create", "missing-durable-execution", {
+    worktree: { mode: "branch-off", newBranch: "missing-durable-worktree" },
+  });
+
+  const response = await hub.ownedCreateResult("missing-durable-create");
+
+  expect(response).toMatchObject({
+    type: "hub.execution.agent.create.response",
+    payload: { success: false, executionId: "missing-durable-execution" },
+  });
+  expect({
+    activeAgentIds: hub.activeOwnedAgentIds(),
+    durableAgentIds: await hub.durableOwnedAgentIds(),
+    worktreeCount: (await hub.listedWorktrees()).length,
+  }).toEqual({
+    activeAgentIds: [],
+    durableAgentIds: [],
+    worktreeCount: 1,
+  });
+}, 20_000);
 
 test("Hub checkout uses the requested branch ref", async () => {
   const hub = await launchRelationship();
@@ -229,7 +411,7 @@ test("Hub checkout uses the requested branch ref", async () => {
     payload: { success: true, executionId: "checkout-execution" },
   });
   expect(await hub.currentBranch(hub.latestCreatedCwd()!)).toBe("existing-hub-branch");
-});
+}, 20_000);
 
 test("failed create never archives a reused worktree", async () => {
   const hub = await launchRelationship();
@@ -254,4 +436,4 @@ test("failed create never archives a reused worktree", async () => {
     payload: { success: false, executionId: "reused-execution" },
   });
   expect(await hub.worktreeState(worktreeCwd!)).toEqual({ exists: true, listed: true });
-});
+}, 20_000);

@@ -12,6 +12,28 @@ Generated validators preserve unknown keys where Zod object parsing strips them.
 
 Provider model normalization is a parser-side compatibility shim in the client consumers that need it. Newer daemons normalize at the provider registry source.
 
+## Additive compatibility boundaries
+
+Wire schemas declare both the beta.5 agent configuration fields (`approvalPolicy`, `sandboxMode`,
+`networkAccess`, `webSearch`, and provider-specific `extra`) and the canonical
+`providerOptions`/`toolPolicy` fields as optional. The schema layer does not choose between them.
+After structural validation, the server compatibility module resolves both representations at the
+Agent creation/resume boundary. Equal values merge; conflicting, ambiguous, invalid, or unsupported
+legacy mappings fail before a provider session starts. The same dual-read shape is retained for
+stored Agent and Schedule records so normal reads do not erase either representation.
+
+New clients must not rely on unknown-field stripping when sending policy-bearing configuration to
+an older daemon. `server_info.features.agentProviderOptions` and `agentToolPolicy` gate Agent create
+and Schedule create/update requests. If the required feature is absent, the client fails before
+sending the frame. Old clients remain valid because all canonical fields and feature flags are
+additive and optional.
+
+Hub v1 create responses retain `error: string | null`; `errorDetails` is an optional passthrough
+object for structured diagnostics. Consumers must accept string-only responses and unknown detail
+keys. Hub v2 request/response literals are not implemented by this repository; exact literal
+agreement, no-fallback selection, and real Cloud interoperability remain cross-repository release
+requirements.
+
 ## Codegen Ownership
 
 The protocol package owns generation.
@@ -32,6 +54,7 @@ zod-aot is exact-pinned and young enough that compiler patches are treated as pa
 - current sequential item routing must accept `tool_call`-like status branches
 - generated runtime imports must keep `.js` extensions for packaged Node ESM
 - the generated WebSocket envelope accepts a minimal valid message and rejects a corrupted one
+- old/new Agent and Hub frames retain additive optional fields and string-error compatibility
 
 ## Schema Purity
 

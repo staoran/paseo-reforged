@@ -22,7 +22,6 @@ import Markdown, {
   type RenderRules,
 } from "react-native-markdown-display";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { AppearanceStyleBoundary } from "@/components/appearance-style-boundary";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
 import { MarkdownFenceBlock } from "@/components/markdown/markdown-fence-block";
 import {
@@ -120,9 +119,7 @@ export function MarkdownRenderer({
 
   return (
     <View dataSet={WORKSPACE_SURFACE_DATASET}>
-      <AppearanceStyleBoundary>
-        <MarkdownPartList parts={parts} rendererProps={rendererProps} />
-      </AppearanceStyleBoundary>
+      <MarkdownPartList parts={parts} rendererProps={rendererProps} />
     </View>
   );
 }

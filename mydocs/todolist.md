@@ -101,6 +101,7 @@
 | 0057 | 已收口 | micro-spec | 已同步        | [修复 stable 合并后 Playwright 合同](micro_specs/0057_修复stable合并后Playwright合同.md)          | 2026-08-09       | C01-C10 已由 `c017dcca1` 收口；定向验证、静态检查、main CI 18/18 与 Docker source-build 检查全绿                        |
 | 0058 | 已收口 | micro-spec | 已同步        | [修复 beta.5 Android APK 版本校验合同](micro_specs/0058_修复beta5AndroidAPK版本校验合同.md)       | 2026-08-10 01:35 | 修复提交 `1ef02da58` 与 CI 全绿；immutable tag 重跑成功，beta.5 共 24 个资产且三条发布 workflow 全绿                    |
 | 0059 | 已收口 | micro-spec | 已同步        | [状态分组显示项目名](micro_specs/0059_状态分组显示项目名.md)                                      | 2026-08-10 00:12 | desktop/compact 项目名 RED→GREEN；状态分组回归、5 单测、lint/format 通过；typecheck 仅有既有拖拽 prop 阻塞              |
+| 0060 | 已收口 | spec       | 已同步        | [合并 upstream v0.3.1 到 Reforged](specs/0060_合并upstream_0.3.1到Reforged.md)                    | 2026-08-13       | 源 merge commit `948fd4a` 已合入本地 `main`；协议/存储/Hub、0059/0061、restart、identity 与静态回归通过，未 push        |
 | 0061 | 已收口 | micro-spec | 已同步        | [恢复最后一条消息编辑入口](micro_specs/0061_恢复最后一条消息编辑入口.md)                          | 2026-08-12       | 独立提交 `f647346fe`；真实 Playwright seam RED→GREEN，完整 Edit UI、模型、server-info、wire 与静态回归通过              |
 
 ## 候选待办

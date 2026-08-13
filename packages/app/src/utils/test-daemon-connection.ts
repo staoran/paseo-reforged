@@ -13,6 +13,7 @@ import {
   createDesktopLocalDaemonTransportFactory,
   createDesktopWebSocketTransportFactory,
 } from "@/desktop/daemon/desktop-daemon-transport";
+import { createAppWebSocketFactory } from "@/runtime/websocket-factory";
 
 export interface DaemonProbeClient {
   readonly lastError: string | null;
@@ -44,10 +45,17 @@ const defaultDaemonConnectionDependencies: DaemonConnectionDependencies<DaemonCl
   createClient: (config) => new DaemonClient(config),
 };
 
-function resolveWebSocketTransportFactory(
+function resolveProbeWebSocketConfig(
+  headers: Record<string, string> | undefined,
   deps: Pick<DaemonConnectionDependencies<DaemonProbeClient>, "createWebSocketTransportFactory">,
-): DaemonClientConfig["transportFactory"] {
-  return deps.createWebSocketTransportFactory?.() ?? undefined;
+): Pick<DaemonClientConfig, "transportFactory" | "webSocketFactory"> {
+  const desktopTransportFactory =
+    Object.keys(headers ?? {}).length > 0
+      ? (deps.createWebSocketTransportFactory?.() ?? null)
+      : null;
+  return desktopTransportFactory
+    ? { transportFactory: desktopTransportFactory }
+    : { webSocketFactory: createAppWebSocketFactory() };
 }
 
 function normalizeNonEmptyString(value: unknown): string | null {
@@ -148,7 +156,7 @@ export async function buildClientConfig(
   if (connection.type === "directTcp") {
     return {
       ...base,
-      transportFactory: resolveWebSocketTransportFactory(deps),
+      ...resolveProbeWebSocketConfig(connection.headers, deps),
       url: buildDaemonWebSocketUrl(connection.endpoint, { useTls: connection.useTls ?? false }),
       ...(connection.password ? { password: connection.password } : {}),
       ...(connection.headers ? { headers: connection.headers } : {}),
@@ -161,6 +169,7 @@ export async function buildClientConfig(
 
   return {
     ...base,
+    webSocketFactory: createAppWebSocketFactory(),
     url: buildRelayWebSocketUrl({
       endpoint: connection.relayEndpoint,
       useTls: connection.useTls ?? shouldUseTlsForDefaultHostedRelay(connection.relayEndpoint),

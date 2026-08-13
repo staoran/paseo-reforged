@@ -69,7 +69,7 @@ function normalizeWebSocketTarget(target: WebSocketTransportTarget): WebSocketTr
   const headers: Record<string, string> = {};
   for (const [name, value] of Object.entries(target.headers ?? {})) {
     if (!HTTP_HEADER_NAME_PATTERN.test(name) || typeof value !== "string" || /[\r\n]/.test(value)) {
-      throw new Error("Invalid WebSocket transport header.");
+      throw new Error("Invalid WebSocket transport header");
     }
     headers[name] = value;
   }

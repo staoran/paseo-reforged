@@ -9,6 +9,16 @@ import { toStoredAgentRecord } from "./agent-projections.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { AgentSessionConfig } from "./agent-sdk-types.js";
 import { AgentOwnerSchema, daemonExecutionKey, type DaemonAgentOwner } from "./agent-owner.js";
+import { HubExecutionContractError, type HubExecutionContract } from "./agent-config-compat.js";
+
+const HUB_EXECUTION_CONTRACT_SCHEMA = z
+  .object({
+    protocolVersion: z.literal(1),
+    executionFingerprint: z.string().regex(/^[a-f0-9]{64}$/u),
+    policyFingerprint: z.string().regex(/^[a-f0-9]{64}$/u),
+    applicationState: z.enum(["prepared", "applied"]),
+  })
+  .strict();
 
 const SERIALIZABLE_CONFIG_SCHEMA = z
   .object({
@@ -16,7 +26,22 @@ const SERIALIZABLE_CONFIG_SCHEMA = z
     model: z.string().nullable().optional(),
     thinkingOptionId: z.string().nullable().optional(),
     featureValues: z.record(z.string(), z.unknown()).nullable().optional(),
+    // COMPAT(agentSessionConfigV1): retain beta.5 legacy fields through 2027-08-10.
+    approvalPolicy: z.string().nullable().optional(),
+    sandboxMode: z.string().nullable().optional(),
+    networkAccess: z.boolean().nullable().optional(),
+    webSearch: z.boolean().nullable().optional(),
     extra: z.record(z.string(), z.any()).nullable().optional(),
+    providerOptions: z.record(z.string(), z.json()).nullable().optional(),
+    toolPolicy: z
+      .object({
+        preapproved: z.array(
+          z.object({ kind: z.literal("mcp"), server: z.string(), tool: z.string() }).strict(),
+        ),
+      })
+      .strict()
+      .nullable()
+      .optional(),
     systemPrompt: z.string().nullable().optional(),
     mcpServers: z.record(z.string(), z.any()).nullable().optional(),
   })
@@ -68,6 +93,8 @@ const STORED_AGENT_SCHEMA = z.object({
   internal: z.boolean().optional(),
   archivedAt: z.string().nullable().optional(),
   owner: AgentOwnerSchema.optional(),
+  // Keep malformed values visible so load/replay can isolate them fail-closed.
+  hubExecutionContract: z.unknown().optional(),
 });
 
 export type SerializableAgentConfig = Pick<
@@ -76,7 +103,13 @@ export type SerializableAgentConfig = Pick<
   | "model"
   | "thinkingOptionId"
   | "featureValues"
+  | "approvalPolicy"
+  | "sandboxMode"
+  | "networkAccess"
+  | "webSearch"
   | "extra"
+  | "providerOptions"
+  | "toolPolicy"
   | "systemPrompt"
   | "mcpServers"
 >;
@@ -130,13 +163,22 @@ export class AgentStorage {
   }
 
   private queueRecordWrite(record: StoredAgentRecord): Promise<void> {
-    const agentId = record.id;
+    return this.queueRecordMutation(record.id, (existing) =>
+      preserveLatestHubExecutionContract(existing, record),
+    );
+  }
+
+  private queueRecordMutation(
+    agentId: string,
+    mutate: (existing: StoredAgentRecord | null) => StoredAgentRecord,
+  ): Promise<void> {
     const prev = this.pendingWrites.get(agentId) ?? Promise.resolve();
     const next = prev.then(async () => {
       if (this.deleting.has(agentId)) {
         return undefined;
       }
 
+      const record = mutate(this.cache.get(agentId) ?? null);
       await this.writeRecord(record);
       return undefined;
     });
@@ -209,25 +251,109 @@ export class AgentStorage {
     options?: { title?: string | null; internal?: boolean },
   ): Promise<void> {
     await this.load();
-    await this.waitForPendingWrite(agent.id);
-    const existing = (await this.get(agent.id)) ?? null;
     const hasTitleOverride =
       options !== undefined && Object.prototype.hasOwnProperty.call(options, "title");
     const hasInternalOverride =
       options !== undefined && Object.prototype.hasOwnProperty.call(options, "internal");
-    const record = toStoredAgentRecord(agent, {
-      title: hasTitleOverride ? (options?.title ?? null) : (existing?.title ?? null),
-      createdAt: existing?.createdAt,
-      internal: hasInternalOverride ? options?.internal : (agent.internal ?? existing?.internal),
-    });
+    await this.queueRecordMutation(agent.id, (existing) => {
+      const record = toStoredAgentRecord(agent, {
+        title: hasTitleOverride ? (options?.title ?? null) : (existing?.title ?? null),
+        createdAt: existing?.createdAt,
+        internal: hasInternalOverride ? options?.internal : (agent.internal ?? existing?.internal),
+      });
 
-    // Preserve soft-delete/archive status across snapshot flushes.
-    // `archivedAt` is not part of the ManagedAgent snapshot, so a naive projection
-    // would wipe it during normal persistence (including on daemon restart).
-    if (existing && existing.archivedAt !== undefined) {
-      record.archivedAt = existing.archivedAt;
+      // Preserve soft-delete/archive status across snapshot flushes. The
+      // projection runs inside the per-agent write queue so it cannot commit a
+      // stale pre-archive record after the archive mutation.
+      if (existing && existing.archivedAt !== undefined) {
+        record.archivedAt = existing.archivedAt;
+      }
+      return preserveLatestHubExecutionContract(existing, record);
+    });
+  }
+
+  /** Persist the first Hub owner/config snapshot together with its prepared contract. */
+  async persistInitialHubExecutionSnapshot(
+    agent: ManagedAgent,
+    expectedPreparedContract: HubExecutionContract,
+  ): Promise<void> {
+    await this.load();
+    const expected = requirePreparedHubExecutionContract(expectedPreparedContract);
+    await this.queueRecordMutation(agent.id, (existing) => {
+      if (existing) {
+        const current = classifyStoredHubExecutionContract(existing.hubExecutionContract);
+        if (current.kind !== "valid") {
+          throw new HubExecutionContractError(
+            current.kind === "invalid"
+              ? "hub_execution_contract_invalid"
+              : "execution_contract_mismatch",
+            `Agent ${agent.id} does not contain the expected prepared contract`,
+          );
+        }
+        if (!sameHubExecutionContract(current.contract, expected)) {
+          throw new HubExecutionContractError(
+            "execution_contract_mismatch",
+            `Agent ${agent.id} prepared contract does not match the create request`,
+          );
+        }
+      }
+
+      const record = toStoredAgentRecord(agent, {
+        title: existing?.title ?? null,
+        createdAt: existing?.createdAt,
+        internal: agent.internal ?? existing?.internal,
+      });
+      if (existing?.archivedAt !== undefined) record.archivedAt = existing.archivedAt;
+      record.hubExecutionContract = structuredClone(expected);
+      return record;
+    });
+  }
+
+  /** Atomically change an exact prepared Hub contract to applied before any prompt starts. */
+  async persistHubExecutionContractBeforePrompt(
+    agentId: string,
+    expectedPreparedContract: HubExecutionContract,
+  ): Promise<HubExecutionContract> {
+    await this.load();
+    const expected = requirePreparedHubExecutionContract(expectedPreparedContract);
+    let applied: HubExecutionContract | null = null;
+    await this.queueRecordMutation(agentId, (existing) => {
+      if (!existing) {
+        throw new HubExecutionContractError(
+          "hub_execution_contract_incomplete",
+          `Agent ${agentId} has no durable prepared snapshot`,
+        );
+      }
+      const current = classifyStoredHubExecutionContract(existing.hubExecutionContract);
+      if (current.kind === "invalid") {
+        throw new HubExecutionContractError(
+          "hub_execution_contract_invalid",
+          `Agent ${agentId} has a malformed Hub execution contract`,
+        );
+      }
+      if (current.kind === "legacy" || current.contract.applicationState !== "prepared") {
+        throw new HubExecutionContractError(
+          "hub_execution_contract_incomplete",
+          `Agent ${agentId} is not in the prepared state`,
+        );
+      }
+      if (!sameHubExecutionContract(current.contract, expected)) {
+        throw new HubExecutionContractError(
+          "execution_contract_mismatch",
+          `Agent ${agentId} prepared contract does not match the create request`,
+        );
+      }
+
+      applied = { ...expected, applicationState: "applied" };
+      return { ...existing, hubExecutionContract: applied };
+    });
+    if (!applied) {
+      throw new HubExecutionContractError(
+        "hub_execution_contract_incomplete",
+        `Agent ${agentId} contract transition did not complete`,
+      );
     }
-    await this.upsert(record);
+    return applied;
   }
 
   async setTitle(agentId: string, title: string): Promise<void> {
@@ -392,6 +518,73 @@ export class AgentStorage {
   private async waitForPendingWrite(agentId: string): Promise<void> {
     await (this.pendingWrites.get(agentId) ?? Promise.resolve()).catch(() => undefined);
   }
+}
+
+export type StoredHubExecutionContractClassification =
+  | { kind: "legacy" }
+  | { kind: "valid"; contract: HubExecutionContract }
+  | { kind: "invalid" };
+
+/** Classify a persisted Hub contract without hiding malformed state as a legacy record. */
+export function classifyStoredHubExecutionContract(
+  value: unknown,
+): StoredHubExecutionContractClassification {
+  if (value === undefined) return { kind: "legacy" };
+  const parsed = HUB_EXECUTION_CONTRACT_SCHEMA.safeParse(value);
+  return parsed.success ? { kind: "valid", contract: parsed.data } : { kind: "invalid" };
+}
+
+/** Permit legacy or applied Hub records while isolating interrupted and malformed executions. */
+export function resolveLoadableHubExecutionContract(
+  agentId: string,
+  value: unknown,
+): HubExecutionContract | undefined {
+  const stored = classifyStoredHubExecutionContract(value);
+  if (stored.kind === "legacy") return undefined;
+  if (stored.kind === "invalid") {
+    throw new HubExecutionContractError(
+      "hub_execution_contract_invalid",
+      `Agent ${agentId} has a malformed Hub execution contract`,
+    );
+  }
+  if (stored.contract.applicationState === "prepared") {
+    throw new HubExecutionContractError(
+      "hub_execution_contract_incomplete",
+      `Agent ${agentId} did not complete Hub execution setup`,
+    );
+  }
+  return stored.contract;
+}
+
+function requirePreparedHubExecutionContract(value: HubExecutionContract): HubExecutionContract {
+  const parsed = HUB_EXECUTION_CONTRACT_SCHEMA.safeParse(value);
+  if (!parsed.success || parsed.data.applicationState !== "prepared") {
+    throw new HubExecutionContractError(
+      "hub_execution_contract_invalid",
+      "Expected a valid prepared Hub execution contract",
+    );
+  }
+  return parsed.data;
+}
+
+function sameHubExecutionContract(
+  left: HubExecutionContract,
+  right: HubExecutionContract,
+): boolean {
+  return (
+    left.protocolVersion === right.protocolVersion &&
+    left.executionFingerprint === right.executionFingerprint &&
+    left.policyFingerprint === right.policyFingerprint &&
+    left.applicationState === right.applicationState
+  );
+}
+
+function preserveLatestHubExecutionContract(
+  existing: StoredAgentRecord | null,
+  next: StoredAgentRecord,
+): StoredAgentRecord {
+  if (existing?.hubExecutionContract === undefined) return next;
+  return { ...next, hubExecutionContract: existing.hubExecutionContract };
 }
 
 function projectDirNameFromCwd(cwd: string): string {

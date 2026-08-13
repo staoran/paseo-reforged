@@ -793,11 +793,8 @@ export interface CreateScheduleOptions {
           archiveOnFinish?: boolean;
           isolation?: "local" | "worktree";
           title?: string | null;
-          approvalPolicy?: string;
-          sandboxMode?: string;
-          networkAccess?: boolean;
-          webSearch?: boolean;
-          extra?: AgentSessionConfig["extra"];
+          providerOptions?: AgentSessionConfig["providerOptions"];
+          toolPolicy?: AgentSessionConfig["toolPolicy"];
           systemPrompt?: string;
           mcpServers?: AgentSessionConfig["mcpServers"];
         };
@@ -819,6 +816,8 @@ export interface UpdateScheduleNewAgentConfig {
   archiveOnFinish?: boolean;
   isolation?: "local" | "worktree";
   cwd?: string;
+  providerOptions?: AgentSessionConfig["providerOptions"];
+  toolPolicy?: AgentSessionConfig["toolPolicy"];
 }
 export interface UpdateScheduleOptions {
   id: string;
@@ -2452,6 +2451,7 @@ export class DaemonClient {
   async createAgent(options: CreateAgentRequestOptions): Promise<AgentSnapshotPayload> {
     const requestId = this.createRequestId(options.requestId);
     const config = resolveAgentConfig(options);
+    this.requireAgentCreateConfigSupport(config);
 
     const message = SessionInboundMessageSchema.parse({
       type: "create_agent_request",
@@ -5203,6 +5203,9 @@ export class DaemonClient {
   }
 
   async scheduleCreate(options: CreateScheduleOptions): Promise<ScheduleCreatePayload> {
+    if (options.target.type === "new-agent") {
+      this.requireAgentCreateConfigSupport(options.target.config);
+    }
     return this.sendCorrelatedSessionRequest({
       requestId: options.requestId,
       message: {
@@ -5296,6 +5299,9 @@ export class DaemonClient {
   }
 
   async scheduleUpdate(options: UpdateScheduleOptions): Promise<ScheduleUpdatePayload> {
+    if (options.newAgentConfig !== undefined) {
+      this.requireAgentCreateConfigSupport(options.newAgentConfig);
+    }
     return this.sendCorrelatedSessionRequest({
       requestId: options.requestId,
       message: {
@@ -5428,6 +5434,25 @@ export class DaemonClient {
     // COMPAT(hubRelationship): added in v0.1.X, drop the gate when floor >= v0.1.X.
     if (this.lastServerInfoMessage?.features?.hubRelationship !== true) {
       throw new Error("Update the host to use Hub relationship management.");
+    }
+  }
+
+  private requireAgentCreateConfigSupport(
+    config: Pick<AgentSessionConfig, "providerOptions" | "toolPolicy">,
+  ): void {
+    // COMPAT(agentProviderOptions): added in v0.3.1, remove gate after 2027-08-10 once daemon floor >= v0.3.1.
+    if (
+      config.providerOptions !== undefined &&
+      this.lastServerInfoMessage?.features?.agentProviderOptions !== true
+    ) {
+      throw new Error("Update the host to use agent provider options.");
+    }
+    // COMPAT(agentToolPolicy): added in v0.3.1, remove gate after 2027-08-10 once daemon floor >= v0.3.1.
+    if (
+      config.toolPolicy !== undefined &&
+      this.lastServerInfoMessage?.features?.agentToolPolicy !== true
+    ) {
+      throw new Error("Update the host to use agent tool policy.");
     }
   }
 

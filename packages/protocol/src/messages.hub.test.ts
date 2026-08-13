@@ -65,6 +65,18 @@ const PreviousHubAgentCreateWithAutoArchiveRequestSchema =
     autoArchive: z.boolean().optional(),
   });
 
+const Beta5HubAgentCreateResponseSchema = z.object({
+  type: z.literal("hub.execution.agent.create.response"),
+  payload: z.object({
+    requestId: z.string(),
+    executionId: z.string(),
+    agentId: z.string().nullable(),
+    agent: z.unknown().nullable(),
+    success: z.boolean(),
+    error: z.string().nullable(),
+  }),
+});
+
 describe("Hub session protocol", () => {
   test("accepts the Hub execution create request", () => {
     const message = {
@@ -75,6 +87,20 @@ describe("Hub session protocol", () => {
       cwd: "/workspace",
       prompt: "Implement the requested change",
       modeId: "code",
+    };
+
+    expect(SessionInboundMessageSchema.parse(message)).toEqual(message);
+  });
+
+  test("keeps the retired Hub workspace selector wire-compatible", () => {
+    const message = {
+      type: "hub.execution.agent.create.request",
+      requestId: "request-retired-workspace",
+      executionId: "execution-retired-workspace",
+      provider: "codex",
+      cwd: "/workspace",
+      workspaceId: "caller-owned-workspace",
+      prompt: "Implement the requested change",
     };
 
     expect(SessionInboundMessageSchema.parse(message)).toEqual(message);
@@ -106,6 +132,43 @@ describe("Hub session protocol", () => {
       cwd: "/workspace",
       prompt: "Implement the requested change",
     });
+  });
+
+  test("round-trips native provider options and structured MCP preapproval", () => {
+    const message = {
+      type: "hub.execution.agent.create.request",
+      requestId: "request-policy",
+      executionId: "execution-policy",
+      provider: "codex",
+      cwd: "/workspace",
+      prompt: "Classify and finish",
+      providerOptions: {
+        sandbox_mode: "workspace-write",
+        sandbox_workspace_write: { writable_roots: ["/var/cache/npm"] },
+      },
+      mcpServers: {
+        hub: { type: "http", url: "https://hub.example/executions/policy" },
+      },
+      toolPolicy: {
+        preapproved: [{ kind: "mcp", server: "hub", tool: "finish_execution" }],
+      },
+    };
+
+    expect(SessionInboundMessageSchema.parse(message)).toEqual(message);
+  });
+
+  test.each(["Bash", "Edit", "Write"])("cannot encode native %s tool preapproval", (tool) => {
+    const message = {
+      type: "hub.execution.agent.create.request",
+      requestId: "request-native-tool",
+      executionId: "execution-native-tool",
+      provider: "claude",
+      cwd: "/workspace",
+      prompt: "Do work",
+      toolPolicy: { preapproved: [{ kind: "native", server: "claude", tool }] },
+    };
+
+    expect(SessionInboundMessageSchema.safeParse(message).success).toBe(false);
   });
 
   test.each([
@@ -238,6 +301,39 @@ describe("Hub session protocol", () => {
   ])("accepts outbound variant $type", (message) => {
     expect(SessionOutboundMessageSchema.parse(message)).toEqual(message);
     expect(parseHubExecutionOutboundMessage(message)).toEqual(message);
+  });
+
+  test("keeps the beta.5 string error contract while accepting open additive details", () => {
+    const response = {
+      type: "hub.execution.agent.create.response" as const,
+      payload: {
+        requestId: "request-future-error",
+        executionId: "execution-future-error",
+        agentId: null,
+        agent: null,
+        success: false,
+        error: "Hub execution could not be created",
+        errorDetails: {
+          code: "future_daemon_error",
+          message: "A newer daemon rejected the request",
+          retryAfterMs: 5000,
+        },
+      },
+    };
+
+    expect(Beta5HubAgentCreateResponseSchema.parse(response)).toEqual({
+      ...response,
+      payload: {
+        requestId: response.payload.requestId,
+        executionId: response.payload.executionId,
+        agentId: null,
+        agent: null,
+        success: false,
+        error: response.payload.error,
+      },
+    });
+    expect(SessionOutboundMessageSchema.parse(response)).toEqual(response);
+    expect(parseHubExecutionOutboundMessage(response)).toEqual(response);
   });
 
   test("rejects a Hub update whose correlated agent ids disagree", () => {

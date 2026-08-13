@@ -11,6 +11,7 @@ import {
   PARENT_AGENT_ID_LABEL,
 } from "@getpaseo/protocol/agent-labels";
 import type { Logger } from "pino";
+import type { ProviderOptions, ToolPolicy } from "@getpaseo/protocol/agent-types";
 import { z } from "zod";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
 
@@ -47,6 +48,13 @@ import { buildArchivedAgentRecord, type ArchivedStoredAgentRecord } from "./agen
 import type { StoredAgentRecord, AgentStorage } from "./agent-storage.js";
 import type { AgentOwner } from "./agent-owner.js";
 import {
+  resolveCompatibleAgentConfig,
+  type AgentConfigCompatibilityProvider,
+  type HubExecutionContract,
+  type LegacyProviderFamily,
+  type ResolvedAgentSessionConfig,
+} from "./agent-config-compat.js";
+import {
   InMemoryAgentTimelineStore,
   type SeedAgentTimelineOptions,
 } from "./agent-timeline-store.js";
@@ -66,7 +74,6 @@ import {
   type ForegroundTurnWaiter,
   type PendingForegroundRun,
 } from "./agent-run-state.js";
-import { getAgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { isSystemInjectedEnvelope } from "./agent-prompt.js";
 import { stripInternalPaseoMcpServer, withRuntimePaseoMcpServer } from "./runtime-mcp-config.js";
@@ -142,8 +149,8 @@ export interface EditLastUserMessageInput {
 }
 
 interface PreparedSessionConfig {
-  storedConfig: AgentSessionConfig;
-  launchConfig: AgentSessionConfig;
+  storedConfig: ResolvedAgentSessionConfig;
+  launchConfig: ResolvedAgentSessionConfig;
 }
 
 interface NormalizeConfigOptions {
@@ -177,7 +184,10 @@ function buildStoredAgentConfig(record: StoredAgentRecord): AgentSessionConfig {
   if (record.config.featureValues != null) {
     config.featureValues = record.config.featureValues;
   }
-  if (record.config.extra != null) config.extra = record.config.extra;
+  if (record.config.providerOptions != null) {
+    config.providerOptions = record.config.providerOptions;
+  }
+  if (record.config.toolPolicy != null) config.toolPolicy = record.config.toolPolicy;
   if (record.config.systemPrompt != null) {
     config.systemPrompt = record.config.systemPrompt;
   }
@@ -253,6 +263,16 @@ interface AgentManagerRescueTimeouts {
 interface ProviderEnabledFlag {
   enabled: boolean;
   derivedFromProviderId?: string | null;
+  legacyFamily?: LegacyProviderFamily;
+  validateOptions?: (options: ProviderOptions | undefined) => ProviderOptions | undefined;
+  applyOptions?: (
+    config: AgentSessionConfig,
+    options: ProviderOptions | undefined,
+  ) => AgentSessionConfig;
+  applyToolPolicy?: (
+    config: AgentSessionConfig,
+    toolPolicy: ToolPolicy | undefined,
+  ) => AgentSessionConfig;
 }
 type ProviderEnabledMap = Partial<Record<AgentProvider, ProviderEnabledFlag>>;
 type ProviderClientMap = Partial<Record<AgentProvider, AgentClient>>;
@@ -266,6 +286,7 @@ export interface CreateAgentOptions {
   // undefined is an explicit decision: the agent never appears in the sidebar.
   workspaceId: string | undefined;
   owner?: AgentOwner;
+  hubExecutionContract?: HubExecutionContract;
 }
 
 export interface AgentManagerOptions {
@@ -343,6 +364,7 @@ interface ManagedAgentBase {
    */
   workspaceId?: string;
   owner?: AgentOwner;
+  hubExecutionContract?: HubExecutionContract;
   capabilities: AgentCapabilityFlags;
   config: AgentSessionConfig;
   runtimeInfo?: AgentRuntimeInfo;
@@ -741,6 +763,7 @@ function getFirstUserMessageTextFromRows(rows: readonly AgentTimelineRow[]): str
 export class AgentManager {
   private readonly clients = new Map<AgentProvider, AgentClient>();
   private readonly providerEnabled = new Map<AgentProvider, boolean>();
+  private readonly providerDefinitions = new Map<AgentProvider, ProviderEnabledFlag>();
   private readonly agents = new Map<string, LiveManagedAgent>();
   private readonly timelineStore = new InMemoryAgentTimelineStore();
   private readonly providerSubagents = new ProviderSubagentStore();
@@ -813,9 +836,11 @@ export class AgentManager {
     clients: ProviderClientMap;
   }): void {
     this.providerEnabled.clear();
+    this.providerDefinitions.clear();
     for (const [provider, definition] of Object.entries(input.providerDefinitions)) {
       if (definition) {
         this.providerEnabled.set(provider, definition.enabled);
+        this.providerDefinitions.set(provider, definition);
       }
     }
 
@@ -825,6 +850,23 @@ export class AgentManager {
         this.clients.set(provider, client);
       }
     }
+  }
+
+  getAgentConfigCompatibilityProvider(provider: AgentProvider): AgentConfigCompatibilityProvider {
+    const definition = this.providerDefinitions.get(provider);
+    return {
+      provider,
+      ...(definition?.legacyFamily ? { legacyFamily: definition.legacyFamily } : {}),
+      validateOptions:
+        definition?.validateOptions ??
+        ((options) => {
+          if (options !== undefined) {
+            throw new Error(`Provider '${provider}' does not accept providerOptions`);
+          }
+          return undefined;
+        }),
+      ...(definition?.applyToolPolicy ? { applyToolPolicy: definition.applyToolPolicy } : {}),
+    };
   }
 
   getRegisteredProviderIds(): AgentProvider[] {
@@ -1232,6 +1274,7 @@ export class AgentManager {
       initialTitle: options.initialTitle,
       workspaceId: options.workspaceId,
       owner: options.owner,
+      hubExecutionContract: options.hubExecutionContract,
     });
   }
 
@@ -1258,6 +1301,7 @@ export class AgentManager {
       labels?: Record<string, string>;
       workspaceId?: string;
       owner?: AgentOwner;
+      hubExecutionContract?: HubExecutionContract;
     },
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
@@ -1279,6 +1323,7 @@ export class AgentManager {
       labels?: Record<string, string>;
       workspaceId?: string;
       owner?: AgentOwner;
+      hubExecutionContract?: HubExecutionContract;
     },
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
@@ -3170,6 +3215,7 @@ export class AgentManager {
       publishWhenReady?: boolean;
       workspaceId?: string;
       owner?: AgentOwner;
+      hubExecutionContract?: HubExecutionContract;
     },
   ): Promise<ManagedAgent> {
     let registered = false;
@@ -3366,6 +3412,7 @@ export class AgentManager {
           persistence?: AgentPersistenceHandle;
           workspaceId?: string;
           owner?: AgentOwner;
+          hubExecutionContract?: HubExecutionContract;
         }
       | undefined;
   }): ActiveManagedAgent {
@@ -3376,6 +3423,7 @@ export class AgentManager {
       cwd: config.cwd,
       workspaceId: options.workspaceId,
       owner: options.owner,
+      hubExecutionContract: options.hubExecutionContract,
       session,
       capabilities: session.capabilities,
       config,
@@ -4860,7 +4908,7 @@ export class AgentManager {
   private async normalizeConfig(
     config: AgentSessionConfig,
     options: NormalizeConfigOptions = {},
-  ): Promise<AgentSessionConfig> {
+  ): Promise<ResolvedAgentSessionConfig> {
     const normalized: AgentSessionConfig = { ...config };
 
     // Always resolve cwd to absolute path for consistent history file lookup
@@ -4899,26 +4947,16 @@ export class AgentManager {
       }
     }
 
-    if (!normalized.modeId) {
-      normalized.modeId = await this.resolveDefaultModeId(normalized, options.env);
-    }
-
-    return normalized;
+    return this.applyProviderConfiguration(normalized);
   }
 
-  private async resolveDefaultModeId(
+  private applyProviderConfiguration(
     config: AgentSessionConfig,
-    env?: Record<string, string>,
-  ): Promise<string | undefined> {
-    const providerDefault = await this.clients
-      .get(config.provider)
-      ?.resolveDefaultModeId?.({ config, env });
-    if (providerDefault) return providerDefault;
-    try {
-      return getAgentProviderDefinition(config.provider).defaultModeId ?? undefined;
-    } catch {
-      return undefined;
-    }
+  ): Promise<ResolvedAgentSessionConfig> {
+    return resolveCompatibleAgentConfig(
+      config,
+      this.getAgentConfigCompatibilityProvider(config.provider),
+    );
   }
 
   private async resolveDefaultModelId(config: AgentSessionConfig): Promise<string | undefined> {
@@ -4947,7 +4985,10 @@ export class AgentManager {
     const storedConfig = await this.normalizeConfig(stripInternalPaseoMcpServer(config), { env });
     const launchConfig = this.applyDaemonAppendSystemPrompt(
       withRuntimePaseoMcpServer({
-        config: storedConfig,
+        config: {
+          ...storedConfig,
+          providerOptions: storedConfig.resolvedProviderOptions,
+        },
         agentId,
         mcpBaseUrl: this.mcpBaseUrl,
         mcpAuthToken: this.mcpAuthToken,

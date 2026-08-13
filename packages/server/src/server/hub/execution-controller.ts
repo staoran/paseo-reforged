@@ -1,9 +1,15 @@
 import { isAbsolute } from "node:path";
 import type {
+  HubExecutionAgentCreateErrorDetails,
   HubExecutionAgentCreateRequest,
   HubExecutionControlRequest,
   SessionOutboundMessage,
 } from "@getpaseo/protocol/messages";
+import { HubExecutionContractError } from "../agent/agent-config-compat.js";
+import {
+  ProviderOptionsValidationError,
+  ToolPolicyUnsupportedError,
+} from "../agent/provider-options.js";
 
 import type { HubExecutionAgents, OwnedAgentEvent } from "./daemon-executions.js";
 
@@ -95,12 +101,13 @@ export class HubExecutionController {
         executionId: message.executionId,
         provider: message.provider,
         cwd: message.cwd,
-        workspaceId: message.workspaceId,
         prompt: message.prompt,
         model: message.model,
         modeId: message.modeId,
         thinkingOptionId: message.thinkingOptionId,
         featureValues: message.featureValues,
+        providerOptions: message.providerOptions,
+        toolPolicy: message.toolPolicy,
         env: message.env,
         mcpServers: message.mcpServers,
         worktree: message.worktree,
@@ -114,11 +121,13 @@ export class HubExecutionController {
           agentId: result.agent.id,
           agent: result.agent,
           success: true,
+          ...(result.toolPolicyApplied ? { toolPolicyApplied: true as const } : {}),
           error: null,
         },
       });
     } catch (error) {
       if (this.closed) return;
+      const failure = toHubCreateFailure(error);
       this.send({
         type: "hub.execution.agent.create.response",
         payload: {
@@ -127,7 +136,7 @@ export class HubExecutionController {
           agentId: null,
           agent: null,
           success: false,
-          error: error instanceof Error ? error.message : String(error),
+          ...failure,
         },
       });
     }
@@ -154,6 +163,53 @@ export class HubExecutionController {
         event: event.event,
       },
     });
+  }
+}
+
+interface HubCreateFailure {
+  error: string;
+  errorDetails?: HubExecutionAgentCreateErrorDetails;
+}
+
+function toHubCreateFailure(error: unknown): HubCreateFailure {
+  if (error instanceof ProviderOptionsValidationError) {
+    return {
+      error: "Hub execution provider options are invalid",
+      errorDetails: {
+        code: error.code,
+        provider: error.provider,
+        issues: error.issues,
+        message: error.message,
+      },
+    };
+  }
+  if (error instanceof ToolPolicyUnsupportedError) {
+    return {
+      error: "Hub execution tool policy is unsupported",
+      errorDetails: {
+        code: error.code,
+        provider: error.provider,
+        message: error.message,
+      },
+    };
+  }
+  if (error instanceof HubExecutionContractError) {
+    return {
+      error: hubExecutionContractErrorSummary(error.code),
+      errorDetails: { code: error.code, message: error.message },
+    };
+  }
+  return { error: "Hub execution could not be created" };
+}
+
+function hubExecutionContractErrorSummary(code: HubExecutionContractError["code"]): string {
+  switch (code) {
+    case "hub_execution_contract_incomplete":
+      return "Hub execution is incomplete";
+    case "hub_execution_contract_invalid":
+      return "Hub execution contract is invalid";
+    case "execution_contract_mismatch":
+      return "Hub execution request conflicts with an existing execution";
   }
 }
 

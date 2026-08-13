@@ -63,17 +63,28 @@ export function attachAgentStoragePersistence(
 }
 
 export function buildConfigOverrides(record: StoredAgentRecord): Partial<AgentSessionConfig> {
+  const config = record.config;
   return stripInternalPaseoMcpServer({
     provider: record.provider,
     cwd: record.cwd,
-    modeId: record.lastModeId ?? record.config?.modeId ?? undefined,
-    model: record.config?.model ?? undefined,
-    thinkingOptionId: record.config?.thinkingOptionId ?? undefined,
-    featureValues: record.config?.featureValues ?? undefined,
-    extra: record.config?.extra ?? undefined,
-    systemPrompt: record.config?.systemPrompt ?? undefined,
-    mcpServers: record.config?.mcpServers ?? undefined,
+    modeId: nullishToUndefined(config?.modeId),
+    model: nullishToUndefined(config?.model),
+    thinkingOptionId: nullishToUndefined(config?.thinkingOptionId),
+    featureValues: nullishToUndefined(config?.featureValues),
+    approvalPolicy: nullishToUndefined(config?.approvalPolicy),
+    sandboxMode: nullishToUndefined(config?.sandboxMode),
+    networkAccess: nullishToUndefined(config?.networkAccess),
+    webSearch: nullishToUndefined(config?.webSearch),
+    extra: nullishToUndefined(config?.extra),
+    providerOptions: nullishToUndefined(config?.providerOptions),
+    toolPolicy: nullishToUndefined(config?.toolPolicy),
+    systemPrompt: nullishToUndefined(config?.systemPrompt),
+    mcpServers: nullishToUndefined(config?.mcpServers),
   });
+}
+
+function nullishToUndefined<T>(value: T | null | undefined): T | undefined {
+  return value ?? undefined;
 }
 
 export function buildSessionConfig(
@@ -91,7 +102,13 @@ export function buildSessionConfig(
     model: overrides.model,
     thinkingOptionId: overrides.thinkingOptionId,
     featureValues: overrides.featureValues,
+    approvalPolicy: overrides.approvalPolicy,
+    sandboxMode: overrides.sandboxMode,
+    networkAccess: overrides.networkAccess,
+    webSearch: overrides.webSearch,
     extra: overrides.extra,
+    providerOptions: overrides.providerOptions,
+    toolPolicy: overrides.toolPolicy,
     systemPrompt: overrides.systemPrompt,
     mcpServers: overrides.mcpServers,
   });

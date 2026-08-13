@@ -3,7 +3,6 @@ import { Text, View, type StyleProp, type TextStyle, type ViewStyle } from "reac
 import Markdown, { type ASTNode } from "react-native-markdown-display";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
-import { AppearanceStyleBoundary } from "@/components/appearance-style-boundary";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { createMarkdownStyles } from "@/styles/markdown-styles";
 import type { Theme } from "@/styles/theme";
@@ -235,11 +234,9 @@ export function PlanCard({
         </Text>
       ) : null}
       <View dataSet={WORKSPACE_SURFACE_DATASET}>
-        <AppearanceStyleBoundary>
-          <ThemedPlanMarkdown rules={PLAN_MARKDOWN_RULES} uniProps={planMarkdownStyleMapping}>
-            {text}
-          </ThemedPlanMarkdown>
-        </AppearanceStyleBoundary>
+        <ThemedPlanMarkdown rules={PLAN_MARKDOWN_RULES} uniProps={planMarkdownStyleMapping}>
+          {text}
+        </ThemedPlanMarkdown>
       </View>
       {footer ? <View style={styles.footer}>{footer}</View> : null}
     </View>
