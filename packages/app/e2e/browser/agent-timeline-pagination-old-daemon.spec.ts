@@ -8,9 +8,10 @@ import {
   expectTimelinePromptVisible,
   holdOlderHistoryPages,
   openAgentTimeline,
+  scrollThroughOlderHistoryPages,
 } from "../support/helpers/timeline-pagination";
 
-test("does not repeat an assistant block when the current app loads a published 0.2.5 daemon", async ({
+test("does not repeat an assistant block when the current app paginates a published 0.2.5 daemon", async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -75,6 +76,9 @@ test("does not repeat an assistant block when the current app loads a published 
       page,
       "timeline-pagination-turn-19: emit 1 coalesced agent stream updates",
     );
+    await scrollThroughOlderHistoryPages(page, 3, history);
+
+    history.expectNoRepeatedEntries();
     await history.expectOwnedTextRendered("Now I have a clearer picture.");
   } finally {
     await agent.cleanup();
