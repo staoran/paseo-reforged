@@ -1,10 +1,51 @@
 # Changelog
 
-## 0.3.0-beta.5 - 2026-08-09
+## 0.3.1-beta.1 - 2026-08-13
 
 ### Known limitations
 
-- Editing your latest plain-text message in place is temporarily unavailable while provider-history identity is hardened
+- Clients already running `0.3.1` must install this first same-base beta manually
+- macOS beta artifacts are unsigned and not notarized
+
+### Added
+
+- Paseo Reforged now has its own desktop installation, mobile package, beta update channel, and support links ([a4172e9](https://github.com/staoran/paseo-reforged/commit/a4172e995dae47a83516da9568dcfc59cc5ad910) by [@staoran](https://github.com/staoran))
+- Edit your latest plain-text message in place and regenerate its answer ([bbca95d](https://github.com/staoran/paseo-reforged/commit/bbca95d08ec35c9834596979b600b82418676992), [fd146bd](https://github.com/staoran/paseo-reforged/commit/fd146bdab18115173c208239cc6df69a62b1eb1b), [f647346](https://github.com/staoran/paseo-reforged/commit/f647346fe5fa1765f31f450a614fe2d3133b945d) by [@staoran](https://github.com/staoran))
+- Regenerate the latest answer without changing your original prompt ([c48a848](https://github.com/staoran/paseo-reforged/commit/c48a848e2a103347e2942bebe6b3485551899457) by [@staoran](https://github.com/staoran))
+- Import a session from the current project while creating a workspace ([feb4e82](https://github.com/staoran/paseo-reforged/commit/feb4e82d5f0e8ddacf85217664941a9e27ab7dc6), [681ca04](https://github.com/staoran/paseo-reforged/commit/681ca0455f6eb6e58e6ee7a8593134717a47de25) by [@staoran](https://github.com/staoran))
+- Set a separate font family and size for each workspace ([1a00edd](https://github.com/staoran/paseo-reforged/commit/1a00eddcd23cf5eb033586ceeae678c56b240468), [a3dbaa2](https://github.com/staoran/paseo-reforged/commit/a3dbaa27a13c2e45eb28df488194417860485bf2) by [@staoran](https://github.com/staoran))
+- Turn selected chat text into follow-ups, prepared drafts, or reusable prompt presets ([3e32c93](https://github.com/staoran/paseo-reforged/commit/3e32c938664c0faad1134e743e69cebb7846246f) by [@staoran](https://github.com/staoran))
+- Right-click sidebar projects or workspaces on web and desktop to use their existing actions ([239eb35](https://github.com/staoran/paseo-reforged/commit/239eb355516348619345d09a227485955255decc), [83bad27](https://github.com/staoran/paseo-reforged/commit/83bad27fd3234e9ca2cb8a4d2a5f17e282683fe5) by [@staoran](https://github.com/staoran))
+- Render Mermaid diagrams directly in chats across web, desktop, iOS, and Android ([94cb6b8](https://github.com/staoran/paseo-reforged/commit/94cb6b816de8c239a5732bd6b7189b551cdbf2d2) by [@staoran](https://github.com/staoran))
+- Inspect expanded Mermaid diagrams with zoom, pan, fit, and selectable text ([0999088](https://github.com/staoran/paseo-reforged/commit/0999088499b97877bde0ea65be4a5da5b5657ca0) by [@staoran](https://github.com/staoran))
+- Open the latest turn's current file changes from a summary beneath the reply ([b6ab2a3](https://github.com/staoran/paseo-reforged/commit/b6ab2a31416a7afbd103690adf1686c80aae5668) by [@staoran](https://github.com/staoran))
+- See Codex retry status live during automatic retries ([ae4af3d](https://github.com/staoran/paseo-reforged/commit/ae4af3dc1ba90b18bda8a94c7b9828f0ef82690f) by [@staoran](https://github.com/staoran))
+- See how many Agents remain resident in each sidebar workspace ([7629e7a](https://github.com/staoran/paseo-reforged/commit/7629e7ad81b6743b007ee05e076f32736ef1d8df) by [@staoran](https://github.com/staoran))
+
+### Improved
+
+- Long conversations reopen with their latest conclusions first while older details load on demand ([6066c7b](https://github.com/staoran/paseo-reforged/commit/6066c7bc9e433107d6f269ceff24f2c556ec8007), [df6efd7](https://github.com/staoran/paseo-reforged/commit/df6efd7675b0caf809cf16ccdeacc39ea7b574ab) by [@staoran](https://github.com/staoran))
+- Switching between recent conversations stays responsive even when their histories are long ([f17b00f](https://github.com/staoran/paseo-reforged/commit/f17b00fabf053d11adc1e09de4dcaf8a576d2c98), [edf25e2](https://github.com/staoran/paseo-reforged/commit/edf25e290a69e03409abb890ab698c930479ec77) by [@staoran](https://github.com/staoran))
+- Paseo starts faster when many hosts and stored Agents are available ([6b05838](https://github.com/staoran/paseo-reforged/commit/6b0583881c3a8b7ac54159e93ae847dc82e8194a) by [@staoran](https://github.com/staoran))
+- Long-running agent output stays smoother while local state is saved ([a0bc702](https://github.com/staoran/paseo-reforged/commit/a0bc7021c9dda955a83861509a31d36831ccfe94) by [@staoran](https://github.com/staoran))
+- Completed agent activity collapses into a processed summary while final answers remain visible ([d330db7](https://github.com/staoran/paseo-reforged/commit/d330db7601cdc40b9945d0ed46b40ccd7f2f2b2d), [ff6ab7e](https://github.com/staoran/paseo-reforged/commit/ff6ab7ef747076b9afd9ab5c46bf052e187b9d25) by [@staoran](https://github.com/staoran))
+- Closing agent tabs stops their runtimes while keeping conversations available to reopen ([023dea1](https://github.com/staoran/paseo-reforged/commit/023dea1881475ae08226a3ddfb9bd331fad3127d) by [@staoran](https://github.com/staoran))
+- Sidebar workspaces show when their latest message arrived ([a32ab54](https://github.com/staoran/paseo-reforged/commit/a32ab5489c846a5bb9b6e177d9fa139e54553e30), [0dde182](https://github.com/staoran/paseo-reforged/commit/0dde18211e515cf74f20564a7380cc06462c4bb4) by [@staoran](https://github.com/staoran))
+- Agent mode controls use risk-aware colors ([6d8b205](https://github.com/staoran/paseo-reforged/commit/6d8b205f69d885e9b5d109fea4431a5311788077) by [@staoran](https://github.com/staoran))
+- Workspace headers show the active Git branch ([d127e69](https://github.com/staoran/paseo-reforged/commit/d127e69ad9a81aa28919f4f0b200867879b23b51) by [@staoran](https://github.com/staoran))
+- Interface text follows the selected size consistently across the app ([041b5ee](https://github.com/staoran/paseo-reforged/commit/041b5eeee47d2b040971a109e46056596f4b4a34) by [@staoran](https://github.com/staoran))
+- Final answers use clearer Markdown typography ([e658832](https://github.com/staoran/paseo-reforged/commit/e65883216265e6a2bb506d1b3d8e87050052b33c), [24a7a7d](https://github.com/staoran/paseo-reforged/commit/24a7a7daa6cd2521965b7fdc5c24fce477d0cf7a) by [@staoran](https://github.com/staoran))
+- Large Changes views open faster without expanding unrelated diffs ([451b35a](https://github.com/staoran/paseo-reforged/commit/451b35a52545735ded20a3cc1da4dc8be158e557) by [@staoran](https://github.com/staoran))
+- Checkout-wide change counts no longer repeat across workspace navigation ([7d0576e](https://github.com/staoran/paseo-reforged/commit/7d0576ec73bc50e375e9e54fbc540efffc2de6e1) by [@staoran](https://github.com/staoran))
+
+### Fixed
+
+- Imported sessions retain their original titles ([084dca0](https://github.com/staoran/paseo-reforged/commit/084dca00b7bff618b09458082d878decfdd40918) by [@staoran](https://github.com/staoran))
+- Reasoning details react immediately to the auto-expand setting ([432f4fd](https://github.com/staoran/paseo-reforged/commit/432f4fd6e755c5b71ebd30a180ce5559569412f9) by [@staoran](https://github.com/staoran))
+- Windows file links open at requested lines, including paths with Chinese filenames ([14f8ed7](https://github.com/staoran/paseo-reforged/commit/14f8ed70e5bae181be0a47a584c2034ab61fe65e), [caedd39](https://github.com/staoran/paseo-reforged/commit/caedd3980ec52be66afc9738ab19a8e1c04f50cb), [76bf444](https://github.com/staoran/paseo-reforged/commit/76bf444bc2c724f0df0cc31d64b63240abab5d7e) by [@staoran](https://github.com/staoran))
+- Relative activity times display on devices without `Intl.RelativeTimeFormat` ([b727d18](https://github.com/staoran/paseo-reforged/commit/b727d18cd1ee0010eb995f96dc90239216778871) by [@staoran](https://github.com/staoran))
+- Stored conversations no longer appear to have running Agents after a restart ([72aab86](https://github.com/staoran/paseo-reforged/commit/72aab860c56634bb042aa763e2bd25338fb45d99) by [@staoran](https://github.com/staoran))
+- Project names remain visible in status-grouped sidebar rows ([9d51195](https://github.com/staoran/paseo-reforged/commit/9d511954b33e8b0c5f8de5e18516b1c86374bd9f) by [@staoran](https://github.com/staoran))
 
 ## 0.3.1 - 2026-08-09
 
