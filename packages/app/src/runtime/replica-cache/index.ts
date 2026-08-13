@@ -1,4 +1,5 @@
 import { Buffer } from "buffer";
+import equal from "fast-deep-equal/es6";
 import { z } from "zod";
 import {
   AgentSnapshotPayloadSchema,
@@ -29,6 +30,10 @@ const MAX_TIMELINE_ITEMS = 50;
 const MAX_CACHE_BYTES = 1024 * 1024;
 const DATE_TAG = "__paseoDate";
 
+const REPLICA_DIRTY_DOMAINS = ["agent", "workspace", "timeline"] as const;
+type ReplicaDirtyDomain = (typeof REPLICA_DIRTY_DOMAINS)[number];
+export type ReplicaCacheFinalSource = "status" | "stream";
+
 const StoredAgentSchema = z.object({
   snapshot: AgentSnapshotPayloadSchema.omit({ providerRetryMessage: true }),
   projectPlacement: ProjectPlacementPayloadSchema.nullable(),
@@ -56,6 +61,38 @@ const StoredCacheSchema = z.object({
 
 type StoredAgent = z.infer<typeof StoredAgentSchema>;
 type StoredHost = z.infer<typeof StoredHostSchema>;
+type StoredWorkspace = StoredHost["workspaces"][number];
+type StoredProject = StoredHost["projects"][number];
+
+interface HostReplicaProjection {
+  session: SessionState | undefined;
+  targetAgentId: string | null;
+  agentRef: Agent | undefined;
+  agent: StoredAgent | null;
+  workspacesRef: SessionState["workspaces"] | undefined;
+  workspaceRef: WorkspaceDescriptor | undefined;
+  workspace: StoredWorkspace | null;
+  projectsRef: SessionState["projects"] | undefined;
+  projectRef: ProjectDescriptor | undefined;
+  project: StoredProject | null;
+  timelineRef: StreamItem[] | undefined;
+  timeline: StoredHost["timeline"];
+}
+
+interface HostDirtyState {
+  revision: number;
+  domains: Map<ReplicaDirtyDomain, number>;
+}
+
+interface CapturedDirtyState {
+  registryRevision: number | null;
+  hostDomains: Map<string, Map<ReplicaDirtyDomain, number>>;
+}
+
+interface PendingFinalState {
+  source: ReplicaCacheFinalSource;
+  timer: ReturnType<typeof setTimeout>;
+}
 
 export interface ReplicaCacheStorage {
   getItem: (key: string) => Promise<string | null>;
@@ -221,6 +258,10 @@ function serializeProject(project: ProjectDescriptor) {
   };
 }
 
+function preserveEqualProjection<Value>(previous: Value | null, next: Value | null): Value | null {
+  return equal(previous, next) ? previous : next;
+}
+
 function deserializeHost(stored: StoredHost): SessionReplica {
   const agents = stored.agents.map((entry) => deserializeAgent(stored.serverId, entry));
   const workspaces = stored.workspaces.map(normalizeWorkspaceDescriptor);
@@ -255,12 +296,20 @@ export class ReplicaCache {
   private readonly activeServerIds = new Set<string>();
   private readonly storedHosts = new Map<string, StoredHost>();
   private readonly lastFocusedAgentIds = new Map<string, string>();
-  private readonly capturedSessions = new Map<string, SessionState>();
+  private readonly projections = new Map<string, HostReplicaProjection>();
+  private readonly dirtyByHost = new Map<string, HostDirtyState>();
+  private readonly hostPersistTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly pendingFinals = new Map<string, PendingFinalState>();
   private readonly maxBytes: number;
-  private needsPersist = false;
+  private registryRevision = 0;
+  private dirtyRegistryRevision: number | null = null;
   private unsubscribe: (() => void) | null = null;
-  private persistTimer: ReturnType<typeof setTimeout> | null = null;
-  private writeQueue: Promise<void> = Promise.resolve();
+  private registryPersistTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingFlushAllHosts = false;
+  private pendingFlushRegistry = false;
+  private pendingForceFlush = false;
+  private readonly pendingFlushHostIds = new Set<string>();
+  private flushLoopPromise: Promise<void> | null = null;
 
   constructor(
     private readonly storage: ReplicaCacheStorage,
@@ -275,23 +324,31 @@ export class ReplicaCache {
 
   setHosts(serverIds: Iterable<string>): void {
     const next = new Set(serverIds);
+    const membershipChanged =
+      next.size !== this.activeServerIds.size ||
+      Array.from(next).some((serverId) => !this.activeServerIds.has(serverId));
+    const removedServerIds = Array.from(this.activeServerIds).filter(
+      (serverId) => !next.has(serverId),
+    );
     this.activeServerIds.clear();
     for (const serverId of next) this.activeServerIds.add(serverId);
-    let removedStoredHost = false;
-    for (const serverId of this.storedHosts.keys()) {
-      if (!next.has(serverId)) {
-        this.storedHosts.delete(serverId);
-        removedStoredHost = true;
+    for (const serverId of removedServerIds) this.removeHostState(serverId);
+    for (const serverId of Array.from(this.storedHosts.keys())) {
+      if (!next.has(serverId)) this.storedHosts.delete(serverId);
+    }
+    if (membershipChanged) this.markRegistryDirty();
+
+    if (this.unsubscribe) {
+      const state = useSessionStore.getState();
+      for (const serverId of next) {
+        if (this.projections.has(serverId)) continue;
+        const projection = this.buildHostProjection(serverId, state.sessions[serverId]);
+        this.projections.set(serverId, projection);
+        if (projection.session && !this.storedHosts.has(serverId)) {
+          this.markHostDirty(serverId, REPLICA_DIRTY_DOMAINS);
+        }
       }
     }
-    for (const serverId of this.lastFocusedAgentIds.keys()) {
-      if (!next.has(serverId)) this.lastFocusedAgentIds.delete(serverId);
-    }
-    for (const serverId of this.capturedSessions.keys()) {
-      if (!next.has(serverId)) this.capturedSessions.delete(serverId);
-    }
-    if (removedStoredHost) this.needsPersist = true;
-    if (this.unsubscribe && this.needsPersist) this.schedulePersist();
   }
 
   async restore(): Promise<void> {
@@ -310,33 +367,49 @@ export class ReplicaCache {
     }
     const cache = StoredCacheSchema.safeParse(parsed);
     if (!cache.success) return;
+    let needsRewrite = false;
     for (const host of cache.data.hosts) {
       if (!this.activeServerIds.has(host.serverId)) {
-        this.needsPersist = true;
+        needsRewrite = true;
         continue;
       }
       this.storedHosts.set(host.serverId, host);
       if (host.timeline) this.lastFocusedAgentIds.set(host.serverId, host.timeline.agentId);
     }
-    if (this.buildBoundedPayload().evicted) this.needsPersist = true;
+    if (this.buildBoundedPayload().evicted) needsRewrite = true;
     for (const host of this.storedHosts.values()) {
       useSessionStore.getState().restoreSessionReplica(host.serverId, deserializeHost(host));
-      const session = useSessionStore.getState().sessions[host.serverId];
-      if (session) this.capturedSessions.set(host.serverId, session);
     }
+    if (needsRewrite) this.markRegistryDirty();
   }
 
   start(): void {
     if (this.unsubscribe) return;
-    this.unsubscribe = useSessionStore.subscribe((state) => {
-      if (this.activeServerIds.size === 0) return;
-      for (const serverId of this.activeServerIds) {
-        const focusedAgentId = state.sessions[serverId]?.focusedAgentId;
-        if (focusedAgentId) this.lastFocusedAgentIds.set(serverId, focusedAgentId);
+    const state = useSessionStore.getState();
+    for (const serverId of this.activeServerIds) {
+      const projection = this.buildHostProjection(serverId, state.sessions[serverId]);
+      this.projections.set(serverId, projection);
+      if (projection.session && !this.storedHosts.has(serverId)) {
+        this.markHostDirty(serverId, REPLICA_DIRTY_DOMAINS);
       }
-      this.schedulePersist();
-    });
-    if (this.needsPersist) this.schedulePersist();
+    }
+    this.unsubscribe = useSessionStore.subscribe((nextState) => this.handleStoreChange(nextState));
+    for (const [serverId, dirty] of this.dirtyByHost) {
+      if (dirty.domains.size > 0) this.scheduleHostPersist(serverId);
+    }
+    if (this.dirtyRegistryRevision !== null) this.scheduleRegistryPersist();
+  }
+
+  /** Stops store observation and scheduled work without discarding dirty state */
+  stop(): void {
+    this.unsubscribe?.();
+    this.unsubscribe = null;
+    for (const timer of this.hostPersistTimers.values()) clearTimeout(timer);
+    this.hostPersistTimers.clear();
+    if (this.registryPersistTimer) clearTimeout(this.registryPersistTimer);
+    this.registryPersistTimer = null;
+    for (const pending of this.pendingFinals.values()) clearTimeout(pending.timer);
+    this.pendingFinals.clear();
   }
 
   reconcileServerId(oldServerId: string, newServerId: string): void {
@@ -350,82 +423,385 @@ export class ReplicaCache {
       this.lastFocusedAgentIds.delete(oldServerId);
       this.lastFocusedAgentIds.set(newServerId, focusedAgentId);
     }
-    const capturedSession = this.capturedSessions.get(oldServerId);
-    if (capturedSession) {
-      this.capturedSessions.delete(oldServerId);
-      this.capturedSessions.set(newServerId, capturedSession);
+    const projection = this.projections.get(oldServerId);
+    if (projection) {
+      this.projections.delete(oldServerId);
+      this.projections.set(newServerId, projection);
     }
+    const dirty = this.dirtyByHost.get(oldServerId);
+    if (dirty) {
+      this.dirtyByHost.delete(oldServerId);
+      this.dirtyByHost.set(newServerId, dirty);
+    }
+    this.clearHostPersistTimer(oldServerId);
+    this.clearFinalsForHost(oldServerId);
     if (this.activeServerIds.delete(oldServerId)) this.activeServerIds.add(newServerId);
-    this.needsPersist = true;
-    this.schedulePersist();
+    this.markRegistryDirty();
+    this.markHostDirty(newServerId, REPLICA_DIRTY_DOMAINS);
   }
 
+  /** Writes the current active-host projection even when no domain is dirty */
   async flush(): Promise<void> {
-    if (this.persistTimer) {
-      clearTimeout(this.persistTimer);
-      this.persistTimer = null;
-    }
-    this.captureSessions();
-    const { payload } = this.buildBoundedPayload();
-    this.needsPersist = false;
-    const write = this.writeQueue
-      .catch(() => undefined)
-      .then(() => this.storage.setItem(STORAGE_KEY, payload));
-    this.writeQueue = write;
-    await write.catch(() => undefined);
+    this.clearAllPersistTimers();
+    this.pendingForceFlush = true;
+    this.pendingFlushAllHosts = true;
+    this.pendingFlushRegistry = true;
+    return this.requestFlush();
   }
 
-  private captureSessions(): void {
-    const sessions = useSessionStore.getState().sessions;
-    for (const serverId of this.activeServerIds) {
-      const session = sessions[serverId];
-      if (!session) continue;
-      if (this.capturedSessions.get(serverId) === session) continue;
-      this.capturedSessions.set(serverId, session);
-      if (session.focusedAgentId) {
-        this.lastFocusedAgentIds.set(serverId, session.focusedAgentId);
-      }
-      const focusedAgentId = this.lastFocusedAgentIds.get(serverId) ?? null;
-      const focusedAgent = focusedAgentId ? session.agents.get(focusedAgentId) : undefined;
-      const focusedWorkspace = focusedAgent
-        ? ((focusedAgent.workspaceId
-            ? session.workspaces.get(focusedAgent.workspaceId)
-            : undefined) ??
-          Array.from(session.workspaces.values()).find(
-            (workspace) => workspace.workspaceDirectory === focusedAgent.cwd,
-          ))
-        : undefined;
-      const timelineState = focusedAgentId
-        ? selectAgentTimelineState(session, focusedAgentId)
-        : { status: "cold" as const };
-      const items =
-        timelineState.status === "cold"
-          ? undefined
-          : timelineState.items.filter(
-              (item) => item.kind !== "user_message" || !isUnreconciledLocalUserMessage(item),
-            );
-      const timeline =
-        focusedAgent && items
-          ? {
-              agentId: focusedAgent.id,
-              items: encodeDates(items.slice(-MAX_TIMELINE_ITEMS)),
-            }
-          : null;
-      const stored: StoredHost = {
-        serverId,
-        agents: focusedAgent ? [serializeAgent(focusedAgent)] : [],
-        workspaces: focusedWorkspace ? [serializeWorkspace(focusedWorkspace)] : [],
-        projects: focusedWorkspace
-          ? [session.projects.get(focusedWorkspace.projectId)].flatMap((project) =>
-              project ? [serializeProject(project)] : [],
-            )
-          : [],
-        emptyProjects: [],
-        timeline,
-      };
-      this.storedHosts.delete(serverId);
-      this.storedHosts.set(serverId, stored);
+  /** Flushes all currently dirty host and registry revisions */
+  async flushDirty(): Promise<void> {
+    this.clearAllPersistTimers();
+    this.pendingFlushAllHosts = true;
+    this.pendingFlushRegistry = true;
+    return this.requestFlush();
+  }
+
+  /** Flushes only the named host while preserving other hosts' dirty windows */
+  async flushDirtyHost(serverId: string): Promise<void> {
+    this.clearHostPersistTimer(serverId);
+    this.pendingFlushHostIds.add(serverId);
+    return this.requestFlush();
+  }
+
+  /** Flushes dirty state and waits until all coalesced requests are idle */
+  async drain(): Promise<void> {
+    await this.flushDirty();
+  }
+
+  /** Coalesces status and stream completion signals for the current cache target */
+  notifyFinal(serverId: string, agentId: string, source: ReplicaCacheFinalSource): void {
+    if (!this.activeServerIds.has(serverId) || this.getTargetAgentId(serverId) !== agentId) return;
+    const key = this.finalKey(serverId, agentId);
+    const current = this.pendingFinals.get(key);
+    if (current?.source === source) return;
+    if (current) {
+      clearTimeout(current.timer);
+      this.pendingFinals.delete(key);
+      void this.flushDirtyHost(serverId);
+      return;
     }
+    const timer = setTimeout(() => {
+      this.pendingFinals.delete(key);
+      if (this.getTargetAgentId(serverId) === agentId) void this.flushDirtyHost(serverId);
+    }, PERSIST_DELAY_MS);
+    this.pendingFinals.set(key, { source, timer });
+  }
+
+  private handleStoreChange(state: ReturnType<typeof useSessionStore.getState>): void {
+    for (const serverId of this.activeServerIds) {
+      const previous = this.projections.get(serverId);
+      const next = this.buildHostProjection(serverId, state.sessions[serverId], previous);
+      this.projections.set(serverId, next);
+      if (!previous) continue;
+
+      const domains: ReplicaDirtyDomain[] = [];
+      const targetChanged = previous.targetAgentId !== next.targetAgentId;
+      if (targetChanged || previous.agent !== next.agent) domains.push("agent");
+      if (
+        targetChanged ||
+        previous.workspace !== next.workspace ||
+        previous.project !== next.project
+      ) {
+        domains.push("workspace");
+      }
+      if (targetChanged || previous.timeline !== next.timeline) domains.push("timeline");
+      if (domains.length === 0) continue;
+
+      this.markHostDirty(serverId, domains);
+      if (targetChanged) {
+        this.clearFinalsForHost(serverId);
+        void this.flushDirtyHost(serverId);
+      }
+    }
+  }
+
+  // Projection reuse decisions stay centralized so all four dirty domains share one target snapshot.
+  // eslint-disable-next-line complexity
+  private buildHostProjection(
+    serverId: string,
+    session: SessionState | undefined,
+    previous?: HostReplicaProjection,
+  ): HostReplicaProjection {
+    if (session?.focusedAgentId) this.lastFocusedAgentIds.set(serverId, session.focusedAgentId);
+    const focusedAgentId = session?.focusedAgentId ?? null;
+    const targetAgentId = focusedAgentId ?? this.lastFocusedAgentIds.get(serverId) ?? null;
+    if (previous && previous.session === session && previous.targetAgentId === targetAgentId) {
+      return previous;
+    }
+
+    const sameTarget = previous?.targetAgentId === targetAgentId;
+    const agentRef = targetAgentId ? session?.agents.get(targetAgentId) : undefined;
+    const agent =
+      sameTarget && previous?.agentRef === agentRef
+        ? (previous?.agent ?? null)
+        : preserveEqualProjection(
+            previous?.agent ?? null,
+            agentRef ? serializeAgent(agentRef) : null,
+          );
+
+    const canReuseWorkspaceRef =
+      sameTarget &&
+      previous?.agentRef === agentRef &&
+      previous?.workspacesRef === session?.workspaces;
+    let workspaceRef = previous?.workspaceRef;
+    if (!canReuseWorkspaceRef) {
+      workspaceRef = undefined;
+      if (agentRef) {
+        if (agentRef.workspaceId) {
+          workspaceRef = session?.workspaces.get(agentRef.workspaceId);
+        }
+        workspaceRef ??= Array.from(session?.workspaces.values() ?? []).find(
+          (workspace) => workspace.workspaceDirectory === agentRef.cwd,
+        );
+      }
+    }
+    const workspace =
+      canReuseWorkspaceRef && previous?.workspaceRef === workspaceRef
+        ? (previous?.workspace ?? null)
+        : preserveEqualProjection(
+            previous?.workspace ?? null,
+            workspaceRef ? serializeWorkspace(workspaceRef) : null,
+          );
+
+    const canReuseProjectRef =
+      sameTarget &&
+      previous?.workspaceRef === workspaceRef &&
+      previous?.projectsRef === session?.projects;
+    let projectRef = previous?.projectRef;
+    if (!canReuseProjectRef) {
+      projectRef = workspaceRef ? session?.projects.get(workspaceRef.projectId) : undefined;
+    }
+    const project =
+      canReuseProjectRef && previous?.projectRef === projectRef
+        ? (previous?.project ?? null)
+        : preserveEqualProjection(
+            previous?.project ?? null,
+            projectRef ? serializeProject(projectRef) : null,
+          );
+
+    const timelineRef = targetAgentId ? session?.agentStreamTail.get(targetAgentId) : undefined;
+    const timeline =
+      sameTarget && previous?.agentRef === agentRef && previous?.timelineRef === timelineRef
+        ? (previous?.timeline ?? null)
+        : preserveEqualProjection(
+            previous?.timeline ?? null,
+            this.buildTimelineProjection(session, targetAgentId, agentRef),
+          );
+
+    return {
+      session,
+      targetAgentId,
+      agentRef,
+      agent,
+      workspacesRef: session?.workspaces,
+      workspaceRef,
+      workspace,
+      projectsRef: session?.projects,
+      projectRef,
+      project,
+      timelineRef,
+      timeline,
+    };
+  }
+
+  private buildTimelineProjection(
+    session: SessionState | undefined,
+    targetAgentId: string | null,
+    agent: Agent | undefined,
+  ): StoredHost["timeline"] {
+    if (!session || !targetAgentId || !agent) return null;
+    const timelineState = selectAgentTimelineState(session, targetAgentId);
+    if (timelineState.status === "cold") return null;
+    const items = timelineState.items.filter(
+      (item) => item.kind !== "user_message" || !isUnreconciledLocalUserMessage(item),
+    );
+    return {
+      agentId: targetAgentId,
+      items: encodeDates(items.slice(-MAX_TIMELINE_ITEMS)),
+    };
+  }
+
+  private markHostDirty(serverId: string, domains: readonly ReplicaDirtyDomain[]): void {
+    if (!this.activeServerIds.has(serverId) || domains.length === 0) return;
+    const dirty = this.dirtyByHost.get(serverId) ?? { revision: 0, domains: new Map() };
+    dirty.revision += 1;
+    for (const domain of domains) dirty.domains.set(domain, dirty.revision);
+    this.dirtyByHost.set(serverId, dirty);
+    this.scheduleHostPersist(serverId);
+  }
+
+  private markRegistryDirty(): void {
+    this.registryRevision += 1;
+    this.dirtyRegistryRevision = this.registryRevision;
+    this.scheduleRegistryPersist();
+  }
+
+  private scheduleHostPersist(serverId: string): void {
+    if (!this.unsubscribe) return;
+    this.clearHostPersistTimer(serverId);
+    const timer = setTimeout(() => {
+      this.hostPersistTimers.delete(serverId);
+      void this.flushDirtyHost(serverId);
+    }, PERSIST_DELAY_MS);
+    this.hostPersistTimers.set(serverId, timer);
+  }
+
+  private scheduleRegistryPersist(): void {
+    if (!this.unsubscribe) return;
+    if (this.registryPersistTimer) clearTimeout(this.registryPersistTimer);
+    this.registryPersistTimer = setTimeout(() => {
+      this.registryPersistTimer = null;
+      this.pendingFlushRegistry = true;
+      void this.requestFlush();
+    }, PERSIST_DELAY_MS);
+  }
+
+  private clearHostPersistTimer(serverId: string): void {
+    const timer = this.hostPersistTimers.get(serverId);
+    if (timer) clearTimeout(timer);
+    this.hostPersistTimers.delete(serverId);
+  }
+
+  private clearAllPersistTimers(): void {
+    for (const timer of this.hostPersistTimers.values()) clearTimeout(timer);
+    this.hostPersistTimers.clear();
+    if (this.registryPersistTimer) clearTimeout(this.registryPersistTimer);
+    this.registryPersistTimer = null;
+  }
+
+  private async requestFlush(): Promise<void> {
+    do {
+      if (!this.flushLoopPromise) {
+        const loop = this.runFlushLoop().finally(() => {
+          if (this.flushLoopPromise === loop) this.flushLoopPromise = null;
+        });
+        this.flushLoopPromise = loop;
+      }
+      await this.flushLoopPromise;
+    } while (this.flushLoopPromise !== null || this.hasPendingFlushRequest());
+  }
+
+  private async runFlushLoop(): Promise<void> {
+    while (this.hasPendingFlushRequest()) {
+      const force = this.pendingForceFlush;
+      const allHosts = this.pendingFlushAllHosts || force;
+      const includeRegistry = this.pendingFlushRegistry || force;
+      const hostIds = new Set(this.pendingFlushHostIds);
+      this.pendingForceFlush = false;
+      this.pendingFlushAllHosts = false;
+      this.pendingFlushRegistry = false;
+      this.pendingFlushHostIds.clear();
+
+      const captured = this.captureDirtyState({ force, allHosts, includeRegistry, hostIds });
+      if (!force && captured.registryRevision === null && captured.hostDomains.size === 0) continue;
+      const { payload } = this.buildBoundedPayload();
+      let succeeded = false;
+      try {
+        await this.storage.setItem(STORAGE_KEY, payload);
+        succeeded = true;
+      } catch {
+        // Replica persistence is best-effort; the captured revisions remain dirty
+      }
+      if (succeeded) {
+        this.clearCapturedDirty(captured);
+      }
+    }
+  }
+
+  private captureDirtyState(input: {
+    force: boolean;
+    allHosts: boolean;
+    includeRegistry: boolean;
+    hostIds: Set<string>;
+  }): CapturedDirtyState {
+    const hostDomains = new Map<string, Map<ReplicaDirtyDomain, number>>();
+    const targetHostIds = input.allHosts
+      ? new Set(input.force ? this.activeServerIds : this.dirtyByHost.keys())
+      : input.hostIds;
+    const sessions = useSessionStore.getState().sessions;
+    for (const serverId of targetHostIds) {
+      if (!this.activeServerIds.has(serverId)) continue;
+      const dirty = this.dirtyByHost.get(serverId);
+      if (!input.force && (!dirty || dirty.domains.size === 0)) continue;
+      if (dirty?.domains.size) hostDomains.set(serverId, new Map(dirty.domains));
+      this.captureHost(serverId, sessions[serverId]);
+    }
+    return {
+      registryRevision: input.includeRegistry ? this.dirtyRegistryRevision : null,
+      hostDomains,
+    };
+  }
+
+  private captureHost(serverId: string, session: SessionState | undefined): void {
+    if (!session) return;
+    const projection = this.buildHostProjection(serverId, session, this.projections.get(serverId));
+    this.projections.set(serverId, projection);
+    const stored: StoredHost = {
+      serverId,
+      agents: projection.agent ? [projection.agent] : [],
+      workspaces: projection.workspace ? [projection.workspace] : [],
+      projects: projection.project ? [projection.project] : [],
+      emptyProjects: [],
+      timeline: projection.timeline,
+    };
+    if (equal(this.storedHosts.get(serverId), stored)) return;
+    this.storedHosts.delete(serverId);
+    this.storedHosts.set(serverId, stored);
+  }
+
+  private clearCapturedDirty(captured: CapturedDirtyState): void {
+    if (
+      captured.registryRevision !== null &&
+      this.dirtyRegistryRevision !== null &&
+      this.dirtyRegistryRevision <= captured.registryRevision
+    ) {
+      this.dirtyRegistryRevision = null;
+    }
+    for (const [serverId, domains] of captured.hostDomains) {
+      const dirty = this.dirtyByHost.get(serverId);
+      if (!dirty) continue;
+      for (const [domain, revision] of domains) {
+        const current = dirty.domains.get(domain);
+        if (current !== undefined && current <= revision) dirty.domains.delete(domain);
+      }
+    }
+  }
+
+  private hasPendingFlushRequest(): boolean {
+    return (
+      this.pendingForceFlush ||
+      this.pendingFlushAllHosts ||
+      this.pendingFlushRegistry ||
+      this.pendingFlushHostIds.size > 0
+    );
+  }
+
+  private getTargetAgentId(serverId: string): string | null {
+    const focusedAgentId = useSessionStore.getState().sessions[serverId]?.focusedAgentId;
+    return focusedAgentId ?? this.lastFocusedAgentIds.get(serverId) ?? null;
+  }
+
+  private finalKey(serverId: string, agentId: string): string {
+    return `${serverId}\u0000${agentId}`;
+  }
+
+  private clearFinalsForHost(serverId: string): void {
+    const prefix = `${serverId}\u0000`;
+    for (const [key, pending] of this.pendingFinals) {
+      if (!key.startsWith(prefix)) continue;
+      clearTimeout(pending.timer);
+      this.pendingFinals.delete(key);
+    }
+  }
+
+  private removeHostState(serverId: string): void {
+    this.lastFocusedAgentIds.delete(serverId);
+    this.projections.delete(serverId);
+    this.dirtyByHost.delete(serverId);
+    this.pendingFlushHostIds.delete(serverId);
+    this.clearHostPersistTimer(serverId);
+    this.clearFinalsForHost(serverId);
   }
 
   private buildBoundedPayload(): { payload: string; evicted: boolean } {
@@ -446,13 +822,5 @@ export class ReplicaCache {
       version: CACHE_VERSION,
       hosts: Array.from(this.storedHosts.values()),
     });
-  }
-
-  private schedulePersist(): void {
-    if (this.persistTimer) return;
-    this.persistTimer = setTimeout(() => {
-      this.persistTimer = null;
-      void this.flush();
-    }, PERSIST_DELAY_MS);
   }
 }
