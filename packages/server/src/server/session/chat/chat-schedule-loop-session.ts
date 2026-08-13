@@ -1,6 +1,6 @@
 import type pino from "pino";
 import type { SessionInboundMessage, SessionOutboundMessage } from "../../messages.js";
-import type { StoredAgentRecord } from "../../agent/agent-storage.js";
+import type { AgentMetadataEntry } from "../../agent/agent-storage.js";
 import type { ManagedAgent } from "../../agent/agent-manager.js";
 import {
   ChatServiceError,
@@ -19,7 +19,7 @@ import type { ScheduleService } from "../../schedule/service.js";
  */
 export interface ChatScheduleLoopSessionHost {
   emit(msg: SessionOutboundMessage): void;
-  listStoredAgents(): Promise<StoredAgentRecord[]>;
+  listStoredAgents(): Promise<AgentMetadataEntry[]>;
   listLiveAgents(): ManagedAgent[];
   resolveAgentIdentifier(
     identifier: string,

@@ -14,6 +14,7 @@ import {
 } from "../../messages.js";
 import type { AgentListItemPayload } from "../../messages.js";
 import {
+  buildStoredAgentMetadataPayload,
   buildStoredAgentPayload,
   toAgentListItemPayload,
   toAgentPayload,
@@ -22,7 +23,6 @@ import { curateAgentActivity } from "../activity-curator.js";
 import { selectItemsByProjectedLimit } from "../timeline-projection.js";
 import type { AgentStorage } from "../agent-storage.js";
 import { ensureAgentLoaded } from "../agent-loading.js";
-import { isStoredAgentProviderAvailable } from "../../persistence-hooks.js";
 import {
   archiveByScope,
   killTerminalsForWorkspace,
@@ -2016,35 +2016,57 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       const requestedCwd = cwd?.trim() ? expandUserPath(cwd) : callerCwd;
       const statusFilter = statuses && statuses.length > 0 ? new Set(statuses) : null;
       const sinceMs = Date.now() - sinceHours * 60 * 60 * 1000;
-      const liveSnapshots = agentManager.listAgents();
-      const liveAgents = await Promise.all(
-        liveSnapshots.map((snapshot) =>
-          serializeSnapshotWithMetadata(agentStorage, snapshot, childLogger),
-        ),
-      );
-      const liveIds = new Set(liveSnapshots.map((snapshot) => snapshot.id));
-      const storedRecords = await agentStorage.list();
-      const registeredProviderIds = new Set(providerSnapshotManager.listRegisteredProviderIds());
-      const storedAgents = storedRecords
-        .filter((record) => !record.internal && !liveIds.has(record.id))
-        .filter((record) => includeArchived || !record.archivedAt)
-        .filter(
-          (record) =>
-            includeArchived || isStoredAgentProviderAvailable(record, registeredProviderIds),
-        )
-        .map((record) => buildStoredAgentPayload(record, registeredProviderIds));
-      const agents = [...liveAgents, ...storedAgents]
-        .map(toAgentListItemPayload)
-        .filter((agent) => !requestedCwd || isSameOrDescendantPath(requestedCwd, agent.cwd))
-        .filter((agent) => !statusFilter || statusFilter.has(agent.status))
-        .filter((agent) => !agent.archivedAt || resolveAgentListActivityTime(agent) >= sinceMs)
-        .sort(compareAgentListItems)
-        .slice(0, limit);
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const liveSnapshots = agentManager.listAgents();
+        const liveAgents = await Promise.all(
+          liveSnapshots.map((snapshot) =>
+            serializeSnapshotWithMetadata(agentStorage, snapshot, childLogger),
+          ),
+        );
+        const liveIds = new Set(liveSnapshots.map((snapshot) => snapshot.id));
+        const storedSnapshot = await agentStorage.getMetadataSnapshot();
+        const registeredProviderIds = new Set(providerSnapshotManager.listRegisteredProviderIds());
+        const storedMetadata = storedSnapshot.entries
+          .filter((record) => !record.internal && !liveIds.has(record.id))
+          .filter((record) => includeArchived || !record.archivedAt)
+          .filter((record) => includeArchived || registeredProviderIds.has(record.provider));
+        const storedMetadataById = new Map(storedMetadata.map((record) => [record.id, record]));
+        const storedAgents = storedMetadata.map((record) =>
+          buildStoredAgentMetadataPayload(record, registeredProviderIds),
+        );
+        const selected = [...liveAgents, ...storedAgents]
+          .map(toAgentListItemPayload)
+          .filter((agent) => !requestedCwd || isSameOrDescendantPath(requestedCwd, agent.cwd))
+          .filter((agent) => !statusFilter || statusFilter.has(agent.status))
+          .filter((agent) => !agent.archivedAt || resolveAgentListActivityTime(agent) >= sinceMs)
+          .sort(compareAgentListItems)
+          .slice(0, limit);
+        const storedIds = selected
+          .map((agent) => agent.id)
+          .filter((agentId) => storedMetadataById.has(agentId));
+        const materialized = await agentStorage.materializeMetadata(
+          storedIds,
+          storedSnapshot.generation,
+        );
+        if (materialized.retryRequired) continue;
 
-      return {
-        content: [],
-        structuredContent: ensureValidJson({ agents }),
-      };
+        const storedItemsById = new Map<string, AgentListItemPayload>();
+        for (let index = 0; index < storedIds.length; index += 1) {
+          const record = materialized.records[index];
+          if (!record) continue;
+          storedItemsById.set(
+            storedIds[index],
+            toAgentListItemPayload(buildStoredAgentPayload(record, registeredProviderIds)),
+          );
+        }
+        const agents = selected.map((agent) => storedItemsById.get(agent.id) ?? agent);
+        return {
+          content: [],
+          structuredContent: ensureValidJson({ agents }),
+        };
+      }
+
+      throw new Error("Agent catalog changed repeatedly while listing recent agents");
     },
   );
 

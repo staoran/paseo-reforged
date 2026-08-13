@@ -3,8 +3,7 @@ import { statSync } from "node:fs";
 
 import type { Logger } from "pino";
 
-import type { StoredAgentRecord } from "./agent/agent-storage.js";
-import type { AgentStorage } from "./agent/agent-storage.js";
+import type { AgentMetadataEntry, AgentStorage } from "./agent/agent-storage.js";
 import { classifyDirectoryForProjectMembership } from "./workspace-registry-bootstrap-legacy.js";
 import { generateWorkspaceId } from "./workspace-registry-model.js";
 import { backfillWorkspaceIdForLegacyAgents } from "./migrations/backfill-workspace-id.migration.js";
@@ -37,11 +36,11 @@ function maxIsoDate(left: string | null, right: string | null): string | null {
   return Date.parse(left) >= Date.parse(right) ? left : right;
 }
 
-function resolveAgentCreatedAt(record: StoredAgentRecord): string {
+function resolveAgentCreatedAt(record: AgentMetadataEntry): string {
   return record.createdAt || record.updatedAt || new Date(0).toISOString();
 }
 
-function resolveAgentUpdatedAt(record: StoredAgentRecord): string {
+function resolveAgentUpdatedAt(record: AgentMetadataEntry): string {
   return record.lastActivityAt || record.updatedAt || record.createdAt || new Date(0).toISOString();
 }
 
@@ -73,7 +72,7 @@ export async function bootstrapWorkspaceRegistries(options: {
       workspace.workspaceId,
     ]),
   );
-  const records = await options.agentStorage.list();
+  const records = await options.agentStorage.listAllMetadata();
   // A legacy agent can outlive its working directory. Reconciliation treats a
   // missing directory as absent rather than asking Git about it; bootstrap must
   // do the same before materializing its first workspace record.
@@ -89,7 +88,7 @@ export async function bootstrapWorkspaceRegistries(options: {
     string,
     {
       membership: ReturnType<typeof classifyDirectoryForProjectMembership>;
-      records: StoredAgentRecord[];
+      records: AgentMetadataEntry[];
     }
   >();
   const placements = await Promise.all(

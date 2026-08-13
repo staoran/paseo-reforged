@@ -11,7 +11,7 @@ import { z } from "zod";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { createAgentMcpServer } from "./mcp-server.js";
 import { AgentManager, type ManagedAgent } from "./agent-manager.js";
-import { AgentStorage, type StoredAgentRecord } from "./agent-storage.js";
+import { AgentStorage, type AgentMetadataEntry, type StoredAgentRecord } from "./agent-storage.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import type { AgentMode, AgentProvider, ProviderSnapshotEntry } from "./agent-sdk-types.js";
 import type { ProviderSnapshotManager } from "./provider-snapshot-manager.js";
@@ -235,7 +235,13 @@ function buildAgentStorageSpies() {
     setTitle: vi.fn().mockResolvedValue(undefined),
     upsert: vi.fn().mockResolvedValue(undefined),
     applySnapshot: vi.fn(),
-    list: vi.fn().mockResolvedValue([]),
+    listAllMetadata: vi.fn().mockResolvedValue([]),
+    getMetadataSnapshot: vi.fn().mockResolvedValue({ entries: [], generation: 0 }),
+    materializeMetadata: vi.fn(async (agentIds: readonly string[], generation: number) => ({
+      records: agentIds.map(() => null),
+      generation,
+      retryRequired: agentIds.length > 0,
+    })),
     remove: vi.fn(),
   };
 }
@@ -479,6 +485,59 @@ function createStoredRecord(overrides: Partial<StoredAgentRecord> = {}): StoredA
   };
 }
 
+function createAgentMetadataEntry(record: StoredAgentRecord): AgentMetadataEntry {
+  const nativeHandle = record.persistence?.nativeHandle;
+  return {
+    id: record.id,
+    recordPath: `test/${record.id}.json`,
+    recordRevision: "0".repeat(64),
+    provider: record.provider,
+    cwd: record.cwd,
+    workspaceId: record.workspaceId,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    lastActivityAt: record.lastActivityAt,
+    lastUserMessageAt: record.lastUserMessageAt ?? null,
+    lastMessageAt: record.lastMessageAt ?? null,
+    title: record.title ?? null,
+    labels: { ...record.labels },
+    lastStatus: record.lastStatus,
+    lastModeId: record.lastModeId ?? null,
+    effectiveThinkingOptionId: null,
+    requiresAttention: record.requiresAttention ?? false,
+    attentionReason: record.attentionReason ?? null,
+    attentionTimestamp: record.attentionTimestamp ?? null,
+    internal: record.internal ?? false,
+    archivedAt: record.archivedAt ?? null,
+    timelineRevision: record.timelineRevision,
+    owner: record.owner,
+    persistenceIdentity: record.persistence
+      ? {
+          provider: record.persistence.provider,
+          sessionId: record.persistence.sessionId,
+          ...(typeof nativeHandle === "string" ? { nativeHandle } : {}),
+        }
+      : undefined,
+  };
+}
+
+function configureStoredRecords(spies: AgentStorageSpies, records: StoredAgentRecord[]): void {
+  const generation = 1;
+  const recordsById = new Map(records.map((record) => [record.id, record]));
+  spies.listAllMetadata.mockResolvedValue(records.map(createAgentMetadataEntry));
+  spies.getMetadataSnapshot.mockResolvedValue({
+    entries: records.map(createAgentMetadataEntry),
+    generation,
+  });
+  spies.materializeMetadata.mockImplementation(
+    async (agentIds: readonly string[], expectedGeneration: number) => ({
+      records: agentIds.map((agentId) => recordsById.get(agentId) ?? null),
+      generation,
+      retryRequired: expectedGeneration !== generation,
+    }),
+  );
+}
+
 function createManagedAgent(overrides: Partial<ManagedAgent> = {}): ManagedAgent {
   const now = new Date();
   return {
@@ -579,8 +638,15 @@ class BoundaryAgentManagerFake {
 }
 
 class BoundaryAgentStorageFake {
-  public async list(): Promise<StoredAgentRecord[]> {
-    return [];
+  public async getMetadataSnapshot(): Promise<{ entries: []; generation: number }> {
+    return { entries: [], generation: 0 };
+  }
+
+  public async materializeMetadata(
+    _agentIds: readonly string[],
+    generation: number,
+  ): Promise<{ records: []; generation: number; retryRequired: false }> {
+    return { records: [], generation, retryRequired: false };
   }
 }
 
@@ -5259,7 +5325,7 @@ describe("agent snapshot MCP serialization", () => {
       createManagedAgent({ id: "in-child-cwd", cwd: "/tmp/workspace/packages/server" }),
       createManagedAgent({ id: "other-cwd", cwd: "/tmp/other" }),
     ]);
-    spies.agentStorage.list.mockResolvedValue([
+    configureStoredRecords(spies.agentStorage, [
       createStoredRecord({
         id: "stored-in-cwd",
         cwd: "/tmp/workspace",
@@ -5318,7 +5384,7 @@ describe("agent snapshot MCP serialization", () => {
         updatedAt: new Date(old),
       }),
     ]);
-    spies.agentStorage.list.mockResolvedValue([
+    configureStoredRecords(spies.agentStorage, [
       createStoredRecord({ id: "recent-archived", cwd: TARGET_CWD, archivedAt: recent }),
       createStoredRecord({ id: "old-archived", cwd: TARGET_CWD, archivedAt: old }),
       createStoredRecord({
@@ -5359,7 +5425,7 @@ describe("agent snapshot MCP serialization", () => {
         archivedAt: new Date(now - index * 60 * 1000).toISOString(),
       }),
     );
-    spies.agentStorage.list.mockResolvedValue([
+    configureStoredRecords(spies.agentStorage, [
       ...recentArchivedRecords,
       createStoredRecord({
         id: "old-archived",
@@ -5384,13 +5450,14 @@ describe("agent snapshot MCP serialization", () => {
         (_, index) => `recent-archived-${index.toString().padStart(2, "0")}`,
       ),
     );
+    expect(spies.agentStorage.materializeMetadata).toHaveBeenCalledWith(agentIds, 1);
     expect(agentIds).not.toContain("old-archived");
   });
 
   it("returns compact list items for stored archived agents", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     const now = new Date().toISOString();
-    spies.agentStorage.list.mockResolvedValue([
+    configureStoredRecords(spies.agentStorage, [
       createStoredRecord({
         id: "stored-archived-compact",
         cwd: REPO_CWD,
@@ -5510,7 +5577,7 @@ describe("agent snapshot MCP serialization", () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     const now = new Date().toISOString();
     spies.agentManager.listAgents.mockReturnValue([createManagedAgent()]);
-    spies.agentStorage.list.mockResolvedValue([
+    configureStoredRecords(spies.agentStorage, [
       createStoredRecord({
         id: "stored-non-archived",
         updatedAt: now,

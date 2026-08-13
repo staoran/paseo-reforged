@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 import type pino from "pino";
-import type { StoredAgentRecord } from "../agent/agent-storage.js";
+import type { AgentMetadataEntry } from "../agent/agent-storage.js";
 import type { ManagedAgent } from "../agent/agent-manager.js";
 import {
   buildChatMentionNotification,
@@ -8,13 +8,13 @@ import {
   prepareChatMentionFanout,
 } from "./chat-mentions.js";
 
-function storedAgent(overrides: Partial<StoredAgentRecord> & { id: string }): StoredAgentRecord {
+function storedAgent(overrides: Partial<AgentMetadataEntry> & { id: string }): AgentMetadataEntry {
   return {
     internal: false,
     archivedAt: null,
     lastStatus: "idle",
     ...overrides,
-  } as StoredAgentRecord;
+  } as AgentMetadataEntry;
 }
 
 function liveAgent(overrides: Partial<ManagedAgent> & { id: string }): ManagedAgent {
@@ -24,7 +24,7 @@ function liveAgent(overrides: Partial<ManagedAgent> & { id: string }): ManagedAg
 async function prepare(input: {
   authorAgentId: string;
   mentionAgentIds: string[];
-  storedAgents?: StoredAgentRecord[];
+  storedAgents?: AgentMetadataEntry[];
   liveAgents?: ManagedAgent[];
   roomPosterAgentIds?: string[];
   limit?: number;

@@ -10,7 +10,7 @@ export async function backfillWorkspaceDefaultAgentIds(options: {
   workspaceRegistry: WorkspaceRegistry;
   logger: Logger;
 }): Promise<number> {
-  const agents = await options.agentStorage.list();
+  const agents = await options.agentStorage.listAllMetadata();
   const workspaces = await options.workspaceRegistry.list();
   let migrated = 0;
 

@@ -1,5 +1,5 @@
 import type pino from "pino";
-import type { StoredAgentRecord } from "../agent/agent-storage.js";
+import type { AgentMetadataEntry } from "../agent/agent-storage.js";
 import type { ManagedAgent } from "../agent/agent-manager.js";
 
 export const CHAT_MENTION_FANOUT_LIMIT = 25;
@@ -23,7 +23,7 @@ export type PrepareChatMentionFanoutResult =
 export interface PrepareChatMentionFanoutInput {
   authorAgentId: string;
   mentionAgentIds: string[];
-  storedAgents: StoredAgentRecord[];
+  storedAgents: AgentMetadataEntry[];
   liveAgents: ManagedAgent[];
   listRoomPosterAgentIds: () => Promise<string[]>;
   limit?: number;
@@ -31,7 +31,7 @@ export interface PrepareChatMentionFanoutInput {
 
 export interface NotifyChatMentionsInput extends ChatMentionNotificationInput {
   logger: pino.Logger;
-  storedAgents: StoredAgentRecord[];
+  storedAgents: AgentMetadataEntry[];
   liveAgents: ManagedAgent[];
   prepared: PreparedChatMentionFanout;
   resolveAgentIdentifier: (
@@ -132,7 +132,7 @@ export function buildChatMentionNotification(input: ChatMentionNotificationInput
 function expandChatMentionTargets(input: {
   authorAgentId: string;
   mentionAgentIds: string[];
-  storedAgents: StoredAgentRecord[];
+  storedAgents: AgentMetadataEntry[];
   liveAgents: ManagedAgent[];
   roomPosterAgentIds: string[];
 }): string[] {
@@ -173,7 +173,7 @@ function expandChatMentionTargets(input: {
 function isChatMentionTargetEligible(input: {
   agentId: string;
   authorAgentId: string;
-  storedAgents: StoredAgentRecord[];
+  storedAgents: AgentMetadataEntry[];
   liveAgents: ManagedAgent[];
 }): boolean {
   if (input.agentId === input.authorAgentId) {
