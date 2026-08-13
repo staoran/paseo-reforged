@@ -1442,6 +1442,30 @@ export const AgentTimelineCursorSchema = z.object({
   seq: z.number().int().nonnegative(),
 });
 
+export const AgentTimelineSeqRangeSchema = z.object({
+  startSeq: z.number().int().nonnegative(),
+  endSeq: z.number().int().nonnegative(),
+});
+
+export type AgentTimelineSeqRange = z.infer<typeof AgentTimelineSeqRangeSchema>;
+
+export const AgentTimelineProjectionRequestSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("summary"),
+  }),
+  z.object({
+    kind: z.literal("activity_detail"),
+    epoch: z.string(),
+    timelineRevision: z.string().uuid(),
+    activityId: z.string().min(1),
+    sourceSeqRanges: z.array(AgentTimelineSeqRangeSchema).min(1),
+    cursor: AgentTimelineCursorSchema.optional(),
+    limit: z.number().int().min(1).max(200),
+  }),
+]);
+
+export type AgentTimelineProjectionRequest = z.infer<typeof AgentTimelineProjectionRequestSchema>;
+
 export const FetchAgentTimelineRequestMessageSchema = z.object({
   type: z.literal("fetch_agent_timeline_request"),
   agentId: z.string(),
@@ -1452,6 +1476,8 @@ export const FetchAgentTimelineRequestMessageSchema = z.object({
   limit: z.number().int().nonnegative().optional(),
   // Default should be projected for app timeline loading.
   projection: z.enum(["projected", "canonical"]).optional(),
+  // COMPAT(agentTimelineSummaryDetail): added in v0.3.0; remove after 2027-02-09.
+  projectionRequest: AgentTimelineProjectionRequestSchema.optional(),
   // Allow the client to merge this bounded page outside its contiguous loaded range.
   mergeWindow: z.boolean().optional(),
 });
@@ -2935,6 +2961,8 @@ export const ServerInfoStatusPayloadSchema = z
         inPlaceEditLastUserMessage: z.boolean().optional(),
         // COMPAT(agentTimelinePromptIndex): added in v0.2.X, drop the gate when floor >= v0.2.X.
         agentTimelinePromptIndex: z.boolean().optional(),
+        // COMPAT(agentTimelineSummaryDetail): added in v0.3.0, remove after 2027-02-09.
+        agentTimelineSummaryDetail: z.boolean().optional(),
         // COMPAT(agentHistorySearch): added in v0.3.0, remove gate after 2027-02-07.
         agentHistorySearch: z.boolean().optional(),
         // COMPAT(checkoutRefresh): added in v0.1.86, remove gate after 2026-11-29.
@@ -3708,11 +3736,6 @@ export const FetchAgentResponseMessageSchema = z.object({
   }),
 });
 
-const AgentTimelineSeqRangeSchema = z.object({
-  startSeq: z.number().int().nonnegative(),
-  endSeq: z.number().int().nonnegative(),
-});
-
 export const AgentTimelineEntryPayloadSchema = z.object({
   provider: AgentProviderSchema,
   item: AgentTimelineItemPayloadSchema,
@@ -3722,6 +3745,43 @@ export const AgentTimelineEntryPayloadSchema = z.object({
   sourceSeqRanges: z.array(AgentTimelineSeqRangeSchema),
   collapsed: z.array(z.enum(["assistant_merge", "reasoning_merge", "tool_lifecycle"])),
 });
+
+export type AgentTimelineEntryPayload = z.infer<typeof AgentTimelineEntryPayloadSchema>;
+
+export const AgentTimelineActivityDescriptorPayloadSchema = z.object({
+  activityId: z.string().min(1),
+  timestamp: z.string(),
+  seqStart: z.number().int().nonnegative(),
+  seqEnd: z.number().int().nonnegative(),
+  sourceSeqRanges: z.array(AgentTimelineSeqRangeSchema).min(1),
+});
+
+export type AgentTimelineActivityDescriptorPayload = z.infer<
+  typeof AgentTimelineActivityDescriptorPayloadSchema
+>;
+
+export const AgentTimelineProjectionPayloadSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("summary"),
+    epoch: z.string(),
+    timelineRevision: z.string().uuid(),
+    entries: z.array(AgentTimelineEntryPayloadSchema),
+    activities: z.array(AgentTimelineActivityDescriptorPayloadSchema),
+    hasOlderTurns: z.boolean(),
+  }),
+  z.object({
+    kind: z.literal("activity_detail"),
+    epoch: z.string(),
+    timelineRevision: z.string().uuid(),
+    activityId: z.string().min(1),
+    entries: z.array(AgentTimelineEntryPayloadSchema),
+    nextCursor: AgentTimelineCursorSchema.nullable(),
+    hasMore: z.boolean(),
+    error: z.string().nullable(),
+  }),
+]);
+
+export type AgentTimelineProjectionPayload = z.infer<typeof AgentTimelineProjectionPayloadSchema>;
 
 export const FetchAgentTimelineResponseMessageSchema = z.object({
   type: z.literal("fetch_agent_timeline_response"),
@@ -3746,6 +3806,8 @@ export const FetchAgentTimelineResponseMessageSchema = z.object({
     hasNewer: z.boolean(),
     mergeWindow: z.boolean().optional(),
     entries: z.array(AgentTimelineEntryPayloadSchema),
+    // COMPAT(agentTimelineSummaryDetail): added in v0.3.0; remove after 2027-02-09.
+    projectionPayload: AgentTimelineProjectionPayloadSchema.optional(),
     error: z.string().nullable(),
   }),
 });

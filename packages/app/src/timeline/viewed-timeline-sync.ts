@@ -27,6 +27,7 @@ export interface ViewedTimelineUiBridge {
   replaceVisibleAgentIds(sourceId: string, agentIds: string[]): void;
   subscribe(listener: () => void): () => void;
   getAgentTimelineStatus(agentId: string): ViewedTimelineStatus;
+  refreshAgent(agentId: string): void;
 }
 
 export interface ViewedTimelineSync extends ViewedTimelineUiBridge {
@@ -449,6 +450,17 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       notifyListeners();
       if (deliveryMode === "selective" && connected) void reconcileMembership();
       else if (connected) startAcknowledgedCatchUps();
+    },
+    refreshAgent(agentId) {
+      if (!isDesired(agentId)) return;
+      const wasPending = visibilityCatchUpPending.has(agentId);
+      const hadError = visibilityCatchUpErrors.delete(agentId);
+      visibilityCatchUpPending.add(agentId);
+      if (!wasPending || hadError) notifyListeners();
+      startCatchUp(agentId, {
+        request: planTimelineTailFetch(),
+        supersede: true,
+      });
     },
     recoverGap(agentId, cursor) {
       if (!isDesired(agentId)) return;

@@ -33,12 +33,23 @@ import type {
   AgentPersistenceHandle,
 } from "@getpaseo/protocol/agent-types";
 import type {
+  AgentTimelineProjectionPayload,
   ServerInfoStatusPayload,
   ProjectPlacementPayload,
   ServerCapabilities,
   WorkspaceDescriptorPayload,
   WorkspaceProjectDescriptorPayload,
 } from "@getpaseo/protocol/messages";
+import {
+  applyActivityDetail,
+  beginActivityDetail,
+  createAgentTimelineProjectionLane,
+  failActivityDetail,
+  isTimelineProjectionAgentStateCompatible,
+  markProjectionCanonicalReplacementPending,
+  type ActivityDetailRequest,
+  type AgentTimelineProjectionLane,
+} from "@/timeline/projection-lane";
 import {
   normalizeWorkspaceOpaqueId,
   normalizeWorkspacePath,
@@ -437,6 +448,7 @@ export interface SessionState {
   agentTimelineHasOlder: Map<string, boolean>;
   agentTimelineHasNewer: Map<string, boolean>;
   agentTimelineOlderFetchInFlight: Map<string, boolean>;
+  agentTimelineProjectionLanes: Map<string, AgentTimelineProjectionLane>;
   historySyncGeneration: number;
   agentHistorySyncGeneration: Map<string, number>;
   agentAuthoritativeHistoryApplied: Map<string, boolean>;
@@ -560,6 +572,36 @@ interface SessionStoreActions {
     message: UserMessageItem,
   ) => boolean;
   clearAgentStreamHead: (serverId: string, agentId: string) => void;
+  installAgentTimelineProjectionSummary: (
+    serverId: string,
+    agentId: string,
+    payload: Extract<AgentTimelineProjectionPayload, { kind: "summary" }>,
+  ) => boolean;
+  beginAgentTimelineProjectionActivityDetail: (
+    serverId: string,
+    agentId: string,
+    activityId: string,
+    limit: number,
+  ) => ActivityDetailRequest | null;
+  applyAgentTimelineProjectionActivityDetail: (
+    serverId: string,
+    agentId: string,
+    input: {
+      activityId: string;
+      generation: number;
+      payload: Extract<AgentTimelineProjectionPayload, { kind: "activity_detail" }>;
+    },
+  ) => boolean;
+  failAgentTimelineProjectionActivityDetail: (
+    serverId: string,
+    agentId: string,
+    input: { activityId: string; generation: number; error: string },
+  ) => void;
+  markAgentTimelineProjectionCanonicalReplacementPending: (
+    serverId: string,
+    agentId: string,
+  ) => boolean;
+  clearAgentTimelineProjectionLane: (serverId: string, agentId: string) => void;
   setAgentTimelineCursor: (
     serverId: string,
     state:
@@ -704,6 +746,7 @@ function createInitialSessionState(
     agentTimelineHasOlder: new Map(),
     agentTimelineHasNewer: new Map(),
     agentTimelineOlderFetchInFlight: new Map(),
+    agentTimelineProjectionLanes: new Map(),
     historySyncGeneration: 0,
     agentHistorySyncGeneration: new Map(),
     agentAuthoritativeHistoryApplied: new Map(),
@@ -1412,6 +1455,133 @@ export const useSessionStore = create<SessionStore>()(
         });
       },
 
+      installAgentTimelineProjectionSummary: (serverId, agentId, payload) => {
+        let installed = false;
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session) return prev;
+          const agent = session.agents.get(agentId) ?? session.agentDetails.get(agentId);
+          if (!isTimelineProjectionAgentStateCompatible(agent)) {
+            return prev;
+          }
+          if (session.agentTimelineProjectionLanes.get(agentId)?.canonicalReplacementPending) {
+            return prev;
+          }
+          const lanes = new Map(session.agentTimelineProjectionLanes);
+          lanes.set(agentId, createAgentTimelineProjectionLane({ agentId, payload }));
+          installed = true;
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, agentTimelineProjectionLanes: lanes },
+            },
+          };
+        });
+        return installed;
+      },
+
+      beginAgentTimelineProjectionActivityDetail: (serverId, agentId, activityId, limit) => {
+        let request: ActivityDetailRequest | null = null;
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          const lane = session?.agentTimelineProjectionLanes.get(agentId);
+          if (!session || !lane || lane.canonicalReplacementPending) return prev;
+          const result = beginActivityDetail(lane, activityId, limit);
+          if (!result) return prev;
+          request = result.request;
+          const lanes = new Map(session.agentTimelineProjectionLanes);
+          lanes.set(agentId, result.lane);
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, agentTimelineProjectionLanes: lanes },
+            },
+          };
+        });
+        return request;
+      },
+
+      applyAgentTimelineProjectionActivityDetail: (serverId, agentId, input) => {
+        let applied = false;
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          const lane = session?.agentTimelineProjectionLanes.get(agentId);
+          if (!session || !lane || lane.canonicalReplacementPending) return prev;
+          const nextLane = applyActivityDetail(lane, input);
+          if (nextLane === lane) return prev;
+          const lanes = new Map(session.agentTimelineProjectionLanes);
+          lanes.set(agentId, nextLane);
+          applied = true;
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, agentTimelineProjectionLanes: lanes },
+            },
+          };
+        });
+        return applied;
+      },
+
+      failAgentTimelineProjectionActivityDetail: (serverId, agentId, input) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          const lane = session?.agentTimelineProjectionLanes.get(agentId);
+          if (!session || !lane || lane.canonicalReplacementPending) return prev;
+          const nextLane = failActivityDetail(lane, input);
+          if (nextLane === lane) return prev;
+          const lanes = new Map(session.agentTimelineProjectionLanes);
+          lanes.set(agentId, nextLane);
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, agentTimelineProjectionLanes: lanes },
+            },
+          };
+        });
+      },
+
+      markAgentTimelineProjectionCanonicalReplacementPending: (serverId, agentId) => {
+        let marked = false;
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          const lane = session?.agentTimelineProjectionLanes.get(agentId);
+          if (!session || !lane) return prev;
+          const nextLane = markProjectionCanonicalReplacementPending(lane);
+          if (nextLane === lane) return prev;
+          const lanes = new Map(session.agentTimelineProjectionLanes);
+          lanes.set(agentId, nextLane);
+          marked = true;
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, agentTimelineProjectionLanes: lanes },
+            },
+          };
+        });
+        return marked;
+      },
+
+      clearAgentTimelineProjectionLane: (serverId, agentId) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session?.agentTimelineProjectionLanes.has(agentId)) return prev;
+          const lanes = new Map(session.agentTimelineProjectionLanes);
+          lanes.delete(agentId);
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, agentTimelineProjectionLanes: lanes },
+            },
+          };
+        });
+      },
+
       setAgentTimelineCursor: (serverId, state) => {
         set((prev) => {
           const session = prev.sessions[serverId];
@@ -1589,6 +1759,8 @@ export const useSessionStore = create<SessionStore>()(
           }
           const nextHasNewer = new Map(session.agentTimelineHasNewer);
           nextHasNewer.set(agentId, state.newer);
+          const nextProjectionLanes = new Map(session.agentTimelineProjectionLanes);
+          nextProjectionLanes.delete(agentId);
           const nextAuthoritative = new Map(session.agentAuthoritativeHistoryApplied);
           const nextSyncGeneration = new Map(session.agentHistorySyncGeneration);
           const currentSubmissions = session.messageSubmissions.get(agentId) ?? [];
@@ -1621,6 +1793,7 @@ export const useSessionStore = create<SessionStore>()(
                 agentTimelineCursor: nextCursor,
                 agentTimelineHasOlder: nextHasOlder,
                 agentTimelineHasNewer: nextHasNewer,
+                agentTimelineProjectionLanes: nextProjectionLanes,
                 agentAuthoritativeHistoryApplied: nextAuthoritative,
                 agentHistorySyncGeneration: nextSyncGeneration,
                 messageSubmissions,

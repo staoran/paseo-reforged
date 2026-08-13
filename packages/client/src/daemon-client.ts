@@ -103,6 +103,8 @@ import type {
   PaseoConfigRevision,
   WorkspaceCreateRequest,
   WorkspaceRecoveryState,
+  AgentTimelineProjectionRequest,
+  AgentTimelineSeqRange,
 } from "@getpaseo/protocol/messages";
 import type {
   AgentPermissionRequest,
@@ -574,6 +576,22 @@ export interface FetchAgentTimelineOptions {
   limit?: number;
   projection?: FetchAgentTimelineProjection;
   mergeWindow?: boolean;
+  requestId?: string;
+  timeout?: number;
+}
+
+export interface FetchAgentTimelineSummaryOptions {
+  requestId?: string;
+  timeout?: number;
+}
+
+export interface FetchAgentTimelineActivityDetailOptions {
+  epoch: string;
+  timelineRevision: string;
+  activityId: string;
+  sourceSeqRanges: readonly AgentTimelineSeqRange[];
+  cursor?: FetchAgentTimelineCursor;
+  limit: number;
   requestId?: string;
   timeout?: number;
 }
@@ -2821,9 +2839,10 @@ export class DaemonClient {
     });
   }
 
-  async fetchAgentTimeline(
+  private async requestAgentTimeline(
     agentId: string,
-    options: FetchAgentTimelineOptions = {},
+    options: FetchAgentTimelineOptions,
+    projectionRequest?: AgentTimelineProjectionRequest,
   ): Promise<FetchAgentTimelinePayload> {
     const resolvedRequestId = this.createRequestId(options.requestId);
     const message = SessionInboundMessageSchema.parse({
@@ -2834,6 +2853,7 @@ export class DaemonClient {
       ...(options.cursor ? { cursor: options.cursor } : {}),
       ...(typeof options.limit === "number" ? { limit: options.limit } : {}),
       ...(options.projection ? { projection: options.projection } : {}),
+      ...(projectionRequest ? { projectionRequest } : {}),
       ...(options.mergeWindow === true ? { mergeWindow: true } : {}),
     });
 
@@ -2858,6 +2878,55 @@ export class DaemonClient {
     }
 
     return payload;
+  }
+
+  async fetchAgentTimeline(
+    agentId: string,
+    options: FetchAgentTimelineOptions = {},
+  ): Promise<FetchAgentTimelinePayload> {
+    return await this.requestAgentTimeline(agentId, options);
+  }
+
+  async fetchAgentTimelineSummary(
+    agentId: string,
+    options: FetchAgentTimelineSummaryOptions = {},
+  ): Promise<FetchAgentTimelinePayload> {
+    if (this.lastServerInfoMessage?.features?.agentTimelineSummaryDetail !== true) {
+      return await this.fetchAgentTimeline(agentId, {
+        requestId: options.requestId,
+        timeout: options.timeout,
+      });
+    }
+    return await this.requestAgentTimeline(
+      agentId,
+      { requestId: options.requestId, timeout: options.timeout },
+      { kind: "summary" },
+    );
+  }
+
+  async fetchAgentTimelineActivityDetail(
+    agentId: string,
+    options: FetchAgentTimelineActivityDetailOptions,
+  ): Promise<FetchAgentTimelinePayload> {
+    if (this.lastServerInfoMessage?.features?.agentTimelineSummaryDetail !== true) {
+      return await this.fetchAgentTimeline(agentId, {
+        requestId: options.requestId,
+        timeout: options.timeout,
+      });
+    }
+    return await this.requestAgentTimeline(
+      agentId,
+      { requestId: options.requestId, timeout: options.timeout },
+      {
+        kind: "activity_detail",
+        epoch: options.epoch,
+        timelineRevision: options.timelineRevision,
+        activityId: options.activityId,
+        sourceSeqRanges: [...options.sourceSeqRanges],
+        ...(options.cursor ? { cursor: options.cursor } : {}),
+        limit: options.limit,
+      },
+    );
   }
 
   async listAgentTimelinePrompts(

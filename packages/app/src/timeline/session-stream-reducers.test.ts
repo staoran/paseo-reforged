@@ -9,6 +9,7 @@ import {
 import {
   createAgentStreamReducerQueue,
   deriveAgentStreamTurnLiveness,
+  enqueueAgentStreamEventAndNotifyTerminal,
   processTimelineResponse,
   processAgentStreamEvent,
   processAgentStreamEvents,
@@ -17,6 +18,55 @@ import {
   type AgentStreamReducerEvent,
   type TimelineCursor,
 } from "./session-stream-reducers";
+
+describe("enqueueAgentStreamEventAndNotifyTerminal", () => {
+  it.each(["turn_completed", "turn_failed", "turn_canceled"] as const)(
+    "commits %s before notifying final observers",
+    (type) => {
+      const calls: string[] = [];
+      enqueueAgentStreamEventAndNotifyTerminal({
+        queue: {
+          enqueue: () => calls.push("enqueue"),
+          flushAgent: () => calls.push("flush"),
+          flush: () => undefined,
+          dispose: () => undefined,
+        },
+        agentId: "agent-1",
+        event: {
+          event: { type, provider: "claude" } as AgentStreamEventPayload,
+          seq: 3,
+          epoch: "epoch-1",
+          timestamp: new Date(3_000),
+        },
+        notifyTerminal: () => calls.push("notify"),
+      });
+
+      expect(calls).toEqual(["enqueue", "flush", "notify"]);
+    },
+  );
+
+  it("leaves non-terminal events queued", () => {
+    const calls: string[] = [];
+    enqueueAgentStreamEventAndNotifyTerminal({
+      queue: {
+        enqueue: () => calls.push("enqueue"),
+        flushAgent: () => calls.push("flush"),
+        flush: () => undefined,
+        dispose: () => undefined,
+      },
+      agentId: "agent-1",
+      event: {
+        event: { type: "turn_started", provider: "claude" } as AgentStreamEventPayload,
+        seq: 1,
+        epoch: "epoch-1",
+        timestamp: new Date(1_000),
+      },
+      notifyTerminal: () => calls.push("notify"),
+    });
+
+    expect(calls).toEqual(["enqueue"]);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Test helpers

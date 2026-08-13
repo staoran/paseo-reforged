@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
+import type {
+  AgentTimelineProjectionPayload,
+  WorkspaceDescriptorPayload,
+} from "@getpaseo/protocol/messages";
 
 import {
   normalizeWorkspaceDescriptor,
@@ -13,6 +16,10 @@ import {
 } from "./session-store";
 import type { StreamItem } from "../types/stream";
 import { patchWorkspaceScripts } from "../contexts/session-workspace-scripts";
+
+function getStreamItemIds(items: readonly StreamItem[] | undefined): string[] {
+  return items?.map((item) => item.id) ?? [];
+}
 
 function createWorkspace(
   input: Partial<WorkspaceDescriptor> & Pick<WorkspaceDescriptor, "id">,
@@ -225,6 +232,124 @@ describe("agent timeline state", () => {
       activeTurn: null,
     });
     expect(store.getSession("test-server")?.agentTurnLiveness.has("agent-1")).toBe(false);
+  });
+});
+
+describe("agent timeline projection state", () => {
+  const summary = {
+    kind: "summary",
+    epoch: "epoch-1",
+    timelineRevision: "43a2674e-081c-4f20-8bca-9de7699dc419",
+    entries: [],
+    activities: [
+      {
+        activityId: "activity:one",
+        timestamp: "2026-08-09T00:00:00.000Z",
+        seqStart: 2,
+        seqEnd: 3,
+        sourceSeqRanges: [{ startSeq: 2, endSeq: 3 }],
+      },
+    ],
+    hasOlderTurns: true,
+  } satisfies Extract<AgentTimelineProjectionPayload, { kind: "summary" }>;
+
+  it("keeps projection detail state outside canonical stream and cursor maps", () => {
+    initializeTestSession();
+    const store = useSessionStore.getState();
+    expect(store.installAgentTimelineProjectionSummary("test-server", "agent-1", summary)).toBe(
+      true,
+    );
+    const request = store.beginAgentTimelineProjectionActivityDetail(
+      "test-server",
+      "agent-1",
+      "activity:one",
+      200,
+    );
+    const session = useSessionStore.getState().sessions["test-server"];
+
+    expect(request).toMatchObject({ activityId: "activity:one", limit: 200, generation: 1 });
+    expect(
+      session?.agentTimelineProjectionLanes.get("agent-1")?.activities.get("activity:one"),
+    ).toMatchObject({ status: "loading", members: [] });
+    expect(session?.agentStreamTail.has("agent-1")).toBe(false);
+    expect(session?.agentTimelineCursor.has("agent-1")).toBe(false);
+    expect(session?.agentAuthoritativeHistoryApplied.has("agent-1")).toBe(false);
+  });
+
+  it("installs canonical state and removes its projection lane in one store commit", () => {
+    initializeTestSession();
+    const store = useSessionStore.getState();
+    store.installAgentTimelineProjectionSummary("test-server", "agent-1", summary);
+    const snapshots: Array<{ hasLane: boolean; tailIds: string[] }> = [];
+    const unsubscribe = useSessionStore.subscribe((state) => {
+      const session = state.sessions["test-server"];
+      snapshots.push({
+        hasLane: session?.agentTimelineProjectionLanes.has("agent-1") === true,
+        tailIds: getStreamItemIds(session?.agentStreamTail.get("agent-1")),
+      });
+    });
+
+    store.applyAgentTimelineResponseState("test-server", "agent-1", {
+      items: [
+        {
+          kind: "assistant_message",
+          id: "canonical-final",
+          text: "Answer",
+          timestamp: new Date("2026-08-09T00:00:04.000Z"),
+        },
+      ],
+      head: [],
+      range: { epoch: "epoch-1", startSeq: 1, endSeq: 4 },
+      older: "available",
+      newer: false,
+      synchronized: true,
+      acknowledgedClientMessageIds: [],
+    });
+    unsubscribe();
+
+    expect(snapshots).toEqual([{ hasLane: false, tailIds: ["canonical-final"] }]);
+  });
+
+  it("rejects a summary install after the Agent becomes live", () => {
+    initializeTestSession();
+    const store = useSessionStore.getState();
+    store.setAgents(
+      "test-server",
+      new Map([
+        ["agent-1", createAgent({ id: "agent-1", workspaceId: "workspace-1", status: "running" })],
+      ]),
+    );
+
+    expect(store.installAgentTimelineProjectionSummary("test-server", "agent-1", summary)).toBe(
+      false,
+    );
+    expect(store.getSession("test-server")?.agentTimelineProjectionLanes.has("agent-1")).toBe(
+      false,
+    );
+  });
+
+  it("rejects a summary install while the Agent has unresolved permission state", () => {
+    initializeTestSession();
+    const store = useSessionStore.getState();
+    store.setAgents(
+      "test-server",
+      new Map([
+        [
+          "agent-1",
+          {
+            ...createAgent({ id: "agent-1", workspaceId: "workspace-1", status: "idle" }),
+            attentionReason: "permission" as const,
+          },
+        ],
+      ]),
+    );
+
+    expect(store.installAgentTimelineProjectionSummary("test-server", "agent-1", summary)).toBe(
+      false,
+    );
+    expect(store.getSession("test-server")?.agentTimelineProjectionLanes.has("agent-1")).toBe(
+      false,
+    );
   });
 });
 

@@ -166,6 +166,27 @@ test("uses a tail fetch when an agent becomes visible", async () => {
   fetch.respond({ hasNewer: false });
 });
 
+test("an explicit Agent refresh supersedes a completed catch-up with one tail request", async () => {
+  const world = new TimelineWorld();
+  world.sync.setConnected(true);
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
+  const membership = await world.nextMembership();
+  membership.succeed();
+  const initial = await world.nextFetch("agent-a");
+  initial.respond({ hasNewer: false });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+
+  world.sync.refreshAgent("agent-a");
+  expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("pending");
+  const refreshed = await world.nextFetch("agent-a");
+  world.sync.refreshAgent("agent-a");
+  world.expectNoPendingFetch();
+  refreshed.respond({ hasNewer: false });
+
+  expect(refreshed.request).toEqual({ direction: "tail", limit: 40, projection: "projected" });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+});
+
 test("a gap absorbed by a running tail is recovered after the tail completes", async () => {
   const world = new TimelineWorld();
   world.sync.setConnected(true);

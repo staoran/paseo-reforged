@@ -1182,6 +1182,194 @@ test("honors explicit fetchAgentTimeline timeout below the session RPC default",
   await expect(responsePromise).rejects.toThrow("Timeout waiting for message (2000ms)");
 });
 
+test("gates timeline summary/detail requests on the single server capability", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger: noopLogger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: { agentTimelineSummaryDetail: true } });
+  await connectPromise;
+
+  const summaryPromise = client.fetchAgentTimelineSummary("agent-1", {
+    requestId: "req-summary-1",
+  });
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "fetch_agent_timeline_request",
+    agentId: "agent-1",
+    requestId: "req-summary-1",
+    projectionRequest: { kind: "summary" },
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "fetch_agent_timeline_response",
+      payload: {
+        requestId: "req-summary-1",
+        agentId: "agent-1",
+        agent: null,
+        direction: "tail",
+        projection: "projected",
+        epoch: "epoch-1",
+        reset: false,
+        staleCursor: false,
+        gap: false,
+        window: { minSeq: 0, maxSeq: 0, nextSeq: 0 },
+        startCursor: null,
+        endCursor: null,
+        hasOlder: false,
+        hasNewer: false,
+        entries: [],
+        projectionPayload: {
+          kind: "summary",
+          epoch: "epoch-1",
+          timelineRevision: "43a2674e-081c-4f20-8bca-9de7699dc419",
+          entries: [],
+          activities: [],
+          hasOlderTurns: false,
+        },
+        error: null,
+      },
+    }),
+  );
+  await expect(summaryPromise).resolves.toMatchObject({
+    projectionPayload: { kind: "summary" },
+  });
+
+  const detailPromise = client.fetchAgentTimelineActivityDetail("agent-1", {
+    requestId: "req-detail-1",
+    epoch: "epoch-1",
+    timelineRevision: "43a2674e-081c-4f20-8bca-9de7699dc419",
+    activityId: "activity:one",
+    sourceSeqRanges: [{ startSeq: 2, endSeq: 3 }],
+    limit: 200,
+  });
+  expect(parseSentFrame(mock.sent[1])).toEqual({
+    type: "fetch_agent_timeline_request",
+    agentId: "agent-1",
+    requestId: "req-detail-1",
+    projectionRequest: {
+      kind: "activity_detail",
+      epoch: "epoch-1",
+      timelineRevision: "43a2674e-081c-4f20-8bca-9de7699dc419",
+      activityId: "activity:one",
+      sourceSeqRanges: [{ startSeq: 2, endSeq: 3 }],
+      limit: 200,
+    },
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "fetch_agent_timeline_response",
+      payload: {
+        requestId: "req-detail-1",
+        agentId: "agent-1",
+        agent: null,
+        direction: "tail",
+        projection: "projected",
+        epoch: "epoch-1",
+        reset: false,
+        staleCursor: false,
+        gap: false,
+        window: { minSeq: 0, maxSeq: 0, nextSeq: 0 },
+        startCursor: null,
+        endCursor: null,
+        hasOlder: false,
+        hasNewer: false,
+        entries: [],
+        projectionPayload: {
+          kind: "activity_detail",
+          epoch: "epoch-1",
+          timelineRevision: "43a2674e-081c-4f20-8bca-9de7699dc419",
+          activityId: "activity:one",
+          entries: [],
+          nextCursor: null,
+          hasMore: false,
+          error: null,
+        },
+        error: null,
+      },
+    }),
+  );
+  await expect(detailPromise).resolves.toMatchObject({
+    projectionPayload: { kind: "activity_detail" },
+  });
+});
+
+test("uses the ordinary tail when timeline summary/detail capability is absent", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_timeline_projection_legacy_test",
+    logger: noopLogger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const respondWithTail = (requestId: string) => {
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "fetch_agent_timeline_response",
+        payload: {
+          requestId,
+          agentId: "agent-1",
+          agent: null,
+          direction: "tail",
+          projection: "projected",
+          epoch: "epoch-1",
+          reset: false,
+          staleCursor: false,
+          gap: false,
+          window: { minSeq: 0, maxSeq: 0, nextSeq: 0 },
+          startCursor: null,
+          endCursor: null,
+          hasOlder: false,
+          hasNewer: false,
+          entries: [],
+          error: null,
+        },
+      }),
+    );
+  };
+
+  const summaryPromise = client.fetchAgentTimelineSummary("agent-1", {
+    requestId: "req-summary-legacy",
+  });
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "fetch_agent_timeline_request",
+    agentId: "agent-1",
+    requestId: "req-summary-legacy",
+  });
+  respondWithTail("req-summary-legacy");
+  await expect(summaryPromise).resolves.not.toHaveProperty("projectionPayload");
+
+  const detailPromise = client.fetchAgentTimelineActivityDetail("agent-1", {
+    requestId: "req-detail-legacy",
+    epoch: "epoch-1",
+    timelineRevision: "43a2674e-081c-4f20-8bca-9de7699dc419",
+    activityId: "activity:one",
+    sourceSeqRanges: [{ startSeq: 2, endSeq: 3 }],
+    cursor: { epoch: "epoch-1", seq: 2 },
+    limit: 200,
+  });
+  expect(parseSentFrame(mock.sent[1])).toEqual({
+    type: "fetch_agent_timeline_request",
+    agentId: "agent-1",
+    requestId: "req-detail-legacy",
+  });
+  respondWithTail("req-detail-legacy");
+  await expect(detailPromise).resolves.not.toHaveProperty("projectionPayload");
+});
+
 test("lists the full agent prompt index", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
