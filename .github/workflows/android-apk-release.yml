@@ -153,6 +153,13 @@ jobs:
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a
+          # Keep the local build below the memory envelope of a free hosted runner
+          GRADLE_OPTS: >-
+            -Xmx3072m
+            -XX:MaxMetaspaceSize=768m
+            -Dorg.gradle.daemon=false
+            -Dorg.gradle.jvmargs="-Xmx3072m -XX:MaxMetaspaceSize=768m -Dkotlin.daemon.jvm.options=-Xmx1024m"
+          NODE_OPTIONS: --max-old-space-size=3072
         run: |
           set -euo pipefail
 

@@ -130,6 +130,15 @@ test("Android APK build monitoring and validation follow the arm64 base-version 
   assert.match(swapStep, /sudo swapon "\$ANDROID_BUILD_SWAP_FILE"/);
   assert.ok(buildStep, "missing Android APK build step");
   assert.match(buildStep, /^\s+ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a$/m);
+  assert.match(buildStep, /^\s+GRADLE_OPTS: >-$/m);
+  assert.match(buildStep, /-Xmx3072m/);
+  assert.match(buildStep, /-XX:MaxMetaspaceSize=768m/);
+  assert.match(buildStep, /-Dorg\.gradle\.daemon=false/);
+  assert.match(
+    buildStep,
+    /-Dorg\.gradle\.jvmargs="-Xmx3072m -XX:MaxMetaspaceSize=768m -Dkotlin\.daemon\.jvm\.options=-Xmx1024m"/,
+  );
+  assert.match(buildStep, /^\s+NODE_OPTIONS: --max-old-space-size=3072$/m);
   assert.match(buildStep, /Build heartbeat/);
   assert.match(buildStep, /memoryAvailable=/);
   assert.match(buildStep, /swapFree=/);
