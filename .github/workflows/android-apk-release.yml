@@ -135,12 +135,33 @@ jobs:
 
           cd packages/app
 
+          # Keep the runner observable through Gradle phases that otherwise emit no output
+          monitor_build_resources() {
+            while true; do
+              memory_available_mb="$(awk '/MemAvailable:/ { printf "%d", $2 / 1024 }' /proc/meminfo)"
+              runner_temp_available_mb="$(df -Pm "$RUNNER_TEMP" | awk 'NR == 2 { print $4 }')"
+              echo "Build heartbeat utc=$(date -u +%Y-%m-%dT%H:%M:%SZ) memoryAvailable=${memory_available_mb}MiB runnerTempAvailable=${runner_temp_available_mb}MiB"
+              sleep 30
+            done
+          }
+
+          monitor_build_resources &
+          build_monitor_pid=$!
+          stop_build_monitor() {
+            kill "$build_monitor_pid" 2>/dev/null || true
+            wait "$build_monitor_pid" 2>/dev/null || true
+          }
+          trap stop_build_monitor EXIT
+
           npx --no-install eas build \
             --platform android \
             --profile production-apk \
             --local \
             --non-interactive \
             --output "$asset_path"
+
+          stop_build_monitor
+          trap - EXIT
 
           if [[ ! -s "$asset_path" ]]; then
             echo "::error::Local EAS build did not create $asset_path."

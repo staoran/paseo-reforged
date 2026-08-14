@@ -110,7 +110,7 @@ test("change gating allows superseded workflow runs to cancel", () => {
   }
 });
 
-test("Android APK build and validation follow the arm64 base-version contract", () => {
+test("Android APK build monitoring and validation follow the arm64 base-version contract", () => {
   const workflowSource = readFileSync(androidReleaseWorkflowPath, "utf8");
   const buildStep = workflowSource
     .split("- name: Build Android APK on GitHub runner", 2)[1]
@@ -121,6 +121,9 @@ test("Android APK build and validation follow the arm64 base-version contract", 
 
   assert.ok(buildStep, "missing Android APK build step");
   assert.match(buildStep, /^\s+ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a$/m);
+  assert.match(buildStep, /Build heartbeat/);
+  assert.match(buildStep, /memoryAvailable=/);
+  assert.match(buildStep, /runnerTempAvailable=/);
   assert.ok(validationStep, "missing Android APK validation step");
   assert.match(validationStep, /versionName='\$RELEASE_BASE_VERSION'/);
   assert.doesNotMatch(validationStep, /versionName='\$RELEASE_VERSION'/);
