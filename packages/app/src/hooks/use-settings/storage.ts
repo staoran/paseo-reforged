@@ -55,6 +55,7 @@ export interface AppSettings {
   language: AppLanguage;
   sendBehavior: SendBehavior;
   serviceUrlBehavior: ServiceUrlBehavior;
+  restoreLastWorkspaceOnLaunch: boolean;
   terminalScrollbackLines: number;
   useLegacyTerminalRenderer: boolean;
   uiFontFamily: string; // "" = platform default UI stack
@@ -94,6 +95,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   language: "system",
   sendBehavior: "interrupt",
   serviceUrlBehavior: "ask",
+  restoreLastWorkspaceOnLaunch: false,
   terminalScrollbackLines: DEFAULT_TERMINAL_SCROLLBACK_LINES,
   useLegacyTerminalRenderer: false,
   uiFontFamily: "",
@@ -293,6 +295,9 @@ function parseStoredSidebarChecksDisplay(stored: StoredAppSettings): SidebarChec
 
 function pickBooleanAppSettings(stored: StoredAppSettings): Partial<AppSettings> {
   const result: Partial<AppSettings> = {};
+  if (typeof stored.restoreLastWorkspaceOnLaunch === "boolean") {
+    result.restoreLastWorkspaceOnLaunch = stored.restoreLastWorkspaceOnLaunch;
+  }
   if (typeof stored.useLegacyTerminalRenderer === "boolean") {
     result.useLegacyTerminalRenderer = stored.useLegacyTerminalRenderer;
   }

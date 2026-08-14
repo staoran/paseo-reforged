@@ -174,6 +174,8 @@ describe("resolveStartupRoute", () => {
     workspaceSelection: null,
     workspaceSelectionStatus: "unknown" as const,
     isWorkspaceSelectionLoaded: true,
+    shouldRestoreWorkspaceOnLaunch: true,
+    isWorkspaceRestorePreferenceLoaded: true,
     hasGivenUpWaitingForHost: false,
   };
   const baseHostInput = {
@@ -200,6 +202,30 @@ describe("resolveStartupRoute", () => {
         isWorkspaceSelectionLoaded: false,
       }),
     ).toEqual({ kind: "splash" });
+  });
+
+  it("keeps startup on the splash while the workspace restore preference is loading", () => {
+    expect(
+      resolveStartupRoute({
+        ...baseIndexInput,
+        hosts: [{ serverId: "server-1" }],
+        workspaceSelection: { serverId: "server-1", workspaceId: "workspace-a" },
+        workspaceSelectionStatus: "exists",
+        isWorkspaceRestorePreferenceLoaded: false,
+      }),
+    ).toEqual({ kind: "splash" });
+  });
+
+  it("opens project selection when workspace restore on launch is disabled", () => {
+    expect(
+      resolveStartupRoute({
+        ...baseIndexInput,
+        hosts: [{ serverId: "server-1" }],
+        workspaceSelection: { serverId: "server-1", workspaceId: "workspace-a" },
+        workspaceSelectionStatus: "exists",
+        shouldRestoreWorkspaceOnLaunch: false,
+      }),
+    ).toEqual({ kind: "redirect", href: "/open-project" });
   });
 
   it("keeps startup on the splash while the host registry is loading", () => {

@@ -26,8 +26,14 @@ render a blank screen.
 
 ## Startup
 
-The root `/` route chooses a host boundary. It does not jump directly into a host
-leaf.
+Installed mobile and Electron clients read `restoreLastWorkspaceOnLaunch` before
+leaving the root `/` route. The setting defaults to `false`: when at least one
+host is registered, a cold launch goes directly to global `/open-project`.
+Enabling the setting restores the previous behavior. Browser startup always
+keeps the restore behavior and does not expose this installed-app setting.
+
+When workspace restore is enabled, the root route chooses a host boundary. It
+does not jump directly into a host leaf.
 
 - Good: `/` -> `/h/[serverId]`
 - Bad: `/` -> `/h/[serverId]/workspace/[workspaceId]`
@@ -35,7 +41,9 @@ leaf.
 `/h/[serverId]` is the host home route. The host index restores the last
 remembered workspace for that host after the remembered selection has hydrated
 and the workspace has not been proven missing. If there is no restorable
-workspace, it goes to global `/open-project`.
+workspace, it goes to global `/open-project`. Do not gate the host index itself
+with the launch setting: in-session navigation, deep links, notifications, and
+recovery routes also use the host root.
 
 This restore is based on the last navigated workspace, not current connection
 status. Do not redirect to another online host just because the remembered host
@@ -135,12 +143,18 @@ state:
 
 1. Seed `paseo:last-workspace-route-selection` with a valid
    `{ serverId, workspaceId }`.
-2. Launch the native app cold.
-3. Assert a real screen is visible, not the blank tree.
-4. Assert no `[Layout children]` warning appears.
+2. Seed `restoreLastWorkspaceOnLaunch` as `true` in app settings.
+3. Launch the native app cold.
+4. Assert a real workspace screen is visible, not the blank tree.
+5. Assert no `[Layout children]` warning appears.
+
+Repeat with `restoreLastWorkspaceOnLaunch` set to `false` and assert the cold
+launch stops at `/open-project` without deleting the remembered workspace.
 
 The pure policy tests should still enforce the boundary split:
 
+- root startup with restore disabled and a registered host returns
+  `/open-project`;
 - root startup with a saved workspace returns `/h/[serverId]`;
 - host index with the same saved workspace returns
   `/h/[serverId]/workspace/[workspaceId]`;
@@ -151,7 +165,9 @@ The pure policy tests should still enforce the boundary split:
 Before landing route changes:
 
 - [ ] Did you change `packages/app/src/app`? Re-read this file.
-- [ ] Did you touch remembered workspace restore? Keep root on `/h/[serverId]`.
+- [ ] Did you touch remembered workspace restore? Keep enabled restore on
+      `/h/[serverId]`; keep disabled restore limited to the root cold-launch
+      decision.
 - [ ] Did a route return to a workspace? Use `navigateToWorkspace()` and pass a
       `target` when the action names a specific tab.
 - [ ] Did you add a route? Register it in the layout that directly owns it.

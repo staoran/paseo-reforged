@@ -1837,6 +1837,12 @@ export const en = {
           external: "External browser",
         },
       },
+      restoreLastWorkspaceOnLaunch: {
+        label: "Open last workspace on launch",
+        description:
+          "Automatically reopen the last workspace when the mobile or desktop app starts",
+        accessibilityLabel: "Open last workspace on launch",
+      },
       terminalScrollback: {
         label: "Terminal scrollback",
         description: "Lines kept in the built-in terminal buffer",

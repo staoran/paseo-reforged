@@ -1859,6 +1859,12 @@ export const ptBR: TranslationResources = {
           external: "Navegador externo",
         },
       },
+      restoreLastWorkspaceOnLaunch: {
+        label: "Abrir o último workspace ao iniciar",
+        description:
+          "Reabre automaticamente o último workspace ao iniciar o aplicativo móvel ou desktop",
+        accessibilityLabel: "Abrir o último workspace ao iniciar",
+      },
       terminalScrollback: {
         label: "Scrollback do terminal",
         description: "Linhas mantidas no buffer do terminal integrado",

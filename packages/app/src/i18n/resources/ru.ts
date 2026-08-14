@@ -1861,6 +1861,12 @@ export const ru: TranslationResources = {
           external: "Внешний браузер",
         },
       },
+      restoreLastWorkspaceOnLaunch: {
+        label: "Открывать последнее рабочее пространство при запуске",
+        description:
+          "Автоматически открывает последнее рабочее пространство при запуске мобильного или настольного приложения",
+        accessibilityLabel: "Открывать последнее рабочее пространство при запуске",
+      },
       terminalScrollback: {
         label: "Terminal прокрутка назад",
         description: "Строки, хранящиеся во встроенном буфере терминала.",

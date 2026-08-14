@@ -1837,6 +1837,12 @@ export const ko: TranslationResources = {
           external: "외부 브라우저",
         },
       },
+      restoreLastWorkspaceOnLaunch: {
+        label: "시작할 때 마지막 작업 공간 열기",
+        description:
+          "모바일 또는 데스크톱 앱을 시작할 때 마지막으로 사용한 작업 공간을 자동으로 다시 엽니다",
+        accessibilityLabel: "시작할 때 마지막 작업 공간 열기",
+      },
       terminalScrollback: {
         label: "터미널 스크롤백",
         description: "내장 터미널 버퍼에 보관되는 줄 수",

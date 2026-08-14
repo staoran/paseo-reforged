@@ -1803,6 +1803,11 @@ export const zhCN: TranslationResources = {
           external: "外部浏览器",
         },
       },
+      restoreLastWorkspaceOnLaunch: {
+        label: "启动时打开上次工作区",
+        description: "移动端或桌面端启动时自动重新打开上次使用的工作区",
+        accessibilityLabel: "启动时打开上次工作区",
+      },
       terminalScrollback: {
         label: "终端回滚",
         description: "内置终端缓冲区保留的行数",

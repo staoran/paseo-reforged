@@ -42,6 +42,26 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result.theme).toBe("auto");
   });
 
+  it("does not restore the last workspace on launch by default", async () => {
+    const deps = makeDeps();
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.restoreLastWorkspaceOnLaunch).toBe(false);
+  });
+
+  it("loads an enabled last-workspace launch preference", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ restoreLastWorkspaceOnLaunch: true }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.restoreLastWorkspaceOnLaunch).toBe(true);
+  });
+
   it("seeds storage with the client defaults when nothing is persisted", async () => {
     const deps = makeDeps();
 

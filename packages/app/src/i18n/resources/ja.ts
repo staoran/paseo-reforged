@@ -1842,6 +1842,12 @@ export const ja: TranslationResources = {
           external: "外部ブラウザ",
         },
       },
+      restoreLastWorkspaceOnLaunch: {
+        label: "起動時に前回のワークスペースを開く",
+        description:
+          "モバイルまたはデスクトップアプリの起動時に、最後に使用したワークスペースを自動的に開きます",
+        accessibilityLabel: "起動時に前回のワークスペースを開く",
+      },
       terminalScrollback: {
         label: "ターミナルスクロールバック",
         description: "組み込みターミナルバッファに保持する行数",

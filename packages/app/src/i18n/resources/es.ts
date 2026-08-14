@@ -1875,6 +1875,12 @@ export const es: TranslationResources = {
           external: "Navegador externo",
         },
       },
+      restoreLastWorkspaceOnLaunch: {
+        label: "Abrir el último espacio de trabajo al iniciar",
+        description:
+          "Vuelve a abrir automáticamente el último espacio de trabajo al iniciar la aplicación móvil o de escritorio",
+        accessibilityLabel: "Abrir el último espacio de trabajo al iniciar",
+      },
       terminalScrollback: {
         label: "Historial de terminal",
         description: "Líneas mantenidas en el búfer de terminal incorporado",

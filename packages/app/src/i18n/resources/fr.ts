@@ -1878,6 +1878,12 @@ export const fr: TranslationResources = {
           external: "Navigateur externe",
         },
       },
+      restoreLastWorkspaceOnLaunch: {
+        label: "Ouvrir le dernier espace de travail au démarrage",
+        description:
+          "Rouvre automatiquement le dernier espace de travail au démarrage de l’application mobile ou de bureau",
+        accessibilityLabel: "Ouvrir le dernier espace de travail au démarrage",
+      },
       terminalScrollback: {
         label: "DéfilementTerminal",
         description: "Lignes conservées dans le tampon du terminal intégré",

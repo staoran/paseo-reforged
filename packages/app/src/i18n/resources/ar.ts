@@ -1825,6 +1825,11 @@ export const ar: TranslationResources = {
           external: "متصفح خارجي",
         },
       },
+      restoreLastWorkspaceOnLaunch: {
+        label: "فتح مساحة العمل الأخيرة عند بدء التشغيل",
+        description: "إعادة فتح آخر مساحة عمل تلقائيًا عند تشغيل تطبيق الهاتف أو سطح المكتب",
+        accessibilityLabel: "فتح مساحة العمل الأخيرة عند بدء التشغيل",
+      },
       terminalScrollback: {
         label: "التمرير Terminal",
         description: "يتم الاحتفاظ بالخطوط في المخزن المؤقت الطرفي المدمج",

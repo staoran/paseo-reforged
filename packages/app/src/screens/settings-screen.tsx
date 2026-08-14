@@ -267,6 +267,7 @@ interface GeneralSectionProps {
   settings: AppSettings;
   isDesktopApp: boolean;
   handleSendBehaviorChange: (behavior: SendBehavior) => void;
+  handleRestoreLastWorkspaceOnLaunchChange: (value: boolean) => void;
   handleServiceUrlBehaviorChange: (behavior: ServiceUrlBehavior) => void;
   handleLanguageChange: (language: AppLanguage) => void;
   handleTerminalScrollbackLinesChange: (lines: number) => void;
@@ -323,6 +324,7 @@ function GeneralSection({
   settings,
   isDesktopApp,
   handleSendBehaviorChange,
+  handleRestoreLastWorkspaceOnLaunchChange,
   handleServiceUrlBehaviorChange,
   handleLanguageChange,
   handleTerminalScrollbackLinesChange,
@@ -410,6 +412,26 @@ function GeneralSection({
             </DropdownMenuContent>
           </DropdownMenu>
         </View>
+        {isNative || isDesktopApp ? (
+          <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+            <View style={settingsStyles.rowContent}>
+              <Text style={settingsStyles.rowTitle}>
+                {t("settings.general.restoreLastWorkspaceOnLaunch.label")}
+              </Text>
+              <Text style={settingsStyles.rowHint}>
+                {t("settings.general.restoreLastWorkspaceOnLaunch.description")}
+              </Text>
+            </View>
+            <Switch
+              value={settings.restoreLastWorkspaceOnLaunch}
+              onValueChange={handleRestoreLastWorkspaceOnLaunchChange}
+              accessibilityLabel={t(
+                "settings.general.restoreLastWorkspaceOnLaunch.accessibilityLabel",
+              )}
+              testID="restore-last-workspace-on-launch-switch"
+            />
+          </View>
+        ) : null}
         {isDesktopApp ? (
           <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
             <View style={settingsStyles.rowContent}>
@@ -1191,6 +1213,13 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
     [updateSettings],
   );
 
+  const handleRestoreLastWorkspaceOnLaunchChange = useCallback(
+    (restoreLastWorkspaceOnLaunch: boolean) => {
+      void updateSettings({ restoreLastWorkspaceOnLaunch });
+    },
+    [updateSettings],
+  );
+
   const handleLanguageChange = useCallback(
     (language: AppLanguage) => {
       void updateSettings({ language });
@@ -1420,6 +1449,7 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
                 settings={settings}
                 isDesktopApp={isDesktopApp}
                 handleSendBehaviorChange={handleSendBehaviorChange}
+                handleRestoreLastWorkspaceOnLaunchChange={handleRestoreLastWorkspaceOnLaunchChange}
                 handleServiceUrlBehaviorChange={handleServiceUrlBehaviorChange}
                 handleLanguageChange={handleLanguageChange}
                 handleTerminalScrollbackLinesChange={handleTerminalScrollbackLinesChange}

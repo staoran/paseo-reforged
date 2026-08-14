@@ -115,6 +115,8 @@ export interface ResolveIndexStartupRouteInput extends ResolveStartupRouteBaseIn
   workspaceSelection: ActiveWorkspaceSelection | null;
   workspaceSelectionStatus: WorkspaceSelectionStatus;
   isWorkspaceSelectionLoaded: boolean;
+  shouldRestoreWorkspaceOnLaunch: boolean;
+  isWorkspaceRestorePreferenceLoaded: boolean;
   hasGivenUpWaitingForHost: boolean;
 }
 
@@ -179,6 +181,14 @@ function hostExists(hosts: readonly { serverId: string }[], serverId: string | n
 function resolveReadyIndexStartupRoute(input: ResolveIndexStartupRouteInput): StartupRouteDecision {
   if (!isIndexPathname(input.route.pathname)) {
     return { kind: "render" };
+  }
+
+  if (!input.isWorkspaceRestorePreferenceLoaded) {
+    return { kind: "splash" };
+  }
+
+  if (!input.shouldRestoreWorkspaceOnLaunch && input.hosts.length > 0) {
+    return { kind: "redirect", href: buildOpenProjectRoute() };
   }
 
   if (!input.isWorkspaceSelectionLoaded) {

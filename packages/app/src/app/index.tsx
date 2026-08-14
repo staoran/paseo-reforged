@@ -13,6 +13,8 @@ import {
   useLastWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
 import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
+import { useAppSettings } from "@/hooks/use-settings";
+import { getIsElectron, isNative } from "@/constants/platform";
 
 const isDesktop = shouldUseDesktopDaemon();
 
@@ -22,8 +24,10 @@ export default function Index() {
   const anyOnlineHostServerId = useEarliestOnlineHostServerId();
   const hosts = useHosts();
   const hostRegistryStatus = useHostRegistryStatus();
+  const { settings, isLoading: isAppSettingsLoading } = useAppSettings();
   const workspaceSelection = useLastWorkspaceSelection();
   const isWorkspaceSelectionLoaded = useIsLastWorkspaceSelectionHydrated();
+  const isInstalledAppRuntime = isNative || getIsElectron();
   const workspaceSelectionServerId = workspaceSelection?.serverId ?? null;
   const workspaceSelectionWorkspaceId = workspaceSelection?.workspaceId ?? null;
   const hasHydratedWorkspaceSelectionHost = useHasHydratedWorkspaces(workspaceSelectionServerId);
@@ -44,6 +48,8 @@ export default function Index() {
       workspaceExists: workspaceSelectionExists,
     }),
     isWorkspaceSelectionLoaded,
+    shouldRestoreWorkspaceOnLaunch: !isInstalledAppRuntime || settings.restoreLastWorkspaceOnLaunch,
+    isWorkspaceRestorePreferenceLoaded: !isInstalledAppRuntime || !isAppSettingsLoading,
     hasGivenUpWaitingForHost: bootstrapState.hasGivenUpWaitingForHost,
   });
 
