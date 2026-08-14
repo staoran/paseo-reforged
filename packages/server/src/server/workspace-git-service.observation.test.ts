@@ -193,6 +193,16 @@ async function flushPromises(): Promise<void> {
   }
 }
 
+async function flushMicrotasksUntil(condition: () => boolean, description: string): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (condition()) {
+      return;
+    }
+    await Promise.resolve();
+  }
+  throw new Error(`Timed out flushing microtasks: ${description}`);
+}
+
 describe("WorkspaceGitService checkout observation", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -483,12 +493,12 @@ describe("WorkspaceGitService checkout observation", () => {
         };
       }),
     });
-    const listener = vi.fn();
+    const initialSnapshotEmitted = createDeferred<void>();
+    const listener = vi.fn(() => initialSnapshotEmitted.resolve());
     const subscription = service.registerWorkspace({ cwd: REPO_CWD }, listener);
-    await vi.waitFor(() => {
-      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(1);
-      expect(listener).toHaveBeenCalledTimes(1);
-    });
+    await initialSnapshotEmitted.promise;
+    expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledTimes(1);
     await fetchWindowOpen.promise;
     listener.mockClear();
 
@@ -498,11 +508,15 @@ describe("WorkspaceGitService checkout observation", () => {
         { path: path.join(GIT_DIR, "refs", "remotes", "origin", "main"), type: "create" },
       ]);
     releaseFetch.resolve();
-    await flushPromises();
+    await flushMicrotasksUntil(
+      () => service.getMetrics().fetchInFlightCount === 0,
+      "background fetch to settle",
+    );
     await vi.advanceTimersByTimeAsync(1_000);
-    await vi.waitFor(() => {
-      expect(getCheckoutRefDerivedState).toHaveBeenCalledTimes(1);
-    });
+    await flushMicrotasksUntil(
+      () => getCheckoutRefDerivedState.mock.calls.length === 1,
+      "narrow refresh to start",
+    );
 
     expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(1);
     expect(listener).toHaveBeenCalledTimes(1);
@@ -736,6 +750,9 @@ describe("WorkspaceGitService checkout observation", () => {
 
   test("a second remote-ref move during a narrow refresh queues a final calculation", async () => {
     const watcher = createWatcherHarness();
+    const fetchStarted = createDeferred<void>();
+    const releaseFetch = createDeferred<void>();
+    const firstRefRefreshStarted = createDeferred<void>();
     const firstRefRefresh = createDeferred<CheckoutStatusGit>();
     const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => ({
       ...createCheckoutFacts(cwd),
@@ -752,7 +769,10 @@ describe("WorkspaceGitService checkout observation", () => {
           current: CheckoutStatusGit,
         ) => Promise<CheckoutStatusGit>
       >()
-      .mockImplementationOnce(() => firstRefRefresh.promise)
+      .mockImplementationOnce(() => {
+        firstRefRefreshStarted.resolve();
+        return firstRefRefresh.promise;
+      })
       .mockImplementation(async (_cwd, facts, current) => ({
         ...current,
         upstreamStatus: facts.upstreamStatus,
@@ -769,17 +789,29 @@ describe("WorkspaceGitService checkout observation", () => {
         }),
       ),
       hasOriginRemote: vi.fn(async () => true),
-      runGitFetch: vi.fn(async () => ({
-        changes: [{ kind: "moved" as const, ref: "origin/main", beforeOid: "a", afterOid: "b" }],
-        error: null,
-      })),
+      runGitFetch: vi.fn(async () => {
+        fetchStarted.resolve();
+        await releaseFetch.promise;
+        return {
+          changes: [{ kind: "moved" as const, ref: "origin/main", beforeOid: "a", afterOid: "b" }],
+          error: null,
+        };
+      }),
     });
-    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+    const initialSnapshotEmitted = createDeferred<void>();
+    const listener = vi.fn(() => initialSnapshotEmitted.resolve());
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, listener);
 
+    await initialSnapshotEmitted.promise;
+    await fetchStarted.promise;
+    releaseFetch.resolve();
+    await flushMicrotasksUntil(
+      () => service.getMetrics().fetchInFlightCount === 0,
+      "background fetch to settle",
+    );
     await vi.advanceTimersByTimeAsync(1_000);
-    await vi.waitFor(() => {
-      expect(getCheckoutRefDerivedState).toHaveBeenCalledTimes(1);
-    });
+    await firstRefRefreshStarted.promise;
+    expect(getCheckoutRefDerivedState).toHaveBeenCalledTimes(1);
 
     watcher.records
       .find((record) => record.directory === GIT_DIR)
@@ -790,10 +822,14 @@ describe("WorkspaceGitService checkout observation", () => {
     expect(service.getMetrics().workspaceRefreshQueuedCount).toBe(1);
 
     firstRefRefresh.resolve(createCheckoutStatus(REPO_CWD, { currentBranch: "feature" }));
-    await vi.waitFor(() => {
-      expect(getCheckoutRefDerivedState).toHaveBeenCalledTimes(2);
-      expect(service.getMetrics().workspaceRefreshInFlightCount).toBe(0);
-    });
+    await flushMicrotasksUntil(
+      () =>
+        getCheckoutRefDerivedState.mock.calls.length === 2 &&
+        service.getMetrics().workspaceRefreshInFlightCount === 0,
+      "queued narrow refresh to finish",
+    );
+    expect(getCheckoutRefDerivedState).toHaveBeenCalledTimes(2);
+    expect(service.getMetrics().workspaceRefreshInFlightCount).toBe(0);
 
     subscription.unsubscribe();
     service.dispose();
@@ -829,11 +865,12 @@ describe("WorkspaceGitService checkout observation", () => {
         return { changes: [], nonRemoteRefsChanged: false, error: null };
       }),
     });
-    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+    const initialSnapshotEmitted = createDeferred<void>();
+    const listener = vi.fn(() => initialSnapshotEmitted.resolve());
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, listener);
+    await initialSnapshotEmitted.promise;
     await fetchSnapshotRead.promise;
-    await vi.waitFor(() => {
-      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(1);
-    });
+    expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(1);
 
     watcher.records
       .find((record) => record.directory === GIT_DIR)
@@ -841,11 +878,16 @@ describe("WorkspaceGitService checkout observation", () => {
         { path: path.join(GIT_DIR, "refs", "remotes", "origin", "main"), type: "update" },
       ]);
     releaseFetch.resolve();
-    await flushPromises();
+    await flushMicrotasksUntil(
+      () => service.getMetrics().fetchInFlightCount === 0,
+      "background fetch to settle",
+    );
     await vi.advanceTimersByTimeAsync(1_000);
-    await vi.waitFor(() => {
-      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
-    });
+    await flushMicrotasksUntil(
+      () => getCheckoutSnapshotFacts.mock.calls.length === 2,
+      "structural refresh to start",
+    );
+    expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
 
     subscription.unsubscribe();
     service.dispose();
