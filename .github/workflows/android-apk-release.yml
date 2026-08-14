@@ -28,6 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       EAS_PROJECT_ID: ${{ vars.EAS_PROJECT_ID }}
+      ANDROID_BUILD_SWAP_FILE: ${{ runner.temp }}/paseo-android-build.swap
 
     steps:
       - uses: actions/checkout@v4
@@ -105,6 +106,29 @@ jobs:
           distribution: "temurin"
           java-version: "21"
 
+      - name: Provision Android build swap
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "$ANDROID_BUILD_SWAP_FILE" != "$RUNNER_TEMP/"* ]]; then
+            echo "::error::Swap file must stay inside RUNNER_TEMP."
+            exit 1
+          fi
+
+          swap_size_mb=2048
+          sudo fallocate -l "${swap_size_mb}M" "$ANDROID_BUILD_SWAP_FILE"
+          sudo chmod 600 "$ANDROID_BUILD_SWAP_FILE"
+          sudo mkswap "$ANDROID_BUILD_SWAP_FILE"
+          sudo swapon "$ANDROID_BUILD_SWAP_FILE"
+
+          if ! sudo swapon --show=NAME --noheadings | awk '{$1=$1; print}' | grep -Fxq "$ANDROID_BUILD_SWAP_FILE"; then
+            echo "::error::Failed to activate Android build swap."
+            exit 1
+          fi
+
+          free -h
+
       - name: Restore Gradle cache
         id: gradle-cache
         uses: actions/cache/restore@v5
@@ -139,8 +163,9 @@ jobs:
           monitor_build_resources() {
             while true; do
               memory_available_mb="$(awk '/MemAvailable:/ { printf "%d", $2 / 1024 }' /proc/meminfo)"
+              swap_free_mb="$(awk '/SwapFree:/ { printf "%d", $2 / 1024 }' /proc/meminfo)"
               runner_temp_available_mb="$(df -Pm "$RUNNER_TEMP" | awk 'NR == 2 { print $4 }')"
-              echo "Build heartbeat utc=$(date -u +%Y-%m-%dT%H:%M:%SZ) memoryAvailable=${memory_available_mb}MiB runnerTempAvailable=${runner_temp_available_mb}MiB"
+              echo "Build heartbeat utc=$(date -u +%Y-%m-%dT%H:%M:%SZ) memoryAvailable=${memory_available_mb}MiB swapFree=${swap_free_mb}MiB runnerTempAvailable=${runner_temp_available_mb}MiB"
               sleep 30
             done
           }
@@ -232,3 +257,24 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload "$RELEASE_TAG" "${{ steps.artifact.outputs.asset_path }}" --clobber --repo "${{ github.repository }}"
+
+      - name: Remove Android build swap
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          if [[ "$ANDROID_BUILD_SWAP_FILE" != "$RUNNER_TEMP/"* ]]; then
+            echo "::warning::Refusing to remove swap outside RUNNER_TEMP."
+            exit 0
+          fi
+
+          if sudo swapon --show=NAME --noheadings | awk '{$1=$1; print}' | grep -Fxq "$ANDROID_BUILD_SWAP_FILE"; then
+            if ! sudo swapoff "$ANDROID_BUILD_SWAP_FILE"; then
+              echo "::warning::Failed to deactivate Android build swap; the hosted runner is ephemeral."
+              exit 0
+            fi
+          fi
+          if ! sudo rm -f -- "$ANDROID_BUILD_SWAP_FILE"; then
+            echo "::warning::Failed to remove Android build swap; the hosted runner is ephemeral."
+          fi
