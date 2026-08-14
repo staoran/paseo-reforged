@@ -105,6 +105,17 @@ jobs:
           distribution: "temurin"
           java-version: "21"
 
+      - name: Restore Gradle cache
+        id: gradle-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: android-gradle-v1-${{ runner.os }}-${{ runner.arch }}-java21-${{ hashFiles('package-lock.json') }}-${{ github.run_id }}
+          restore-keys: |
+            android-gradle-v1-${{ runner.os }}-${{ runner.arch }}-java21-${{ hashFiles('package-lock.json') }}-
+
       - name: Install JS dependencies
         run: node scripts/npm-retry.mjs ci
         env:
@@ -137,6 +148,16 @@ jobs:
 
           echo "asset_name=$asset_name" >> "$GITHUB_OUTPUT"
           echo "asset_path=$asset_path" >> "$GITHUB_OUTPUT"
+
+      # A unique primary key lets a cancelled build publish a newer partial cache
+      - name: Save Gradle cache
+        if: ${{ always() && (steps.gradle-cache.outputs.cache-matched-key == '' || steps.build.outcome != 'success') }}
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ steps.gradle-cache.outputs.cache-primary-key }}
 
       - name: Validate Android APK
         id: artifact
