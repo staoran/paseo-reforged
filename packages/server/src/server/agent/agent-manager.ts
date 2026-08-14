@@ -2861,10 +2861,15 @@ export class AgentManager {
     await this.hydrateTimelineFromLegacyProviderHistory(agent, options);
   }
 
+  /** Validates the canonical edit target and resolves its provider-native rewind ID */
   private requireLastUserMessageEditTarget(
     agentId: string,
     input: EditLastUserMessageInput,
-  ): { agent: ActiveManagedAgent; persistence: AgentPersistenceHandle } {
+  ): {
+    agent: ActiveManagedAgent;
+    persistence: AgentPersistenceHandle;
+    providerMessageId: string;
+  } {
     const agent = this.requireSessionAgent(agentId);
     if (
       agent.capabilities.supportsInPlaceEditLastUserMessage !== true ||
@@ -2887,21 +2892,32 @@ export class AgentManager {
       throw new Error("Replacement message id must not be empty");
     }
 
-    const latestUserMessage = this.timelineStore
-      .getItems(agentId)
-      .findLast((item) => item.type === "user_message");
+    const latestUserMessageRow = this.timelineStore
+      .getRows(agentId)
+      .findLast((row) => row.item.type === "user_message");
     if (
-      !latestUserMessage ||
-      latestUserMessage.messageId !== input.messageId ||
-      latestUserMessage.replayKind !== "text_only"
+      !latestUserMessageRow ||
+      latestUserMessageRow.item.type !== "user_message" ||
+      latestUserMessageRow.item.messageId !== input.messageId ||
+      latestUserMessageRow.item.replayKind !== "text_only"
     ) {
       throw new Error("The edit target is not the latest replayable text user message");
+    }
+    if (
+      latestUserMessageRow.item.clientMessageId === input.messageId &&
+      !latestUserMessageRow.providerMessageId
+    ) {
+      throw new Error("Cannot edit before the provider acknowledges the submitted prompt");
     }
     const persistence = agent.session.describePersistence() ?? agent.persistence;
     if (!persistence) {
       throw new Error("The provider session has no stable persistence identity");
     }
-    return { agent, persistence };
+    return {
+      agent,
+      persistence,
+      providerMessageId: latestUserMessageRow.providerMessageId ?? input.messageId,
+    };
   }
 
   /** Replaces the latest replayable user message without changing the provider session identity. */
@@ -2909,7 +2925,11 @@ export class AgentManager {
     agentId: string,
     input: EditLastUserMessageInput,
   ): Promise<EditLastUserMessageResult> {
-    let editTarget: { agent: ActiveManagedAgent; persistence: AgentPersistenceHandle };
+    let editTarget: {
+      agent: ActiveManagedAgent;
+      persistence: AgentPersistenceHandle;
+      providerMessageId: string;
+    };
     try {
       editTarget = this.requireLastUserMessageEditTarget(agentId, input);
     } catch (error) {
@@ -2921,7 +2941,7 @@ export class AgentManager {
         error: editLastUserMessageError(error, "Message edit validation failed"),
       };
     }
-    const { agent, persistence: beforePersistence } = editTarget;
+    const { agent, persistence: beforePersistence, providerMessageId } = editTarget;
 
     let reservation: PendingForegroundRun;
     try {
@@ -2941,7 +2961,7 @@ export class AgentManager {
 
     try {
       await this.beginDurableTimelineMutation(agentId, "append");
-      await agent.session.rewindLastUserMessageInPlace!({ messageId: input.messageId });
+      await agent.session.rewindLastUserMessageInPlace!({ messageId: providerMessageId });
     } catch (error) {
       await this.markDurableTimelineIncomplete(agentId);
       this.runs.settleForegroundRun(agentId, reservation.token);

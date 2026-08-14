@@ -15,6 +15,8 @@ import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-
 import { getWorkspaceTabTestIds } from "../support/helpers/workspace-tabs";
 
 const EDIT_REQUEST_TYPE = "agent.edit_last_user_message.request";
+const UNKNOWN_HISTORY_MESSAGE =
+  "The conversation state could not be confirmed. Your edit was restored while history refreshes.";
 const TEST_IMAGE = {
   name: "edit-gate.png",
   mimeType: "image/png",
@@ -66,6 +68,8 @@ test.describe("Edit latest user message", () => {
   }) => {
     const firstPrompt = "emit 1 coalesced agent stream updates for the first edit turn.";
     const latestPrompt = "emit 1 coalesced agent stream updates for the latest edit turn.";
+    const replacementPrompt =
+      "emit 1 coalesced agent stream updates for the edited replacement turn.";
     const editRequests = observeEditRequests(page);
     const session = await seedMockAgentWorkspace({
       repoPrefix: "edit-last-user-message-e2e-",
@@ -118,6 +122,7 @@ test.describe("Edit latest user message", () => {
       const reopenedEditor = page.getByTestId("edit-last-user-message-editor");
       const reopenedInput = reopenedEditor.getByRole("textbox", { name: "Edit message" });
       await expect(reopenedInput).toHaveValue(latestPrompt);
+      await reopenedInput.fill(replacementPrompt);
       const submit = reopenedEditor.getByRole("button", { name: "Submit edit" });
       await expect(submit).toBeEnabled();
       await submit.evaluate((element) => {
@@ -130,15 +135,30 @@ test.describe("Edit latest user message", () => {
       await expect(submit).toBeDisabled();
       await expect.poll(() => editRequests.length).toBe(1);
 
-      await expect(userMessage(page, latestPrompt)).toBeVisible({ timeout: 15_000 });
-      await expect(userMessage(page, latestPrompt)).toHaveCount(1);
+      await expect(reopenedEditor).toHaveCount(0);
+      const replacementMessage = userMessage(page, replacementPrompt);
+      const unknownHistoryToast = page
+        .getByTestId("app-toast-message")
+        .filter({ hasText: UNKNOWN_HISTORY_MESSAGE });
+      const editOutcome = await Promise.race([
+        replacementMessage
+          .waitFor({ state: "visible", timeout: 15_000 })
+          .then(() => "replacement" as const),
+        unknownHistoryToast
+          .waitFor({ state: "visible", timeout: 15_000 })
+          .then(() => "unknown" as const),
+      ]);
+      expect(editOutcome).toBe("replacement");
+      await expect(replacementMessage).toHaveCount(1);
+      await expect(userMessage(page, latestPrompt)).toHaveCount(0);
       await expect(userMessage(page, firstPrompt)).toBeVisible();
       await expectAgentIdle(page);
+      await expect(unknownHistoryToast).toHaveCount(0);
 
       expect(editRequests[0]).toMatchObject({
         type: EDIT_REQUEST_TYPE,
         agentId: session.agentId,
-        replacementText: latestPrompt,
+        replacementText: replacementPrompt,
       });
       expect(page.url()).toBe(routeBefore);
       expect(page.context().pages()).toHaveLength(browserPageCountBefore);
@@ -230,9 +250,7 @@ test.describe("Edit latest user message", () => {
       await editor.getByRole("textbox", { name: "Edit message" }).fill(replacementPrompt);
       await editor.getByRole("button", { name: "Submit edit" }).click();
 
-      await expect(page.getByTestId("app-toast-message")).toHaveText(
-        "The conversation state could not be confirmed. Your edit was restored while history refreshes.",
-      );
+      await expect(page.getByTestId("app-toast-message")).toHaveText(UNKNOWN_HISTORY_MESSAGE);
       await expect(editor).toHaveCount(0);
       await expectComposerDraft(page, replacementPrompt);
       await expectComposerEditable(page);
