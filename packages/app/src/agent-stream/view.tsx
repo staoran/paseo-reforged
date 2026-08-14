@@ -121,6 +121,7 @@ import {
 } from "./retained-session-selectors";
 import { requestIdleProjectionActivityDetails } from "./projection-detail-prefetch";
 import { useTurnChanges } from "./use-turn-changes";
+import { resolveToolCallExpansionPolicy } from "./tool-call-expansion";
 import {
   getEditableLastUserMessageId,
   type LastUserMessageEditController,
@@ -899,17 +900,18 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
     const renderThoughtItem = useCallback(
       (layoutItem: StreamLayoutItem, item: Extract<StreamItem, { kind: "thought" }>) => {
+        const expansionPolicy = resolveToolCallExpansionPolicy(autoExpandReasoning, "thinking");
         return (
           <ToolCallSlot
-            key={autoExpandReasoning ? "expanded" : "collapsed"}
+            key={expansionPolicy.remountKey}
             itemId={item.id}
             onInlineDetailsExpandedChangeByItemId={setInlineDetailsExpanded}
             toolName="thinking"
             args={item.text}
             status={item.status === "ready" ? "completed" : "executing"}
             isLastInSequence={layoutItem.isLastInToolSequence}
-            defaultExpanded={autoExpandReasoning}
-            forceInline={autoExpandReasoning}
+            defaultExpanded={expansionPolicy.defaultExpanded}
+            forceInline={expansionPolicy.forceInline}
           />
         );
       },
@@ -923,6 +925,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         maxDetailHeight?: number,
       ) => {
         const { payload } = item;
+        const expansionPolicy = resolveToolCallExpansionPolicy(autoExpandReasoning, "tool");
 
         if (payload.source === "agent") {
           const data = payload.data;
@@ -940,6 +943,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
           return (
             <ToolCallSlot
+              key={expansionPolicy.remountKey}
               itemId={item.id}
               onInlineDetailsExpandedChangeByItemId={setInlineDetailsExpanded}
               toolName={data.name}
@@ -951,6 +955,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               isLastInSequence={isLastInSequence}
               onOpenFilePath={handleToolCallOpenFile}
               maxDetailHeight={maxDetailHeight}
+              defaultExpanded={expansionPolicy.defaultExpanded}
             />
           );
         }
@@ -958,6 +963,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         const data = payload.data;
         return (
           <ToolCallSlot
+            key={expansionPolicy.remountKey}
             itemId={item.id}
             onInlineDetailsExpandedChangeByItemId={setInlineDetailsExpanded}
             toolName={data.toolName}
@@ -967,10 +973,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             isLastInSequence={isLastInSequence}
             onOpenFilePath={handleToolCallOpenFile}
             maxDetailHeight={maxDetailHeight}
+            defaultExpanded={expansionPolicy.defaultExpanded}
           />
         );
       },
-      [context.cwd, setInlineDetailsExpanded, handleToolCallOpenFile],
+      [autoExpandReasoning, context.cwd, setInlineDetailsExpanded, handleToolCallOpenFile],
     );
 
     const renderToolCallItem = useCallback(

@@ -97,6 +97,7 @@ import {
   useAssistantLinkPress,
 } from "@/assistant-file-links";
 import { getCompactionMarkerLabel } from "./message-compaction-label";
+import { createExpandableBadgeTextStyle } from "./expandable-badge-typography";
 import { useAssistantImage } from "@/assistant-image/use-assistant-image";
 import {
   AttachmentFrame,
@@ -1190,8 +1191,7 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
   },
   label: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.normal,
+    ...createExpandableBadgeTextStyle(theme),
     flexShrink: 0,
   },
   labelActive: {
@@ -1205,8 +1205,7 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
     flexShrink: 1,
     minWidth: 0,
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.normal,
+    ...createExpandableBadgeTextStyle(theme),
     marginLeft: theme.spacing[2],
   },
   secondaryLabelActive: {
@@ -1214,8 +1213,7 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
   },
   shimmerText: {
     color: "transparent",
-    fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.normal,
+    ...createExpandableBadgeTextStyle(theme),
   },
   spacer: {
     flex: 1,
@@ -2504,6 +2502,7 @@ function ExpandableBadgeSecondaryLabel({
   return (
     <Text
       style={secondaryLabelStyle}
+      dataSet={WORKSPACE_SURFACE_DATASET}
       numberOfLines={1}
       onLayout={shouldMeasureWebShimmer ? onSecondaryLayout : undefined}
     >
@@ -2529,11 +2528,15 @@ function ExpandableBadgeWebShimmerOverlay({
 }: ExpandableBadgeWebShimmerOverlayProps) {
   return (
     <View style={expandableBadgeStylesheet.shimmerOverlay} pointerEvents="none">
-      <Text style={shimmerLabelTextStyle} numberOfLines={1}>
+      <Text style={shimmerLabelTextStyle} dataSet={WORKSPACE_SURFACE_DATASET} numberOfLines={1}>
         {label}
       </Text>
       {secondaryLabel ? (
-        <Text style={shimmerSecondaryTextStyle} numberOfLines={1}>
+        <Text
+          style={shimmerSecondaryTextStyle}
+          dataSet={WORKSPACE_SURFACE_DATASET}
+          numberOfLines={1}
+        >
           {secondaryLabel}
         </Text>
       ) : null}
@@ -2608,6 +2611,7 @@ function ExpandableBadgeLabelRow({
     >
       <Text
         style={labelStyle}
+        dataSet={WORKSPACE_SURFACE_DATASET}
         numberOfLines={1}
         onLayout={shouldMeasureWebShimmer ? onLabelLayout : undefined}
       >
@@ -3244,6 +3248,7 @@ export const ToolCall = memo(function ToolCall({
       }),
     [toolName, status, error, effectiveDetail, metadata, cwd],
   );
+  const isInlineDetailsExpanded = shouldRenderInline && presentation.canOpenDetails && isExpanded;
   const handleOpenFile = useMemo(() => {
     const openFilePath = presentation.openFilePath;
     if (!openFilePath || !onOpenFilePath) {
@@ -3277,22 +3282,18 @@ export const ToolCall = memo(function ToolCall({
   ]);
 
   useEffect(() => {
-    if (!onInlineDetailsHoverChange || !shouldRenderInline || isExpanded) {
+    if (!onInlineDetailsHoverChange || !shouldRenderInline || isInlineDetailsExpanded) {
       return;
     }
     onInlineDetailsHoverChange(false);
-  }, [isExpanded, shouldRenderInline, onInlineDetailsHoverChange]);
+  }, [isInlineDetailsExpanded, shouldRenderInline, onInlineDetailsHoverChange]);
 
   useEffect(() => {
     if (!onInlineDetailsExpandedChange) {
       return;
     }
-    if (!shouldRenderInline) {
-      onInlineDetailsExpandedChange(false);
-      return;
-    }
-    onInlineDetailsExpandedChange(isExpanded);
-  }, [isExpanded, shouldRenderInline, onInlineDetailsExpandedChange]);
+    onInlineDetailsExpandedChange(isInlineDetailsExpanded);
+  }, [isInlineDetailsExpanded, onInlineDetailsExpandedChange]);
 
   useEffect(() => {
     if (!onInlineDetailsExpandedChange) {
@@ -3338,7 +3339,7 @@ export const ToolCall = memo(function ToolCall({
       label={presentation.displayName}
       secondaryLabel={presentation.summary}
       icon={presentation.icon}
-      isExpanded={shouldRenderInline && isExpanded}
+      isExpanded={isInlineDetailsExpanded}
       onToggle={presentation.canOpenDetails ? handleToggle : undefined}
       onOpenFile={handleOpenFile}
       renderDetails={presentation.canOpenDetails && shouldRenderInline ? renderDetails : undefined}
