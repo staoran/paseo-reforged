@@ -28,6 +28,11 @@ const DRAG_OVERLAY_STYLE: React.CSSProperties = {
   WebkitAppRegion: "drag",
 };
 
+const DRAG_OVERLAY_WITH_BOTTOM_BORDER_STYLE: React.CSSProperties = {
+  ...DRAG_OVERLAY_STYLE,
+  height: "calc(100% + 1px)",
+};
+
 const TOP_RESIZER_STYLE: React.CSSProperties = {
   position: "absolute",
   top: 0,
@@ -37,11 +42,22 @@ const TOP_RESIZER_STYLE: React.CSSProperties = {
   WebkitAppRegion: "no-drag",
 };
 
+interface TitlebarDragRegionProps {
+  /** True only when this host touches the physical top edge of the window */
+  ownsWindowTopEdge: boolean;
+  /** Extends through a one-pixel bottom border owned by this host */
+  coversBottomBorder?: boolean;
+}
+
 /**
- * Static drag overlay and top-edge resizer. Returns null on non-Electron.
- * Place as FIRST child of any positioned container that should be draggable.
+ * Static drag overlay and, for a physical top-edge host, its resize strip
+ * Returns null on non-Electron
+ * Place as FIRST child of any positioned container that should be draggable
  */
-export function TitlebarDragRegion() {
+export function TitlebarDragRegion({
+  ownsWindowTopEdge,
+  coversBottomBorder = false,
+}: TitlebarDragRegionProps) {
   if (isNative || !getIsElectronRuntime()) {
     return null;
   }
@@ -49,9 +65,13 @@ export function TitlebarDragRegion() {
   return (
     <>
       {/* Drag overlay — VS Code .titlebar-drag-region (titlebarpart.css:57-64) */}
-      <div style={DRAG_OVERLAY_STYLE} />
-      {/* Top-edge resizer — VS Code .resizer (titlebarpart.css:249-256) */}
-      <div style={TOP_RESIZER_STYLE} />
+      <div
+        style={coversBottomBorder ? DRAG_OVERLAY_WITH_BOTTOM_BORDER_STYLE : DRAG_OVERLAY_STYLE}
+      />
+      {ownsWindowTopEdge ? (
+        /* Top-edge resizer — VS Code .resizer (titlebarpart.css:249-256) */
+        <div style={TOP_RESIZER_STYLE} />
+      ) : null}
     </>
   );
 }

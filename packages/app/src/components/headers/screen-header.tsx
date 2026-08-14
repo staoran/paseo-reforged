@@ -57,7 +57,7 @@ export function ScreenHeader({
           onLayout={onRowLayout}
           style={rowStyle}
         >
-          <TitlebarDragRegion />
+          <TitlebarDragRegion ownsWindowTopEdge coversBottomBorder />
           <View style={leftCombinedStyle}>{left}</View>
           <View style={rightCombinedStyle}>{right}</View>
         </WindowChromeSafeArea>

@@ -8,6 +8,7 @@ const EXPO_PORT = process.env.EXPO_PORT ?? "8082";
 const CDP_URL = process.env.CDP_URL ?? `http://127.0.0.1:${CDP_PORT}`;
 const OUTPUT_DIR = process.env.ELECTRON_VERIFY_OUTPUT_DIR ?? "/tmp/electron-verification";
 const APP_URL_FRAGMENT = process.env.ELECTRON_VERIFY_APP_URL_FRAGMENT ?? `localhost:${EXPO_PORT}`;
+const WORKSPACE_ID = process.env.ELECTRON_VERIFY_WORKSPACE_ID?.trim() || null;
 const REQUIRED_DESKTOP_KEYS = ["invoke", "events", "window", "dialog", "notification", "opener"];
 const INTERACTIVE_SELECTOR = [
   "button",
@@ -109,6 +110,10 @@ function settingsGeometryClearsWindowChrome(geometry, platform) {
   const obstruction = getWindowChromeObstruction(platform, geometry.innerWidth);
   const consumer = platform === "darwin" ? geometry.backButtonRect : geometry.detailHeaderLeftRect;
   return Boolean(consumer && !rectsIntersect(consumer, obstruction));
+}
+
+function rectHasArea(rect) {
+  return Boolean(rect && rect.width > 0 && rect.height > 0);
 }
 
 async function readBridgeFullscreen(page) {
@@ -340,6 +345,18 @@ async function inspectTitlebarRegions(page) {
       interactiveSelector,
       dragRegionCount: dragSummaries.length,
       verifiedRegionCount: verifiedRegions.length,
+      topEdgeResizers: dragSummaries
+        .flatMap((entry) => entry.siblingResizers)
+        .filter(
+          (entry, index, entries) =>
+            entries.findIndex(
+              (existingEntry) =>
+                Math.abs(existingEntry.top - entry.top) <= 1 &&
+                Math.abs(existingEntry.left - entry.left) <= 1 &&
+                Math.abs(existingEntry.width - entry.width) <= 1 &&
+                Math.abs(existingEntry.height - entry.height) <= 1,
+            ) === index,
+        ),
       candidate,
       suspiciousDragHosts: suspiciousDragHosts.slice(0, 10),
       dragRegions: dragSummaries.slice(0, 10),
@@ -453,7 +470,7 @@ async function inspectHalfScreenSettingsLayout(page, platform) {
         details.sidebarRect.width >= 300 &&
         details.detailPaneRect !== null &&
         details.detailPaneRect.width >= 400 &&
-        details.outerAppSidebarSettingsRect === null &&
+        !rectHasArea(details.outerAppSidebarSettingsRect) &&
         Math.abs(details.sidebarRect.left) <= 1 &&
         sidebarRight !== null &&
         Math.abs(sidebarRight - details.detailPaneRect.left) <= 1 &&
@@ -547,6 +564,36 @@ async function navigateToSettings(page, serverId) {
     .waitFor({ state: "visible", timeout: 30_000 });
 }
 
+async function inspectWorkspaceDragContinuity(page, serverId) {
+  if (!WORKSPACE_ID) {
+    return { skipped: true, reason: "ELECTRON_VERIFY_WORKSPACE_ID is not set" };
+  }
+
+  await page.evaluate(
+    ({ nextServerId, workspaceId }) => {
+      window.location.href = `/h/${nextServerId}/workspace/${workspaceId}`;
+    },
+    { nextServerId: serverId, workspaceId: WORKSPACE_ID },
+  );
+  await page
+    .getByTestId("workspace-tabs-row")
+    .first()
+    .waitFor({ state: "visible", timeout: 30_000 });
+  await page.getByTestId("workspace-header-title").waitFor({ state: "visible", timeout: 30_000 });
+
+  const dragRegions = await inspectTitlebarRegions(page);
+  const continuity = measureWorkspaceDragContinuity(dragRegions);
+  const screenshot = await captureScreenshot(page, "08-workspace-drag-continuity.png");
+  return {
+    skipped: false,
+    route: page.url(),
+    dragRegions,
+    continuity,
+    screenshot,
+    passed: evaluateTopEdgeResizerOwnership(dragRegions) && continuity.passed,
+  };
+}
+
 async function dismissOuterAppSidebarIfVisible(page) {
   const sidebarSettingsButton = page.locator('[data-testid="sidebar-settings"]').first();
   const menuToggle = page.locator('[data-testid="menu-button"]').first();
@@ -595,6 +642,51 @@ function evaluateDragRegionCheck(dragRegionCheck) {
   );
 }
 
+function evaluateTopEdgeResizerOwnership(dragRegionCheck) {
+  return (
+    dragRegionCheck.topEdgeResizers.length > 0 &&
+    dragRegionCheck.topEdgeResizers.every((resizer) => Math.abs(resizer.top) <= 1)
+  );
+}
+
+function measureWorkspaceDragContinuity(dragRegionCheck) {
+  const regions = dragRegionCheck.dragRegions
+    .filter((region) => region.top >= 0 && region.top < 220)
+    .map((region) => ({
+      top: region.top,
+      left: region.left,
+      width: region.width,
+      height: region.height,
+      right: region.left + region.width,
+      bottom: region.top + region.height,
+    }));
+  const adjacentPairs = [];
+
+  for (const lower of regions) {
+    const upper = regions
+      .filter((candidate) => candidate.top < lower.top)
+      .filter((candidate) => {
+        const horizontalOverlap = Math.max(
+          0,
+          Math.min(candidate.right, lower.right) - Math.max(candidate.left, lower.left),
+        );
+        return horizontalOverlap >= Math.min(candidate.width, lower.width) * 0.9;
+      })
+      .filter((candidate) => lower.top - candidate.bottom >= -1)
+      .filter((candidate) => lower.top - candidate.bottom <= 4)
+      .sort((left, right) => right.bottom - left.bottom)[0];
+
+    if (upper) {
+      adjacentPairs.push({ upper, lower, gap: lower.top - upper.bottom });
+    }
+  }
+
+  return {
+    adjacentPairs,
+    passed: adjacentPairs.length > 0 && adjacentPairs.every((pair) => pair.gap <= 0),
+  };
+}
+
 function evaluateTrafficLightAvoidance(dragRegionCheck) {
   const firstInteractive = dragRegionCheck.candidate?.explicitNoDragInteractive?.find(
     (entry) => entry.testId === "settings-back-to-workspace",
@@ -610,6 +702,16 @@ async function collectDragRegionResults(page, dragRegionCheck, dragScreenshot, r
     check: "titlebar-drag-structure",
     pass: evaluateDragRegionCheck(dragRegionCheck),
     details: dragRegionCheck,
+    screenshot: dragScreenshot,
+  });
+
+  results.push({
+    check: "titlebar-top-edge-resizer-ownership",
+    pass: evaluateTopEdgeResizerOwnership(dragRegionCheck),
+    details: {
+      topEdgeResizers: dragRegionCheck.topEdgeResizers,
+      note: "Every 4px no-drag resize strip must belong to the physical viewport top edge.",
+    },
     screenshot: dragScreenshot,
   });
 
@@ -750,6 +852,15 @@ async function main() {
       pass: halfScreenDetails.supported && halfScreenDetails.passed,
       details: halfScreenDetails,
       screenshot: halfScreenDetails.screenshot ?? null,
+    });
+
+    const workspaceDragContinuity = await inspectWorkspaceDragContinuity(page, serverId);
+    results.push({
+      check: "workspace-titlebar-drag-continuity",
+      pass: workspaceDragContinuity.skipped || workspaceDragContinuity.passed,
+      skipped: workspaceDragContinuity.skipped,
+      details: workspaceDragContinuity,
+      screenshot: workspaceDragContinuity.screenshot ?? null,
     });
 
     const desktopDetectionScreenshot = await captureScreenshot(page, "07-desktop-detection.png");

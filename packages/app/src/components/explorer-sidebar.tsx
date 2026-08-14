@@ -353,7 +353,7 @@ function ExplorerSidebarContent({
         style={styles.header}
         testID="explorer-header"
       >
-        <TitlebarDragRegion />
+        <TitlebarDragRegion ownsWindowTopEdge />
         <View style={styles.tabsContainer}>
           {isGit && (
             <ExplorerTabButton

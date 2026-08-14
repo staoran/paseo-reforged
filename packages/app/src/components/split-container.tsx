@@ -188,6 +188,7 @@ interface SplitPaneViewProps extends Omit<
   showDropZones: boolean;
   dropPreview: SplitDropZoneHover | null;
   tabDropPreview: TabDropPreview | null;
+  ownsWindowTopEdge: boolean;
 }
 
 interface MountedTabSlotProps {
@@ -820,6 +821,7 @@ function SplitNodeView({
           showDropZones={showDropZones}
           dropPreview={dropPreview}
           tabDropPreview={tabDropPreview}
+          ownsWindowTopEdge={windowChromeCorners !== "none"}
           focusModeEnabled={focusModeEnabled}
           onExitFocusMode={onExitFocusMode}
         />
@@ -926,6 +928,7 @@ function SplitPaneView({
   showDropZones,
   dropPreview,
   tabDropPreview,
+  ownsWindowTopEdge,
   focusModeEnabled,
   onExitFocusMode,
 }: SplitPaneViewProps) {
@@ -1039,7 +1042,7 @@ function SplitPaneView({
     <RenderProfile id={`SplitPaneView:${pane.id}`}>
       <View ref={paneRef} collapsable={false} style={styles.pane}>
         <WindowChromeSafeArea placement="inline" style={styles.paneTabs}>
-          <TitlebarDragRegion />
+          <TitlebarDragRegion ownsWindowTopEdge={ownsWindowTopEdge} />
           <WorkspaceDesktopTabsRow
             paneId={pane.id}
             isFocused={isFocused}

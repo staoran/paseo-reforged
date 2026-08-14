@@ -855,10 +855,10 @@ function DesktopSidebar({
         <View style={styles.sidebarDragArea}>
           {ownsTopLeft ? (
             <View style={styles.desktopChromeRow}>
-              <TitlebarDragRegion />
+              <TitlebarDragRegion ownsWindowTopEdge />
             </View>
           ) : (
-            <TitlebarDragRegion />
+            <TitlebarDragRegion ownsWindowTopEdge />
           )}
           <View style={sidebarHeaderGroupStyle}>
             <SidebarNewWorkspaceHeaderRow

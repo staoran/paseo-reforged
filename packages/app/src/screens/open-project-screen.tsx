@@ -92,7 +92,7 @@ export function OpenProjectScreen() {
     <View style={styles.container}>
       <MenuHeader borderless />
       <View style={styles.content}>
-        <TitlebarDragRegion />
+        <TitlebarDragRegion ownsWindowTopEdge={false} />
         <View style={styles.logo}>
           <PaseoLogo size={52} />
         </View>

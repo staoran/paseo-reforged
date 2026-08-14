@@ -2293,7 +2293,7 @@ export function NewWorkspaceScreen({
     <FileDropZone style={styles.container}>
       <ScreenHeader left={screenHeaderLeft} borderless />
       <View style={contentStyle}>
-        <TitlebarDragRegion />
+        <TitlebarDragRegion ownsWindowTopEdge={false} />
         <ReanimatedAnimated.View style={centeredStyle}>
           <View style={styles.composerTitleContainer}>
             <Text style={styles.composerTitle}>{t("newWorkspace.title")}</Text>

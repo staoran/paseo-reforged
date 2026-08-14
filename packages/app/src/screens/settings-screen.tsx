@@ -1101,7 +1101,7 @@ function SettingsSidebar({
       {isDesktop ? (
         <View style={innerContainerStyle}>
           <View style={sidebarStyles.sidebarDragArea}>
-            <TitlebarDragRegion />
+            <TitlebarDragRegion ownsWindowTopEdge />
             <WindowChromeSafeArea placement="below" />
             <SidebarHeaderRow
               icon={ArrowLeft}
