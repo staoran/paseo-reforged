@@ -110,15 +110,24 @@ test("change gating allows superseded workflow runs to cancel", () => {
   }
 });
 
-test("Android APK validation follows the native base-version contract", () => {
+test("Android APK build and validation follow the arm64 base-version contract", () => {
   const workflowSource = readFileSync(androidReleaseWorkflowPath, "utf8");
+  const buildStep = workflowSource
+    .split("- name: Build Android APK on GitHub runner", 2)[1]
+    ?.split("- name: Save Gradle cache", 1)[0];
   const validationStep = workflowSource
     .split("- name: Validate Android APK", 2)[1]
     ?.split("- name: Upload APK to GitHub Release", 1)[0];
 
+  assert.ok(buildStep, "missing Android APK build step");
+  assert.match(buildStep, /^\s+ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a$/m);
   assert.ok(validationStep, "missing Android APK validation step");
   assert.match(validationStep, /versionName='\$RELEASE_BASE_VERSION'/);
   assert.doesNotMatch(validationStep, /versionName='\$RELEASE_VERSION'/);
+  assert.ok(
+    validationStep.includes(`if [[ "$native_code_line" != "native-code: 'arm64-v8a'" ]]; then`),
+    "missing exact arm64-only APK validation",
+  );
 });
 
 test("focused contracts stay inside existing required checks", () => {

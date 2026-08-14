@@ -126,6 +126,7 @@ jobs:
         shell: bash
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a
         run: |
           set -euo pipefail
 
@@ -182,8 +183,11 @@ jobs:
 
           "$apksigner" verify --verbose --print-certs "$asset_path"
 
-          package_line="$("$aapt" dump badging "$asset_path" | sed -n '1p')"
+          badging="$("$aapt" dump badging "$asset_path")"
+          package_line="$(sed -n '1p' <<< "$badging")"
+          native_code_line="$(sed -n '/^native-code:/p' <<< "$badging")"
           echo "$package_line"
+          echo "$native_code_line"
           if ! grep -Fq "name='sh.paseo.reforged'" <<< "$package_line"; then
             echo "::error::Expected package sh.paseo.reforged."
             exit 1
@@ -192,8 +196,12 @@ jobs:
             echo "::error::Expected versionName $RELEASE_BASE_VERSION."
             exit 1
           fi
+          if [[ "$native_code_line" != "native-code: 'arm64-v8a'" ]]; then
+            echo "::error::Expected only arm64-v8a native code, got: ${native_code_line:-<missing>}."
+            exit 1
+          fi
 
-          echo "Verified package=sh.paseo.reforged versionName=$RELEASE_BASE_VERSION asset=$asset_name"
+          echo "Verified package=sh.paseo.reforged versionName=$RELEASE_BASE_VERSION nativeCode=arm64-v8a asset=$asset_name"
 
           echo "asset_name=$asset_name" >> "$GITHUB_OUTPUT"
           echo "asset_path=$asset_path" >> "$GITHUB_OUTPUT"
