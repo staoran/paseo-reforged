@@ -123,6 +123,9 @@ test("Android APK build monitoring and validation follow the arm64 base-version 
     ?.split("- name: Upload APK to GitHub Release", 1)[0];
 
   assert.ok(swapStep, "missing Android APK swap provisioning step");
+  assert.doesNotMatch(workflowSource, /ANDROID_BUILD_SWAP_FILE:\s*\$\{\{\s*runner\.temp/);
+  assert.match(swapStep, /ANDROID_BUILD_SWAP_FILE="\$RUNNER_TEMP\/paseo-android-build\.swap"/);
+  assert.match(swapStep, /ANDROID_BUILD_SWAP_FILE=.*>> "\$GITHUB_ENV"/);
   assert.match(swapStep, /swap_size_mb=2048/);
   assert.match(swapStep, /sudo swapon "\$ANDROID_BUILD_SWAP_FILE"/);
   assert.ok(buildStep, "missing Android APK build step");

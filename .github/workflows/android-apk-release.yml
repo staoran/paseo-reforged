@@ -28,7 +28,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       EAS_PROJECT_ID: ${{ vars.EAS_PROJECT_ID }}
-      ANDROID_BUILD_SWAP_FILE: ${{ runner.temp }}/paseo-android-build.swap
 
     steps:
       - uses: actions/checkout@v4
@@ -110,6 +109,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          ANDROID_BUILD_SWAP_FILE="$RUNNER_TEMP/paseo-android-build.swap"
+          echo "ANDROID_BUILD_SWAP_FILE=$ANDROID_BUILD_SWAP_FILE" >> "$GITHUB_ENV"
 
           if [[ "$ANDROID_BUILD_SWAP_FILE" != "$RUNNER_TEMP/"* ]]; then
             echo "::error::Swap file must stay inside RUNNER_TEMP."
