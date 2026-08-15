@@ -110,14 +110,20 @@ test("change gating allows superseded workflow runs to cancel", () => {
   }
 });
 
-test("Android APK build observability and validation follow the arm64 base-version contract", () => {
+test("Android APK build observability and task cache follow the arm64 base-version contract", () => {
   const workflowSource = readFileSync(androidReleaseWorkflowPath, "utf8");
   const swapStep = workflowSource
     .split("- name: Provision Android build swap", 2)[1]
     ?.split("- name: Restore Gradle cache", 1)[0];
+  const restoreCacheStep = workflowSource
+    .split("- name: Restore Gradle cache", 2)[1]
+    ?.split("- name: Install JS dependencies", 1)[0];
   const buildStep = workflowSource
     .split("- name: Build Android APK on GitHub runner", 2)[1]
     ?.split("- name: Save Gradle cache", 1)[0];
+  const saveCacheStep = workflowSource
+    .split("- name: Save Gradle cache", 2)[1]
+    ?.split("- name: Validate Android APK", 1)[0];
   const validationStep = workflowSource
     .split("- name: Validate Android APK", 2)[1]
     ?.split("- name: Upload APK to GitHub Release", 1)[0];
@@ -128,6 +134,13 @@ test("Android APK build observability and validation follow the arm64 base-versi
   assert.match(swapStep, /ANDROID_BUILD_SWAP_FILE=.*>> "\$GITHUB_ENV"/);
   assert.match(swapStep, /swap_size_mb=2048/);
   assert.match(swapStep, /sudo swapon "\$ANDROID_BUILD_SWAP_FILE"/);
+  assert.ok(restoreCacheStep, "missing Gradle cache restore step");
+  assert.match(restoreCacheStep, /uses: actions\/cache\/restore@v5/);
+  assert.match(
+    restoreCacheStep,
+    /key: android-gradle-v1-\$\{\{ runner\.os \}\}-\$\{\{ runner\.arch \}\}-java21-\$\{\{ hashFiles\('package-lock\.json'\) \}\}-\$\{\{ github\.run_id \}\}/,
+  );
+  assert.match(restoreCacheStep, /restore-keys:/);
   assert.ok(buildStep, "missing Android APK build step");
   assert.match(buildStep, /^\s+ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a$/m);
   assert.match(buildStep, /^\s+GRADLE_OPTS: >-$/m);
@@ -139,7 +152,7 @@ test("Android APK build observability and validation follow the arm64 base-versi
     /-Dorg\.gradle\.jvmargs="-Xmx3072m -XX:MaxMetaspaceSize=768m -Dkotlin\.daemon\.jvm\.options=-Xmx1024m"/,
   );
   assert.match(buildStep, /^\s+NODE_OPTIONS: --max-old-space-size=3072$/m);
-  assert.doesNotMatch(buildStep, /-Dorg\.gradle\.caching=true/);
+  assert.match(buildStep, /-Dorg\.gradle\.caching=true/);
   assert.match(buildStep, /android_perf_prefix="\[ANDROID-PERF\]"/);
   assert.match(buildStep, /monitor_interval_seconds=15/);
   assert.match(buildStep, /\/proc\/self\/cgroup/);
@@ -161,6 +174,14 @@ test("Android APK build observability and validation follow the arm64 base-versi
     buildStep,
     /npx --no-install eas build \\\n+\s+--platform android \\\n+\s+--profile production-apk \\\n+\s+--local \\\n+\s+--non-interactive \\\n+\s+--output "\$asset_path"/,
   );
+  assert.ok(saveCacheStep, "missing Gradle cache save step");
+  assert.match(saveCacheStep, /uses: actions\/cache\/save@v5/);
+  assert.match(
+    saveCacheStep,
+    /if: \$\{\{ always\(\) && steps\.gradle-cache\.outputs\.cache-hit != 'true' \}\}/,
+  );
+  assert.doesNotMatch(saveCacheStep, /cache-matched-key/);
+  assert.match(saveCacheStep, /key: \$\{\{ steps\.gradle-cache\.outputs\.cache-primary-key \}\}/);
   assert.ok(validationStep, "missing Android APK validation step");
   assert.match(validationStep, /versionName='\$RELEASE_BASE_VERSION'/);
   assert.doesNotMatch(validationStep, /versionName='\$RELEASE_VERSION'/);

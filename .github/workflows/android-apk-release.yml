@@ -158,6 +158,7 @@ jobs:
             -Xmx3072m
             -XX:MaxMetaspaceSize=768m
             -Dorg.gradle.daemon=false
+            -Dorg.gradle.caching=true
             -Dorg.gradle.jvmargs="-Xmx3072m -XX:MaxMetaspaceSize=768m -Dkotlin.daemon.jvm.options=-Xmx1024m"
           NODE_OPTIONS: --max-old-space-size=3072
         run: |
@@ -326,9 +327,9 @@ jobs:
           echo "asset_name=$asset_name" >> "$GITHUB_OUTPUT"
           echo "asset_path=$asset_path" >> "$GITHUB_OUTPUT"
 
-      # A unique primary key lets a cancelled build publish a newer partial cache
+      # A unique primary key lets each build publish a newer cache after prefix restores
       - name: Save Gradle cache
-        if: ${{ always() && (steps.gradle-cache.outputs.cache-matched-key == '' || steps.build.outcome != 'success') }}
+        if: ${{ always() && steps.gradle-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v5
         with:
           path: |
