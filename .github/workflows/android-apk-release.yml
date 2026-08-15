@@ -105,6 +105,43 @@ jobs:
           distribution: "temurin"
           java-version: "21"
 
+      - name: Provision Android build swap
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ANDROID_BUILD_SWAP_FILE="$RUNNER_TEMP/paseo-android-build.swap"
+          echo "ANDROID_BUILD_SWAP_FILE=$ANDROID_BUILD_SWAP_FILE" >> "$GITHUB_ENV"
+
+          if [[ "$ANDROID_BUILD_SWAP_FILE" != "$RUNNER_TEMP/"* ]]; then
+            echo "::error::Swap file must stay inside RUNNER_TEMP."
+            exit 1
+          fi
+
+          swap_size_mb=2048
+          sudo fallocate -l "${swap_size_mb}M" "$ANDROID_BUILD_SWAP_FILE"
+          sudo chmod 600 "$ANDROID_BUILD_SWAP_FILE"
+          sudo mkswap "$ANDROID_BUILD_SWAP_FILE"
+          sudo swapon "$ANDROID_BUILD_SWAP_FILE"
+
+          if ! sudo swapon --show=NAME --noheadings | awk '{$1=$1; print}' | grep -Fxq "$ANDROID_BUILD_SWAP_FILE"; then
+            echo "::error::Failed to activate Android build swap."
+            exit 1
+          fi
+
+          free -h
+
+      - name: Restore Gradle cache
+        id: gradle-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: android-gradle-v1-${{ runner.os }}-${{ runner.arch }}-java21-${{ hashFiles('package-lock.json') }}-${{ github.run_id }}
+          restore-keys: |
+            android-gradle-v1-${{ runner.os }}-${{ runner.arch }}-java21-${{ hashFiles('package-lock.json') }}-
+
       - name: Install JS dependencies
         run: node scripts/npm-retry.mjs ci
         env:
@@ -115,6 +152,14 @@ jobs:
         shell: bash
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a
+          # Keep the local build below the memory envelope of a free hosted runner
+          GRADLE_OPTS: >-
+            -Xmx3072m
+            -XX:MaxMetaspaceSize=768m
+            -Dorg.gradle.daemon=false
+            -Dorg.gradle.jvmargs="-Xmx3072m -XX:MaxMetaspaceSize=768m -Dkotlin.daemon.jvm.options=-Xmx1024m"
+          NODE_OPTIONS: --max-old-space-size=3072
         run: |
           set -euo pipefail
 
@@ -123,12 +168,34 @@ jobs:
 
           cd packages/app
 
+          # Keep the runner observable through Gradle phases that otherwise emit no output
+          monitor_build_resources() {
+            while true; do
+              memory_available_mb="$(awk '/MemAvailable:/ { printf "%d", $2 / 1024 }' /proc/meminfo)"
+              swap_free_mb="$(awk '/SwapFree:/ { printf "%d", $2 / 1024 }' /proc/meminfo)"
+              runner_temp_available_mb="$(df -Pm "$RUNNER_TEMP" | awk 'NR == 2 { print $4 }')"
+              echo "Build heartbeat utc=$(date -u +%Y-%m-%dT%H:%M:%SZ) memoryAvailable=${memory_available_mb}MiB swapFree=${swap_free_mb}MiB runnerTempAvailable=${runner_temp_available_mb}MiB"
+              sleep 30
+            done
+          }
+
+          monitor_build_resources &
+          build_monitor_pid=$!
+          stop_build_monitor() {
+            kill "$build_monitor_pid" 2>/dev/null || true
+            wait "$build_monitor_pid" 2>/dev/null || true
+          }
+          trap stop_build_monitor EXIT
+
           npx --no-install eas build \
             --platform android \
             --profile production-apk \
             --local \
             --non-interactive \
             --output "$asset_path"
+
+          stop_build_monitor
+          trap - EXIT
 
           if [[ ! -s "$asset_path" ]]; then
             echo "::error::Local EAS build did not create $asset_path."
@@ -137,6 +204,16 @@ jobs:
 
           echo "asset_name=$asset_name" >> "$GITHUB_OUTPUT"
           echo "asset_path=$asset_path" >> "$GITHUB_OUTPUT"
+
+      # A unique primary key lets a cancelled build publish a newer partial cache
+      - name: Save Gradle cache
+        if: ${{ always() && (steps.gradle-cache.outputs.cache-matched-key == '' || steps.build.outcome != 'success') }}
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ steps.gradle-cache.outputs.cache-primary-key }}
 
       - name: Validate Android APK
         id: artifact
@@ -161,8 +238,11 @@ jobs:
 
           "$apksigner" verify --verbose --print-certs "$asset_path"
 
-          package_line="$("$aapt" dump badging "$asset_path" | sed -n '1p')"
+          badging="$("$aapt" dump badging "$asset_path")"
+          package_line="$(sed -n '1p' <<< "$badging")"
+          native_code_line="$(sed -n '/^native-code:/p' <<< "$badging")"
           echo "$package_line"
+          echo "$native_code_line"
           if ! grep -Fq "name='sh.paseo.reforged'" <<< "$package_line"; then
             echo "::error::Expected package sh.paseo.reforged."
             exit 1
@@ -171,8 +251,12 @@ jobs:
             echo "::error::Expected versionName $RELEASE_BASE_VERSION."
             exit 1
           fi
+          if [[ "$native_code_line" != "native-code: 'arm64-v8a'" ]]; then
+            echo "::error::Expected only arm64-v8a native code, got: ${native_code_line:-<missing>}."
+            exit 1
+          fi
 
-          echo "Verified package=sh.paseo.reforged versionName=$RELEASE_BASE_VERSION asset=$asset_name"
+          echo "Verified package=sh.paseo.reforged versionName=$RELEASE_BASE_VERSION nativeCode=arm64-v8a asset=$asset_name"
 
           echo "asset_name=$asset_name" >> "$GITHUB_OUTPUT"
           echo "asset_path=$asset_path" >> "$GITHUB_OUTPUT"
@@ -182,3 +266,24 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload "$RELEASE_TAG" "${{ steps.artifact.outputs.asset_path }}" --clobber --repo "${{ github.repository }}"
+
+      - name: Remove Android build swap
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          if [[ "$ANDROID_BUILD_SWAP_FILE" != "$RUNNER_TEMP/"* ]]; then
+            echo "::warning::Refusing to remove swap outside RUNNER_TEMP."
+            exit 0
+          fi
+
+          if sudo swapon --show=NAME --noheadings | awk '{$1=$1; print}' | grep -Fxq "$ANDROID_BUILD_SWAP_FILE"; then
+            if ! sudo swapoff "$ANDROID_BUILD_SWAP_FILE"; then
+              echo "::warning::Failed to deactivate Android build swap; the hosted runner is ephemeral."
+              exit 0
+            fi
+          fi
+          if ! sudo rm -f -- "$ANDROID_BUILD_SWAP_FILE"; then
+            echo "::warning::Failed to remove Android build swap; the hosted runner is ephemeral."
+          fi

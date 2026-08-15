@@ -4,7 +4,7 @@
 
 - 当前编号基线：`0064`
 - 下一个建议编号：`0065`
-- 最后更新：`2026-08-14`
+- 最后更新：`2026-08-15`
 - 迁移说明：既有 `0001` 至 `0014` 任务已于 2026-08-02 合并迁移至 `mydocs/specs/`，旧 `mydocs/tasks/` 目录已删除；这些编号继续占用。
 
 ## 用途
@@ -112,7 +112,7 @@
 | 0059 | 已收口 | micro-spec | 已同步        | [状态分组显示项目名](micro_specs/0059_状态分组显示项目名.md)                                      | 2026-08-10 00:12 | desktop/compact 项目名 RED→GREEN；状态分组回归、5 单测、lint/format 通过；typecheck 仅有既有拖拽 prop 阻塞                            |
 | 0060 | 已收口 | spec       | 已同步        | [合并 upstream v0.3.1 到 Reforged](specs/0060_合并upstream_0.3.1到Reforged.md)                    | 2026-08-13       | 源 merge commit `948fd4a` 已合入本地 `main`；协议/存储/Hub、0059/0061、restart、identity 与静态回归通过，未 push                      |
 | 0061 | 已收口 | micro-spec | 已同步        | [恢复最后一条消息编辑入口](micro_specs/0061_恢复最后一条消息编辑入口.md)                          | 2026-08-12       | 独立提交 `f647346fe`；真实 Playwright seam RED→GREEN，完整 Edit UI、模型、server-info、wire 与静态回归通过                            |
-| 0062 | 发布中 | micro-spec | 执行中        | [从当前主分支发布0.3.1测试版](micro_specs/0062_从当前主分支发布0.3.1测试版.md)                    | 2026-08-13       | 已获明确 `go ahead`；保留 ACP pins，先推送最新 `main` 并等待 CI，再发布 `0.3.1-beta.1`                                                |
+| 0062 | 已收口 | micro-spec | 已同步        | [从当前主分支发布0.3.1测试版](micro_specs/0062_从当前主分支发布0.3.1测试版.md)                    | 2026-08-15       | `v0.3.1-beta.1` 已发布；main/tag、三条发布 workflow、24 个资产与 arm64-only APK 已核验；保留 ACP pins；禁止渠道未成功发布             |
 | 0063 | 已收口 | micro-spec | Review 完成   | [修复标题栏边界拖拽死带](micro_specs/0063_修复标题栏边界拖拽死带.md)                              | 2026-08-14       | 两个真实 Electron 切片均 Red→Green；连续性 gap `1→0`，原生 `y=46..52` 均为 `HTCAPTION`，完整 verifier、typecheck、lint 通过           |
 | 0064 | 已收口 | micro-spec | 已同步        | [工具调用字体与默认折叠](micro_specs/0064_工具调用字体与默认折叠.md)                              | 2026-08-14       | 两个单元 seam RED→GREEN，相关回归 `14/14`、typecheck、全仓 lint、目标 format 通过；按要求未做 e2e                                     |
 

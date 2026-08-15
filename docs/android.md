@@ -153,7 +153,7 @@ Supported values are `armeabi-v7a`, `arm64-v8a`, `x86`, and `x86_64`. The F-Droi
 
 Keep the excluded npm packages installed. Normal builds use them, while the F-Droid profile removes only their Android native modules and config plugins. Paseo always applies `expo-gradle-jvmargs` with `-Xmx4096m` and `-XX:MaxMetaspaceSize=1024m` so local Expo prebuilds have enough Gradle heap whether they use precompiled AARs or source-built Expo modules.
 
-The GitHub APK workflow runs `eas build --local` on its Ubuntu runner with the EAS `production-apk` profile. The build still authenticates with `EXPO_TOKEN` and uses the EAS-managed Android keystore for the Reforged project, but Gradle and Hermes run on GitHub Actions instead of an EAS remote worker, so the build does not consume EAS build quota or a paid resource class. Before upload, the workflow verifies the APK signature, package ID, and version name.
+The GitHub APK workflow runs `eas build --local` on its Ubuntu runner with the EAS `production-apk` profile. The build still authenticates with `EXPO_TOKEN` and uses the EAS-managed Android keystore for the Reforged project, but Gradle and Hermes run on GitHub Actions instead of an EAS remote worker, so the build does not consume EAS build quota or a paid resource class. It builds only `arm64-v8a`, so the GitHub prerelease APK supports 64-bit ARM devices but not 32-bit ARM devices or x86/x86_64 emulators. Before upload, the workflow verifies the APK signature, package ID, version name, and sole native ABI.
 
 ### React version lockstep
 

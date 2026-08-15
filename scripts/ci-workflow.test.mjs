@@ -110,15 +110,46 @@ test("change gating allows superseded workflow runs to cancel", () => {
   }
 });
 
-test("Android APK validation follows the native base-version contract", () => {
+test("Android APK build monitoring and validation follow the arm64 base-version contract", () => {
   const workflowSource = readFileSync(androidReleaseWorkflowPath, "utf8");
+  const swapStep = workflowSource
+    .split("- name: Provision Android build swap", 2)[1]
+    ?.split("- name: Restore Gradle cache", 1)[0];
+  const buildStep = workflowSource
+    .split("- name: Build Android APK on GitHub runner", 2)[1]
+    ?.split("- name: Save Gradle cache", 1)[0];
   const validationStep = workflowSource
     .split("- name: Validate Android APK", 2)[1]
     ?.split("- name: Upload APK to GitHub Release", 1)[0];
 
+  assert.ok(swapStep, "missing Android APK swap provisioning step");
+  assert.doesNotMatch(workflowSource, /ANDROID_BUILD_SWAP_FILE:\s*\$\{\{\s*runner\.temp/);
+  assert.match(swapStep, /ANDROID_BUILD_SWAP_FILE="\$RUNNER_TEMP\/paseo-android-build\.swap"/);
+  assert.match(swapStep, /ANDROID_BUILD_SWAP_FILE=.*>> "\$GITHUB_ENV"/);
+  assert.match(swapStep, /swap_size_mb=2048/);
+  assert.match(swapStep, /sudo swapon "\$ANDROID_BUILD_SWAP_FILE"/);
+  assert.ok(buildStep, "missing Android APK build step");
+  assert.match(buildStep, /^\s+ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a$/m);
+  assert.match(buildStep, /^\s+GRADLE_OPTS: >-$/m);
+  assert.match(buildStep, /-Xmx3072m/);
+  assert.match(buildStep, /-XX:MaxMetaspaceSize=768m/);
+  assert.match(buildStep, /-Dorg\.gradle\.daemon=false/);
+  assert.match(
+    buildStep,
+    /-Dorg\.gradle\.jvmargs="-Xmx3072m -XX:MaxMetaspaceSize=768m -Dkotlin\.daemon\.jvm\.options=-Xmx1024m"/,
+  );
+  assert.match(buildStep, /^\s+NODE_OPTIONS: --max-old-space-size=3072$/m);
+  assert.match(buildStep, /Build heartbeat/);
+  assert.match(buildStep, /memoryAvailable=/);
+  assert.match(buildStep, /swapFree=/);
+  assert.match(buildStep, /runnerTempAvailable=/);
   assert.ok(validationStep, "missing Android APK validation step");
   assert.match(validationStep, /versionName='\$RELEASE_BASE_VERSION'/);
   assert.doesNotMatch(validationStep, /versionName='\$RELEASE_VERSION'/);
+  assert.ok(
+    validationStep.includes(`if [[ "$native_code_line" != "native-code: 'arm64-v8a'" ]]; then`),
+    "missing exact arm64-only APK validation",
+  );
 });
 
 test("focused contracts stay inside existing required checks", () => {
