@@ -345,6 +345,19 @@ gh workflow run desktop-release.yml \
   -f checkout_ref=v0.2.0-beta.2
 ```
 
+For a transient Android retry, use the immutable tag as both the workflow ref
+and the input tag:
+
+```bash
+gh workflow run android-apk-release.yml \
+  --ref v0.2.0-beta.2 \
+  -f tag=v0.2.0-beta.2
+```
+
+GitHub Actions caches are scoped by the event ref. Using `--ref main` for an
+Android tag retry cannot reuse the cache saved by the tag-push run and may seed
+another multi-gigabyte cache under `main`.
+
 For a source fix after `v0.2.0-beta.2`, update the changelog and cut
 `v0.2.0-beta.3`. `release:push` deliberately refuses a local or remote tag that
 already points elsewhere.
