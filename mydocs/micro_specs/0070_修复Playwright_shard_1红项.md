@@ -6,8 +6,8 @@
 | ------------------ | -------------------------------------------------------- |
 | task_id            | `0070`                                                   |
 | spec layer         | `Feature Spec`                                           |
-| task status        | `待验证`                                                 |
-| document status    | `Active`                                                 |
+| task status        | `已收口`                                                 |
+| document status    | `Completed`                                              |
 | depth              | `standard`                                               |
 | phase              | `Review`                                                 |
 | Execution Approval | `Approved`                                               |
@@ -27,7 +27,7 @@
 
 - 范围内：两个失败 E2E、其直接 helper/产品 seam、必要的最小回归断言、本任务记录
 - 范围外：其他 shard、Android workflow、无关 UI 重构、测试超时的全局放宽
-- 当前任务单元：先建立两个独立 Red 反馈环，再按各自根因做最小修复
+- 当前任务单元：两个独立 Red/Green、静态门禁与精确 main hosted CI 均已完成
 - 轻量评估：`升级 standard`
 - 已确认事实：CI run `31864025981` / job `94962094953` 报告 appearance 期望源码文本 count 0、实际 3；consecutive-turns 的倒数第二帧未绘制首个 prompt footer 与 working spinner
 - 风险与未知：两项可能分别是选择器过宽与帧采样时序假设，也可能暴露真实渲染回归；在 Red 前不选实现方案
@@ -51,9 +51,9 @@
 ## 4. 执行前检查点
 
 - 当前目标：消除当前 main shard 1 的两个真实失败
-- 当前进度：CI Red 证据已取得，本地反馈环尚未运行
+- 当前进度：实现、独立提交、推送与精确 main hosted CI 均已完成
 - 当前动作是否仍服务核心目标：是
-- 下一步：整合 main 后安装/核对依赖，分别运行两个 test title/file 的最窄命令
+- 下一步：无；0070 已完成 Review
 - 风险与回退：不通过扩大 timeout 或弱化可观察行为掩盖失败；探针若需临时日志统一标记并在收尾删除
 - 验证方式：两条精确 Playwright 命令、相关受影响测试、typecheck、lint、format、GitHub shard 1
 - TDD 判定、测试 seam 与验收行为：`N/A；现有失败 E2E 已是正确 public seam，本轮修复既有 Red，不新增预设测试`
@@ -68,35 +68,36 @@
   - `2026-08-15`：建立独立诊断任务并确认执行授权
   - `2026-08-15`：按 CI 前置步骤构建 app/server 后，本地复现 appearance 精确 Red；匹配数量在 CI/本地为 `1-3`，可见性探针确认是展开的真实普通工具详情
   - `2026-08-15`：本地复现 consecutive-turns 精确 Red；仅抑制 `assistant_message` 的首轮方案仍被 reasoning/commentary 输出证伪，改为受控 canonical hydration 后原 oracle 连续 Green
+  - `2026-08-15`：提交 `e1827453f test: stabilize Playwright shard 1` 推送到 main；精确 CI run `31880050156` 的 Playwright shard 1-4 与全部 18 个 job 全绿
 
 ## 6. 验证与完成判断
 
-| 验收项                      | 命令或步骤                                                                                                                                                                                                                                            | 结果   | 证据                                                                               |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------- |
-| appearance Red/Green        | `npm run test:e2e --workspace=@getpaseo/app -- e2e/browser/appearance-reasoning.spec.ts --grep "keeps activity folding" --workers=1 --reporter=line`                                                                                                  | 通过   | 原合同 Red；修正后 `1 passed (3.2m)`                                               |
-| consecutive turns Red/Green | `$env:PASEO_NODE_INSPECT='0'; npm run test:e2e --workspace=@getpaseo/app -- e2e/browser/agent-consecutive-turns.spec.ts --grep "keeps the first prompt" --workers=1 --repeat-each=2 --reporter=line`                                                  | 通过   | 原夹具 frame `41/42` 与 `49-53` Red；受控 canonical hydration 后 `2 passed (2.9m)` |
-| 两项合并回归                | `$env:PASEO_NODE_INSPECT='0'; npm run test:e2e --workspace=@getpaseo/app -- e2e/browser/appearance-reasoning.spec.ts e2e/browser/agent-consecutive-turns.spec.ts --grep "keeps activity folding\|keeps the first prompt" --workers=1 --reporter=line` | 通过   | `2 passed (3.1m)`；同一 worker daemon 正常回收                                     |
-| 定向 workflow 合同          | `node --test --test-name-pattern="Android APK build observability" scripts/ci-workflow.test.mjs`                                                                                                                                                      | 通过   | `1/1`；cache key 与 Android 构建合同保持 Green                                     |
-| 格式与 diff 检查            | `npm run format:files -- <0070 spec> <两个 E2E 文件>`；`git diff --check`                                                                                                                                                                             | 通过   | 仅目标文件；无格式或空白错误                                                       |
-| TypeScript                  | `npm run typecheck`                                                                                                                                                                                                                                   | 通过   | 全 workspace 退出码 `0`，耗时 `65.7s`                                              |
-| lint                        | `npm run lint`                                                                                                                                                                                                                                        | 通过   | `0 errors / 0 warnings`，扫描 `3516` 个文件                                        |
-| main CI                     | GitHub Actions                                                                                                                                                                                                                                        | 待执行 |                                                                                    |
+| 验收项                      | 命令或步骤                                                                                                                                                                                                                                            | 结果 | 证据                                                                               |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------------------------------- |
+| appearance Red/Green        | `npm run test:e2e --workspace=@getpaseo/app -- e2e/browser/appearance-reasoning.spec.ts --grep "keeps activity folding" --workers=1 --reporter=line`                                                                                                  | 通过 | 原合同 Red；修正后 `1 passed (3.2m)`                                               |
+| consecutive turns Red/Green | `$env:PASEO_NODE_INSPECT='0'; npm run test:e2e --workspace=@getpaseo/app -- e2e/browser/agent-consecutive-turns.spec.ts --grep "keeps the first prompt" --workers=1 --repeat-each=2 --reporter=line`                                                  | 通过 | 原夹具 frame `41/42` 与 `49-53` Red；受控 canonical hydration 后 `2 passed (2.9m)` |
+| 两项合并回归                | `$env:PASEO_NODE_INSPECT='0'; npm run test:e2e --workspace=@getpaseo/app -- e2e/browser/appearance-reasoning.spec.ts e2e/browser/agent-consecutive-turns.spec.ts --grep "keeps activity folding\|keeps the first prompt" --workers=1 --reporter=line` | 通过 | `2 passed (3.1m)`；同一 worker daemon 正常回收                                     |
+| 定向 workflow 合同          | `node --test --test-name-pattern="Android APK build observability" scripts/ci-workflow.test.mjs`                                                                                                                                                      | 通过 | `1/1`；cache key 与 Android 构建合同保持 Green                                     |
+| 格式与 diff 检查            | `npm run format:files -- <0070 spec> <两个 E2E 文件>`；`git diff --check`                                                                                                                                                                             | 通过 | 仅目标文件；无格式或空白错误                                                       |
+| TypeScript                  | `npm run typecheck`                                                                                                                                                                                                                                   | 通过 | 全 workspace 退出码 `0`，耗时 `65.7s`                                              |
+| lint                        | `npm run lint`                                                                                                                                                                                                                                        | 通过 | `0 errors / 0 warnings`，扫描 `3516` 个文件                                        |
+| main CI                     | GitHub Actions run `31880050156`                                                                                                                                                                                                                      | 通过 | SHA `fc9c97515`，Playwright shard 1-4 与全部 18 个 job 全绿                        |
 
-- 未验证项与原因：尚未推送，main CI 待执行
+- 未验证项与原因：无；本任务要求的本地与 hosted seam 均已验证
 - 剩余风险：上游当前 main 保留同一过宽夹具，未来同步可能重新引入；本任务不修改上游仓库
-- Done Contract 是否由证据满足：`否`
+- Done Contract 是否由证据满足：`是`
 
 ## 7. 恢复与同步
 
-- 状态说明：两个独立 Red 均已定位，连续/合并回归与静态门禁 Green，等待 main CI
+- 状态说明：`已收口 / Review / Completed`
 - 当前卡点：无
-- 下一步唯一动作：创建独立修复提交、推送精确 main 并等待 CI
-- Resume / Handoff：从第 3 节动作 3 的 hosted 验证继续
+- 下一步唯一动作：无；由 0071 继续 beta 发布
+- Resume / Handoff：本任务完成证据为提交 `e1827453f` 与 CI run `31880050156`
 - Project Sync Candidates：`无；本次为既有 E2E 合同修复`
 - 长期文档同步：`不需要`
 
 ### 提交记录
 
-| 提交信息（Commit Message） | 提交脚注（Commit Footer） | 关联改动或阶段 | 文档同步状态 | 备注 |
-| -------------------------- | ------------------------- | -------------- | ------------ | ---- |
-| `<待提交>`                 | `N/A`                     | `0070`         | `待回写`     |      |
+| 提交信息（Commit Message）           | 提交脚注（Commit Footer） | 关联改动或阶段 | 文档同步状态 | 备注        |
+| ------------------------------------ | ------------------------- | -------------- | ------------ | ----------- |
+| `test: stabilize Playwright shard 1` | `N/A`                     | `0070`         | `已同步`     | `e1827453f` |

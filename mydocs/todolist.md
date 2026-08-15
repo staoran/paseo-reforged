@@ -2,8 +2,8 @@
 
 ## 编号索引
 
-- 当前编号基线：`0071`
-- 下一个建议编号：`0072`
+- 当前编号基线：`0072`
+- 下一个建议编号：`0073`
 - 最后更新：`2026-08-15`
 - 迁移说明：既有 `0001` 至 `0014` 任务已于 2026-08-02 合并迁移至 `mydocs/specs/`，旧 `mydocs/tasks/` 目录已删除；这些编号继续占用。
 
@@ -119,10 +119,10 @@
 | 0066 | 待手工验收 | micro-spec | 已同步        | [控制启动时恢复上次工作区](micro_specs/0066_控制启动时恢复上次工作区.md)                          | 2026-08-14       | 自动验证通过，待真实客户端两态冒烟                                                                                                    |
 | 0067 | 已收口     | micro-spec | Review 完成   | [修复编辑提交的 Provider 消息定位](micro_specs/0067_修复编辑提交的Provider消息定位.md)            | 2026-08-14       | 独立提交 `f21eba8e9`；定向 Playwright 与静态门禁通过                                                                                  |
 | 0068 | 执行中     | micro-spec | 已同步        | [观测 Android 冷构建资源峰值](micro_specs/0068_观测Android冷构建资源峰值.md)                      | 2026-08-15       | baseline 与 Gradle task cache seed/hit 已完成；切片 3-4 未纳入本轮                                                                    |
-| 0069 | 待验证     | micro-spec | 已同步        | [稳定 Android Gradle cache key](micro_specs/0069_稳定Android_Gradle_cache_key.md)                 | 2026-08-15       | immutable commit key 静态合同已 Red→Green；待连续两次 hosted run 验证 exact hit 与不重复保存                                          |
-| 0070 | 待验证     | micro-spec | 已同步        | [修复 Playwright shard 1 红项](micro_specs/0070_修复Playwright_shard_1红项.md)                    | 2026-08-15       | 两个定向 E2E 与静态门禁已通过；待精确 main CI 验证                                                                                    |
-| 0071 | 执行中     | micro-spec | 已落盘        | [发布 0.4.0 beta 测试版](micro_specs/0071_发布0.4.0_beta测试版.md)                                | 2026-08-15       | 精确 main CI 全绿后准备并发布 `v0.4.0-beta.1`                                                                                         |
-| 0072 | 待验证     | micro-spec | 已同步        | [修复 upstream 合并后 CI 合同](micro_specs/0072_修复upstream合并后CI合同.md)                      | 2026-08-15       | formatter、三个 Vitest seam、四个 Playwright oracle 与静态门禁已本地 Green；待精确 main CI                                            |
+| 0069 | 待验证     | micro-spec | 已同步        | [稳定 Android Gradle cache key](micro_specs/0069_稳定Android_Gradle_cache_key.md)                 | 2026-08-15       | commit key 已随 `7cd4e4f50` 推送；待 `v0.4.0-beta.3` 同 tag 第二次 dispatch 验证 exact hit 与不重复保存                               |
+| 0070 | 已完成     | micro-spec | 已同步        | [修复 Playwright shard 1 红项](micro_specs/0070_修复Playwright_shard_1红项.md)                    | 2026-08-15       | `e1827453f` 已进入 main；精确 CI run `31880050156` 的 shard 1-4 与全部 18 个 job 全绿                                                 |
+| 0071 | 执行中     | micro-spec | 已落盘        | [发布 0.4.0 beta 测试版](micro_specs/0071_发布0.4.0_beta测试版.md)                                | 2026-08-15       | changelog 已批准；准备提交并发布 `v0.4.0-beta.3`                                                                                      |
+| 0072 | 已完成     | micro-spec | 已同步        | [修复 upstream 合并后 CI 合同](micro_specs/0072_修复upstream合并后CI合同.md)                      | 2026-08-15       | `fc9c97515` 已进入 main；精确 CI run `31880050156` 全部 18 个 job 全绿                                                                |
 
 ## 候选待办
 
