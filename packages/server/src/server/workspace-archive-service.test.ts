@@ -9,7 +9,7 @@ import type { ForgeService } from "../services/forge-service.js";
 import { createRealpathAwarePathMatcher } from "../utils/path.js";
 import { createWorktree, type WorktreeConfig } from "../utils/worktree.js";
 import type { ManagedAgent } from "./agent/agent-manager.js";
-import type { AgentMetadataEntry, AgentStorage } from "./agent/agent-storage.js";
+import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import {
   archiveByScope,
@@ -153,8 +153,8 @@ function createArchiveDeps(input: ArchiveDepsInput): ArchiveTestDependencies {
       }),
     },
     agentStorage: {
-      listAllMetadata: async (): Promise<AgentMetadataEntry[]> => [],
-    } as Pick<AgentStorage, "listAllMetadata">,
+      listByWorkspace: async (): Promise<StoredAgentRecord[]> => [],
+    } as Pick<AgentStorage, "listByWorkspace">,
     findWorkspaceIdForCwd: input.findWorkspaceIdForCwd ?? vi.fn(async () => null),
     listActiveWorkspaces: async () =>
       active.filter((workspace) => !archivedWorkspaceIds.has(workspace.workspaceId)),
@@ -703,12 +703,15 @@ describe("archiveByScope", () => {
       }),
     };
     deps.agentStorage = {
-      listAllMetadata: async () =>
-        [
-          { id: targetStoredAgentId, workspaceId: targetWorkspaceId, archivedAt: null },
-          { id: otherStoredAgentId, workspaceId: otherWorkspaceId, archivedAt: null },
-        ] as AgentMetadataEntry[],
-    } as Pick<AgentStorage, "listAllMetadata">;
+      listByWorkspace: async (workspaceId: string) =>
+        workspaceId === targetWorkspaceId
+          ? ([
+              { id: targetStoredAgentId, workspaceId: targetWorkspaceId, archivedAt: null },
+            ] as StoredAgentRecord[])
+          : ([
+              { id: otherStoredAgentId, workspaceId: otherWorkspaceId, archivedAt: null },
+            ] as StoredAgentRecord[]),
+    } as Pick<AgentStorage, "listByWorkspace">;
 
     const result = await archiveByScope(deps, {
       scope: { kind: "workspace", workspaceId: targetWorkspaceId },

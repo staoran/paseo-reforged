@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import type { Logger } from "pino";
 
 import type { AgentManager } from "./agent/agent-manager.js";
-import type { AgentMetadataEntry, AgentStorage } from "./agent/agent-storage.js";
+import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import type { ForgeService } from "../services/forge-service.js";
 import {
@@ -33,7 +33,7 @@ export interface ArchiveDependencies {
   github: ForgeService;
   workspaceGitService: Pick<WorkspaceGitService, "getSnapshot">;
   agentManager: Pick<AgentManager, "listAgents" | "getAgent" | "archiveAgent" | "archiveSnapshot">;
-  agentStorage: Pick<AgentStorage, "listAllMetadata">;
+  agentStorage: Pick<AgentStorage, "listByWorkspace">;
   // Resolves the worktree at a path to its workspaceId for archive-by-path. The
   // path uniquely identifies a worktree workspace; this is a directory lookup for
   // the archive target, not status/ownership.
@@ -450,18 +450,16 @@ export async function archiveWorkspaceContents(
     archivedAgents.add(agent.id);
   }
 
-  let storedRecords: AgentMetadataEntry[] = [];
+  let storedRecords: StoredAgentRecord[] = [];
   try {
-    storedRecords = await dependencies.agentStorage.listAllMetadata();
+    storedRecords = await dependencies.agentStorage.listByWorkspace(workspaceId);
   } catch (error) {
     dependencies.sessionLogger?.warn(
       { err: error, workspaceId },
       "Failed to list stored agents during workspace archive; continuing",
     );
   }
-  const matchingStoredRecords = storedRecords.filter(
-    (record) => record.workspaceId === workspaceId,
-  );
+  const matchingStoredRecords = storedRecords;
   for (const record of matchingStoredRecords) {
     archivedAgents.add(record.id);
   }

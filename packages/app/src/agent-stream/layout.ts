@@ -32,6 +32,7 @@ export interface StreamLayoutItem {
   isLastInUserGroup: boolean;
   isLastInToolSequence: boolean;
   frameOrder: StreamFrameChildOrder;
+  phase: "streaming" | "complete";
 }
 
 export interface StreamLayout {
@@ -62,6 +63,7 @@ interface LayoutSegmentInput {
   boundaryBelowItem: StreamItem | null;
   boundaryAboveItems: StreamItem[] | null;
   boundaryAboveIndex: number | null;
+  phase: "streaming" | "complete";
 }
 
 interface AssistantFooterSource {
@@ -364,6 +366,7 @@ function layoutSegment(input: LayoutSegmentInput): StreamLayoutItem[] {
       isLastInToolSequence:
         row.kind === "item" && isToolSequenceItem(item) && !isToolSequenceItem(belowItem),
       frameOrder: input.frameOrder,
+      phase: input.phase,
     };
   });
 }
@@ -376,6 +379,7 @@ export function layoutActivityFoldMembers(input: {
   fold: ActivityFold;
   aboveItem: StreamItem | null;
   belowItem: StreamItem | null;
+  phase: StreamLayoutItem["phase"];
 }): StreamLayoutItem[] {
   const items = input.strategy.orderTail(input.fold.members);
   const frameOrder = input.strategy.getFrameChildOrder();
@@ -400,6 +404,7 @@ export function layoutActivityFoldMembers(input: {
       isLastInUserGroup: item.kind === "user_message" && belowItem?.kind !== "user_message",
       isLastInToolSequence: isToolSequenceItem(item) && !isToolSequenceItem(belowItem),
       frameOrder,
+      phase: input.phase,
     };
   });
 }
@@ -476,6 +481,7 @@ export function layoutStream(input: StreamLayoutInput): StreamLayout {
         boundaryBelowItem: liveHeadBoundaryItem,
         boundaryAboveItems: null,
         boundaryAboveIndex: null,
+        phase: "complete",
       });
       byKey.set(historyCacheKey, history);
     }
@@ -497,6 +503,7 @@ export function layoutStream(input: StreamLayoutInput): StreamLayout {
     boundaryBelowItem: null,
     boundaryAboveItems: historyItems,
     boundaryAboveIndex: input.strategy.getHistoryLiveBoundaryIndex(historyItems),
+    phase: input.isTurnActive ? "streaming" : "complete",
   });
 
   return {

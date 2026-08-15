@@ -530,15 +530,23 @@ function toProviderSessionImportAgentMutationKey(agentId: string): string {
 async function resolveProviderSessionImportOwner(
   input: ImportProviderSessionInput,
 ): Promise<ResolvedProviderSessionImportOwner | null> {
-  const [entry] = await input.agentStorage.findByPersistenceHandle({
-    provider: input.request.provider,
-    sessionId: input.request.providerHandleId,
-    nativeHandle: input.request.providerHandleId,
-  });
-  if (!entry) return null;
-  const record = await input.agentStorage.get(entry.id);
-  if (!record?.persistence) {
-    throw new Error(`Indexed provider session record is unavailable: ${entry.id}`);
+  const matchingRecords = await input.agentStorage.listByProviderSession(
+    input.request.provider,
+    input.request.providerHandleId,
+  );
+  const record = matchingRecords.reduce<StoredAgentRecord | null>((selected, candidate) => {
+    if (!selected) return candidate;
+    if (Boolean(selected.archivedAt) !== Boolean(candidate.archivedAt)) {
+      return candidate.archivedAt ? selected : candidate;
+    }
+    return Date.parse(candidate.updatedAt) > Date.parse(selected.updatedAt) ? candidate : selected;
+  }, null);
+  if (!record?.persistence) return null;
+  const entry = (await input.agentStorage.getMetadataSnapshot()).entries.find(
+    (candidate) => candidate.id === record.id,
+  );
+  if (!entry) {
+    throw new Error(`Indexed provider session metadata is unavailable: ${record.id}`);
   }
   return { entry, record };
 }

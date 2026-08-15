@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/desktop",
-  "version": "0.3.1-beta.1",
+  "version": "0.4.0",
   "private": true,
   "description": "Paseo Reforged desktop app, an independently maintained enhanced fork of Paseo",
   "homepage": "https://github.com/staoran/paseo-reforged#readme",

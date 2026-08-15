@@ -37,6 +37,10 @@ class MemoryStorage implements ReplicaCacheStorage {
     this.writes.push(value);
   }
 
+  async removeItem(key: string): Promise<void> {
+    this.values.delete(key);
+  }
+
   failNextWrite(): void {
     this.failuresRemaining += 1;
   }
@@ -499,6 +503,33 @@ describe("ReplicaCache", () => {
     expect(storage.writes).toHaveLength(2);
   });
 
+  it("persists focused replica changes without writing transient stream head updates", async () => {
+    vi.useFakeTimers();
+    const storage = new MemoryStorage();
+    const cache = new ReplicaCache(storage);
+    startedCaches.add(cache);
+    cache.setHosts([SERVER_ID]);
+    seedSession();
+    await cache.flush();
+    cache.start();
+    const writesBeforeStream = storage.writes.length;
+
+    useSessionStore
+      .getState()
+      .setAgentStreamHead(SERVER_ID, new Map([["agent-1", [message("live", "Streaming")]]]));
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(storage.writes).toHaveLength(writesBeforeStream);
+
+    useSessionStore
+      .getState()
+      .setAgentStreamTail(SERVER_ID, new Map([["agent-1", [message("saved", "Committed")]]]));
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(storage.writes).toHaveLength(writesBeforeStream + 1);
+    cache.setHosts([]);
+  });
+
   it("restores a displayable stale replica without claiming remote hydration", async () => {
     const storage = new MemoryStorage();
     const writer = new ReplicaCache(storage);
@@ -609,7 +640,7 @@ describe("ReplicaCache", () => {
       version: number;
       hosts: Array<{ timeline: Record<string, unknown> | null }>;
     };
-    expect(persisted.version).toBe(3);
+    expect(persisted.version).toBe(6);
     expect(Object.keys(persisted.hosts[0]?.timeline ?? {}).sort()).toEqual(["agentId", "items"]);
   });
 
@@ -643,7 +674,7 @@ describe("ReplicaCache", () => {
     ]);
   });
 
-  it("never restores provider retry messages from persistent cache", async () => {
+  it("rejects cached provider retry state instead of restoring it", async () => {
     const storage = new MemoryStorage();
     const writer = new ReplicaCache(storage);
     writer.setHosts([SERVER_ID]);
@@ -675,9 +706,8 @@ describe("ReplicaCache", () => {
     reader.setHosts([SERVER_ID]);
     await reader.restore();
 
-    expect(
-      useSessionStore.getState().sessions[SERVER_ID]?.agents.get("agent-1")?.providerRetryMessage,
-    ).toBeNull();
+    expect(storage.values.has(cacheKey)).toBe(false);
+    expect(useSessionStore.getState().sessions[SERVER_ID]).toBeUndefined();
   });
 
   it("evicts the least recently written host when the cache exceeds its byte budget", async () => {
@@ -705,38 +735,29 @@ describe("ReplicaCache", () => {
     expect(Object.keys(useSessionStore.getState().sessions).sort()).toEqual(["host-a", "host-c"]);
   });
 
-  it("rejects version 1 cache data and overwrites it on flush", async () => {
-    const storage = new MemoryStorage();
-    storage.values.set(
-      "@paseo:replica-cache",
-      JSON.stringify({
-        version: 1,
-        hosts: [
-          {
-            serverId: SERVER_ID,
-            agents: [],
-            workspaces: [],
-            emptyProjects: [],
-            timeline: {
-              agentId: "agent-1",
-              items: [],
-              cursor: { epoch: "poisoned", startSeq: 1, endSeq: 100 },
-              hasOlder: false,
-            },
-          },
-        ],
-      }),
-    );
-    const cache = new ReplicaCache(storage);
-    cache.setHosts([SERVER_ID]);
+  it.each([3, 5])(
+    "rejects and clears version %s cache data before overwriting it on flush",
+    async (version) => {
+      const storage = new MemoryStorage();
+      storage.values.set(
+        "@paseo:replica-cache",
+        JSON.stringify({
+          version,
+          hosts: [],
+        }),
+      );
+      const cache = new ReplicaCache(storage);
+      cache.setHosts([SERVER_ID]);
 
-    await cache.restore();
-    await cache.flush();
+      await cache.restore();
+      expect(storage.values.has("@paseo:replica-cache")).toBe(false);
+      await cache.flush();
 
-    expect(useSessionStore.getState().sessions[SERVER_ID]).toBeUndefined();
-    expect(JSON.parse(storage.values.get("@paseo:replica-cache") ?? "null")).toEqual({
-      version: 3,
-      hosts: [],
-    });
-  });
+      expect(useSessionStore.getState().sessions[SERVER_ID]).toBeUndefined();
+      expect(JSON.parse(storage.values.get("@paseo:replica-cache") ?? "null")).toEqual({
+        version: 6,
+        hosts: [],
+      });
+    },
+  );
 });

@@ -1,4 +1,5 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { getOpenAgentTabLabel } from "@getpaseo/protocol/agent-labels";
 import {
   memo,
   useCallback,
@@ -65,6 +66,7 @@ import { WorkspaceOpenInEditorButton } from "@/screens/workspace/workspace-open-
 import { WorkspaceScriptsButton } from "@/screens/workspace/workspace-scripts-button";
 import { ImportSessionSheet } from "@/components/import-session-sheet";
 import { useToast } from "@/contexts/toast-context";
+import { getOrCreateClientId } from "@/utils/client-id";
 import { selectIsFileExplorerOpen, usePanelStore } from "@/stores/panel-store";
 import { type ExplorerCheckoutContext } from "@/stores/explorer-checkout-context";
 import { traceInstant } from "@/performance/native-trace";
@@ -103,6 +105,7 @@ import { useWorkspace } from "@/stores/session-store-hooks";
 import { useWorkspaceTerminalSessionRetention } from "@/terminal/hooks/use-workspace-terminal-session-retention";
 import type { CheckoutStatusPayload } from "@/git/use-status-query";
 import { confirmDialog } from "@/utils/confirm-dialog";
+import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { removeResidentBrowserWebview } from "@/desktop/browser/resident-webviews";
 import { createWorkspaceBrowser, useBrowserStore } from "@/desktop/browser/store";
@@ -110,6 +113,7 @@ import { getDesktopHost } from "@/desktop/host";
 import { buildProviderCommand } from "@/utils/provider-command-templates";
 import { generateDraftId } from "@/stores/draft-keys";
 import { resolveWorkspaceRouteId } from "@/utils/workspace-identity";
+import { useOpenAgentTabLabels } from "@/subagents/use-open-agent-tab-labels";
 import {
   WorkspaceTabPresentationResolver,
   WorkspaceTabIcon,
@@ -169,6 +173,7 @@ import {
   closeAgentRuntimeAndCommit,
   type AgentRuntimeCloseOutcome,
 } from "@/screens/workspace/agent-runtime-close-transaction";
+import { resolveCloseAgentTabPolicy } from "@/subagents";
 import { useHostFeature } from "@/runtime/host-features";
 import {
   getPanelInstanceAttributes,
@@ -1876,6 +1881,8 @@ function WorkspaceScreenContent({
     onTerminalCreateQueued: handleTerminalCreateQueued,
     onTerminalCreateFailed: handleTerminalCreateFailed,
   });
+  const { archiveAgent } = useArchiveAgent();
+
   const { checkoutQuery, isCheckoutStatusLoading } = useWorkspaceCheckoutStatus({
     client,
     isConnected,
@@ -1980,6 +1987,12 @@ function WorkspaceScreenContent({
     () => (workspaceLayout ? collectAllTabs(workspaceLayout.root) : EMPTY_UI_TABS),
     [workspaceLayout],
   );
+  useOpenAgentTabLabels({
+    client,
+    serverId: normalizedServerId,
+    tabs: uiTabs,
+    enabled: hasHydratedWorkspaceLayoutStore,
+  });
   useSyncWorkspaceActiveBrowser({
     workspaceLayout,
     isRouteFocused,
@@ -2734,9 +2747,10 @@ function WorkspaceScreenContent({
 
         const agent =
           useSessionStore.getState().sessions[normalizedServerId]?.agents?.get(agentId) ?? null;
+        let closePolicy = resolveCloseAgentTabPolicy(agent);
         const isRunning = agent?.status === "running";
 
-        if (isRunning) {
+        if (isRunning && closePolicy.kind === "archive-on-close") {
           const confirmed = await confirmDialog({
             title: t("workspace.tabs.confirmations.stopRunningAgentTitle"),
             message: t("workspace.tabs.confirmations.stopRunningAgentMessage"),
@@ -2747,6 +2761,39 @@ function WorkspaceScreenContent({
           if (!confirmed) {
             return;
           }
+        }
+
+        if (closePolicy.kind === "layout-only") {
+          const sessionClient = useSessionStore.getState().sessions[normalizedServerId]?.client;
+          if (!sessionClient) {
+            toast.error(t("common.errors.daemonClientUnavailable"));
+            return;
+          }
+          try {
+            const clientId = await getOrCreateClientId();
+            await sessionClient.updateAgent(agentId, {
+              labels: { [getOpenAgentTabLabel(clientId)]: "false" },
+            });
+            const latestAgent =
+              useSessionStore.getState().sessions[normalizedServerId]?.agents?.get(agentId) ?? null;
+            closePolicy = resolveCloseAgentTabPolicy(latestAgent);
+          } catch (error) {
+            console.error("[WorkspaceScreen] Failed to close subagent tab", { error, agentId });
+            toast.error(t("workspace.tabs.toasts.failedToCloseAgent"));
+            return;
+          }
+
+          setHoveredCloseTabKey((current) => (current === tabId ? null : current));
+          if (persistenceKey) {
+            closeWorkspaceTabWithCleanup({
+              tabId,
+              target: { kind: "agent", agentId },
+            });
+          }
+          if (closePolicy.kind === "archive-on-close") {
+            void archiveAgent({ serverId: normalizedServerId, agentId }).catch(() => {});
+          }
+          return;
         }
 
         const outcome = await closeAgentRuntimeAndCommit({
@@ -2775,6 +2822,8 @@ function WorkspaceScreenContent({
       persistenceKey,
       supportsAgentRuntimeClose,
       t,
+      archiveAgent,
+      toast,
     ],
   );
 
@@ -2991,7 +3040,10 @@ function WorkspaceScreenContent({
         return;
       }
 
-      const groups = classifyBulkClosableTabs(tabsToClose);
+      const groups = classifyBulkClosableTabs(tabsToClose, (agentId) => {
+        const agent = useSessionStore.getState().sessions[normalizedServerId]?.agents?.get(agentId);
+        return resolveCloseAgentTabPolicy(agent).kind === "layout-only" ? "layout-only" : "archive";
+      });
       const modifiedCount = tabsToClose.filter(
         (tab) =>
           getPanelInstanceAttributes({
@@ -3020,6 +3072,20 @@ function WorkspaceScreenContent({
         supportsAgentRuntimeClose,
         groups,
         closeTab,
+        closeLayoutOnlyAgent: async (agentId) => {
+          if (!client) {
+            throw new Error(t("common.errors.daemonClientUnavailable"));
+          }
+          const clientId = await getOrCreateClientId();
+          await client.updateAgent(agentId, {
+            labels: { [getOpenAgentTabLabel(clientId)]: "false" },
+          });
+          const latestAgent =
+            useSessionStore.getState().sessions[normalizedServerId]?.agents?.get(agentId) ?? null;
+          if (resolveCloseAgentTabPolicy(latestAgent).kind === "archive-on-close") {
+            await archiveAgent({ serverId: normalizedServerId, agentId });
+          }
+        },
         closeWorkspaceTabWithCleanup: (cleanupInput) => {
           if (!persistenceKey) {
             return;
@@ -3039,6 +3105,7 @@ function WorkspaceScreenContent({
       setHoveredCloseTabKey((current) => (current && closedKeys.has(current) ? null : current));
     },
     [
+      archiveAgent,
       bulkCloseConfirmationLabels,
       client,
       closeTab,

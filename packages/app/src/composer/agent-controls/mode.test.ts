@@ -54,7 +54,6 @@ describe("resolveAgentControlsMode", () => {
       resolveAgentControlsMode({
         providerDefinitions: [],
         selectedProvider: "codex",
-        onSelectProvider: () => undefined,
         modeOptions: [],
         selectedMode: "",
         onSelectMode: () => undefined,
@@ -68,6 +67,7 @@ describe("resolveAgentControlsMode", () => {
         thinkingOptions: [],
         selectedThinkingOptionId: "",
         onSelectThinkingOption: () => undefined,
+        onApplyAgentProfile: () => undefined,
       }),
     ).toBe("draft");
   });

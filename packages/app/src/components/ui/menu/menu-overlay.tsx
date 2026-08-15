@@ -333,6 +333,7 @@ export function AnchoredSurface({
     <>
       {backdrop ? (
         <Pressable
+          {...{ onContextMenu: onClose }}
           accessibilityRole="button"
           accessibilityLabel={t("menu.backdrop")}
           style={styles.backdrop}
@@ -462,6 +463,9 @@ export function MenuOverlay({
   const overlay = (
     <OverlayLayerProvider layer={floatingLayer}>
       <View
+        {...{
+          onContextMenu: (event: { preventDefault?: () => void }) => event.preventDefault?.(),
+        }}
         ref={setWebOverlayNode}
         collapsable={false}
         style={[styles.overlay, webOverlayStyle, isWeb ? { zIndex: floatingLayer } : null]}

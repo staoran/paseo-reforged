@@ -163,6 +163,7 @@ describe("layoutStream", () => {
         timestamp: timestamp(5),
         provider: "codex",
         items: [{ text: "Verify", completed: false }],
+        activity: { type: "created", count: 1 },
       };
       const finalAnswer = assistantMessage("final-1", 6, undefined, "final_answer");
       const trailingTool = toolCall("tool-after-final", 7);
@@ -194,6 +195,7 @@ describe("layoutStream", () => {
         fold: host.activityFold!,
         aboveItem: host.aboveItem,
         belowItem: host.belowItem,
+        phase: host.phase,
       });
       expect(details.map((item) => item.item.id).sort()).toEqual(
         [reasoning, commentary, tool, todo].map((item) => item.id).sort(),
@@ -294,6 +296,30 @@ describe("layoutStream", () => {
         id: "activity:u2",
         completed: false,
       });
+    },
+  );
+
+  it.each(["web", "android"] as const)(
+    "marks only the active live-head assistant block as streaming on %s",
+    (platform) => {
+      const completed = assistantMessage("turn:block:0", 2, { groupId: "turn", index: 0 });
+      const live = assistantMessage("turn:block:1", 3, { groupId: "turn", index: 1 });
+      const active = layoutFor({
+        platform,
+        isTurnActive: true,
+        tail: [userMessage("u1", 1), completed],
+        head: [live],
+      });
+      const complete = layoutFor({
+        platform,
+        isTurnActive: false,
+        tail: [userMessage("u1", 1), completed],
+        head: [live],
+      });
+
+      expect(findLayoutItem(active, completed.id).phase).toBe("complete");
+      expect(findLayoutItem(active, live.id).phase).toBe("streaming");
+      expect(findLayoutItem(complete, live.id).phase).toBe("complete");
     },
   );
 

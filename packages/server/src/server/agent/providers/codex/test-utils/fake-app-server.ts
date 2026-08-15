@@ -52,7 +52,12 @@ export interface FakeCodexAppServer {
   waitForTurnStart(): Promise<JsonObject>;
   nextResponse(): Promise<string>;
   startsTurn(params: { threadId: string; turnId?: string }): void;
-  completeTurn(params?: { threadId?: string; turnId?: string }): void;
+  completeTurn(params?: {
+    threadId?: string;
+    turnId?: string;
+    status?: "completed" | "failed" | "interrupted";
+    error?: { message: string } | null;
+  }): void;
   reportsError(params: {
     threadId: string;
     turnId: string;
@@ -62,6 +67,7 @@ export interface FakeCodexAppServer {
   }): void;
   warns(params: { threadId?: string | null; message: string }): void;
   compactsThread(params: { threadId: string; turnId: string }): void;
+  startsCompaction(params: { threadId: string; itemId: string }): void;
   updatesPlan(params: { threadId: string; steps: string[] }): void;
   startsSubAgent(params: {
     callId: string;
@@ -339,6 +345,12 @@ export function createFakeCodexAppServer(
         })}\n`,
       );
     },
+    startsCompaction(params) {
+      writeNotification("item/started", {
+        threadId: params.threadId,
+        item: { type: "contextCompaction", id: params.itemId },
+      });
+    },
     updatesPlan(params) {
       child.stdout.write(
         `${JSON.stringify({
@@ -358,7 +370,11 @@ export function createFakeCodexAppServer(
           method: "turn/completed",
           params: {
             threadId,
-            turn: { ...(turnId ? { id: turnId } : {}), status: "completed" },
+            turn: {
+              ...(turnId ? { id: turnId } : {}),
+              status: params.status ?? "completed",
+              error: params.error ?? null,
+            },
           },
         })}\n`,
       );
