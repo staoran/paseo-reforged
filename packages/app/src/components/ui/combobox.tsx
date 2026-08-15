@@ -109,6 +109,8 @@ export interface ComboboxProps {
    */
   header?: SheetHeader;
   mobileChildrenScrollEnabled?: boolean;
+  /** Let custom desktop children own scrolling, for example a virtualized list. */
+  desktopChildrenScrollEnabled?: boolean;
   /** Overrides the mobile scroll container spacing for custom child content. */
   mobileChildrenContentContainerStyle?: StyleProp<ViewStyle>;
   presentation?: "push" | "replace";
@@ -123,6 +125,8 @@ export interface ComboboxProps {
   desktopPreventInitialFlash?: boolean;
   /** Minimum width for the desktop popover (overrides trigger-based width). */
   desktopMinWidth?: number;
+  /** Keep the desktop popover at its opening width as its content changes. */
+  desktopLockWidth?: boolean;
   /** Fixed height for the desktop popover (overrides default 400px max). */
   desktopFixedHeight?: number;
   /** Content rendered above the scroll area on desktop (sticky header). */
@@ -1084,17 +1088,28 @@ interface DesktopBodyProps {
   handleSelect: (id: string) => void;
   renderOption: RenderOptionFn | undefined;
   hasChildren: boolean;
+  childrenScrollEnabled: boolean;
   children: ReactNode;
 }
 
 function DesktopComboboxChildrenBody(props: {
   header: SheetHeader | undefined;
   stickyHeader: ReactNode;
+  scrollEnabled: boolean;
   children: ReactNode;
 }): ReactElement {
+  const header = props.header ? <InlineHeaderView header={props.header} /> : props.stickyHeader;
+  if (!props.scrollEnabled) {
+    return (
+      <>
+        {header}
+        <View style={styles.desktopChildrenBody}>{props.children}</View>
+      </>
+    );
+  }
   return (
     <>
-      {props.header ? <InlineHeaderView header={props.header} /> : props.stickyHeader}
+      {header}
       <ScrollView
         contentContainerStyle={styles.desktopChildrenScrollContent}
         keyboardShouldPersistTaps="handled"
@@ -1222,7 +1237,11 @@ function DesktopComboboxBody(props: DesktopBodyProps): ReactElement {
           onLayout={props.handleDesktopContentLayout}
         >
           {props.hasChildren ? (
-            <DesktopComboboxChildrenBody header={props.header} stickyHeader={props.stickyHeader}>
+            <DesktopComboboxChildrenBody
+              header={props.header}
+              stickyHeader={props.stickyHeader}
+              scrollEnabled={props.childrenScrollEnabled}
+            >
               {props.children}
             </DesktopComboboxChildrenBody>
           ) : (
@@ -1288,6 +1307,7 @@ export function Combobox({
   title,
   header,
   mobileChildrenScrollEnabled = true,
+  desktopChildrenScrollEnabled = true,
   mobileChildrenContentContainerStyle,
   presentation,
   open,
@@ -1295,6 +1315,7 @@ export function Combobox({
   desktopPlacement = "bottom-start",
   desktopPreventInitialFlash = true,
   desktopMinWidth,
+  desktopLockWidth,
   desktopFixedHeight,
   stickyHeader,
   footer,
@@ -1542,6 +1563,7 @@ export function Combobox({
     () =>
       buildDesktopFrameStyle({
         desktopMinWidth,
+        desktopLockWidth: Boolean(desktopLockWidth),
         referenceWidth,
         desktopFixedHeight,
         desktopPositionStyle,
@@ -1550,6 +1572,7 @@ export function Combobox({
       }),
     [
       desktopMinWidth,
+      desktopLockWidth,
       referenceWidth,
       desktopFixedHeight,
       desktopPositionStyle,
@@ -1634,6 +1657,7 @@ export function Combobox({
       handleSelect={handleSelect}
       renderOption={renderOption}
       hasChildren={hasChildren}
+      childrenScrollEnabled={desktopChildrenScrollEnabled}
     >
       {children}
     </DesktopComboboxBody>
@@ -1789,6 +1813,10 @@ const styles = StyleSheet.create((theme) => ({
   },
   desktopChildrenScrollContent: {
     // No padding — custom children (e.g. model selector) control their own spacing
+  },
+  desktopChildrenBody: {
+    flex: 1,
+    minHeight: 0,
   },
   desktopScrollContentAboveSearch: {
     flexGrow: 1,

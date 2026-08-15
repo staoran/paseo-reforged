@@ -72,8 +72,8 @@ Here is the criteria I use to decide:
 - PRs that were explicitly approved in a discussion are preferred.
 - Unsolicited PR can be closed without a detailed review.
 - Your PR can be narrowed, refactored, or redesigned.
-- Your PR might be accpeted but not merged immediately.
-- You wil be attributed for your work in the changelog, even if I redesign your PR
+- Your PR might be accepted but not merged immediately.
+- You will be attributed for your work in the changelog, even if I redesign your PR
 
 ## QA evidence
 

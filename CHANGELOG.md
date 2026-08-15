@@ -1,5 +1,57 @@
 # Changelog
 
+## Unreleased
+
+The following user-visible changes are being adopted from upstream Paseo 0.4.0. This section does not represent a Paseo Reforged 0.4.0 release.
+
+### Breaking
+
+- Removed `paseo chat` and `paseo loop` ([upstream #3053](https://github.com/getpaseo/paseo/pull/3053))
+
+### Added
+
+- Added host-wide agent profiles for reusable provider, model, mode, thinking, and feature settings ([upstream #3208](https://github.com/getpaseo/paseo/pull/3208))
+- Added workspace file search to Cmd/Ctrl+P ([upstream #3059](https://github.com/getpaseo/paseo/pull/3059))
+- Added file and folder actions to Files and Changes ([upstream #3027](https://github.com/getpaseo/paseo/pull/3027) by [@nikuscs](https://github.com/nikuscs))
+- Added live task progress above the composer and in the timeline ([upstream #3227](https://github.com/getpaseo/paseo/pull/3227))
+- Added a model setting for generated workspace titles, branch names, commits, and pull request drafts ([upstream #3215](https://github.com/getpaseo/paseo/pull/3215))
+- Added the supported `@getpaseo/client` TypeScript SDK ([upstream #3141](https://github.com/getpaseo/paseo/pull/3141))
+- Added provider installation diagnostics to the CLI ([upstream #3243](https://github.com/getpaseo/paseo/pull/3243))
+- Added workspace rename to the CLI ([upstream #3209](https://github.com/getpaseo/paseo/pull/3209) by [@martinhanzik](https://github.com/martinhanzik))
+
+### Improved
+
+- Unified Mermaid rendering for streaming chats and Markdown previews while retaining interactive diagram controls ([upstream #2306](https://github.com/getpaseo/paseo/pull/2306) by [@dmeledon](https://github.com/dmeledon))
+- Added a centered reading layout and formatted YAML front matter to Markdown previews ([upstream #3240](https://github.com/getpaseo/paseo/pull/3240))
+- Added sidebar grouping to the Command Center ([upstream #3063](https://github.com/getpaseo/paseo/pull/3063) by [@cleiter](https://github.com/cleiter))
+- Added every built-in theme to theme shortcuts ([upstream #3214](https://github.com/getpaseo/paseo/pull/3214))
+- Removed periodic Git polling for idle workspaces ([upstream #3323](https://github.com/getpaseo/paseo/pull/3323))
+- Set provider catalog refreshes to a configurable two-minute deadline ([upstream #3322](https://github.com/getpaseo/paseo/pull/3322))
+
+### Fixed
+
+- Fixed terminal sessions being lost after host sleep or daemon worker stalls ([upstream #3235](https://github.com/getpaseo/paseo/pull/3235), [upstream #3263](https://github.com/getpaseo/paseo/pull/3263))
+- Fixed daemon hang when archiving a workspace ([upstream #3107](https://github.com/getpaseo/paseo/pull/3107))
+- Fixed New Workspace crash on Android when projects span multiple hosts ([upstream #3241](https://github.com/getpaseo/paseo/pull/3241))
+- Fixed provider cache exhausting Android local storage ([upstream #3234](https://github.com/getpaseo/paseo/pull/3234))
+- Fixed dictation recordings being lost during connection interruptions ([upstream #3159](https://github.com/getpaseo/paseo/pull/3159))
+- Fixed new workspaces reusing an existing worktree ([upstream #3224](https://github.com/getpaseo/paseo/pull/3224))
+- Fixed new worktrees ignoring the setup command saved in Project Settings ([upstream #3233](https://github.com/getpaseo/paseo/pull/3233))
+- Fixed new worktrees becoming dirty when the selected base contained a different `paseo.json` ([upstream #3311](https://github.com/getpaseo/paseo/pull/3311))
+- Fixed removed hosts continuing to receive push notifications ([upstream #3176](https://github.com/getpaseo/paseo/pull/3176))
+- Fixed delegated-agent notifications stopping after permission prompts or workspace closure ([upstream #3177](https://github.com/getpaseo/paseo/pull/3177), [upstream #3192](https://github.com/getpaseo/paseo/pull/3192) by [@thomasvan](https://github.com/thomasvan), [@wilgon456](https://github.com/wilgon456))
+- Fixed OMP agent startup when model catalogs exceed the protocol-v1 frame limit ([upstream #3184](https://github.com/getpaseo/paseo/pull/3184) by [@pi3123](https://github.com/pi3123))
+- Fixed OpenCode models being unable to return to their default variant ([upstream #3281](https://github.com/getpaseo/paseo/pull/3281))
+- Fixed completed Codex subagents remaining marked active ([upstream #3188](https://github.com/getpaseo/paseo/pull/3188) by [@Strainy](https://github.com/Strainy))
+- Fixed Codex compaction leaving turns marked as working ([upstream #3211](https://github.com/getpaseo/paseo/pull/3211) by [@edihasaj](https://github.com/edihasaj))
+- Fixed Cursor usage with current Cursor logins ([upstream #2704](https://github.com/getpaseo/paseo/pull/2704) by [@QuteSaltyFish](https://github.com/QuteSaltyFish))
+- Fixed SVG project icons rendering as blank on mobile ([upstream #2579](https://github.com/getpaseo/paseo/pull/2579) by [@colonelpanic8](https://github.com/colonelpanic8))
+- Fixed crash when persisted cache was incompatible ([upstream #3289](https://github.com/getpaseo/paseo/pull/3289))
+- Fixed open delegated agents being archived with their parent ([upstream #3279](https://github.com/getpaseo/paseo/pull/3279))
+- Fixed agent creation when profiles carried modes unsupported by the selected provider ([upstream #3331](https://github.com/getpaseo/paseo/pull/3331))
+- Fixed Claude agents waiting on Paseo's ten-minute MCP timeout ([upstream #3315](https://github.com/getpaseo/paseo/pull/3315))
+- Fixed Copy resume command for Hermes agents ([upstream #3300](https://github.com/getpaseo/paseo/pull/3300) by [@desmond-rai](https://github.com/desmond-rai))
+
 ## 0.3.1-beta.1 - 2026-08-13
 
 ### Known limitations
@@ -46,7 +98,6 @@
 - Relative activity times display on devices without `Intl.RelativeTimeFormat` ([b727d18](https://github.com/staoran/paseo-reforged/commit/b727d18cd1ee0010eb995f96dc90239216778871) by [@staoran](https://github.com/staoran))
 - Stored conversations no longer appear to have running Agents after a restart ([72aab86](https://github.com/staoran/paseo-reforged/commit/72aab860c56634bb042aa763e2bd25338fb45d99) by [@staoran](https://github.com/staoran))
 - Project names remain visible in status-grouped sidebar rows ([9d51195](https://github.com/staoran/paseo-reforged/commit/9d511954b33e8b0c5f8de5e18516b1c86374bd9f) by [@staoran](https://github.com/staoran))
-
 ## 0.3.1 - 2026-08-09
 
 ### Added

@@ -1,4 +1,4 @@
-import { forwardRef, useCallback } from "react";
+import { forwardRef, useCallback, type ComponentProps } from "react";
 import {
   Text,
   View,
@@ -12,7 +12,10 @@ import { useComposerControlLayout } from "@/composer/agent-controls/layout-conte
 import { ComposerToolbarGlyph } from "@/composer/agent-controls/glyph";
 import type { AgentControlIcon } from "@/agent-controls/icons";
 
-interface AgentControlTriggerProps {
+type AgentControlTriggerProps = Omit<
+  ComponentProps<typeof ComboboxTrigger>,
+  "accessibilityLabel" | "block" | "children" | "chevron" | "onPress" | "style"
+> & {
   icon: AgentControlIcon;
   iconColor?: string;
   surface: "toolbar" | "sheet";
@@ -22,11 +25,9 @@ interface AgentControlTriggerProps {
   showToolbarLabel?: boolean;
   showCaret?: boolean;
   open?: boolean;
-  disabled?: boolean;
   onPress: () => void;
   accessibilityLabel: string;
-  testID?: string;
-}
+};
 
 export const AgentControlTrigger = forwardRef<View, AgentControlTriggerProps>(
   function AgentControlTrigger(
@@ -44,6 +45,7 @@ export const AgentControlTrigger = forwardRef<View, AgentControlTriggerProps>(
       onPress,
       accessibilityLabel,
       testID,
+      ...triggerProps
     },
     ref,
   ) {
@@ -65,6 +67,7 @@ export const AgentControlTrigger = forwardRef<View, AgentControlTriggerProps>(
 
     return (
       <ComboboxTrigger
+        {...triggerProps}
         ref={ref}
         collapsable={false}
         disabled={disabled}

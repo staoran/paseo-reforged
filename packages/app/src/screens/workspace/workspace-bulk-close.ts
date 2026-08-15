@@ -7,7 +7,8 @@ import {
 } from "@/screens/workspace/agent-runtime-close-transaction";
 
 export interface BulkClosableTabGroups {
-  agentTabs: Array<{ tabId: string; agentId: string }>;
+  archiveAgentTabs: Array<{ tabId: string; agentId: string }>;
+  layoutOnlyAgentTabs: Array<{ tabId: string; agentId: string }>;
   terminalTabs: Array<{ tabId: string; terminalId: string }>;
   otherTabs: Array<{ tabId: string; target: WorkspaceTabDescriptor["target"] }>;
 }
@@ -49,21 +50,31 @@ interface CloseBulkWorkspaceTabsInput {
   groups: BulkClosableTabGroups;
   closeTab: (tabId: string, action: () => Promise<void>) => Promise<void>;
   closeWorkspaceTabWithCleanup: (input: CloseWorkspaceTabWithCleanupInput) => void;
+  closeLayoutOnlyAgent: (agentId: string) => Promise<void>;
   logLabel: string;
   onAgentRuntimeCloseOutcome?: (agentId: string, outcome: AgentRuntimeCloseOutcome) => void;
   warn?: (message: string, payload: object) => void;
 }
 
-export function classifyBulkClosableTabs(tabs: WorkspaceTabDescriptor[]): BulkClosableTabGroups {
+export function classifyBulkClosableTabs(
+  tabs: WorkspaceTabDescriptor[],
+  resolveAgentCloseKind: (agentId: string) => "archive" | "layout-only" = () => "archive",
+): BulkClosableTabGroups {
   const groups: BulkClosableTabGroups = {
-    agentTabs: [],
+    archiveAgentTabs: [],
+    layoutOnlyAgentTabs: [],
     terminalTabs: [],
     otherTabs: [],
   };
 
   for (const tab of tabs) {
     if (tab.target.kind === "agent") {
-      groups.agentTabs.push({ tabId: tab.tabId, agentId: tab.target.agentId });
+      const agentTab = { tabId: tab.tabId, agentId: tab.target.agentId };
+      if (resolveAgentCloseKind(tab.target.agentId) === "layout-only") {
+        groups.layoutOnlyAgentTabs.push(agentTab);
+      } else {
+        groups.archiveAgentTabs.push(agentTab);
+      }
       continue;
     }
     if (tab.target.kind === "terminal") {
@@ -80,39 +91,40 @@ export function buildBulkCloseConfirmationMessage(
   input: BulkClosableTabGroups,
   labels: BulkCloseConfirmationLabels = DEFAULT_BULK_CLOSE_CONFIRMATION_LABELS,
 ): string {
-  const { agentTabs, terminalTabs, otherTabs } = input;
-  if (agentTabs.length > 0 && terminalTabs.length > 0 && otherTabs.length > 0) {
+  const { archiveAgentTabs, layoutOnlyAgentTabs, terminalTabs, otherTabs } = input;
+  const tabCount = layoutOnlyAgentTabs.length + otherTabs.length;
+  if (archiveAgentTabs.length > 0 && terminalTabs.length > 0 && tabCount > 0) {
     return labels.all({
-      agents: agentTabs.length,
+      agents: archiveAgentTabs.length,
       terminals: terminalTabs.length,
-      tabs: otherTabs.length,
+      tabs: tabCount,
     });
   }
-  if (agentTabs.length > 0 && terminalTabs.length > 0) {
+  if (archiveAgentTabs.length > 0 && terminalTabs.length > 0) {
     return labels.agentsAndTerminals({
-      agents: agentTabs.length,
+      agents: archiveAgentTabs.length,
       terminals: terminalTabs.length,
     });
   }
-  if (terminalTabs.length > 0 && otherTabs.length > 0) {
+  if (terminalTabs.length > 0 && tabCount > 0) {
     return labels.terminalsAndTabs({
       terminals: terminalTabs.length,
-      tabs: otherTabs.length,
+      tabs: tabCount,
     });
   }
-  if (agentTabs.length > 0 && otherTabs.length > 0) {
+  if (archiveAgentTabs.length > 0 && tabCount > 0) {
     return labels.agentsAndTabs({
-      agents: agentTabs.length,
-      tabs: otherTabs.length,
+      agents: archiveAgentTabs.length,
+      tabs: tabCount,
     });
   }
   if (terminalTabs.length > 0) {
     return labels.terminals({ terminals: terminalTabs.length });
   }
-  if (otherTabs.length > 0) {
-    return labels.tabs({ tabs: otherTabs.length });
+  if (tabCount > 0) {
+    return labels.tabs({ tabs: tabCount });
   }
-  return labels.agents({ agents: agentTabs.length });
+  return labels.agents({ agents: archiveAgentTabs.length });
 }
 
 export async function closeBulkWorkspaceTabs(input: CloseBulkWorkspaceTabsInput): Promise<void> {
@@ -122,10 +134,26 @@ export async function closeBulkWorkspaceTabs(input: CloseBulkWorkspaceTabsInput)
     groups,
     closeTab,
     closeWorkspaceTabWithCleanup,
+    closeLayoutOnlyAgent,
     logLabel,
     onAgentRuntimeCloseOutcome,
     warn,
   } = input;
+
+  for (const { tabId, agentId } of groups.layoutOnlyAgentTabs) {
+    await closeTab(tabId, async () => {
+      try {
+        await closeLayoutOnlyAgent(agentId);
+      } catch (error) {
+        warn?.(`[WorkspaceScreen] Failed to close subagent tab ${logLabel}`, { error, agentId });
+        return;
+      }
+      closeWorkspaceTabWithCleanup({
+        tabId,
+        target: { kind: "agent", agentId },
+      });
+    });
+  }
 
   if (groups.terminalTabs.length > 0 && client) {
     void client
@@ -142,7 +170,7 @@ export async function closeBulkWorkspaceTabs(input: CloseBulkWorkspaceTabsInput)
     });
   }
 
-  for (const { tabId, agentId } of groups.agentTabs) {
+  for (const { tabId, agentId } of groups.archiveAgentTabs) {
     await closeTab(tabId, async () => {
       const outcome = await closeAgentRuntimeAndCommit({
         client,

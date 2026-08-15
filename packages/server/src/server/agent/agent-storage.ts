@@ -465,6 +465,24 @@ export class AgentStorage {
       .map(cloneMetadataEntry);
   }
 
+  async listByProviderSession(
+    provider: string,
+    providerHandleId: string,
+  ): Promise<StoredAgentRecord[]> {
+    await this.load();
+    return Array.from(this.cache.values()).filter(
+      (record) =>
+        record.persistence?.provider === provider &&
+        (record.persistence.sessionId === providerHandleId ||
+          record.persistence.nativeHandle === providerHandleId),
+    );
+  }
+
+  async listByWorkspace(workspaceId: string): Promise<StoredAgentRecord[]> {
+    await this.load();
+    return Array.from(this.cache.values()).filter((record) => record.workspaceId === workspaceId);
+  }
+
   async findByDaemonExecution(owner: DaemonAgentOwner): Promise<StoredAgentRecord | null> {
     await this.ensureReady();
     const agentId = this.daemonAgentIdsByExecution.get(daemonExecutionKey(owner));

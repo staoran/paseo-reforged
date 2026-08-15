@@ -380,26 +380,36 @@ No prefix (`v`), no extra text. `Release Notes Sync` matches the heading for the
 ## Changelog ownership
 
 - **The agent running the release writes the changelog entry — beta or stable.** Do not hand the changelog to another model or agent. The release agent has the release context and owns the final wording.
-- Draft the entry from the previous-stable-to-`HEAD` diff, review it against the changelog policy below, show it to the user, and wait for approval before committing it. Each beta refreshes the same entry; a future formal release refreshes it one last time from the full previous-stable-to-`HEAD` diff.
+- **Commit history is only an index of the changes. Never draft the changelog from commit subjects or diffs alone.** For every PR in the release range, read the full PR description and every issue it links to before deciding what changed, why users care, or how changes should be grouped. Use the implementation only to verify the resulting understanding.
+- Draft or refresh the entry from the previous-stable-to-`HEAD` range, review it against the changelog policy below, show it to the user, and wait for approval before committing it. Each beta refreshes the same entry; a future formal release refreshes it one last time from that full range.
 
-## Changelog voice
+## Changelog wording
 
-The changelog is shown in Paseo Reforged release surfaces. Write it for **end users**, not developers.
+The changelog is shown in Paseo Reforged release surfaces. Write each bullet as a compact factual record of changed product behavior for **end users**, not developers.
 
-- **Frame everything from the user's perspective.** Describe what changed in the app, not what changed in the code. Users care that "workspaces load instantly" — not that a component no longer remounts.
-- **Never mention component names, internal modules, or implementation details.** No `WorkingIndicator`, no `accumulatedUsage`, no `reconcileAndEmitWorkspaceUpdates`. Also no "virtualized lists", no "remount", no "memoization", no "debounced", no "fuzzy ranking", no "controlled input", no "uncontrolled input" — these are implementation words masquerading as user-facing copy.
-- **Concrete WRONG → RIGHT examples** (real mistakes from past releases):
+- **Name the exact change.** Prefer `Added <capability>`, `Removed <behavior>`,
+  `Changed <behavior>`, or `Fixed <failure> when <condition>`.
+- **Keep the scope exact.** A conditional bug is not a general reliability problem. Do not
+  broaden one failure into claims that Paseo is now faster, smoother, responsive, or reliable.
+- **Use concrete product and runtime terms.** Git polling, persisted cache, provider catalog,
+  and WebSocket reconnects can identify the affected behavior. Component names, internal
+  modules, code symbols, and implementation techniques cannot: omit `WorkingIndicator`,
+  `reconcileAndEmitWorkspaceUpdates`, remounts, memoization, and controlled inputs.
+- **State the consequence only when the change itself is unclear.** Keep the condition that
+  makes the consequence true. Do not replace a precise change with a broad benefit claim.
+- **Do not invent context.** Mention an upgrade, platform, workload, or user action only when
+  the PR or linked issue establishes that scope.
 
-  | Wrong (implementation-facing)                                                       | Right (user-facing)                                         |
-  | ----------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-  | Switching layouts no longer remounts the active agent                               | Splitting a pane no longer loses your scroll position       |
-  | Model, mode, and thinking pickers — searchable virtualized lists with fuzzy ranking | Mobile model selector is faster and more straightforward    |
-  | Text inputs in mobile sheets no longer flicker while typing fast                    | Typing in mobile sheets no longer flickers                  |
-  | Compact web sheets no longer crash when swiped to dismiss                           | Sheets on mobile web no longer crash when swiped to dismiss |
-  | Reduced re-renders in the agent list                                                | Agent list scrolls smoothly                                 |
-  | Added debouncing to the search input                                                | Search results no longer lag behind typing                  |
+| Avoid                                                        | Write                                                 |
+| ------------------------------------------------------------ | ----------------------------------------------------- |
+| Paseo stays responsive with many idle Git workspaces         | Removed periodic Git polling for idle workspaces      |
+| Incompatible saved app data no longer crashes after upgrades | Fixed crash when persisted cache was incompatible     |
+| Splitting layouts no longer remounts the active agent        | Fixed scroll position resetting when splitting a pane |
+| Mobile model selector is faster and more straightforward     | Added search to the mobile model selector             |
 
-  Test: would a non-developer reader recognise what changed when using the app? If they'd need an engineer to translate ("what's a remount?"), the bullet is still implementation-facing — rewrite it as the symptom the user experiences.
+Test each bullet against the source PR and issue: can a reviewer point to the exact behavior
+that changed, the failure that was fixed, or the capability that was added? If the bullet only
+claims a general improvement, rewrite it with the concrete change.
 
 - **Collapse internal iterations.** If a feature was added and then fixed within the same release, just list the feature as working. Users never saw the broken version.
 - **Only list changes relative to the previous stable release.** The diff is `v(previous)..HEAD`. If something was introduced and fixed between those two tags, it never shipped — don't mention the fix.
@@ -416,8 +426,7 @@ Every bullet must be scannable at a glance. The changelog is not release documen
 - **One line per bullet.** If a bullet wraps to three lines in a narrow column, it's too long.
 - **Split bullets that pack multiple distinct changes.** If a bullet uses "and", "plus", a comma list, or an em-dash to chain several independent improvements, break them into separate bullets — even when they share a theme or author. One bullet = one user-facing change.
 - **Trim qualifying clauses.** Drop "with a hint shown when…", "matching the CLI's behaviour", "across common install shapes". If the detail doesn't change whether a user cares, cut it.
-- **Lead with what the user can do, not the mechanism.** The reader cares about the capability, not how it works under the hood. Do not explain LAN vs WAN, TLS handshakes, IPC, the daemon-relay topology, or any internal concept the user has not asked about. "Self-hosted relays can use a different TLS setting for the public endpoint" — not "Self-hosted relays support a separate TLS setting for the public endpoint, so the daemon can reach the relay over the LAN while the phone reaches it over the public secure address." If a feature genuinely needs background to be understood, it belongs in product docs, with a one-line teaser in the changelog.
-- **Lead with the outcome.** "Windows: agents launch reliably from npm `.cmd` shims…" is better than "Windows: agents launch reliably across common install shapes. Claude, Codex, and OpenCode now start correctly…".
+- **Stop after identifying the change.** Do not explain LAN/WAN topology, TLS handshakes, IPC, or other architecture in a changelog bullet. Put necessary background in product docs.
 - **Attribution follows the split.** When you split a dense bullet, move each PR/author to the bullet it belongs to. Never duplicate the same PR across multiple bullets.
 
 ## Changelog attribution
@@ -484,8 +493,10 @@ Betas are checkpoints along the way; the entry is the single record for the jump
 
 - [ ] Working tree is clean and the intended commit is on `main`
 - [ ] `origin` is exactly `https://github.com/staoran/paseo-reforged.git`
+- [ ] Every PR in the previous-stable-to-`HEAD` range has been opened, and its full description and every linked issue have been read before drafting the changelog
 - [ ] Update the in-place beta entry in `CHANGELOG.md` (heading `## X.Y.Z-beta.N - YYYY-MM-DD`), review it against the changelog policy, get approval, and commit it before cutting the release
 - [ ] The adopted upstream base version is re-checked; the target follows the current fork policy and is approved
+- [ ] Release preparation stayed local until the approved release command pushed the complete branch and tag
 - [ ] `npm run release:beta:next` completes successfully
 - [ ] GitHub `Desktop Release` workflow for the `v*-beta.N` tag is green
 - [ ] GitHub `Android APK Release` workflow for the same tag is green
@@ -499,6 +510,7 @@ Betas are checkpoints along the way; the entry is the single record for the jump
 - [ ] macOS signing and notarization credentials are configured and the stable workflow gate has been intentionally replaced by credential-backed signing
 - [ ] Run the pre-release sanity check (see above) and address any findings
 - [ ] The adopted upstream base and next Reforged formal ordinal are re-checked, with the target version and rationale approved
+- [ ] Every PR in the previous-stable-to-`HEAD` range has been opened, and its full description and every linked issue have been read before drafting the changelog
 - [ ] Ensure the intended release commit is already committed and the git worktree is clean before running any release command
 - [ ] Ensure local `npm run typecheck` passes on that exact commit before running any release command
 - [ ] Update `CHANGELOG.md` with user-facing release notes (features, fixes — not refactors). Overwrite the existing `## X.Y.Z-beta.N` heading in place with `## X.Y.Z-reforged.N` and the formal release date; do not add a duplicate entry
