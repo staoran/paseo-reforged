@@ -186,6 +186,7 @@ import type { SurfaceBackdrop } from "@/styles/surface-backdrop";
 import { useContainerWidthBelow } from "@/hooks/use-container-width";
 import {
   buildHostRootRoute,
+  buildNewWorkspaceRoute,
   buildSettingsHostRoute,
   buildSettingsHostSectionRoute,
 } from "@/utils/host-routes";
@@ -228,6 +229,26 @@ function isWorkspaceDirectoryMissing(
   workspaceDirectory: string | null,
 ): boolean {
   return Boolean(workspaceDescriptor) && !workspaceDirectory;
+}
+
+/** Leaves the current workspace route after its persisted layout has no tabs. */
+function replaceEmptyWorkspaceWithNewWorkspace(input: {
+  workspaceKey: string;
+  serverId: string;
+  workspaceDescriptor: WorkspaceDescriptor | null | undefined;
+  router: Pick<ReturnType<typeof useRouter>, "replace">;
+}): void {
+  const remainingLayout = useWorkspaceLayoutStore.getState().layoutByWorkspace[input.workspaceKey];
+  if (!remainingLayout || collectAllTabs(remainingLayout.root).length > 0) {
+    return;
+  }
+  input.router.replace(
+    buildNewWorkspaceRoute({
+      serverId: input.serverId,
+      sourceDirectory: input.workspaceDescriptor?.projectRootPath,
+      projectId: input.workspaceDescriptor?.projectId,
+    }) as Href,
+  );
 }
 
 interface WorkspaceFileLocationFields {
@@ -1719,6 +1740,7 @@ function WorkspaceScreenContent({
   recoveryAgentId,
 }: WorkspaceScreenContentProps) {
   const { t } = useTranslation();
+  const router = useRouter();
   const _insets = useSafeAreaInsets();
   const toast = useToast();
   const isMobile = useIsCompactFormFactor();
@@ -2807,6 +2829,12 @@ function WorkspaceScreenContent({
                 tabId,
                 target: { kind: "agent", agentId },
               });
+              replaceEmptyWorkspaceWithNewWorkspace({
+                workspaceKey: persistenceKey,
+                serverId: normalizedServerId,
+                workspaceDescriptor,
+                router,
+              });
             }
           },
         });
@@ -2820,10 +2848,12 @@ function WorkspaceScreenContent({
       handleAgentRuntimeCloseOutcome,
       normalizedServerId,
       persistenceKey,
+      router,
       supportsAgentRuntimeClose,
       t,
       archiveAgent,
       toast,
+      workspaceDescriptor,
     ],
   );
 

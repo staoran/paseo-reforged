@@ -2,6 +2,7 @@ import {
   buildHostAgentDetailRoute,
   buildHostWorkspaceOpenRoute,
   buildHostWorkspaceRoute,
+  buildNewWorkspaceRoute,
 } from "@/utils/host-routes";
 import { expect, test, type Page } from "../support/fixtures";
 import { gotoAppShell, openSettings } from "../support/helpers/app";
@@ -139,7 +140,7 @@ test.describe("Workspace navigation regression", () => {
     await expect(page.getByText("Add a project", { exact: true })).toHaveCount(0);
   });
 
-  test("updates resident Agent counts while closing tabs and reopens the persisted default agent", async ({
+  test("returns to New Workspace after closing the last agent tab and reopens the persisted default agent", async ({
     page,
   }) => {
     const workspace = await seedWorkspace({ repoPrefix: "workspace-runtime-reopen-" });
@@ -176,9 +177,19 @@ test.describe("Workspace navigation regression", () => {
         .filter({ visible: true })
         .click();
       await closeWorkspaceAgentTab(page, defaultAgent.id);
+      await expectAppRoute(page, buildHostWorkspaceRoute(serverId, workspace.workspaceId));
       await expect(residentIndicator).toBeVisible({ timeout: 30_000 });
       await expect(residentCount).toHaveCount(0);
       await closeWorkspaceAgentTab(page, lastClosedAgent.id);
+
+      await expectAppRoute(
+        page,
+        buildNewWorkspaceRoute({
+          serverId,
+          sourceDirectory: workspace.repoPath,
+          projectId: workspace.projectId,
+        }),
+      );
 
       await expect.poll(() => getVisibleDraftTabCount(page), { timeout: 30_000 }).toBe(0);
       await expectOnlyWorkspaceAgentTabsVisible(page, []);
