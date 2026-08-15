@@ -123,7 +123,7 @@
 | 0070 | 已完成     | micro-spec | 已同步        | [修复 Playwright shard 1 红项](micro_specs/0070_修复Playwright_shard_1红项.md)                    | 2026-08-15       | `e1827453f` 已进入 main；精确 CI run `31880050156` 的 shard 1-4 与全部 18 个 job 全绿                                                 |
 | 0071 | 已收口     | micro-spec | 已同步        | [发布 0.4.0 beta 测试版](micro_specs/0071_发布0.4.0_beta测试版.md)                                | 2026-08-15       | `v0.4.0-beta.3` 已发布；release CI、三条 workflow、24 个资产和 arm64-only APK 均已核验                                                |
 | 0072 | 已完成     | micro-spec | 已同步        | [修复 upstream 合并后 CI 合同](micro_specs/0072_修复upstream合并后CI合同.md)                      | 2026-08-15       | `fc9c97515` 已进入 main；精确 CI run `31880050156` 全部 18 个 job 全绿                                                                |
-| 0073 | 执行中     | micro-spec | 已同步        | [修复 Windows Lefthook PATH](micro_specs/0073_修复Windows_Lefthook_PATH.md)                       | 2026-08-15       | Windows 真实 hook 与带空格 staged 文件回归全绿；已授权提交并推送到 main，正在执行                                                     |
+| 0073 | 已收口     | micro-spec | 已同步        | [修复 Windows Lefthook PATH](micro_specs/0073_修复Windows_Lefthook_PATH.md)                       | 2026-08-15       | 功能提交 `e955a7d26` 已进入 main；Windows 真实 hook、空格参数与远端 SHA 均已核验                                                      |
 
 ## 候选待办
 

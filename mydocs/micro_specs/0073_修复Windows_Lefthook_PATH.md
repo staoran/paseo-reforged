@@ -6,8 +6,8 @@
 | ------------------ | --------------------------------------------------------- |
 | task_id            | `0073`                                                    |
 | spec layer         | `Feature Spec`                                            |
-| task status        | `执行中`                                                  |
-| document status    | `Active`                                                  |
+| task status        | `已收口`                                                  |
+| document status    | `Completed`                                               |
 | depth              | `standard`                                                |
 | phase              | `Review`                                                  |
 | Execution Approval | `Approved`                                                |
@@ -50,9 +50,9 @@
 ## 4. 执行前检查点
 
 - 当前目标：修复 Lefthook 子 shell 中 Node/npm 不可解析，而不是绕过 hook
-- 当前进度：实现与真实 Windows 回归完成；用户已授权提交并推送到 `main`，正在执行
+- 当前进度：实现、真实 Windows 回归、功能提交与远端 `main` 核验均已完成
 - 当前动作是否仍服务核心目标：是
-- 下一步：提交并推送四个目标文件，核验远端后回写收口记录
+- 下一步：无；0073 进入收口
 - 风险与回退：fixture 和 index 变更必须在每轮后清理；不得覆盖用户工作区或固化本机绝对路径
 - 验证方式：原始 `npx lefthook run pre-commit` staged-fixture loop、目标测试、精确 format、`git diff --check`
 - TDD 判定、测试 seam 与验收行为：`N/A；正确 seam 是真实 Lefthook + Git index + Windows shell 集成，先用可回收 fixture 验收；若发现既有稳定静态 seam，再补普通回归合同`
@@ -71,6 +71,7 @@
   - `2026-08-15`：真实 Lefthook 探针确认原生 Node 收到的 PATH 在 Node 安装目录之前截断；前置动态解析的 Node 目录后，普通 staged fixture 的 format/lint/typecheck 全绿
   - `2026-08-15`：带空格 staged 文件名证伪直接 `.cmd` 调用；改为 `node.exe + npm-cli.js` 后三个 job 再次全绿，fixture、暂存状态与调试输出均已清理
   - `2026-08-15`：用户明确批准提交并推送 0073 到 `main`；远端同步检查确认本地与 `origin/main` 均为 `6b660c2fb`
+  - `2026-08-15`：功能提交 `e955a7d26` 已快进推送到 `main`；`git ls-remote` 与 GitHub API 均确认远端 SHA 为 `e955a7d266059de7e21846de7bc9636ee54eb07b`
 
 ## 6. 验证与完成判断
 
@@ -81,6 +82,7 @@
 | 原反馈回归   | 修复后暂存合法 TypeScript fixture，运行 `npx lefthook run pre-commit`                       | 通过 | lint、format、全 workspace typecheck 均 Green，退出码 `0`                          |
 | 空格参数回归 | 暂存 `scripts/lefthook path probe.ts` 后重复真实 pre-commit                                 | 通过 | 三个 job 均 Green，退出码 `0`；临时文件与 index 已清理                             |
 | 目标合同     | `sh -n scripts/run-npm-hook.sh`；`npx lefthook validate`；目标 format 与 `git diff --check` | 通过 | shell/config/格式/空白检查均通过，无调试探针残留                                   |
+| 远端 main    | push 后执行 `git ls-remote` 与 GitHub ref API                                               | 通过 | 两个事实源均返回完整 SHA `e955a7d266059de7e21846de7bc9636ee54eb07b`                |
 
 - 未验证项与原因：未在 Linux/macOS runner 执行 hook；非 Windows 分支仍是原有 `exec npm "$@"`，以静态检查覆盖
 - 剩余风险：Windows Node 管理器若不把 npm JS 入口放在 `command -v npm` 同目录的 `node_modules/npm/bin/`，helper 会明确失败；当前全局 npm 与标准 Node 安装布局已验证
@@ -88,15 +90,15 @@
 
 ## 7. 恢复与同步
 
-- 状态说明：`执行中 / Review / Active`；实现与自动验证完成，提交与推送已获授权
+- 状态说明：`已收口 / Review / Completed`
 - 当前卡点：无
-- 下一步唯一动作：创建功能提交并推送到 `main`，随后回写远端证据
-- Resume / Handoff：目标改动仅为 `lefthook.yml`、`scripts/run-npm-hook.sh` 与 0073 任务记录；所有临时 fixture、index 与 `[DEBUG-0073]` 输出均已清理
+- 下一步唯一动作：无；如 CI 出现新失败，另建独立任务处理
+- Resume / Handoff：功能提交 `e955a7d26` 已进入 `main`；所有临时 fixture、index 与 `[DEBUG-0073]` 输出均已清理
 - Project Sync Candidates：`无；项目内 helper 与配置已承载稳定约束`
 - 长期文档同步：`不需要`
 
 ### 提交记录
 
-| 提交信息（Commit Message）                       | 提交脚注（Commit Footer） | 关联改动或阶段 | 文档同步状态 | 备注   |
-| ------------------------------------------------ | ------------------------- | -------------- | ------------ | ------ |
-| `fix: stabilize Windows Lefthook npm resolution` | `N/A`                     | `0073`         | `待同步`     | 待创建 |
+| 提交信息（Commit Message）                       | 提交脚注（Commit Footer） | 关联改动或阶段 | 文档同步状态 | 备注        |
+| ------------------------------------------------ | ------------------------- | -------------- | ------------ | ----------- |
+| `fix: stabilize Windows Lefthook npm resolution` | `N/A`                     | `0073`         | `已同步`     | `e955a7d26` |
