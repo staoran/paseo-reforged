@@ -40,6 +40,7 @@ jobs:
         run: node scripts/emit-release-env.mjs --source-tag "$SOURCE_TAG" >> "$GITHUB_ENV"
 
       - name: Verify immutable tag checkout
+        id: release-source
         shell: bash
         run: |
           set -euo pipefail
@@ -56,6 +57,7 @@ jobs:
             exit 1
           fi
 
+          echo "commit=$actual_commit" >> "$GITHUB_OUTPUT"
           echo "Verified immutable source: $SOURCE_TAG -> $actual_commit"
 
       - name: Enforce beta-only release gate
@@ -138,9 +140,10 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: android-gradle-v1-${{ runner.os }}-${{ runner.arch }}-java21-${{ hashFiles('package-lock.json') }}-${{ github.run_id }}
+          key: android-gradle-v2-${{ runner.os }}-${{ runner.arch }}-java21-${{ steps.release-source.outputs.commit }}
           restore-keys: |
-            android-gradle-v1-${{ runner.os }}-${{ runner.arch }}-java21-${{ hashFiles('package-lock.json') }}-
+            android-gradle-v2-${{ runner.os }}-${{ runner.arch }}-java21-
+            android-gradle-v1-${{ runner.os }}-${{ runner.arch }}-java21-
 
       - name: Install JS dependencies
         run: node scripts/npm-retry.mjs ci
@@ -327,7 +330,7 @@ jobs:
           echo "asset_name=$asset_name" >> "$GITHUB_OUTPUT"
           echo "asset_path=$asset_path" >> "$GITHUB_OUTPUT"
 
-      # A unique primary key lets each build publish a newer cache after prefix restores
+      # Immutable source commits seed once; exact reruns restore without another multi-GB upload
       - name: Save Gradle cache
         if: ${{ always() && steps.gradle-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v5

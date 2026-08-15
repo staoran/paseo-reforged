@@ -112,6 +112,9 @@ test("change gating allows superseded workflow runs to cancel", () => {
 
 test("Android APK build observability and task cache follow the arm64 base-version contract", () => {
   const workflowSource = readFileSync(androidReleaseWorkflowPath, "utf8");
+  const immutableCheckoutStep = workflowSource
+    .split("- name: Verify immutable tag checkout", 2)[1]
+    ?.split("- name: Enforce beta-only release gate", 1)[0];
   const swapStep = workflowSource
     .split("- name: Provision Android build swap", 2)[1]
     ?.split("- name: Restore Gradle cache", 1)[0];
@@ -128,6 +131,9 @@ test("Android APK build observability and task cache follow the arm64 base-versi
     .split("- name: Validate Android APK", 2)[1]
     ?.split("- name: Upload APK to GitHub Release", 1)[0];
 
+  assert.ok(immutableCheckoutStep, "missing immutable tag checkout step");
+  assert.match(immutableCheckoutStep, /^\s+id: release-source$/m);
+  assert.match(immutableCheckoutStep, /echo "commit=\$actual_commit" >> "\$GITHUB_OUTPUT"/);
   assert.ok(swapStep, "missing Android APK swap provisioning step");
   assert.doesNotMatch(workflowSource, /ANDROID_BUILD_SWAP_FILE:\s*\$\{\{\s*runner\.temp/);
   assert.match(swapStep, /ANDROID_BUILD_SWAP_FILE="\$RUNNER_TEMP\/paseo-android-build\.swap"/);
@@ -138,9 +144,13 @@ test("Android APK build observability and task cache follow the arm64 base-versi
   assert.match(restoreCacheStep, /uses: actions\/cache\/restore@v5/);
   assert.match(
     restoreCacheStep,
-    /key: android-gradle-v1-\$\{\{ runner\.os \}\}-\$\{\{ runner\.arch \}\}-java21-\$\{\{ hashFiles\('package-lock\.json'\) \}\}-\$\{\{ github\.run_id \}\}/,
+    /key: android-gradle-v2-\$\{\{ runner\.os \}\}-\$\{\{ runner\.arch \}\}-java21-\$\{\{ steps\.release-source\.outputs\.commit \}\}/,
   );
-  assert.match(restoreCacheStep, /restore-keys:/);
+  assert.doesNotMatch(restoreCacheStep, /github\.run_id/);
+  assert.match(
+    restoreCacheStep,
+    /restore-keys: \|\s+android-gradle-v2-\$\{\{ runner\.os \}\}-\$\{\{ runner\.arch \}\}-java21-\s+android-gradle-v1-\$\{\{ runner\.os \}\}-\$\{\{ runner\.arch \}\}-java21-/,
+  );
   assert.ok(buildStep, "missing Android APK build step");
   assert.match(buildStep, /^\s+ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a$/m);
   assert.match(buildStep, /^\s+GRADLE_OPTS: >-$/m);

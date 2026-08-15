@@ -6,10 +6,10 @@
 | ------------------ | --------------------------------------------------------- |
 | task_id            | `0069`                                                    |
 | spec layer         | `Feature Spec`                                            |
-| task status        | `执行中`                                                  |
+| task status        | `待验证`                                                  |
 | document status    | `Active`                                                  |
 | depth              | `fast`                                                    |
-| phase              | `Execute`                                                 |
+| phase              | `Review`                                                  |
 | Execution Approval | `Approved`                                                |
 | Approval Source    | `User；2026-08-15 当前消息明确要求优化 key、提交并发布`   |
 | file path          | `mydocs/micro_specs/0069_稳定Android_Gradle_cache_key.md` |
@@ -58,27 +58,30 @@
 
 ## 5. 执行与变更记录
 
-- 实际改动：`待执行`
+- 实际改动：为 immutable tag checkout step 增加 `release-source` id 并输出已核验的 commit；Gradle primary key 改为 `android-gradle-v2-<os>-<arch>-java21-<commit>`；restore 先查 v2 同平台前缀，再回退现有 v1 cache；保存条件和 cache 路径不变
 - 偏差与用户决策：`无`
-- Change Log：`2026-08-15 建立独立任务并确认执行授权`
+- Change Log：
+  - `2026-08-15`：建立独立任务并确认执行授权
+  - `2026-08-15`：静态合同在旧 `${{ github.run_id }}` key 上按预期 Red；实现 commit-addressed key 后 Green
 
 ## 6. 验证与完成判断
 
-| 验收项           | 命令或步骤                                                                                       | 结果   | 证据 |
-| ---------------- | ------------------------------------------------------------------------------------------------ | ------ | ---- |
-| 静态合同         | `node --test --test-name-pattern="Android APK build observability" scripts/ci-workflow.test.mjs` | 待执行 |      |
-| hosted exact hit | 同一 immutable tag 连续两次 Android workflow                                                     | 待执行 |      |
+| 验收项             | 命令或步骤                                                                                       | 结果              | 证据                                                                                            |
+| ------------------ | ------------------------------------------------------------------------------------------------ | ----------------- | ----------------------------------------------------------------------------------------------- |
+| 静态合同           | `node --test --test-name-pattern="Android APK build observability" scripts/ci-workflow.test.mjs` | 通过              | `1/1`；commit output、v2 key、v2/v1 restore 顺序、无 `github.run_id` 与 exact-hit save 条件成立 |
+| 完整 workflow 合同 | `node --test scripts/ci-workflow.test.mjs`                                                       | 既有 Windows 阻塞 | `8/9`；唯一失败仍是 `filesUnder` 返回反斜杠，目标 Android 合同通过                              |
+| hosted exact hit   | 同一 immutable tag 连续两次 Android workflow                                                     | 待执行            |                                                                                                 |
 
-- 未验证项与原因：尚未执行
-- 剩余风险：尚未执行
+- 未验证项与原因：尚未推送，无法取得 GitHub cache exact-hit/save 元数据
+- 剩余风险：新 commit 第一次运行仍会保存一个约 2.17 GB seed；这是让新源码 Gradle task outputs 可在同 commit 重跑复用的必要更新粒度
 - Done Contract 是否由证据满足：`否`
 
 ## 7. 恢复与同步
 
-- 状态说明：已完成任务登记和执行前检查点
+- 状态说明：本地 Red→Green 完成，等待与 0070 一起推送并做 hosted 验证
 - 当前卡点：无
-- 下一步唯一动作：在隔离 worktree 合并两条 main 线后建立 cache key 静态 Red
-- Resume / Handoff：从第 3 节动作 1 继续
+- 下一步唯一动作：完成 0070 后提交、推送精确 main，再连续 dispatch Android workflow
+- Resume / Handoff：从第 3 节动作 3 继续
 - Project Sync Candidates：`无；运行数据留在本任务记录`
 - 长期文档同步：`不需要`
 
