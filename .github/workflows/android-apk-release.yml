@@ -168,31 +168,152 @@ jobs:
 
           cd packages/app
 
-          # Keep the runner observable through Gradle phases that otherwise emit no output
+          android_perf_prefix="[ANDROID-PERF]"
+          monitor_interval_seconds=15
+
+          find_memory_cgroup() {
+            local relative_path
+
+            relative_path="$(awk -F: '$1 == "0" { print $3; exit }' /proc/self/cgroup 2>/dev/null || true)"
+            if [[ -n "$relative_path" && -d "/sys/fs/cgroup${relative_path}" ]]; then
+              printf '%s' "/sys/fs/cgroup${relative_path}"
+            elif [[ -d /sys/fs/cgroup ]]; then
+              printf '%s' /sys/fs/cgroup
+            fi
+          }
+
+          read_bytes_as_mib() {
+            local path="$1"
+            local value
+
+            if [[ ! -r "$path" ]]; then
+              printf '%s' unavailable
+              return
+            fi
+
+            value="$(<"$path")"
+            if [[ "$value" =~ ^[0-9]+$ ]]; then
+              printf '%d' "$((value / 1024 / 1024))"
+            else
+              printf '%s' unavailable
+            fi
+          }
+
+          read_memory_events() {
+            local path="$1"
+
+            if [[ ! -r "$path" ]]; then
+              printf '%s' unavailable
+              return
+            fi
+
+            awk '{ pairs = pairs (pairs ? "," : "") $1 "=" $2 } END { print pairs }' "$path"
+          }
+
           monitor_build_resources() {
+            local build_started_epoch="$1"
+            local cgroup_dir
+            local cgroup_peak_start_mib
+            local monitor_sleep_pid=""
+            local observed_peak_rss_kib=0
+            local observed_peak_pid=unavailable
+            local observed_peak_comm=unavailable
+            local sample_count=0
+
+            cgroup_dir="$(find_memory_cgroup)"
+            cgroup_peak_start_mib="$(read_bytes_as_mib "${cgroup_dir:-/unavailable}/memory.peak")"
+
+            emit_resource_summary() {
+              local cgroup_peak_final_mib
+              local cgroup_events_final
+
+              cgroup_peak_final_mib="$(read_bytes_as_mib "${cgroup_dir:-/unavailable}/memory.peak")"
+              cgroup_events_final="$(read_memory_events "${cgroup_dir:-/unavailable}/memory.events")"
+              echo "$android_perf_prefix summary samples=$sample_count process_peak_rss_kib=$observed_peak_rss_kib process_peak_pid=$observed_peak_pid process_peak_comm=$observed_peak_comm cgroup_memory_peak_start_mib=$cgroup_peak_start_mib cgroup_memory_peak_final_mib=$cgroup_peak_final_mib cgroup_memory_events_final=$cgroup_events_final"
+            }
+
+            trap 'if [[ -n "${monitor_sleep_pid:-}" ]]; then kill "$monitor_sleep_pid" 2>/dev/null || true; wait "$monitor_sleep_pid" 2>/dev/null || true; fi; emit_resource_summary; exit 0' TERM INT
+
             while true; do
-              memory_available_mb="$(awk '/MemAvailable:/ { printf "%d", $2 / 1024 }' /proc/meminfo)"
-              swap_free_mb="$(awk '/SwapFree:/ { printf "%d", $2 / 1024 }' /proc/meminfo)"
-              runner_temp_available_mb="$(df -Pm "$RUNNER_TEMP" | awk 'NR == 2 { print $4 }')"
-              echo "Build heartbeat utc=$(date -u +%Y-%m-%dT%H:%M:%SZ) memoryAvailable=${memory_available_mb}MiB swapFree=${swap_free_mb}MiB runnerTempAvailable=${runner_temp_available_mb}MiB"
-              sleep 30
+              local now_epoch
+              local memory_available_mib
+              local swap_free_mib
+              local runner_temp_available_mib
+              local cgroup_current_mib
+              local cgroup_peak_mib
+              local cgroup_swap_current_mib
+              local cgroup_events
+              local process_snapshot
+
+              now_epoch="$(date -u +%s)"
+              sample_count=$((sample_count + 1))
+              memory_available_mib="$(awk '/MemAvailable:/ { printf "%d", $2 / 1024 }' /proc/meminfo 2>/dev/null || true)"
+              swap_free_mib="$(awk '/SwapFree:/ { printf "%d", $2 / 1024 }' /proc/meminfo 2>/dev/null || true)"
+              runner_temp_available_mib="$(df -Pm "$RUNNER_TEMP" 2>/dev/null | awk 'NR == 2 { print $4 }' || true)"
+              cgroup_current_mib="$(read_bytes_as_mib "${cgroup_dir:-/unavailable}/memory.current")"
+              cgroup_peak_mib="$(read_bytes_as_mib "${cgroup_dir:-/unavailable}/memory.peak")"
+              cgroup_swap_current_mib="$(read_bytes_as_mib "${cgroup_dir:-/unavailable}/memory.swap.current")"
+              cgroup_events="$(read_memory_events "${cgroup_dir:-/unavailable}/memory.events")"
+
+              echo "$android_perf_prefix sample=$sample_count utc=$(date -u +%Y-%m-%dT%H:%M:%SZ) elapsed_s=$((now_epoch - build_started_epoch)) memory_available_mib=${memory_available_mib:-unavailable} swap_free_mib=${swap_free_mib:-unavailable} cgroup_memory_current_mib=$cgroup_current_mib cgroup_memory_peak_mib=$cgroup_peak_mib cgroup_swap_current_mib=$cgroup_swap_current_mib cgroup_memory_events=$cgroup_events runner_temp_available_mib=${runner_temp_available_mib:-unavailable}"
+
+              process_snapshot="$(
+                ps -eo pid=,ppid=,rss=,etimes=,comm= --sort=-rss 2>/dev/null |
+                  awk '$5 ~ /^(java|node|hermesc?|cmake|ninja|gradle|gradlew|kotlin|kotlinc)$/ && count++ < 10 { print }'
+              )" || process_snapshot=""
+
+              if [[ -z "$process_snapshot" ]]; then
+                echo "$android_perf_prefix process sample=$sample_count state=none"
+              else
+                while read -r pid ppid rss_kib process_elapsed_s comm; do
+                  echo "$android_perf_prefix process sample=$sample_count pid=$pid ppid=$ppid rss_kib=$rss_kib elapsed_s=$process_elapsed_s comm=$comm"
+                  if ((rss_kib > observed_peak_rss_kib)); then
+                    observed_peak_rss_kib="$rss_kib"
+                    observed_peak_pid="$pid"
+                    observed_peak_comm="$comm"
+                  fi
+                done <<< "$process_snapshot"
+              fi
+
+              sleep "$monitor_interval_seconds" &
+              monitor_sleep_pid=$!
+              wait "$monitor_sleep_pid" 2>/dev/null || true
+              monitor_sleep_pid=""
             done
           }
 
-          monitor_build_resources &
-          build_monitor_pid=$!
+          build_monitor_pid=""
           stop_build_monitor() {
-            kill "$build_monitor_pid" 2>/dev/null || true
-            wait "$build_monitor_pid" 2>/dev/null || true
+            if [[ -n "$build_monitor_pid" ]]; then
+              kill "$build_monitor_pid" 2>/dev/null || true
+              wait "$build_monitor_pid" 2>/dev/null || true
+              build_monitor_pid=""
+            fi
           }
+
+          build_started_epoch="$(date -u +%s)"
+          echo "$android_perf_prefix phase=eas-local-build event=start utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          monitor_build_resources "$build_started_epoch" &
+          build_monitor_pid=$!
           trap stop_build_monitor EXIT
 
-          npx --no-install eas build \
+          if npx --no-install eas build \
             --platform android \
             --profile production-apk \
             --local \
             --non-interactive \
-            --output "$asset_path"
+            --output "$asset_path"; then
+            build_exit_code=0
+          else
+            build_exit_code=$?
+          fi
+
+          build_finished_epoch="$(date -u +%s)"
+          echo "$android_perf_prefix phase=eas-local-build event=finish utc=$(date -u +%Y-%m-%dT%H:%M:%SZ) elapsed_s=$((build_finished_epoch - build_started_epoch)) exit_code=$build_exit_code"
+
+          if ((build_exit_code != 0)); then
+            exit "$build_exit_code"
+          fi
 
           stop_build_monitor
           trap - EXIT

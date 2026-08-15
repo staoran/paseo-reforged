@@ -110,7 +110,7 @@ test("change gating allows superseded workflow runs to cancel", () => {
   }
 });
 
-test("Android APK build monitoring and validation follow the arm64 base-version contract", () => {
+test("Android APK build observability and validation follow the arm64 base-version contract", () => {
   const workflowSource = readFileSync(androidReleaseWorkflowPath, "utf8");
   const swapStep = workflowSource
     .split("- name: Provision Android build swap", 2)[1]
@@ -139,10 +139,28 @@ test("Android APK build monitoring and validation follow the arm64 base-version 
     /-Dorg\.gradle\.jvmargs="-Xmx3072m -XX:MaxMetaspaceSize=768m -Dkotlin\.daemon\.jvm\.options=-Xmx1024m"/,
   );
   assert.match(buildStep, /^\s+NODE_OPTIONS: --max-old-space-size=3072$/m);
-  assert.match(buildStep, /Build heartbeat/);
-  assert.match(buildStep, /memoryAvailable=/);
-  assert.match(buildStep, /swapFree=/);
-  assert.match(buildStep, /runnerTempAvailable=/);
+  assert.doesNotMatch(buildStep, /-Dorg\.gradle\.caching=true/);
+  assert.match(buildStep, /android_perf_prefix="\[ANDROID-PERF\]"/);
+  assert.match(buildStep, /monitor_interval_seconds=15/);
+  assert.match(buildStep, /\/proc\/self\/cgroup/);
+  assert.match(buildStep, /memory\.current/);
+  assert.match(buildStep, /memory\.peak/);
+  assert.match(buildStep, /memory\.swap\.current/);
+  assert.match(buildStep, /memory\.events/);
+  assert.match(buildStep, /ps -eo pid=,ppid=,rss=,etimes=,comm= --sort=-rss/);
+  assert.match(buildStep, /rss_kib=\$rss_kib elapsed_s=\$process_elapsed_s comm=\$comm/);
+  assert.doesNotMatch(buildStep, /\b(?:args|cmdline|environ)\b/);
+  assert.match(buildStep, /monitor_build_resources "\$build_started_epoch" &/);
+  assert.match(buildStep, /build_monitor_pid=\$!/);
+  assert.match(buildStep, /trap stop_build_monitor EXIT/);
+  assert.match(buildStep, /kill "\$build_monitor_pid" 2>\/dev\/null \|\| true/);
+  assert.match(buildStep, /phase=eas-local-build event=start/);
+  assert.match(buildStep, /phase=eas-local-build event=finish/);
+  assert.match(buildStep, /summary samples=/);
+  assert.match(
+    buildStep,
+    /npx --no-install eas build \\\n+\s+--platform android \\\n+\s+--profile production-apk \\\n+\s+--local \\\n+\s+--non-interactive \\\n+\s+--output "\$asset_path"/,
+  );
   assert.ok(validationStep, "missing Android APK validation step");
   assert.match(validationStep, /versionName='\$RELEASE_BASE_VERSION'/);
   assert.doesNotMatch(validationStep, /versionName='\$RELEASE_VERSION'/);
