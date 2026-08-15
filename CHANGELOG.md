@@ -1,8 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.4.0-beta.3 - 2026-08-15
 
-The following user-visible changes are being adopted from upstream Paseo 0.4.0. This section does not represent a Paseo Reforged 0.4.0 release.
+### Known limitations
+
+- Clients already running `0.4.0` must install this first Paseo Reforged same-base beta manually
+- Android APKs support `arm64-v8a` devices only
+- macOS beta artifacts are unsigned and not notarized
 
 ### Breaking
 
@@ -10,6 +14,7 @@ The following user-visible changes are being adopted from upstream Paseo 0.4.0. 
 
 ### Added
 
+- Added a desktop and mobile setting to restore the last workspace on launch ([cb7530a](https://github.com/staoran/paseo-reforged/commit/cb7530ab10e57107ce48c7921f7017d5c5d2c84e) by [@staoran](https://github.com/staoran))
 - Added host-wide agent profiles for reusable provider, model, mode, thinking, and feature settings ([upstream #3208](https://github.com/getpaseo/paseo/pull/3208))
 - Added workspace file search to Cmd/Ctrl+P ([upstream #3059](https://github.com/getpaseo/paseo/pull/3059))
 - Added file and folder actions to Files and Changes ([upstream #3027](https://github.com/getpaseo/paseo/pull/3027) by [@nikuscs](https://github.com/nikuscs))
@@ -21,6 +26,7 @@ The following user-visible changes are being adopted from upstream Paseo 0.4.0. 
 
 ### Improved
 
+- Applied workspace typography and reasoning-detail expansion preferences to tool calls ([c2548f6](https://github.com/staoran/paseo-reforged/commit/c2548f6dbe66d3479195d239321437170109264e) by [@staoran](https://github.com/staoran))
 - Unified Mermaid rendering for streaming chats and Markdown previews while retaining interactive diagram controls ([upstream #2306](https://github.com/getpaseo/paseo/pull/2306) by [@dmeledon](https://github.com/dmeledon))
 - Added a centered reading layout and formatted YAML front matter to Markdown previews ([upstream #3240](https://github.com/getpaseo/paseo/pull/3240))
 - Added sidebar grouping to the Command Center ([upstream #3063](https://github.com/getpaseo/paseo/pull/3063) by [@cleiter](https://github.com/cleiter))
@@ -30,6 +36,8 @@ The following user-visible changes are being adopted from upstream Paseo 0.4.0. 
 
 ### Fixed
 
+- Fixed editing the latest user message returning an unknown-history error in persisted sessions ([f21eba8e](https://github.com/staoran/paseo-reforged/commit/f21eba8e91968ac1c216784d1e2d4822f5836321) by [@staoran](https://github.com/staoran))
+- Fixed a horizontal desktop titlebar dead zone that could not drag the window ([5470608](https://github.com/staoran/paseo-reforged/commit/54706089c95a720cfe3583a5fed02f466816e433) by [@staoran](https://github.com/staoran))
 - Fixed terminal sessions being lost after host sleep or daemon worker stalls ([upstream #3235](https://github.com/getpaseo/paseo/pull/3235), [upstream #3263](https://github.com/getpaseo/paseo/pull/3263))
 - Fixed daemon hang when archiving a workspace ([upstream #3107](https://github.com/getpaseo/paseo/pull/3107))
 - Fixed New Workspace crash on Android when projects span multiple hosts ([upstream #3241](https://github.com/getpaseo/paseo/pull/3241))
