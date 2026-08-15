@@ -3,6 +3,7 @@ import { test, expect, type Page } from "../support/fixtures";
 import { openSettings } from "../support/helpers/app";
 import { expandCompletedActivity } from "../support/helpers/agent-stream";
 import { expectComposerVisible } from "../support/helpers/composer";
+import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import { getServerId } from "../support/helpers/server-id";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
@@ -13,6 +14,7 @@ import {
 } from "../support/helpers/settings";
 
 const APP_SETTINGS_KEY = "@paseo:app-settings";
+const STANDARD_FINAL_TEXT = "(end of synthetic stream)";
 
 const RICH_MARKDOWN = [
   "## Markdown rhythm",
@@ -165,15 +167,15 @@ async function returnToWorkspace(page: Page): Promise<void> {
 
 function workspaceTypographyLocators(page: Page, prompt: string) {
   const assistantMessages = page.getByTestId("assistant-message");
+  const assistant = assistantMessages.getByText(STANDARD_FINAL_TEXT, { exact: true }).first();
   return {
     user: page
       .getByTestId("user-message")
       .filter({ hasText: prompt })
       .locator("[data-pworkspace]")
       .first(),
-    assistant: assistantMessages
-      .getByText(/The change should keep scroll-to-bottom working/)
-      .first(),
+    assistant,
+    assistantBlock: assistant.locator('xpath=ancestor::*[@data-paseo-markdown-tag="p"][1]'),
     code: assistantMessages.locator("[data-pmono]").last(),
     composer: page.getByRole("textbox", { name: "Message agent...", exact: true }).first(),
   };
@@ -181,7 +183,8 @@ function workspaceTypographyLocators(page: Page, prompt: string) {
 
 async function readWorkspaceTypography(page: Page, prompt: string) {
   const locators = workspaceTypographyLocators(page, prompt);
-  await expandCompletedActivity(page, locators.assistant);
+  await expect(locators.assistant).toBeVisible({ timeout: 30_000 });
+  await expandCompletedActivity(page, locators.code);
   return {
     user: await readTypography(locators.user),
     assistant: await readTypography(locators.assistant),
@@ -194,6 +197,7 @@ async function setStoredFontSize(
   page: Page,
   field: "uiFontSize" | "workspaceFontSize",
   fontSize: number,
+  reloadPage?: () => Promise<void>,
 ): Promise<void> {
   await page.evaluate(
     ({ key, setting, size }) => {
@@ -203,31 +207,37 @@ async function setStoredFontSize(
     },
     { key: APP_SETTINGS_KEY, setting: field, size: fontSize },
   );
+  if (reloadPage) {
+    await reloadPage();
+    return;
+  }
   await page.reload();
   await expectComposerVisible(page);
 }
 
-async function expectTextFits(locator: Locator): Promise<void> {
-  await locator.scrollIntoViewIfNeeded();
+async function expectTextFits(locator: Locator, layoutBox: Locator = locator): Promise<void> {
+  await layoutBox.scrollIntoViewIfNeeded();
   await expect(locator).toBeVisible();
-  const metrics = await locator.evaluate((element) => {
-    const style = getComputedStyle(element);
-    const fontSize = Number.parseFloat(style.fontSize);
-    const lineHeight = Number.parseFloat(style.lineHeight);
-    const rect = element.getBoundingClientRect();
-    return {
-      height: rect.height,
-      fontSize,
-      lineHeight,
+  await expect(layoutBox).toBeVisible();
+  const [typography, box] = await Promise.all([
+    locator.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        fontSize: Number.parseFloat(style.fontSize),
+        lineHeight: Number.parseFloat(style.lineHeight),
+      };
+    }),
+    layoutBox.evaluate((element) => ({
+      height: element.getBoundingClientRect().height,
       horizontalOverflow: element.scrollWidth > element.clientWidth + 1,
-    };
-  });
-  expect(metrics.horizontalOverflow).toBe(false);
-  expect(metrics.height).toBeGreaterThanOrEqual(metrics.fontSize);
-  if (Number.isFinite(metrics.lineHeight)) {
-    expect(metrics.lineHeight).toBeGreaterThanOrEqual(metrics.fontSize);
+    })),
+  ]);
+  expect(box.horizontalOverflow).toBe(false);
+  expect(box.height).toBeGreaterThanOrEqual(typography.fontSize);
+  if (Number.isFinite(typography.lineHeight)) {
+    expect(typography.lineHeight).toBeGreaterThanOrEqual(typography.fontSize);
+    expect(box.height).toBeGreaterThanOrEqual(typography.lineHeight);
   }
-  expect(metrics.height).toBeGreaterThanOrEqual(metrics.lineHeight);
 }
 
 test("renders final answer Markdown with distinct line and block rhythm", async ({
@@ -448,12 +458,26 @@ test("renders sidebar activity time as secondary metadata", async ({ page }, tes
 test("keeps interface, workspace, and code typography independent", async ({ page }, testInfo) => {
   test.setTimeout(180_000);
   const prompt = "Verify independent workspace typography.";
+  const gate = await installDaemonWebSocketGate(page);
   const agent = await seedMockAgentWorkspace({
     repoPrefix: "appearance-typography-",
     title: "Appearance typography",
     model: "ten-second-stream",
     initialPrompt: prompt,
   });
+  const reloadWithCanonicalTimeline = async (): Promise<void> => {
+    gate.holdNextServerMessage("fetch_agent_timeline_response");
+    await page.reload();
+    await expectComposerVisible(page);
+
+    const cachedLocators = workspaceTypographyLocators(page, prompt);
+    await expect(cachedLocators.assistant).toBeVisible({ timeout: 30_000 });
+    await expandCompletedActivity(page, cachedLocators.code);
+
+    await gate.waitForHeldServerMessage("fetch_agent_timeline_response");
+    gate.releaseHeldServerMessage("fetch_agent_timeline_response");
+    await expect(cachedLocators.code).toHaveCount(0);
+  };
 
   try {
     await agent.client.waitForFinish(agent.agentId, 30_000);
@@ -509,8 +533,7 @@ test("keeps interface, workspace, and code typography independent", async ({ pag
     expect(changedCode.code.fontFamily.toLowerCase()).toContain("serif");
     expect(changedCode.code.fontSize).toBe(18);
 
-    await page.reload();
-    await expectComposerVisible(page);
+    await reloadWithCanonicalTimeline();
     expect(await readWorkspaceTypography(page, prompt)).toEqual(changedCode);
 
     await openAppearanceSettings(page);
@@ -533,14 +556,15 @@ test("keeps interface, workspace, and code typography independent", async ({ pag
 
     await page.setViewportSize({ width: 390, height: 844 });
     for (const size of [24, 11]) {
-      await setStoredFontSize(page, "workspaceFontSize", size);
+      await setStoredFontSize(page, "workspaceFontSize", size, reloadWithCanonicalTimeline);
       const locators = workspaceTypographyLocators(page, prompt);
-      await expandCompletedActivity(page, locators.assistant);
+      await expect(locators.assistant).toBeVisible({ timeout: 30_000 });
+      await expandCompletedActivity(page, locators.code);
       expect((await readTypography(locators.user)).fontSize).toBe(size);
       expect((await readTypography(locators.assistant)).fontSize).toBe(size);
       expect((await readTypography(locators.composer)).fontSize).toBe(size);
       await expectTextFits(locators.user);
-      await expectTextFits(locators.assistant);
+      await expectTextFits(locators.assistant, locators.assistantBlock);
       await expectTextFits(locators.composer);
       await testInfo.attach(`workspace-font-${size}-mobile`, {
         body: await page.screenshot(),
@@ -548,6 +572,7 @@ test("keeps interface, workspace, and code typography independent", async ({ pag
       });
     }
   } finally {
+    gate.restore();
     await agent.cleanup();
   }
 });

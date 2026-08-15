@@ -98,6 +98,7 @@ The following user-visible changes are being adopted from upstream Paseo 0.4.0. 
 - Relative activity times display on devices without `Intl.RelativeTimeFormat` ([b727d18](https://github.com/staoran/paseo-reforged/commit/b727d18cd1ee0010eb995f96dc90239216778871) by [@staoran](https://github.com/staoran))
 - Stored conversations no longer appear to have running Agents after a restart ([72aab86](https://github.com/staoran/paseo-reforged/commit/72aab860c56634bb042aa763e2bd25338fb45d99) by [@staoran](https://github.com/staoran))
 - Project names remain visible in status-grouped sidebar rows ([9d51195](https://github.com/staoran/paseo-reforged/commit/9d511954b33e8b0c5f8de5e18516b1c86374bd9f) by [@staoran](https://github.com/staoran))
+
 ## 0.3.1 - 2026-08-09
 
 ### Added

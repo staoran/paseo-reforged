@@ -782,6 +782,7 @@ describe("real provider usage fetchers", () => {
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "state.vscdb"), "not a sqlite database");
     const logger = createLogger();
+    const debug = vi.spyOn(logger, "debug").mockImplementation(() => undefined);
     const provider = new CursorQuotaProvider({
       logger,
       fetch: (() => {
@@ -793,7 +794,7 @@ describe("real provider usage fetchers", () => {
     const usage = await provider.fetchUsage();
 
     expect(usage.status).toBe("unavailable");
-    expect((logger as unknown as { debug: ReturnType<typeof vi.fn> }).debug).toHaveBeenCalledWith(
+    expect(debug).toHaveBeenCalledWith(
       expect.objectContaining({ path: expect.stringContaining("state.vscdb") }),
       expect.stringContaining("Failed to read Cursor token"),
     );

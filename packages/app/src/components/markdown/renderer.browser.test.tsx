@@ -18,34 +18,34 @@ Object.assign(globalThis, {
   React,
 });
 
-async function findVisibleSvg(
+async function findVisibleDiagram(
   container: HTMLElement,
   timeoutMs: number,
-): Promise<SVGSVGElement | null> {
+): Promise<HTMLElement | null> {
   const startedAt = performance.now();
   while (performance.now() - startedAt < timeoutMs) {
-    const svg = container.querySelector<SVGSVGElement>("svg");
-    if (svg?.parentElement && getComputedStyle(svg.parentElement).display !== "none") {
-      return svg;
+    const diagram = container.querySelector<HTMLElement>('[role="img"]');
+    if (diagram && getComputedStyle(diagram).display !== "none") {
+      return diagram;
     }
     await act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
   }
   return null;
 }
 
-async function waitForSvg(container: HTMLElement): Promise<SVGSVGElement> {
-  const svg = await findVisibleSvg(container, 5_000);
-  if (svg) return svg;
-  throw new Error("Timed out waiting for Mermaid SVG");
+async function waitForDiagram(container: HTMLElement): Promise<HTMLElement> {
+  const diagram = await findVisibleDiagram(container, 5_000);
+  if (diagram) return diagram;
+  throw new Error("Timed out waiting for Mermaid diagram");
 }
 
-async function waitForSvgCount(container: HTMLElement, count: number): Promise<void> {
+async function waitForFrameCount(container: HTMLElement, count: number): Promise<void> {
   const startedAt = performance.now();
   while (performance.now() - startedAt < 5_000) {
-    if (container.querySelectorAll("svg").length >= count) return;
+    if (container.querySelectorAll("iframe").length >= count) return;
     await act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
   }
-  throw new Error(`Timed out waiting for ${count} Mermaid SVGs`);
+  throw new Error(`Timed out waiting for ${count} Mermaid frames`);
 }
 
 describe("MarkdownRenderer Mermaid fences", () => {
@@ -59,7 +59,7 @@ describe("MarkdownRenderer Mermaid fences", () => {
     root = null;
   });
 
-  it("renders a closed Mermaid fence as selectable SVG text", async () => {
+  it("renders a closed Mermaid fence through a sandboxed runtime", async () => {
     const { MarkdownRenderer } = await import("./renderer");
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -74,19 +74,10 @@ describe("MarkdownRenderer Mermaid fences", () => {
       );
     });
 
-    const svg = await waitForSvg(container);
-    const startLabel = Array.from(svg.querySelectorAll("text")).find(
-      (element) => element.textContent === "Start",
-    );
-    expect(startLabel).toBeDefined();
-
-    const range = document.createRange();
-    range.selectNodeContents(startLabel as SVGTextElement);
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
-    selection?.addRange(range);
-
-    expect(selection?.toString()).toBe("Start");
+    const diagram = await waitForDiagram(container);
+    const frame = diagram.querySelector("iframe");
+    expect(frame?.sandbox.contains("allow-scripts")).toBe(true);
+    expect(frame?.sandbox.contains("allow-same-origin")).toBe(false);
   });
 
   it("keeps an unclosed Mermaid fence as source while content is streaming", async () => {
@@ -104,7 +95,7 @@ describe("MarkdownRenderer Mermaid fences", () => {
       );
     });
 
-    expect(await findVisibleSvg(container, 1_500)).toBeNull();
+    expect(await findVisibleDiagram(container, 1_500)).toBeNull();
     expect(container.textContent).toContain("flowchart LR");
   });
 
@@ -120,7 +111,7 @@ describe("MarkdownRenderer Mermaid fences", () => {
       );
     });
 
-    expect(container.querySelector("svg")).toBeNull();
+    expect(container.querySelector('[role="img"]')).toBeNull();
     expect(container.textContent).toContain("const answer = 42;");
   });
 
@@ -137,7 +128,7 @@ describe("MarkdownRenderer Mermaid fences", () => {
       );
     });
 
-    expect(await findVisibleSvg(container, 1_500)).toBeNull();
+    expect(await findVisibleDiagram(container, 1_500)).toBeNull();
     expect(container.textContent).toContain(source);
   });
 
@@ -154,7 +145,7 @@ describe("MarkdownRenderer Mermaid fences", () => {
       );
     });
 
-    expect(await findVisibleSvg(container, 1_500)).toBeNull();
+    expect(await findVisibleDiagram(container, 1_500)).toBeNull();
     expect(container.textContent).toContain(source);
   });
 
@@ -171,11 +162,11 @@ describe("MarkdownRenderer Mermaid fences", () => {
       );
     });
 
-    expect(await findVisibleSvg(container, 1_500)).toBeNull();
+    expect(await findVisibleDiagram(container, 1_500)).toBeNull();
     expect(container.textContent).toContain(source);
   });
 
-  it("renders br labels as selectable multiline SVG text", async () => {
+  it("renders Mermaid labels with HTML line breaks instead of falling back to source", async () => {
     const { MarkdownRenderer } = await import("./renderer");
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -190,15 +181,8 @@ describe("MarkdownRenderer Mermaid fences", () => {
       );
     });
 
-    const svg = await waitForSvg(container);
-    const label = Array.from(svg.querySelectorAll("text")).find((element) =>
-      element.textContent?.includes("First line"),
-    );
-    const lines = Array.from(label?.querySelectorAll(":scope > tspan.text-outer-tspan") ?? [])
-      .map((element) => element.textContent?.trim())
-      .filter(Boolean);
-
-    expect(lines).toEqual(["First line", "Second line"]);
+    await waitForDiagram(container);
+    expect(container.textContent).not.toContain("flowchart LR");
   });
 
   it("offers source, copy, and expanded preview actions after rendering", async () => {
@@ -217,7 +201,7 @@ describe("MarkdownRenderer Mermaid fences", () => {
       );
     });
 
-    await waitForSvg(container);
+    await waitForDiagram(container);
 
     const [showSource, copySource, expand] = Array.from(
       container.querySelectorAll<HTMLElement>('[role="button"]'),
@@ -236,7 +220,7 @@ describe("MarkdownRenderer Mermaid fences", () => {
     expect(clipboard.getClipboardStringForTests()).toBe(`${source}\n`);
 
     act(() => expand?.click());
-    await waitForSvgCount(document.body, 2);
+    await waitForFrameCount(document.body, 2);
   });
 
   it("falls back to source when Mermaid syntax is invalid", async () => {
@@ -252,7 +236,7 @@ describe("MarkdownRenderer Mermaid fences", () => {
       );
     });
 
-    expect(await findVisibleSvg(container, 1_500)).toBeNull();
+    expect(await findVisibleDiagram(container, 1_500)).toBeNull();
     expect(container.textContent).toContain(source);
   });
 
@@ -279,8 +263,10 @@ describe("MarkdownRenderer Mermaid fences", () => {
       );
     });
 
-    const svg = await waitForSvg(container);
-    expect(svg.textContent).toContain("New");
-    expect(svg.textContent).not.toContain("Old");
+    await waitForDiagram(container);
+    const showSource = container.querySelector<HTMLElement>('[role="button"]');
+    act(() => showSource?.click());
+    expect(container.textContent).toContain('A["New"]');
+    expect(container.textContent).not.toContain('A["Old"]');
   });
 });
