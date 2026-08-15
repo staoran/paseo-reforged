@@ -6,10 +6,10 @@
 | ------------------ | -------------------------------------------------------- |
 | task_id            | `0070`                                                   |
 | spec layer         | `Feature Spec`                                           |
-| task status        | `执行中`                                                 |
+| task status        | `待验证`                                                 |
 | document status    | `Active`                                                 |
 | depth              | `standard`                                               |
-| phase              | `Execute`                                                |
+| phase              | `Review`                                                 |
 | Execution Approval | `Approved`                                               |
 | Approval Source    | `User；2026-08-15 当前消息明确要求单独修复 shard 1 红项` |
 | file path          | `mydocs/micro_specs/0070_修复Playwright_shard_1红项.md`  |
@@ -31,6 +31,10 @@
 - 轻量评估：`升级 standard`
 - 已确认事实：CI run `31864025981` / job `94962094953` 报告 appearance 期望源码文本 count 0、实际 3；consecutive-turns 的倒数第二帧未绘制首个 prompt footer 与 working spinner
 - 风险与未知：两项可能分别是选择器过宽与帧采样时序假设，也可能暴露真实渲染回归；在 Red 前不选实现方案
+- appearance 排序假设：`H1` 折叠工具保留隐藏 DOM、count 断言错误；`H2` reasoning setting 错误展开普通 Read；`H3` reload 后 retained view 留下隐藏副本；`H4` timeline hydration 在 active stream 重复 Read 内容。分别由匹配元素可见性/折叠祖先、Read expanded 状态、所属 panel 与 badge 数量证伪
+- appearance 根因：可见性探针确认普通 Read 源码详情真实可见；`autoExpandReasoning=true` 按已批准行为同时展开 thinking 与普通工具详情，末尾 `count=0` 合同已过时。Playwright 官方文档确认多匹配 locator 的单元素操作为 strict，表达“至少一个可见匹配”应对可见集合取 `.first()` 后使用 `toBeVisible()`
+- consecutive-turns 排序假设：`H1` oracle 把首次 prompt 原子转场扩展到后续流式内容；`H2` 产品遗漏 near-bottom 自动滚动；`H3` authoritative hydration 改变 prompt/附件几何；`H4` CSS 可见性探针误判。frame record 排除 `H3/H4`，原始 PR 意图与受控 timeline probe 确认 `H1`
+- consecutive-turns 根因：frame `38-40` footer/spinner 已绘制；frame `41` assistant block 从 `264px` 增到 `286px`，footer 被推到滚动视口外，而 prompt 与附件 rect 保持不变。测试目标是 hydration 期间 prompt 不跳动，不应混入无关 assistant token 增长
 
 ## 3. 涉及文件与计划
 
@@ -58,30 +62,38 @@
 
 ## 5. 执行与变更记录
 
-- 实际改动：`待执行`
+- 实际改动：appearance 测试改为验证 activity 展开后至少一个普通工具源码详情可见，并使测试名匹配真实合同；first-prompt 测试在 hydration 采样窗口内用既有 WebSocket gate 暂停 live `agent_stream`，截获 authoritative timeline response 并裁到最后一个 `user_message` 后释放，保留 prompt、附件、footer、spinner、composer、tab 与 interrupt 的原子转场断言
 - 偏差与用户决策：`无`
-- Change Log：`2026-08-15 建立独立诊断任务并确认执行授权`
+- Change Log：
+  - `2026-08-15`：建立独立诊断任务并确认执行授权
+  - `2026-08-15`：按 CI 前置步骤构建 app/server 后，本地复现 appearance 精确 Red；匹配数量在 CI/本地为 `1-3`，可见性探针确认是展开的真实普通工具详情
+  - `2026-08-15`：本地复现 consecutive-turns 精确 Red；仅抑制 `assistant_message` 的首轮方案仍被 reasoning/commentary 输出证伪，改为受控 canonical hydration 后原 oracle 连续 Green
 
 ## 6. 验证与完成判断
 
-| 验收项                      | 命令或步骤           | 结果   | 证据 |
-| --------------------------- | -------------------- | ------ | ---- |
-| appearance Red/Green        | 精确 Playwright test | 待执行 |      |
-| consecutive turns Red/Green | 精确 Playwright test | 待执行 |      |
-| main CI                     | GitHub Actions       | 待执行 |      |
+| 验收项                      | 命令或步骤                                                                                                                                                                                                                                            | 结果   | 证据                                                                               |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------- |
+| appearance Red/Green        | `npm run test:e2e --workspace=@getpaseo/app -- e2e/browser/appearance-reasoning.spec.ts --grep "keeps activity folding" --workers=1 --reporter=line`                                                                                                  | 通过   | 原合同 Red；修正后 `1 passed (3.2m)`                                               |
+| consecutive turns Red/Green | `$env:PASEO_NODE_INSPECT='0'; npm run test:e2e --workspace=@getpaseo/app -- e2e/browser/agent-consecutive-turns.spec.ts --grep "keeps the first prompt" --workers=1 --repeat-each=2 --reporter=line`                                                  | 通过   | 原夹具 frame `41/42` 与 `49-53` Red；受控 canonical hydration 后 `2 passed (2.9m)` |
+| 两项合并回归                | `$env:PASEO_NODE_INSPECT='0'; npm run test:e2e --workspace=@getpaseo/app -- e2e/browser/appearance-reasoning.spec.ts e2e/browser/agent-consecutive-turns.spec.ts --grep "keeps activity folding\|keeps the first prompt" --workers=1 --reporter=line` | 通过   | `2 passed (3.1m)`；同一 worker daemon 正常回收                                     |
+| 定向 workflow 合同          | `node --test --test-name-pattern="Android APK build observability" scripts/ci-workflow.test.mjs`                                                                                                                                                      | 通过   | `1/1`；cache key 与 Android 构建合同保持 Green                                     |
+| 格式与 diff 检查            | `npm run format:files -- <0070 spec> <两个 E2E 文件>`；`git diff --check`                                                                                                                                                                             | 通过   | 仅目标文件；无格式或空白错误                                                       |
+| TypeScript                  | `npm run typecheck`                                                                                                                                                                                                                                   | 通过   | 全 workspace 退出码 `0`，耗时 `65.7s`                                              |
+| lint                        | `npm run lint`                                                                                                                                                                                                                                        | 通过   | `0 errors / 0 warnings`，扫描 `3516` 个文件                                        |
+| main CI                     | GitHub Actions                                                                                                                                                                                                                                        | 待执行 |                                                                                    |
 
-- 未验证项与原因：尚未执行
-- 剩余风险：尚未执行
+- 未验证项与原因：尚未推送，main CI 待执行
+- 剩余风险：上游当前 main 保留同一过宽夹具，未来同步可能重新引入；本任务不修改上游仓库
 - Done Contract 是否由证据满足：`否`
 
 ## 7. 恢复与同步
 
-- 状态说明：已完成任务登记和执行前检查点
+- 状态说明：两个独立 Red 均已定位，连续/合并回归与静态门禁 Green，等待 main CI
 - 当前卡点：无
-- 下一步唯一动作：合并 main 后运行两个精确 Playwright Red
-- Resume / Handoff：从第 3 节动作 1 继续
-- Project Sync Candidates：`无；根因确认后再判断`
-- 长期文档同步：`待判断`
+- 下一步唯一动作：创建独立修复提交、推送精确 main 并等待 CI
+- Resume / Handoff：从第 3 节动作 3 的 hosted 验证继续
+- Project Sync Candidates：`无；本次为既有 E2E 合同修复`
+- 长期文档同步：`不需要`
 
 ### 提交记录
 

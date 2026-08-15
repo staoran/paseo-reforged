@@ -809,21 +809,30 @@ test("keeps the first prompt of a new agent in place through authoritative hydra
       );
     });
     const gate = await installDaemonWebSocketGate(page);
-    await gotoWorkspace(page, workspace.workspaceId);
-    await clickNewChat(page);
-    await expectComposerVisible(page);
+    gate.setAgentStreamSuppressed(true);
+    try {
+      await gotoWorkspace(page, workspace.workspaceId);
+      await clickNewChat(page);
+      await expectComposerVisible(page);
 
-    const prompt = "Delay synthetic user message by 300ms.";
-    await attachImageFromMenu(page, FIRST_PROMPT_IMAGE);
-    await expectAttachmentPill(page, "composer-image-attachment-pill");
-    await recordTurnFrames(page, prompt);
-    await submitMessage(page, prompt);
+      const prompt = "Delay synthetic user message by 300ms.";
+      await attachImageFromMenu(page, FIRST_PROMPT_IMAGE);
+      await expectAttachmentPill(page, "composer-image-attachment-pill");
+      await recordTurnFrames(page, prompt);
+      gate.holdNextServerMessage("fetch_agent_timeline_response");
+      await submitMessage(page, prompt);
 
-    const submittedRow = page.getByTestId("user-message").filter({ hasText: prompt }).first();
-    await expect(submittedRow).toBeVisible();
-    await gate.waitForServerMessage("fetch_agent_timeline_response");
-    await recordPaintsFor(page, 80);
-    expectAtomicFirstPromptTransition(await stopTurnFrameRecording(page));
+      const submittedRow = page.getByTestId("user-message").filter({ hasText: prompt }).first();
+      await expect(submittedRow).toBeVisible();
+      await gate.waitForHeldServerMessage("fetch_agent_timeline_response");
+      gate.truncateHeldTimelineAfterLast("user_message");
+      gate.releaseHeldServerMessage("fetch_agent_timeline_response");
+      await expect(submittedRow.getByTestId("rewind-menu-trigger")).toBeVisible();
+      await recordPaintsFor(page, 80);
+      expectAtomicFirstPromptTransition(await stopTurnFrameRecording(page));
+    } finally {
+      gate.setAgentStreamSuppressed(false);
+    }
   } finally {
     await workspace.cleanup();
   }

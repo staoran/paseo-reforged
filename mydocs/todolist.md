@@ -120,7 +120,7 @@
 | 0067 | 已收口     | micro-spec | Review 完成   | [修复编辑提交的 Provider 消息定位](micro_specs/0067_修复编辑提交的Provider消息定位.md)            | 2026-08-14       | 独立提交 `f21eba8e9`；定向 Playwright 与静态门禁通过                                                                                  |
 | 0068 | 执行中     | micro-spec | 已同步        | [观测 Android 冷构建资源峰值](micro_specs/0068_观测Android冷构建资源峰值.md)                      | 2026-08-15       | baseline 与 Gradle task cache seed/hit 已完成；切片 3-4 未纳入本轮                                                                    |
 | 0069 | 待验证     | micro-spec | 已同步        | [稳定 Android Gradle cache key](micro_specs/0069_稳定Android_Gradle_cache_key.md)                 | 2026-08-15       | immutable commit key 静态合同已 Red→Green；待连续两次 hosted run 验证 exact hit 与不重复保存                                          |
-| 0070 | 执行中     | micro-spec | 已落盘        | [修复 Playwright shard 1 红项](micro_specs/0070_修复Playwright_shard_1红项.md)                    | 2026-08-15       | 仅处理 `agent-consecutive-turns` 与 `appearance-reasoning` 失败                                                                       |
+| 0070 | 待验证     | micro-spec | 已同步        | [修复 Playwright shard 1 红项](micro_specs/0070_修复Playwright_shard_1红项.md)                    | 2026-08-15       | 两个定向 E2E 与静态门禁已通过；待精确 main CI 验证                                                                                    |
 | 0071 | 执行中     | micro-spec | 已落盘        | [发布 0.4.0 beta 测试版](micro_specs/0071_发布0.4.0_beta测试版.md)                                | 2026-08-15       | 精确 main CI 全绿后准备并发布 `v0.4.0-beta.1`                                                                                         |
 
 ## 候选待办
