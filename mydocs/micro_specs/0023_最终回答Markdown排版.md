@@ -6,8 +6,8 @@
 | ------------------ | ------------------------------------------------- |
 | task_id            | `0023`                                            |
 | spec layer         | `Feature Spec`                                    |
-| task status        | `待验证`                                          |
-| document status    | `Active`                                          |
+| task status        | `已收口`                                          |
+| document status    | `Completed`                                       |
 | depth              | `deep`                                            |
 | phase              | `Review`                                          |
 | Execution Approval | `Approved`                                        |
@@ -15,7 +15,7 @@
 | file path          | `mydocs/micro_specs/0023_最终回答Markdown排版.md` |
 | parent spec        | `N/A`                                             |
 | superseded by      | `N/A`                                             |
-| created / updated  | `2026-07-29 / 2026-07-31 15:53`                   |
+| created / updated  | `2026-07-29 / 2026-08-16 13:16`                   |
 
 ## 1. 目标与完成契约
 
@@ -72,7 +72,8 @@
 
 - 实际改动：首轮将 `strong` 改为 bold、正文/代码/表格字距显式为 0，叶子 `text` 不再覆盖语义字号；shared/assistant renderer 将 `styles.body` 传入段落；Android 纯文字段落使用单 `Text`、iOS 根 `UITextView` 合并正文样式，含图片段落继续使用 `View`。后续把正文行高由 `1.5` 收紧为 `1.4`、assistant Markdown block 额外间距收紧为 4px、footer 同时常显耗时与完成时间，并给缺少可见行号的文件链接追加 `(line N)` / `(lines N-M)`。本次把共享 `list_item.marginBottom` 从 4px 增至 8px，使有序/无序列表增加条目间距而不改变条目内部行高。
 - 偏差与用户决策：本任务独立于 Interface 字号任务 `0022`；使用 workspace typography，不设父子关系。带行号文件链接只验证现有渲染样式，不修改任务 `0025` 所属解析逻辑。
-- Change Log：`2026-07-29` 完成只读调查并建档；`2026-07-30` 用户提供参考截图并授权执行，确认 rich Markdown seam；`2026-07-31 04:41` 完成首轮实现、Web 截图与验证，转 Review 等待 Native smoke；`2026-07-31 09:49` 用户对比截图后要求常显完成时间、显示链接行号并收紧段落行距；`2026-07-31 15:28` 用户要求增加密集列表的条目间距，复用原 seam 进入 Execute。
+- 收口决定：`2026-08-16` 用户确认任务已完结并要求收口，接受未补 Android/iOS smoke 的验证例外与剩余 Native 字体风险。
+- Change Log：`2026-07-29` 完成只读调查并建档；`2026-07-30` 用户提供参考截图并授权执行，确认 rich Markdown seam；`2026-07-31 04:41` 完成首轮实现、Web 截图与验证，转 Review 等待 Native smoke；`2026-07-31 09:49` 用户对比截图后要求常显完成时间、显示链接行号并收紧段落行距；`2026-07-31 15:28` 用户要求增加密集列表的条目间距，复用原 seam 进入 Execute；`2026-08-16` 按用户确认收口。
 
 ## 6. 验证与完成判断
 
@@ -87,18 +88,18 @@
 | targeted lint         | `rtk npm run lint -- <0023 files>`                                            | PASS      | 0 warnings / 0 errors。                                                                                                 |
 | full lint             | `rtk npm run lint`                                                            | BLOCKED   | 无关 `sidebar-workspace-list.test.tsx` 既有 5 errors。                                                                  |
 | format                | `rtk npm run format:check:files -- <0023 files>`                              | PASS      | 9 个目标文件格式正确。                                                                                                  |
-| Native smoke          | Android/iOS                                                                   | PENDING   | 当前 Windows 环境未运行。                                                                                               |
+| Native smoke          | Android/iOS                                                                   | 例外接受  | 未补设备证据；用户于 2026-08-16 确认完结并接受该验证例外。                                                              |
 
-- 未验证项与原因：Android/iOS text-only 与 image paragraph 需真机或模拟器 smoke；当前 Windows 环境未运行。
-- 剩余风险：自定义字体缺少 bold face 时视觉可能弱于系统字体；Native 测量仍待 smoke。
-- Done Contract 是否由证据满足：`Web 已满足；全平台合同待 Native smoke。`
+- 未验证项与原因：Android/iOS text-only 与 image paragraph smoke 未补跑；用户于 2026-08-16 确认完结并接受验证例外。
+- 剩余风险：自定义字体缺少 bold face 时视觉可能弱于系统字体；Native 测量缺少设备证据，用户已接受。
+- Done Contract 是否由证据满足：`Web 合同已满足；Native smoke 作为用户接受的验证例外保留，任务收口。`
 
 ## 7. 恢复与同步
 
-- 状态说明：`待验证 / Review`。
-- 当前卡点：`Android/iOS smoke 未执行`。
-- 下一步唯一动作：在 Native 运行 rich Markdown fixture，确认纯文字、含图片段落及列表项间距无裁切或选择回归。
-- Resume / Handoff：先回读第 6 节验证证据，再执行 Android/iOS smoke。
+- 状态说明：`已收口 / Review`。
+- 当前卡点：无；Native smoke 验证例外已由用户接受。
+- 下一步唯一动作：N/A。
+- Resume / Handoff：N/A；任务已完结，不再补跑 Native smoke。
 - Project Sync Candidates：`无`。
 - 长期文档同步：`N/A`。
 
@@ -107,3 +108,4 @@
 | 提交信息（Commit Message）                           | 提交脚注（Commit Footer） | 关联改动或阶段  | 文档同步状态 | 备注              |
 | ---------------------------------------------------- | ------------------------- | --------------- | ------------ | ----------------- |
 | `fix(app): improve final answer markdown typography` | `N/A`                     | `0023 / Review` | `N/A`        | 用户已授权 commit |
+| `docs: close remaining local tasks`                  | `N/A`                     | `0023 / Review` | `已同步`     | 用户确认完结      |

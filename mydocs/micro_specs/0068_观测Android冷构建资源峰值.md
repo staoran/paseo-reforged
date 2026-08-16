@@ -6,8 +6,8 @@
 | ------------------ | ------------------------------------------------------ |
 | task_id            | `0068`                                                 |
 | spec layer         | `Feature Spec`                                         |
-| task status        | `执行中（切片 1-2 完成，切片 3-4 待批准）`             |
-| document status    | `Active`                                               |
+| task status        | `已收口`                                               |
+| document status    | `Completed`                                            |
 | depth              | `standard`                                             |
 | phase              | `Review`                                               |
 | Execution Approval | `Approved`                                             |
@@ -15,7 +15,7 @@
 | file path          | `mydocs/micro_specs/0068_观测Android冷构建资源峰值.md` |
 | parent spec        | `N/A`                                                  |
 | superseded by      | `N/A`                                                  |
-| created / updated  | `2026-08-15 08:54 / 2026-08-15 13:40`                  |
+| created / updated  | `2026-08-15 08:54 / 2026-08-16 13:16`                  |
 
 ## 1. 目标与完成契约
 
@@ -27,7 +27,7 @@
 
 - 范围内：Android APK workflow 中 EAS local build 的进程 RSS、系统内存、cgroup v2 内存/交换区事件、临时盘可用量、阶段起止与耗时日志；监控生命周期；Gradle local task build cache 的启用和恢复/保存闭环；静态合同测试；将已提交本地代码与远端 beta CI 线合并后推送 main 并 dispatch 既有 immutable tag
 - 范围外：Gradle/JVM/Node 内存上限、swap 配置、ABI、ccache、Hermes/source map、EAS profile、APK 内容、版本和移动商店发布；不携带 0065 未提交合并工作或 `packages/desktop/scripts/dev.ps1`
-- 当前任务单元：切片 1 基线与切片 2 seed/hit 对照已完成；切片 3-4 等待新的执行批准
+- 当前任务单元：切片 1 基线与切片 2 seed/hit 对照已完成；用户于 2026-08-16 确认任务完结，切片 3-4 不再实施
 - 轻量评估：`升级 standard`；改动跨 workflow、静态合同和任务记录，且必须兼容失败/取消与缺失 cgroup 文件
 - 已确认事实：成功 run `31827931781` / job `94856442163` 总计约 29 分钟，Gradle 约 22 分钟且 `688 actionable tasks: 688 executed`；`:app:createBundleReleaseJsAndAssets` 约从 `18:37:24` 到 `18:41:16`，Metro 约 16 秒后存在约 3.5 分钟静默区间；该区间同时出现最低 `MemAvailable=625 MiB`，最低 `SwapFree=648 MiB`；native CMake 约 5 分钟；产物仅含 `arm64-v8a`
 - 已确认事实：当前本地 `main=f21eba8e9`，相对 `origin/main=dfb48da30` 为 ahead 4 / behind 8；远端 8 个提交包含 beta 发布及 swap/cache/arm64/内存 heartbeat 改动，当前工作树另有 0065 与 `packages/desktop/scripts/dev.ps1` 用户改动，本任务不合并、覆盖或提交这些内容
@@ -36,12 +36,12 @@
 
 ### 四个单变量切片
 
-| 切片 | 唯一变量                                             | 本轮状态      | 验收信号                                             |
-| ---- | ---------------------------------------------------- | ------------- | ---------------------------------------------------- |
-| 1    | 增加进程 RSS、cgroup v2、系统内存和 EAS 阶段耗时观测 | 集成/待实跑   | 下一次冷构建产出连续样本与退出摘要，APK 构建合同不变 |
-| 2    | 启用并闭合 Gradle task build cache 的恢复/保存链路   | 已批准/待基线 | 对比 cache hit、executed task 数量、耗时和峰值内存   |
-| 3    | 仅为 native CMake/Ninja 编译启用 ccache              | 待后续批准    | 对比 ccache hit/miss、native 阶段耗时和峰值内存      |
-| 4    | 仅关闭未被发布流程消费的 Hermes source map 生成/合并 | 待后续批准    | 对比 JS bundle 静默区间、Hermes RSS 和产物校验       |
+| 切片 | 唯一变量                                             | 本轮状态 | 验收信号                                             |
+| ---- | ---------------------------------------------------- | -------- | ---------------------------------------------------- |
+| 1    | 增加进程 RSS、cgroup v2、系统内存和 EAS 阶段耗时观测 | 已完成   | 下一次冷构建产出连续样本与退出摘要，APK 构建合同不变 |
+| 2    | 启用并闭合 Gradle task build cache 的恢复/保存链路   | 已完成   | 对比 cache hit、executed task 数量、耗时和峰值内存   |
+| 3    | 仅为 native CMake/Ninja 编译启用 ccache              | 不再实施 | 用户确认任务完结，不再取得新批准                     |
+| 4    | 仅关闭未被发布流程消费的 Hermes source map 生成/合并 | 不再实施 | 用户确认任务完结，不再取得新批准                     |
 
 ## 3. 涉及文件与计划
 
@@ -80,8 +80,9 @@
   - `2026-08-15 12:00`：切片 1 hosted-runner 基线 run `31862057595` / job `94957051858` 成功；`headSha=2e2262776b3721c932b35405fe7737a04343abca`，EAS `1148s`，Gradle `14m51s`，`688 actionable tasks: 688 executed`
   - `2026-08-15 12:00`：77 个观测样本中进程 RSS 峰值 `13548944 KiB`（`hermesc`），cgroup 峰值 `14957 MiB`，cgroup swap current 峰值 `5082 MiB`，最低 `MemAvailable=819 MiB`、`SwapFree=37 MiB`，`memory.events` 无 OOM；APK 校验为 `sh.paseo.reforged`、`arm64-v8a`
   - `2026-08-15 12:00`：基线 restore 命中上一 run 的 Gradle User Home key，但旧 `cache-matched-key` 条件使 Save step skipped；切片 2 仅启用 `-Dorg.gradle.caching=true` 并改用 `cache-hit != 'true'`
-  - `2026-08-15 13:27`：切片 2 commit `790aca54140dcf77a0057122a283fcd7dea30b9d` 已推送到 `main`；seed run `31864116282` 成功保存 `2.15 GB` Gradle cache，`564 executed / 124 from cache`，EAS `1041s`
-  - `2026-08-15 13:27`：hit run `31866295866` 从 seed key 恢复并成功保存新 key，`368 executed / 320 from cache`，Gradle `8m45s`，EAS `697s`；RSS `13499480 KiB`、cgroup peak `14862 MiB`、无 OOM，APK 校验为 `arm64-v8a`
+- `2026-08-15 13:27`：切片 2 commit `790aca54140dcf77a0057122a283fcd7dea30b9d` 已推送到 `main`；seed run `31864116282` 成功保存 `2.15 GB` Gradle cache，`564 executed / 124 from cache`，EAS `1041s`
+- `2026-08-15 13:27`：hit run `31866295866` 从 seed key 恢复并成功保存新 key，`368 executed / 320 from cache`，Gradle `8m45s`，EAS `697s`；RSS `13499480 KiB`、cgroup peak `14862 MiB`、无 OOM，APK 校验为 `arm64-v8a`
+  - `2026-08-16 13:16`：用户确认任务已完结并要求收口；切片 3-4 不再实施，既有切片 1-2 证据作为最终验收范围
 
 ## 6. 验证与完成判断
 
@@ -97,16 +98,16 @@
 | beta 发布清单      | 复核 immutable tag 的 Desktop、Android、Release Notes 与 GitHub prerelease                                               | 通过         | Desktop `31764185857`、Release Notes `31764185948`、最终 Android `31866295866` 成功；prerelease 非 draft，共 24 个资产，含 macOS 未签名说明      |
 | 当前 main CI 归因  | 对比切片 2 commit `790aca5414...` 与父提交 `2e2262776b...` 的 CI                                                         | 非本切片回归 | 两者均仅 Playwright shard 1 失败并包含同一 `appearance-reasoning`；切片 2 的 format/lint/typecheck 与其余 CI jobs 通过                           |
 
-- 未验证项与原因：当前批准范围的 hosted runner、Gradle seed/hit、APK 校验、cache save 与 beta 发布清单均已验证；未为单次实验追加更多重复运行
-- 剩余风险：单次 seed/hit 仍受 hosted runner 噪声影响；15 秒采样可能错过极短峰值；run-specific cache key 会持续产生约 2 GB 新 cache，需关注仓库 cache 配额；当前 main 仍有父提交已存在的 Playwright shard 1 红项；切片 3-4 尚未实施
-- Done Contract 是否由证据满足：是（切片 1 基线与切片 2 seed/hit 已完成）；切片 3-4 属于后续批准范围
+- 未验证项与原因：当前批准范围的 hosted runner、Gradle seed/hit、APK 校验、cache save 与 beta 发布清单均已验证；切片 3-4 按用户收口决定不再实施
+- 剩余风险：单次 seed/hit 仍受 hosted runner 噪声影响；15 秒采样可能错过极短峰值；run-specific cache key 会持续产生约 2 GB 新 cache，需关注仓库 cache 配额；切片 3-4 没有实验数据，用户已接受
+- Done Contract 是否由证据满足：是；切片 1 基线与切片 2 seed/hit 已完成，用户确认以该范围完结任务
 
 ## 7. 恢复与同步
 
-- 状态说明：切片 1 commit `2e2262776b...` 与切片 2 commit `790aca5414...` 均已 fast-forward 到 `main`；baseline/seed/hit 三次 Android run 均成功
-- 当前卡点：当前批准范围已完成；原工作树仍保留 0065、`dev.ps1` 等用户改动，未被触碰或提交
-- 下一步唯一动作：切片 3-4 需新的明确执行批准；Playwright shard 1 红项应在独立任务中处理
-- Resume / Handoff：从第 2 节切片 3-4 和第 6 节发布清单继续；严格排除 0065 WIP
+- 状态说明：`已收口 / Review`；切片 1-2 已完成，切片 3-4 按用户决定不再实施
+- 当前卡点：无
+- 下一步唯一动作：N/A
+- Resume / Handoff：N/A；任务已完结
 - Project Sync Candidates：`无；当前 run 数据和实验设计属于一次性任务事实，留在本 micro-spec`
 - 长期文档同步：不需要
 
@@ -116,3 +117,4 @@
 | ----------------------------------------------------------- | ------------------------- | ----------------- | ------------ | -------------------------------- |
 | `perf: observe Android build resources` (`2e2262776b...`)   | `N/A`                     | 切片 1 观测       | 已回写       | 已推送到 `main`                  |
 | `perf: enable Android Gradle build cache` (`790aca5414...`) | `N/A`                     | 切片 2 cache 闭环 | 已回写       | 已推送到 `main`；seed/hit 已验证 |
+| `docs: close remaining local tasks`                         | `N/A`                     | `0068 Review`     | 已同步       | 用户确认完结；切片 3-4 不再实施  |
