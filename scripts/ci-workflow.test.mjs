@@ -110,15 +110,95 @@ test("change gating allows superseded workflow runs to cancel", () => {
   }
 });
 
-test("Android APK validation follows the native base-version contract", () => {
+test("Android APK build observability and task cache follow the arm64 base-version contract", () => {
   const workflowSource = readFileSync(androidReleaseWorkflowPath, "utf8");
+  const immutableCheckoutStep = workflowSource
+    .split("- name: Verify immutable tag checkout", 2)[1]
+    ?.split("- name: Enforce beta-only release gate", 1)[0];
+  const swapStep = workflowSource
+    .split("- name: Provision Android build swap", 2)[1]
+    ?.split("- name: Restore Gradle cache", 1)[0];
+  const restoreCacheStep = workflowSource
+    .split("- name: Restore Gradle cache", 2)[1]
+    ?.split("- name: Install JS dependencies", 1)[0];
+  const buildStep = workflowSource
+    .split("- name: Build Android APK on GitHub runner", 2)[1]
+    ?.split("- name: Save Gradle cache", 1)[0];
+  const saveCacheStep = workflowSource
+    .split("- name: Save Gradle cache", 2)[1]
+    ?.split("- name: Validate Android APK", 1)[0];
   const validationStep = workflowSource
     .split("- name: Validate Android APK", 2)[1]
     ?.split("- name: Upload APK to GitHub Release", 1)[0];
 
+  assert.ok(immutableCheckoutStep, "missing immutable tag checkout step");
+  assert.match(immutableCheckoutStep, /^\s+id: release-source$/m);
+  assert.match(immutableCheckoutStep, /echo "commit=\$actual_commit" >> "\$GITHUB_OUTPUT"/);
+  assert.ok(swapStep, "missing Android APK swap provisioning step");
+  assert.doesNotMatch(workflowSource, /ANDROID_BUILD_SWAP_FILE:\s*\$\{\{\s*runner\.temp/);
+  assert.match(swapStep, /ANDROID_BUILD_SWAP_FILE="\$RUNNER_TEMP\/paseo-android-build\.swap"/);
+  assert.match(swapStep, /ANDROID_BUILD_SWAP_FILE=.*>> "\$GITHUB_ENV"/);
+  assert.match(swapStep, /swap_size_mb=2048/);
+  assert.match(swapStep, /sudo swapon "\$ANDROID_BUILD_SWAP_FILE"/);
+  assert.ok(restoreCacheStep, "missing Gradle cache restore step");
+  assert.match(restoreCacheStep, /uses: actions\/cache\/restore@v5/);
+  assert.match(
+    restoreCacheStep,
+    /key: android-gradle-v2-\$\{\{ runner\.os \}\}-\$\{\{ runner\.arch \}\}-java21-\$\{\{ steps\.release-source\.outputs\.commit \}\}/,
+  );
+  assert.doesNotMatch(restoreCacheStep, /github\.run_id/);
+  assert.match(
+    restoreCacheStep,
+    /restore-keys: \|\s+android-gradle-v2-\$\{\{ runner\.os \}\}-\$\{\{ runner\.arch \}\}-java21-\s+android-gradle-v1-\$\{\{ runner\.os \}\}-\$\{\{ runner\.arch \}\}-java21-/,
+  );
+  assert.ok(buildStep, "missing Android APK build step");
+  assert.match(buildStep, /^\s+ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a$/m);
+  assert.match(buildStep, /^\s+GRADLE_OPTS: >-$/m);
+  assert.match(buildStep, /-Xmx3072m/);
+  assert.match(buildStep, /-XX:MaxMetaspaceSize=768m/);
+  assert.match(buildStep, /-Dorg\.gradle\.daemon=false/);
+  assert.match(
+    buildStep,
+    /-Dorg\.gradle\.jvmargs="-Xmx3072m -XX:MaxMetaspaceSize=768m -Dkotlin\.daemon\.jvm\.options=-Xmx1024m"/,
+  );
+  assert.match(buildStep, /^\s+NODE_OPTIONS: --max-old-space-size=3072$/m);
+  assert.match(buildStep, /-Dorg\.gradle\.caching=true/);
+  assert.match(buildStep, /android_perf_prefix="\[ANDROID-PERF\]"/);
+  assert.match(buildStep, /monitor_interval_seconds=15/);
+  assert.match(buildStep, /\/proc\/self\/cgroup/);
+  assert.match(buildStep, /memory\.current/);
+  assert.match(buildStep, /memory\.peak/);
+  assert.match(buildStep, /memory\.swap\.current/);
+  assert.match(buildStep, /memory\.events/);
+  assert.match(buildStep, /ps -eo pid=,ppid=,rss=,etimes=,comm= --sort=-rss/);
+  assert.match(buildStep, /rss_kib=\$rss_kib elapsed_s=\$process_elapsed_s comm=\$comm/);
+  assert.doesNotMatch(buildStep, /\b(?:args|cmdline|environ)\b/);
+  assert.match(buildStep, /monitor_build_resources "\$build_started_epoch" &/);
+  assert.match(buildStep, /build_monitor_pid=\$!/);
+  assert.match(buildStep, /trap stop_build_monitor EXIT/);
+  assert.match(buildStep, /kill "\$build_monitor_pid" 2>\/dev\/null \|\| true/);
+  assert.match(buildStep, /phase=eas-local-build event=start/);
+  assert.match(buildStep, /phase=eas-local-build event=finish/);
+  assert.match(buildStep, /summary samples=/);
+  assert.match(
+    buildStep,
+    /npx --no-install eas build \\\n+\s+--platform android \\\n+\s+--profile production-apk \\\n+\s+--local \\\n+\s+--non-interactive \\\n+\s+--output "\$asset_path"/,
+  );
+  assert.ok(saveCacheStep, "missing Gradle cache save step");
+  assert.match(saveCacheStep, /uses: actions\/cache\/save@v5/);
+  assert.match(
+    saveCacheStep,
+    /if: \$\{\{ always\(\) && steps\.gradle-cache\.outputs\.cache-hit != 'true' \}\}/,
+  );
+  assert.doesNotMatch(saveCacheStep, /cache-matched-key/);
+  assert.match(saveCacheStep, /key: \$\{\{ steps\.gradle-cache\.outputs\.cache-primary-key \}\}/);
   assert.ok(validationStep, "missing Android APK validation step");
   assert.match(validationStep, /versionName='\$RELEASE_BASE_VERSION'/);
   assert.doesNotMatch(validationStep, /versionName='\$RELEASE_VERSION'/);
+  assert.ok(
+    validationStep.includes(`if [[ "$native_code_line" != "native-code: 'arm64-v8a'" ]]; then`),
+    "missing exact arm64-only APK validation",
+  );
 });
 
 test("focused contracts stay inside existing required checks", () => {

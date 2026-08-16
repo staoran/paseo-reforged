@@ -77,7 +77,9 @@ async function setExpansionSettings(
   await expectComposerVisible(page);
 }
 
-test("keeps activity, reasoning, and tool expansion independent", async ({ page }) => {
+test("keeps activity folding independent while expanding reasoning and tool details", async ({
+  page,
+}) => {
   const agent = await seedMockAgentWorkspace({
     repoPrefix: "appearance-reasoning-",
     title: "Appearance reasoning",
@@ -148,7 +150,12 @@ test("keeps activity, reasoning, and tool expansion independent", async ({ page 
     await activityFold(page).click();
     await expect(reasoningDetails(page)).toBeVisible();
     await expect(thinkingTool(page)).toBeVisible();
-    await expect(page.getByText(/export function ConversationList/)).toHaveCount(0);
+    await expect(
+      page
+        .getByText(/export function ConversationList/)
+        .filter({ visible: true })
+        .first(),
+    ).toBeVisible();
   } finally {
     await agent.cleanup();
   }

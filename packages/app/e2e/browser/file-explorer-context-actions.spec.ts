@@ -263,8 +263,7 @@ test("creates, renames, copies, and deletes entries through the file explorer", 
   await page.getByText("Copy path", { exact: true }).click({ button: "right" });
   await expect(menu).toBeVisible();
 
-  const backdrop = page.getByTestId(/file-explorer-row-\d+-context-menu-backdrop$/);
-  await backdrop.click({ button: "right" });
+  await page.getByTestId("files-new-file").click({ button: "right" });
   await expect(menu).toBeHidden();
 
   await entry("created.txt").click({ button: "right" });

@@ -9,9 +9,7 @@ export interface MarkdownFenceBlockProps extends MarkdownFenceRendererProps {
   isClosed?: boolean;
 }
 
-const diagramFences: Partial<
-  Record<string, ComponentType<MarkdownFenceRendererProps>>
-> = {
+const diagramFences: Partial<Record<string, ComponentType<MarkdownFenceRendererProps>>> = {
   mermaid: MermaidFence,
 };
 
@@ -24,8 +22,7 @@ export function MarkdownFenceBlock({
   textStyle,
 }: MarkdownFenceBlockProps) {
   const language = getMarkdownFenceLanguage(info);
-  const DiagramFence =
-    isClosed && language ? diagramFences[language] : undefined;
+  const DiagramFence = isClosed && language ? diagramFences[language] : undefined;
   if (DiagramFence) {
     return (
       <DiagramFence

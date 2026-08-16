@@ -91,10 +91,7 @@ function triggerStyle({
   pressed,
   open,
 }: PressableStateCallbackType & { hovered?: boolean; open?: boolean }) {
-  return [
-    styles.trigger,
-    (Boolean(hovered) || pressed || Boolean(open)) && styles.triggerActive,
-  ];
+  return [styles.trigger, (Boolean(hovered) || pressed || Boolean(open)) && styles.triggerActive];
 }
 
 /** Shared kebab menu for file actions in the explorer and diff pane. */
@@ -153,10 +150,7 @@ export function FileActionsMenu({
         accessibilityLabel={accessibilityLabel}
         testID={testIDPrefix ? `${testIDPrefix}-actions` : undefined}
       >
-        <ThemedMoreVertical
-          size={ICON_SIZE.sm}
-          uniProps={foregroundMutedColorMapping}
-        />
+        <ThemedMoreVertical size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" width={220}>
         {header ? (
@@ -373,9 +367,7 @@ function useFileActions({
           }
         : null,
     ];
-    const actions = specs.filter(
-      (action): action is FileAction => action !== null,
-    );
+    const actions = specs.filter((action): action is FileAction => action !== null);
     return actions.map((action, index) =>
       Object.assign(action, {
         separatorBefore: Boolean(
@@ -419,11 +411,7 @@ function FileActionMenuItem({
     () => (
       <ThemedIcon
         size={ICON_SIZE.sm}
-        uniProps={
-          action.destructive
-            ? destructiveColorMapping
-            : foregroundMutedColorMapping
-        }
+        uniProps={action.destructive ? destructiveColorMapping : foregroundMutedColorMapping}
       />
     ),
     [ThemedIcon, action.destructive],

@@ -28,20 +28,11 @@ import {
   configureMarkdownFenceMetadata,
   isMarkdownFenceNodeClosed,
 } from "@/components/markdown/fence-metadata";
-import {
-  MarkdownParagraphView,
-  MarkdownTextSpan,
-} from "@/components/markdown-text";
+import { MarkdownParagraphView, MarkdownTextSpan } from "@/components/markdown-text";
 import { MarkdownTableCellText } from "@/components/markdown-text-selection";
-import {
-  getMarkdownListMarker,
-  getMarkdownListSpacing,
-} from "@/utils/markdown-list";
+import { getMarkdownListMarker, getMarkdownListSpacing } from "@/utils/markdown-list";
 import { markdownNodeContainsType } from "@/utils/markdown-ast";
-import {
-  createCompactMarkdownStyles,
-  createMarkdownStyles,
-} from "@/styles/markdown-styles";
+import { createCompactMarkdownStyles, createMarkdownStyles } from "@/styles/markdown-styles";
 import type { Theme } from "@/styles/theme";
 import { WORKSPACE_SURFACE_DATASET } from "@/styles/workspace-surface";
 import { openExternalUrl } from "@/utils/open-external-url";
@@ -51,24 +42,16 @@ import {
   type MarkdownDisplayPart,
   type MarkdownInlineImagePart,
 } from "./html-ish";
-import {
-  resolveInlineImageSize,
-  type InlineImageDimensions,
-} from "./inline-image-size";
+import { resolveInlineImageSize, type InlineImageDimensions } from "./inline-image-size";
 import { groupMarkdownParts, type MarkdownPartGroup } from "./part-groups";
 import { colorMarkdownLinkChildren } from "./link-children";
 import { MarkdownLinkText } from "./link-text";
 
-export type MarkdownStyles = Record<
-  string,
-  TextStyle & ViewStyle & { [key: string]: unknown }
->;
+export type MarkdownStyles = Record<string, TextStyle & ViewStyle & { [key: string]: unknown }>;
 
 interface MarkdownWithStableRendererProps {
   children: ReactNode;
-  style:
-    | ReturnType<typeof createMarkdownStyles>
-    | ReturnType<typeof createCompactMarkdownStyles>;
+  style: ReturnType<typeof createMarkdownStyles> | ReturnType<typeof createCompactMarkdownStyles>;
   rules?: RenderRules;
   markdownit?: ReturnType<typeof MarkdownIt>;
   onLinkPress?: (url: string) => boolean;
@@ -76,19 +59,14 @@ interface MarkdownWithStableRendererProps {
   topLevelMaxExceededItem?: ReactNode;
 }
 
-const MarkdownWithStableRenderer =
-  Markdown as ComponentType<MarkdownWithStableRendererProps>;
+const MarkdownWithStableRenderer = Markdown as ComponentType<MarkdownWithStableRendererProps>;
 const ThemedMarkdown = withUnistyles(MarkdownWithStableRenderer);
 
-function markdownStyleMapping(
-  theme: Theme,
-): Partial<MarkdownWithStableRendererProps> {
+function markdownStyleMapping(theme: Theme): Partial<MarkdownWithStableRendererProps> {
   return { style: createMarkdownStyles(theme) };
 }
 
-function compactMarkdownStyleMapping(
-  theme: Theme,
-): Partial<MarkdownWithStableRendererProps> {
+function compactMarkdownStyleMapping(theme: Theme): Partial<MarkdownWithStableRendererProps> {
   return { style: createCompactMarkdownStyles(theme) };
 }
 
@@ -122,15 +100,9 @@ export function MarkdownRenderer({
   topLevelMaxExceededItem,
   enableHtmlish = true,
 }: MarkdownRendererProps) {
-  const markdownRules = useMemo(
-    () => rules ?? createSharedMarkdownRules(),
-    [rules],
-  );
+  const markdownRules = useMemo(() => rules ?? createSharedMarkdownRules(), [rules]);
   const parts = useMemo(
-    () =>
-      enableHtmlish
-        ? splitHtmlishMarkdown(text)
-        : [{ kind: "markdown" as const, text }],
+    () => (enableHtmlish ? splitHtmlishMarkdown(text) : [{ kind: "markdown" as const, text }]),
     [enableHtmlish, text],
   );
   const rendererProps = useMemo(
@@ -159,10 +131,7 @@ export function MarkdownRenderer({
   );
 }
 
-type MarkdownPartRendererProps = Omit<
-  MarkdownRendererProps,
-  "text" | "enableHtmlish"
-> & {
+type MarkdownPartRendererProps = Omit<MarkdownRendererProps, "text" | "enableHtmlish"> & {
   rules: RenderRules;
 };
 
@@ -173,25 +142,14 @@ function MarkdownPartList({
   parts: MarkdownDisplayPart[];
   rendererProps: MarkdownPartRendererProps;
 }) {
-  const keyedGroups = useMemo(
-    () => keyMarkdownGroups(groupMarkdownParts(parts)),
-    [parts],
-  );
+  const keyedGroups = useMemo(() => keyMarkdownGroups(groupMarkdownParts(parts)), [parts]);
   return (
     <>
       {keyedGroups.map(({ key, group }) =>
         group.kind === "part" ? (
-          <MarkdownPart
-            key={key}
-            part={group.part}
-            rendererProps={rendererProps}
-          />
+          <MarkdownPart key={key} part={group.part} rendererProps={rendererProps} />
         ) : (
-          <MarkdownImageTextGroup
-            key={key}
-            group={group}
-            rendererProps={rendererProps}
-          />
+          <MarkdownImageTextGroup key={key} group={group} rendererProps={rendererProps} />
         ),
       )}
     </>
@@ -235,12 +193,7 @@ function MarkdownPart({
   }
 
   if (part.kind === "inlineImage") {
-    return (
-      <MarkdownInlineImage
-        part={part}
-        onLinkPress={rendererProps.onLinkPress}
-      />
-    );
+    return <MarkdownInlineImage part={part} onLinkPress={rendererProps.onLinkPress} />;
   }
 
   if (part.text.length === 0) {
@@ -336,10 +289,7 @@ function MarkdownInlineImage({
       }),
     [explicitDimensions, naturalDimensions],
   );
-  const imageStyle = useMemo(
-    () => [detailsStyles.inlineImage, imageSize],
-    [imageSize],
-  );
+  const imageStyle = useMemo(() => [detailsStyles.inlineImage, imageSize], [imageSize]);
 
   const image = (
     <Image
@@ -355,11 +305,7 @@ function MarkdownInlineImage({
   }
 
   return (
-    <Pressable
-      style={detailsStyles.inlineImageWrap}
-      onPress={handlePress}
-      accessibilityRole="link"
-    >
+    <Pressable style={detailsStyles.inlineImageWrap} onPress={handlePress} accessibilityRole="link">
       {image}
     </Pressable>
   );
@@ -393,10 +339,7 @@ function MarkdownFlowImage({
       height: Math.round(size.height * scale),
     };
   }, [natural, part.height, part.width]);
-  const imageStyle = useMemo(
-    () => [detailsStyles.flowImage, imageSize],
-    [imageSize],
-  );
+  const imageStyle = useMemo(() => [detailsStyles.flowImage, imageSize], [imageSize]);
 
   if (failed) {
     if (!part.alt) {
@@ -441,19 +384,13 @@ function MarkdownImageTextGroup({
     <>
       <View style={detailsStyles.imageTextRow}>
         {group.images.map((image) => (
-          <MarkdownFlowImage
-            key={image.src}
-            part={image}
-            onLinkPress={rendererProps.onLinkPress}
-          />
+          <MarkdownFlowImage key={image.src} part={image} onLinkPress={rendererProps.onLinkPress} />
         ))}
         <View style={detailsStyles.imageTextRowContent}>
           <MarkdownFragment text={group.lead} {...rendererProps} />
         </View>
       </View>
-      {group.rest ? (
-        <MarkdownFragment text={group.rest} {...rendererProps} />
-      ) : null}
+      {group.rest ? <MarkdownFragment text={group.rest} {...rendererProps} /> : null}
     </>
   );
 }
@@ -473,11 +410,7 @@ function MarkdownDetails({
   );
   return (
     <View style={detailsStyles.container}>
-      <Pressable
-        style={detailsStyles.summaryRow}
-        onPress={toggle}
-        accessibilityRole="button"
-      >
+      <Pressable style={detailsStyles.summaryRow} onPress={toggle} accessibilityRole="button">
         {open ? (
           <ChevronDown size={14} color={detailsStyles.summaryIcon.color} />
         ) : (
@@ -534,14 +467,8 @@ interface MarkdownListItemContentProps {
   children: ReactNode;
 }
 
-function MarkdownListItemContent({
-  contentStyle,
-  children,
-}: MarkdownListItemContentProps) {
-  const style = useMemo(
-    () => [contentStyle, MARKDOWN_LIST_ITEM_CONTENT_FLEX],
-    [contentStyle],
-  );
+function MarkdownListItemContent({ contentStyle, children }: MarkdownListItemContentProps) {
+  const style = useMemo(() => [contentStyle, MARKDOWN_LIST_ITEM_CONTENT_FLEX], [contentStyle]);
   return <View style={style}>{children}</View>;
 }
 
@@ -551,11 +478,7 @@ interface MarkdownListViewProps {
   children: ReactNode;
 }
 
-function MarkdownListView({
-  baseStyle,
-  spacing,
-  children,
-}: MarkdownListViewProps) {
+function MarkdownListView({ baseStyle, spacing, children }: MarkdownListViewProps) {
   const style = useMemo(() => [baseStyle, spacing], [baseStyle, spacing]);
   return <View style={style}>{children}</View>;
 }
@@ -580,10 +503,7 @@ function SharedMarkdownLink({
     if (onLinkPress?.(href) === false) return;
     void openExternalUrl(href);
   }, [href, onLinkPress]);
-  const style = useMemo(
-    () => [inheritedStyles, linkStyle],
-    [inheritedStyles, linkStyle],
-  );
+  const style = useMemo(() => [inheritedStyles, linkStyle], [inheritedStyles, linkStyle]);
 
   if (!isNative) {
     return (
@@ -664,11 +584,7 @@ export function createSharedMarkdownRules(): RenderRules {
       styles: MarkdownStyles,
       inheritedStyles: TextStyle = {},
     ) => (
-      <MarkdownInheritedText
-        key={node.key}
-        inheritedStyles={inheritedStyles}
-        textStyle={styles.em}
-      >
+      <MarkdownInheritedText key={node.key} inheritedStyles={inheritedStyles} textStyle={styles.em}>
         {children}
       </MarkdownInheritedText>
     ),
@@ -679,11 +595,7 @@ export function createSharedMarkdownRules(): RenderRules {
       styles: MarkdownStyles,
       inheritedStyles: TextStyle = {},
     ) => (
-      <MarkdownInheritedText
-        key={node.key}
-        inheritedStyles={inheritedStyles}
-        textStyle={styles.s}
-      >
+      <MarkdownInheritedText key={node.key} inheritedStyles={inheritedStyles} textStyle={styles.s}>
         {children}
       </MarkdownInheritedText>
     ),
@@ -790,38 +702,22 @@ export function createSharedMarkdownRules(): RenderRules {
       styles: MarkdownStyles,
     ) => {
       const { isOrdered, marker } = getMarkdownListMarker(node, parent);
-      const iconStyle = isOrdered
-        ? styles.ordered_list_icon
-        : styles.bullet_list_icon;
-      const contentStyle = isOrdered
-        ? styles.ordered_list_content
-        : styles.bullet_list_content;
+      const iconStyle = isOrdered ? styles.ordered_list_icon : styles.bullet_list_icon;
+      const contentStyle = isOrdered ? styles.ordered_list_content : styles.bullet_list_content;
 
       return (
         <View key={node.key} style={styles.list_item}>
           <Text style={iconStyle}>{marker}</Text>
-          <MarkdownListItemContent contentStyle={contentStyle}>
-            {children}
-          </MarkdownListItemContent>
+          <MarkdownListItemContent contentStyle={contentStyle}>{children}</MarkdownListItemContent>
         </View>
       );
     },
-    th: (
-      node: ASTNode,
-      children: ReactNode[],
-      _parent: ASTNode[],
-      styles: MarkdownStyles,
-    ) => (
+    th: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
       <MarkdownTableCellText key={node.key}>
         <View style={styles._VIEW_SAFE_th}>{children}</View>
       </MarkdownTableCellText>
     ),
-    td: (
-      node: ASTNode,
-      children: ReactNode[],
-      _parent: ASTNode[],
-      styles: MarkdownStyles,
-    ) => (
+    td: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
       <MarkdownTableCellText key={node.key}>
         <View style={styles._VIEW_SAFE_td}>{children}</View>
       </MarkdownTableCellText>
