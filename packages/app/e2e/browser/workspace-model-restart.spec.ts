@@ -499,15 +499,15 @@ test.describe("Workspace model restart regressions", () => {
           ]),
         )
         .toMatchObject({
-          [seeded.workspaceA]: "done",
+          [seeded.workspaceA]: "attention",
           [seeded.workspaceB]: "done",
           [createdWorkspaceId]: "done",
         });
 
-      // The restarted provider session may settle while the browser creates the sibling. Its
-      // initial running status is asserted above; this phase verifies that ownership never moves.
+      // The restarted provider session may settle to idle while the browser creates the sibling.
+      // This phase verifies that ownership never moves.
       const workspaceStatuses = await fetchWorkspaceStatuses(client, [seeded.workspaceA]);
-      expect(["running", "done"]).toContain(workspaceStatuses[seeded.workspaceA]);
+      expect(["running", "attention"]).toContain(workspaceStatuses[seeded.workspaceA]);
 
       await expectWorkspaceRowDoesNotShowIndicator(page, {
         serverId,
@@ -522,7 +522,7 @@ test.describe("Workspace model restart regressions", () => {
       await expectWorkspaceRowInStatusBucket(page, {
         serverId,
         workspaceId: seeded.workspaceA,
-        bucket: "done",
+        bucket: "attention",
       });
       await expectWorkspaceRowInStatusBucket(page, {
         serverId,

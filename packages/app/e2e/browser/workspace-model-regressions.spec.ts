@@ -563,7 +563,7 @@ test.describe("Workspace model regressions", () => {
       });
       await expectWorkspaceRowHasOnlyActivityIndicator(page, {
         rowTestId: parentRowTestId,
-        indicator: "done",
+        indicator: "attention",
       });
       const parentRow = page.getByTestId(parentRowTestId);
       await expect(parentRow.getByTestId("workspace-runtime-resident-indicator")).toBeVisible({
