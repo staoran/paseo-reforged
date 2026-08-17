@@ -19,6 +19,7 @@ import { pycharmTarget } from "./targets/pycharm.js";
 import { riderTarget } from "./targets/rider.js";
 import { rubymineTarget } from "./targets/rubymine.js";
 import { rustroverTarget } from "./targets/rustrover.js";
+import { terminalTarget } from "./targets/terminal.js";
 import { traeTarget } from "./targets/trae.js";
 import { vscodiumTarget } from "./targets/vscodium.js";
 import { vscodeInsidersTarget } from "./targets/vscode-insiders.js";
@@ -47,6 +48,7 @@ export const EDITOR_TARGETS: readonly EditorTarget[] = [
   rubymineTarget,
   rustroverTarget,
   webstormTarget,
+  terminalTarget,
   finderTarget,
   explorerTarget,
   fileManagerTarget,

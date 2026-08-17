@@ -4,12 +4,14 @@ const COMMANDS = ["datagrip", "datagrip64"] as const;
 
 export const datagripTarget: EditorTarget = {
   id: "datagrip",
-  async describe() {
+
+  /** Returns the menu descriptor and bundled DataGrip icon. */
+  async describe(runtime) {
     return {
       id: this.id,
       label: "DataGrip",
       kind: "editor",
-      icon: { kind: "symbol", name: "terminal" },
+      icon: await runtime.loadIcon("datagrip.png"),
     };
   },
   async isInstalled(runtime) {

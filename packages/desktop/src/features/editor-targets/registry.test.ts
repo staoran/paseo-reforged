@@ -3,9 +3,12 @@ import { describe, expect, it } from "vitest";
 import { listAvailableEditorTargets, openEditorTarget } from "./registry.js";
 import type { EditorTargetIcon, EditorTargetRuntime } from "./target.js";
 import { cursorTarget } from "./targets/cursor.js";
+import { datagripTarget } from "./targets/datagrip.js";
 import { explorerTarget, fileManagerTarget, finderTarget } from "./targets/file-manager.js";
 import { intellijIdeaTarget } from "./targets/intellij-idea.js";
 import { pycharmTarget } from "./targets/pycharm.js";
+import { terminalTarget } from "./targets/terminal.js";
+import { vscodeInsidersTarget } from "./targets/vscode-insiders.js";
 import { vscodeTarget } from "./targets/vscode.js";
 import { webstormTarget } from "./targets/webstorm.js";
 import { zedTarget } from "./targets/zed.js";
@@ -197,6 +200,68 @@ describe("editor target registry", () => {
         args: ["--line", "6", "C:/repo", "C:/repo/src/app.py"],
       },
     ]);
+  });
+
+  it("uses branded icons for VS Code Insiders and DataGrip", async () => {
+    const runtime = new FakeEditorTargets("win32");
+    runtime.installCommand("code-insiders");
+    runtime.installCommand("datagrip");
+
+    const targets = await listAvailableEditorTargets(runtime, [
+      vscodeInsidersTarget,
+      datagripTarget,
+    ]);
+
+    expect(targets).toEqual([
+      {
+        id: "vscode-insiders",
+        label: "VS Code Insiders",
+        kind: "editor",
+        icon: { kind: "image", dataUrl: "data:image/png;base64,vscode-insiders.png" },
+      },
+      {
+        id: "datagrip",
+        label: "DataGrip",
+        kind: "editor",
+        icon: { kind: "image", dataUrl: "data:image/png;base64,datagrip.png" },
+      },
+    ]);
+  });
+
+  it("detects Windows Terminal and launches it in the workspace directory", async () => {
+    const runtime = new FakeEditorTargets("win32");
+    runtime.installCommand("wt", "C:/WindowsApps/wt.exe");
+    runtime.addPath("C:/repo");
+
+    const targets = await listAvailableEditorTargets(runtime);
+    expect(targets).toContainEqual({
+      id: "terminal",
+      label: "Terminal",
+      kind: "editor",
+      icon: { kind: "image", dataUrl: "data:image/png;base64,windows-terminal.png" },
+    });
+
+    await openEditorTarget(
+      {
+        editorId: "terminal",
+        workspacePath: "C:/repo",
+      },
+      runtime,
+    );
+
+    expect(runtime.launches).toContainEqual({
+      command: "C:/WindowsApps/wt.exe",
+      args: ["-d", "C:/repo"],
+    });
+  });
+
+  it("hides Windows Terminal when it is unavailable or the platform is not Windows", async () => {
+    const missingOnWindows = new FakeEditorTargets("win32");
+    const installedOnLinux = new FakeEditorTargets("linux");
+    installedOnLinux.installCommand("wt");
+
+    expect(await terminalTarget.isInstalled(missingOnWindows)).toBe(false);
+    expect(await terminalTarget.isInstalled(installedOnLinux)).toBe(false);
   });
 
   it("detects and launches the macOS application when the command is absent", async () => {
