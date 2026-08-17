@@ -6911,21 +6911,21 @@ test("buildWorkspaceDescriptorMap computes statusEnteredAt from runtime agent fi
   const owned = (input: Parameters<typeof makeAgent>[0]) =>
     makeAgent({ ...input, workspaceId: "ws-status-entered" });
 
-  // 2. Single idle agent (derives to "done") — statusEnteredAt uses the
+  // 2. Single idle agent (derives to "attention") — statusEnteredAt uses the
   // agent's updatedAt as a best-effort timestamp.
   {
     const { session, workspace } = setupSession();
     const updatedAt = "2026-05-12T09:30:00.000Z";
     session.listAgentPayloads = async () => [
       owned({
-        id: "agent-done",
+        id: "agent-attention",
         cwd: workspace.cwd,
         status: "idle",
         updatedAt,
       }),
     ];
     const descriptor = await buildDescriptor(session, workspace.workspaceId);
-    expect(descriptor.status).toBe("done");
+    expect(descriptor.status).toBe("attention");
     expect(descriptor.statusEnteredAt).toBe(updatedAt);
   }
 
@@ -6948,19 +6948,19 @@ test("buildWorkspaceDescriptorMap computes statusEnteredAt from runtime agent fi
   }
 
   // 4. Highest-priority across all buckets: a "needs_input" agent beats
-  // a "running" agent beats a "done" agent. statusEnteredAt is the winning
+  // a "running" agent beats an "attention" agent. statusEnteredAt is the winning
   // bucket's newest agent timestamp.
   {
     const { session, workspace } = setupSession();
-    const doneUpdatedAt = "2026-05-12T09:30:00.000Z";
+    const attentionUpdatedAt = "2026-05-12T09:30:00.000Z";
     const runningUpdatedAt = "2026-05-12T10:00:00.000Z";
     const needsInputUpdatedAt = "2026-05-12T10:15:00.000Z";
     session.listAgentPayloads = async () => [
       owned({
-        id: "agent-done",
+        id: "agent-attention",
         cwd: workspace.cwd,
         status: "idle",
-        updatedAt: doneUpdatedAt,
+        updatedAt: attentionUpdatedAt,
       }),
       owned({
         id: "agent-running",
@@ -6989,34 +6989,34 @@ test("buildWorkspaceDescriptorMap computes statusEnteredAt from runtime agent fi
     const lateUpdatedAt = "2026-05-12T08:30:00.000Z";
     session.listAgentPayloads = async () => [
       owned({
-        id: "agent-done-early",
+        id: "agent-attention-early",
         cwd: workspace.cwd,
         status: "idle",
         updatedAt: earlyUpdatedAt,
       }),
     ];
     const first = await buildDescriptor(session, workspace.workspaceId);
-    expect(first.status).toBe("done");
+    expect(first.status).toBe("attention");
     expect(first.statusEnteredAt).toBe(earlyUpdatedAt);
 
     // Second call: same winning bucket, newer agent updatedAt must not move
     // the workspace bucket entry time forward.
     session.listAgentPayloads = async () => [
       owned({
-        id: "agent-done-early",
+        id: "agent-attention-early",
         cwd: workspace.cwd,
         status: "idle",
         updatedAt: earlyUpdatedAt,
       }),
       owned({
-        id: "agent-done-late",
+        id: "agent-attention-late",
         cwd: workspace.cwd,
         status: "idle",
         updatedAt: lateUpdatedAt,
       }),
     ];
     const second = await buildDescriptor(session, workspace.workspaceId);
-    expect(second.status).toBe("done");
+    expect(second.status).toBe("attention");
     expect(second.statusEnteredAt).toBe(earlyUpdatedAt);
   }
 
@@ -7026,14 +7026,14 @@ test("buildWorkspaceDescriptorMap computes statusEnteredAt from runtime agent fi
     const { session, workspace } = setupSession();
     const unmaskTime = "2026-05-12T12:00:00.000Z";
     vi.setSystemTime(new Date(unmaskTime));
-    const doneUpdatedAt = "2026-05-12T08:00:00.000Z";
+    const attentionUpdatedAt = "2026-05-12T08:00:00.000Z";
     const needsInputUpdatedAt = "2026-05-12T07:00:00.000Z";
     session.listAgentPayloads = async () => [
       owned({
-        id: "agent-done",
+        id: "agent-attention",
         cwd: workspace.cwd,
         status: "idle",
-        updatedAt: doneUpdatedAt,
+        updatedAt: attentionUpdatedAt,
       }),
       owned({
         id: "agent-needs-input",
@@ -7046,17 +7046,17 @@ test("buildWorkspaceDescriptorMap computes statusEnteredAt from runtime agent fi
     const first = await buildDescriptor(session, workspace.workspaceId);
     expect(first.status).toBe("needs_input");
 
-    // Drop the needs_input agent. The unmask time is "now", not doneUpdatedAt.
+    // Drop the needs_input agent. The unmask time is "now", not the idle agent's timestamp.
     session.listAgentPayloads = async () => [
       owned({
-        id: "agent-done",
+        id: "agent-attention",
         cwd: workspace.cwd,
         status: "idle",
-        updatedAt: doneUpdatedAt,
+        updatedAt: attentionUpdatedAt,
       }),
     ];
     const second = await buildDescriptor(session, workspace.workspaceId);
-    expect(second.status).toBe("done");
+    expect(second.status).toBe("attention");
     expect(second.statusEnteredAt).toBe(unmaskTime);
     vi.useRealTimers();
   }
@@ -7147,7 +7147,7 @@ test("same-cwd workspace descriptors compute agent status per workspaceId", asyn
   expect(attentionDescriptors.get(workspaceB.workspaceId)?.status).toBe("attention");
 });
 
-test("buildWorkspaceDescriptorMap keeps a done workspace recent after its agents are archived", async () => {
+test("buildWorkspaceDescriptorMap transitions to done after its agents are archived", async () => {
   const session = createSessionForWorkspaceTests();
   const project = createPersistedProjectRecord({
     projectId: "proj-archive-status-entered",
@@ -7166,43 +7166,48 @@ test("buildWorkspaceDescriptorMap keeps a done workspace recent after its agents
     createdAt: "2026-03-01T12:00:00.000Z",
     updatedAt: "2026-03-01T12:00:00.000Z",
   });
-  const doneEnteredAt = "2026-05-12T09:30:00.000Z";
+  const attentionEnteredAt = "2026-05-12T09:30:00.000Z";
   const archivedAt = "2026-05-12T09:45:00.000Z";
 
   session.projectRegistry.list = async () => [project];
   session.workspaceRegistry.list = async () => [workspace];
   session.listAgentPayloads = async () => [
     makeAgent({
-      id: "agent-done",
+      id: "agent-attention",
       cwd: workspace.cwd,
       workspaceId: workspace.workspaceId,
       status: "idle",
-      updatedAt: doneEnteredAt,
+      updatedAt: attentionEnteredAt,
     }),
   ];
 
   const first = await session.buildWorkspaceDescriptorMap({ includeGitData: false });
-  expect(first.get(workspace.workspaceId)?.status).toBe("done");
-  expect(first.get(workspace.workspaceId)?.statusEnteredAt).toBe(doneEnteredAt);
+  expect(first.get(workspace.workspaceId)?.status).toBe("attention");
+  expect(first.get(workspace.workspaceId)?.statusEnteredAt).toBe(attentionEnteredAt);
 
   session.listAgentPayloads = async () => [
     {
       ...makeAgent({
-        id: "agent-done",
+        id: "agent-attention",
         cwd: workspace.cwd,
         workspaceId: workspace.workspaceId,
         status: "idle",
-        updatedAt: doneEnteredAt,
+        updatedAt: attentionEnteredAt,
       }),
       archivedAt,
     },
   ];
 
-  const second = await session.buildWorkspaceDescriptorMap({ includeGitData: false });
-  expect(second.get(workspace.workspaceId)).toMatchObject({
-    status: "done",
-    statusEnteredAt: doneEnteredAt,
-  });
+  vi.setSystemTime(new Date(archivedAt));
+  try {
+    const second = await session.buildWorkspaceDescriptorMap({ includeGitData: false });
+    expect(second.get(workspace.workspaceId)).toMatchObject({
+      status: "done",
+      statusEnteredAt: archivedAt,
+    });
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test("buildWorkspaceDescriptorMap stamps workspace archiving state", async () => {

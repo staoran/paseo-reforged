@@ -307,7 +307,7 @@ describe("workspace agent activity index", () => {
           "workspace-a",
           {
             agentId: "parent",
-            status: "done",
+            status: "attention",
             enteredAt: new Date("2026-06-01T10:00:00.000Z"),
             lastActivityAt: new Date("2026-06-01T10:00:00.000Z"),
           },

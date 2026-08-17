@@ -159,9 +159,9 @@ describe("buildSubagentRowPresentationData", () => {
     );
   });
 
-  it("maps an idle row to the done status bucket so callers render the static provider icon", () => {
+  it("maps an idle row to the attention status bucket", () => {
     expect(buildSubagentRowPresentationData(row({ id: "a", status: "idle" })).statusBucket).toBe(
-      "done",
+      "attention",
     );
   });
 
@@ -169,7 +169,7 @@ describe("buildSubagentRowPresentationData", () => {
     expect(
       buildSubagentRowPresentationData(row({ id: "a", status: "idle", requiresAttention: true }))
         .statusBucket,
-    ).toBe("done");
+    ).toBe("attention");
   });
 });
 
