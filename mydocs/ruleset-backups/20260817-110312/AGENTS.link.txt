@@ -1,0 +1,4 @@
+Path: AGENTS.md
+LinkType: SymbolicLink
+Target: CLAUDE.md
+Backed-up content: CLAUDE.md.bak
