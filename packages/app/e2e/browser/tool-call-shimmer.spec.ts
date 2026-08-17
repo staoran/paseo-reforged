@@ -47,16 +47,32 @@ function getToolCallStatus(
     : null;
 }
 
-function replaceToolCallStatus(message: WebSocketMessage, status: string): string {
+/** Keeps the second intercepted mock call in the first call's group for this shimmer transition. */
+function replaceToolCallWithReadCategory(message: WebSocketMessage, status: string): string {
   const raw = typeof message === "string" ? message : message.toString("utf8");
   const envelope = JSON.parse(raw) as {
-    message?: { payload?: { event?: { item?: { status?: string } } } };
+    message?: {
+      payload?: {
+        event?: {
+          item?: {
+            name?: string;
+            status?: string;
+            detail?: unknown;
+          };
+        };
+      };
+    };
   };
   const item = envelope.message?.payload?.event?.item;
   if (!item) {
     throw new Error("Expected a tool-call session message");
   }
+  item.name = "read";
   item.status = status;
+  item.detail = {
+    type: "read",
+    filePath: "packages/app/src/components/message.tsx",
+  };
   return JSON.stringify(envelope);
 }
 
@@ -118,7 +134,7 @@ async function gateSecondToolCall(page: Page, agentId: string) {
         toolCall.callId === secondCallId &&
         (toolCall.status === "running" || toolCall.status === "executing")
       ) {
-        secondRunningMessage = message;
+        secondRunningMessage = replaceToolCallWithReadCategory(message, toolCall.status);
         pauseServerMessages = true;
         resolveSecondRunning();
         if (releaseSecondRequested) {
@@ -130,7 +146,7 @@ async function gateSecondToolCall(page: Page, agentId: string) {
       if (toolCall.callId === secondCallId && toolCall.status === "completed") {
         // Keep the second real tool call inspectably active. Production providers
         // send this same status shape while their work remains in flight.
-        secondRunningMessage = replaceToolCallStatus(message, "running");
+        secondRunningMessage = replaceToolCallWithReadCategory(message, "running");
         pauseServerMessages = true;
         resolveSecondRunning();
         if (releaseSecondRequested) {
