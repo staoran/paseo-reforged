@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
+import type { ActivityFold } from "@/agent-stream/model";
 import type { StreamItem, ToolCallItem } from "@/types/stream";
 import {
   prepareToolCallHistory,
@@ -49,36 +50,144 @@ function project(input: {
   level: ToolCallDetailLevel;
   tail?: StreamItem[];
   head?: StreamItem[];
+  activityFolds?: ActivityFold[];
   isTurnActive?: boolean;
-  preparedHistory?: PreparedToolCallHistory | null;
+  preparedHistory?: PreparedToolCallHistory;
 }) {
   const tail = input.tail ?? [];
   return projectToolCallDetailLevel({
     level: input.level,
     tail,
     head: input.head ?? [],
-    preparedHistory: input.preparedHistory ?? prepareToolCallHistory(input.level, tail),
+    preparedHistory:
+      input.preparedHistory ?? prepareToolCallHistory(input.level, tail, input.activityFolds ?? []),
     isTurnActive: input.isTurnActive ?? false,
   });
 }
 
 describe("tool call detail-level projection", () => {
-  it("passes detailed timelines through without grouping work", () => {
+  it.each(["overview", "detailed"] as const)(
+    "groups loaded Activity members once in %s mode",
+    (level) => {
+      const calls = ["1", "2", "3", "4", "5"].map((id) =>
+        toolCall(id, { type: "shell", command: `command-${id}` }),
+      );
+      const activityFold: ActivityFold = {
+        id: "activity-1",
+        completed: true,
+        hostItemId: "activity-1",
+        memberIds: calls.map((call) => call.id),
+        members: calls,
+        detailStatus: "ready",
+      };
+
+      const result = project({ level, activityFolds: [activityFold] });
+
+      expect(result.activityFolds[0]?.members).toEqual([
+        expect.objectContaining({ id: calls[0]?.id, timestamp: calls[4]?.timestamp }),
+      ]);
+      expect(result.activityFolds[0]?.memberIds).toEqual(calls.map((call) => call.id));
+      expect(result.groupsByHostId.get(calls[0]?.id ?? "")?.run.calls).toEqual(calls);
+    },
+  );
+
+  it("uses the shared grouping outer structure in detailed timelines", () => {
     const tail = [toolCall("1", { type: "shell", command: "one" })];
     const head = [toolCall("2", { type: "shell", command: "two" })];
 
     const prepared = prepareToolCallHistory("detailed", tail);
     const result = project({ level: "detailed", tail, head, preparedHistory: prepared });
 
-    expect(prepared).toBeNull();
-    expect(result.tail).toBe(tail);
-    expect(result.head).toBe(head);
-    expect(result.groupsByHostId.size).toBe(0);
+    expect(prepared.mode).toBe("detailed");
+    expect(result.tail).toEqual([tail[0]]);
+    expect(result.head).toEqual([]);
+    expect(result.groupsByHostId.get("1")).toMatchObject({
+      mode: "detailed",
+      run: { calls: [...tail, ...head] },
+    });
+  });
+
+  it.each(["overview", "detailed"] as const)(
+    "splits adjacent %s groups by tool type without reordering them",
+    (level) => {
+      const calls = [
+        toolCall("1", { type: "shell", command: "one" }),
+        toolCall("2", { type: "shell", command: "two" }),
+        toolCall("3", { type: "read", filePath: "/repo/a.ts" }),
+        toolCall("4", { type: "edit", filePath: "/repo/a.ts" }),
+        toolCall("5", { type: "write", filePath: "/repo/b.ts" }),
+        toolCall("6", { type: "shell", command: "three" }),
+      ];
+
+      const result = project({ level, tail: calls });
+
+      expect(result.tail.map((item) => item.id)).toEqual(["1", "3", "4", "6"]);
+      expect(["1", "3", "4", "6"].map((id) => result.groupsByHostId.get(id)?.kind)).toEqual([
+        "command",
+        "read",
+        "edit",
+        "command",
+      ]);
+      expect(["1", "3", "4", "6"].map((id) => result.groupsByHostId.get(id)?.run.calls)).toEqual([
+        calls.slice(0, 2),
+        calls.slice(2, 3),
+        calls.slice(3, 5),
+        calls.slice(5),
+      ]);
+    },
+  );
+
+  it("classifies shell commands after removing only the leading RTK wrapper", () => {
+    const calls = [
+      toolCall("1", { type: "shell", command: "rtk read 'src/a.ts'" }),
+      toolCall("2", { type: "shell", command: "rtk.exe rg -n paseo src" }),
+      toolCall("3", { type: "shell", command: "rtk find src -name '*.ts'" }),
+      toolCall("4", { type: "shell", command: "rtk proxy git status" }),
+      toolCall("5", { type: "shell", command: "rtk run npm test" }),
+      toolCall("6", {
+        type: "shell",
+        command: 'powershell -NoProfile -Command "rtk read hidden.txt"',
+      }),
+      toolCall("7", {
+        type: "shell",
+        command: 'rtk proxy powershell -NoProfile -Command "Get-Content src/a.ts"',
+      }),
+    ];
+
+    const result = project({ level: "overview", tail: calls });
+
+    expect(result.tail.map((item) => item.id)).toEqual(["1", "2", "4"]);
+    expect(["1", "2", "4"].map((id) => result.groupsByHostId.get(id)?.kind)).toEqual([
+      "read",
+      "search",
+      "command",
+    ]);
+    expect(result.groupsByHostId.get("2")?.run.calls).toEqual(calls.slice(1, 3));
+    expect(result.groupsByHostId.get("4")?.run.calls).toEqual(calls.slice(3));
+  });
+
+  it("uses the same top-level command classification without an RTK wrapper", () => {
+    const calls = [
+      toolCall("1", { type: "shell", command: "cat src/a.ts" }),
+      toolCall("2", { type: "shell", command: "rg -n paseo src" }),
+      toolCall("3", { type: "shell", command: 'powershell -Command "rg hidden.txt"' }),
+      toolCall("4", { type: "shell", command: "rtk proxy cat src/b.ts" }),
+    ];
+
+    const result = project({ level: "overview", tail: calls });
+
+    expect(result.tail.map((item) => item.id)).toEqual(["1", "2", "3", "4"]);
+    expect(["1", "2", "3", "4"].map((id) => result.groupsByHostId.get(id)?.kind)).toEqual([
+      "read",
+      "search",
+      "command",
+      "read",
+    ]);
   });
 
   it("keeps one stable overview host as a run grows", () => {
     const firstCall = toolCall("1", { type: "shell", command: "one" });
-    const secondCall = toolCall("2", { type: "read", filePath: "/repo/a.ts" });
+    const secondCall = toolCall("2", { type: "shell", command: "two" });
     const prepared = prepareToolCallHistory("overview", []);
 
     const single = project({
@@ -135,12 +244,7 @@ describe("tool call detail-level projection", () => {
   });
 
   it("keeps an active overview group on its latest call until a visible boundary arrives", () => {
-    const calls = [
-      toolCall("1", { type: "shell", command: "one" }),
-      toolCall("2", { type: "read", filePath: "/repo/a.ts" }),
-      toolCall("3", { type: "read", filePath: "/repo/b.ts" }),
-      toolCall("4", { type: "edit", filePath: "/repo/a.ts" }),
-    ];
+    const calls = ["1", "2", "3", "4"].map((id) => toolCall(id, { type: "shell", command: id }));
     const prepared = prepareToolCallHistory("overview", []);
     const active = project({
       level: "overview",
@@ -164,7 +268,7 @@ describe("tool call detail-level projection", () => {
     expect(sealed.groupsByHostId.get("1")).toMatchObject({
       mode: "overview",
       run: { latest: calls[3], isSealed: true },
-      summary: { editedFileCount: 1, readFileCount: 2, commandCount: 1 },
+      summary: { editedFileCount: 0, readFileCount: 0, commandCount: 4 },
     });
   });
 
@@ -196,7 +300,7 @@ describe("tool call detail-level projection", () => {
       isTurnActive: true,
       preparedHistory: prepared,
     });
-    const nextCall = toolCall("5", { type: "read", filePath: "/repo/a.ts" });
+    const nextCall = toolCall("5", { type: "shell", command: "5" });
     const continued = project({
       level: "overview",
       head: [...calls, nextCall],
@@ -218,7 +322,7 @@ describe("tool call detail-level projection", () => {
     expect(ended.groupsByHostId.get("1")?.run.isSealed).toBe(true);
   });
 
-  it("builds overview summaries without category-specific presentation data", () => {
+  it("builds one overview summary per adjacent category group", () => {
     const calls = [
       toolCall("1", { type: "read", filePath: "/repo/src/a.ts" }),
       toolCall("2", { type: "read", filePath: "/repo/src/b.ts" }),
@@ -230,16 +334,25 @@ describe("tool call detail-level projection", () => {
 
     expect(overview.groupsByHostId.get("1")).toEqual({
       mode: "overview",
+      kind: "read",
       run: expect.any(Object),
       isLoading: false,
       summary: {
-        editedFileCount: 1,
-        commandCount: 1,
+        editedFileCount: 0,
+        commandCount: 0,
         readFileCount: 2,
         searchCount: 0,
         otherToolCount: 0,
         paseoCallCount: 0,
       },
+    });
+    expect(overview.groupsByHostId.get("3")).toMatchObject({
+      kind: "command",
+      summary: { commandCount: 1 },
+    });
+    expect(overview.groupsByHostId.get("4")).toMatchObject({
+      kind: "edit",
+      summary: { editedFileCount: 1 },
     });
   });
 
@@ -259,13 +372,26 @@ describe("tool call detail-level projection", () => {
     const result = project({ level: "overview", head: calls });
 
     expect(result.groupsByHostId.get("1")).toMatchObject({
+      kind: "read",
       summary: {
         editedFileCount: 0,
         commandCount: 0,
         readFileCount: 2,
-        searchCount: 1,
-        otherToolCount: 2,
+        searchCount: 0,
+        otherToolCount: 0,
       },
+    });
+    expect(result.groupsByHostId.get("3")).toMatchObject({
+      kind: "other",
+      summary: { otherToolCount: 1 },
+    });
+    expect(result.groupsByHostId.get("4")).toMatchObject({
+      kind: "search",
+      summary: { searchCount: 1 },
+    });
+    expect(result.groupsByHostId.get("5")).toMatchObject({
+      kind: "other",
+      summary: { otherToolCount: 1 },
     });
   });
 
@@ -282,12 +408,16 @@ describe("tool call detail-level projection", () => {
     const result = project({ level: "overview", head: calls });
 
     expect(result.groupsByHostId.get("1")).toMatchObject({
-      summary: {
-        editedFileCount: 2,
-        commandCount: 2,
-        readFileCount: 1,
-        otherToolCount: 0,
-      },
+      kind: "edit",
+      summary: { editedFileCount: 2, commandCount: 0, readFileCount: 0 },
+    });
+    expect(result.groupsByHostId.get("4")).toMatchObject({
+      kind: "command",
+      summary: { commandCount: 2 },
+    });
+    expect(result.groupsByHostId.get("6")).toMatchObject({
+      kind: "read",
+      summary: { readFileCount: 1 },
     });
   });
 
@@ -306,7 +436,12 @@ describe("tool call detail-level projection", () => {
     const result = project({ level: "overview", head: calls });
 
     expect(result.groupsByHostId.get("1")).toMatchObject({
-      summary: { otherToolCount: 2, paseoCallCount: 2 },
+      kind: "paseo",
+      summary: { otherToolCount: 0, paseoCallCount: 2 },
+    });
+    expect(result.groupsByHostId.get("3")).toMatchObject({
+      kind: "other",
+      summary: { otherToolCount: 2, paseoCallCount: 0 },
     });
   });
 
@@ -324,7 +459,16 @@ describe("tool call detail-level projection", () => {
     const result = project({ level: "overview", head: calls });
 
     expect(result.groupsByHostId.get("1")).toMatchObject({
-      summary: { searchCount: 3, otherToolCount: 0, paseoCallCount: 3 },
+      kind: "search",
+      summary: { searchCount: 2, otherToolCount: 0, paseoCallCount: 0 },
+    });
+    expect(result.groupsByHostId.get("3")).toMatchObject({
+      kind: "paseo",
+      summary: { searchCount: 0, paseoCallCount: 3 },
+    });
+    expect(result.groupsByHostId.get("6")).toMatchObject({
+      kind: "search",
+      summary: { searchCount: 1, paseoCallCount: 0 },
     });
   });
 
@@ -371,7 +515,7 @@ describe("tool call detail-level projection", () => {
   it("preserves projected history identity during assistant-only head updates", () => {
     const trailingCalls = [
       toolCall("1", { type: "shell", command: "one" }),
-      toolCall("2", { type: "read", filePath: "/repo/a.ts" }),
+      toolCall("2", { type: "shell", command: "two" }),
     ];
     const tail = [assistant("before"), ...trailingCalls];
     const prepared = prepareToolCallHistory("overview", tail);
@@ -411,8 +555,8 @@ describe("tool call detail-level projection", () => {
       toolCall("2", { type: "shell", command: "two" }),
     ];
     const head = [
-      toolCall("3", { type: "read", filePath: "/repo/a.ts" }),
-      toolCall("4", { type: "edit", filePath: "/repo/a.ts" }, { status: "running" }),
+      toolCall("3", { type: "shell", command: "three" }),
+      toolCall("4", { type: "shell", command: "four" }, { status: "running" }),
     ];
 
     const result = project({ level: "overview", tail, head, isTurnActive: true });

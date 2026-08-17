@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveToolCallExpansionPolicy } from "./tool-call-expansion";
+import {
+  createToolCallGroupExpansionState,
+  isToolCallGroupExpanded,
+  resetToolCallGroupExpansionState,
+  resolveToolCallExpansionPolicy,
+  setToolCallGroupExpanded,
+} from "./tool-call-expansion";
 
 describe("tool-call expansion policy", () => {
   it.each([false, true])(
@@ -23,4 +29,26 @@ describe("tool-call expansion policy", () => {
       });
     },
   );
+
+  it("resets manual group overrides whenever the setting changes", () => {
+    let state = createToolCallGroupExpansionState(false);
+    expect(isToolCallGroupExpanded(state, "group-1")).toBe(false);
+
+    state = setToolCallGroupExpanded(state, "group-1", true);
+    expect(isToolCallGroupExpanded(state, "group-1")).toBe(true);
+
+    state = resetToolCallGroupExpansionState(state, true);
+    expect(state.expandedById.size).toBe(0);
+    expect(isToolCallGroupExpanded(state, "group-1")).toBe(true);
+
+    state = setToolCallGroupExpanded(state, "group-1", false);
+    expect(isToolCallGroupExpanded(state, "group-1")).toBe(false);
+
+    state = resetToolCallGroupExpansionState(state, false);
+    expect(state.expandedById.size).toBe(0);
+    expect(isToolCallGroupExpanded(state, "group-1")).toBe(false);
+
+    state = resetToolCallGroupExpansionState(state, true);
+    expect(isToolCallGroupExpanded(state, "group-1")).toBe(true);
+  });
 });

@@ -1923,12 +1923,12 @@ export const ko: TranslationResources = {
         accessibilityLabel: "터미널 스크롤백 줄 수",
       },
       autoExpandActivity: {
-        label: "완료된 활동 펼쳐 두기",
-        description: "턴이 끝나도 에이전트의 작업을 자동으로 접지 않습니다.",
+        label: "완료 후 전체 과정 펼쳐 두기",
+        description: "턴이 끝난 뒤에도 과정 텍스트, 추론, 도구 호출 및 계획을 계속 표시합니다.",
       },
       autoExpandReasoning: {
-        label: "추론 항상 펼치기",
-        description: "에이전트의 사고 및 추론 블록을 기본적으로 모두 펼쳐 표시합니다.",
+        label: "추론 및 도구 세부 정보 기본 펼치기",
+        description: "추론 블록, 도구 호출 그룹 및 그룹 내 세부 정보를 기본적으로 펼칩니다.",
       },
       toolCallDetail: {
         label: "도구 호출 표시",

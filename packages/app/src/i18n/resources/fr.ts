@@ -1964,12 +1964,14 @@ export const fr: TranslationResources = {
         accessibilityLabel: "Lignes de défilementTerminal",
       },
       autoExpandActivity: {
-        label: "Garder l’activité terminée développée",
-        description: "Ne pas réduire automatiquement le travail de l’agent à la fin d’un tour",
+        label: "Conserver tout le processus développé",
+        description:
+          "Après la fin d’un tour, garder visibles le processus, le raisonnement, les appels d’outils et les plans",
       },
       autoExpandReasoning: {
-        label: "Développer les détails du raisonnement",
-        description: "Afficher les blocs de raisonnement individuels développés par défaut",
+        label: "Développer le raisonnement et les outils",
+        description:
+          "Développer par défaut les blocs de raisonnement, les groupes d’appels d’outils et leurs détails",
       },
       toolCallDetail: {
         label: "Affichage des appels d’outils",

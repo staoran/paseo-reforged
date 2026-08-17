@@ -1928,12 +1928,14 @@ export const ja: TranslationResources = {
         accessibilityLabel: "ターミナルスクロールバック行数",
       },
       autoExpandActivity: {
-        label: "完了した処理を展開したままにする",
-        description: "ターン完了時にエージェントの処理を自動的に折りたたみません",
+        label: "完了後もターン全体を展開",
+        description:
+          "ターン完了後も、処理テキスト、推論、ツール呼び出し、計画を表示したままにします",
       },
       autoExpandReasoning: {
-        label: "推論の詳細を展開",
-        description: "個々の推論ブロックをデフォルトで展開します",
+        label: "推論とツールの詳細をデフォルトで展開",
+        description:
+          "推論ブロック、ツール呼び出しグループ、グループ内の詳細をデフォルトで展開します",
       },
       toolCallDetail: {
         label: "ツール呼び出しの表示",

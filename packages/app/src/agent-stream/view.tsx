@@ -121,7 +121,13 @@ import {
 } from "./retained-session-selectors";
 import { requestIdleProjectionActivityDetails } from "./projection-detail-prefetch";
 import { useTurnChanges } from "./use-turn-changes";
-import { resolveToolCallExpansionPolicy } from "./tool-call-expansion";
+import {
+  createToolCallGroupExpansionState,
+  isToolCallGroupExpanded,
+  resetToolCallGroupExpansionState,
+  resolveToolCallExpansionPolicy,
+  setToolCallGroupExpanded,
+} from "./tool-call-expansion";
 import {
   getEditableLastUserMessageId,
   type LastUserMessageEditController,
@@ -454,8 +460,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const [expandedInlineToolCallIds, setExpandedInlineToolCallIds] = useState<Set<string>>(
       new Set(),
     );
-    const [expandedToolCallGroupIds, setExpandedToolCallGroupIds] = useState<Set<string>>(
-      new Set(),
+    const [toolCallGroupExpansionState, setToolCallGroupExpansionState] = useState(() =>
+      createToolCallGroupExpansionState(autoExpandReasoning),
     );
     const [activityFoldOverrides, setActivityFoldOverrides] = useState<Map<string, boolean>>(
       new Map(),
@@ -543,9 +549,17 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     useEffect(() => {
       setIsNearBottom(true);
       setExpandedInlineToolCallIds(new Set());
-      setExpandedToolCallGroupIds(new Set());
       setActivityFoldOverrides(new Map());
     }, [agentId]);
+
+    useEffect(() => {
+      setToolCallGroupExpansionState(createToolCallGroupExpansionState(autoExpandReasoning));
+    }, [agentId, autoExpandReasoning]);
+
+    const effectiveToolCallGroupExpansionState = useMemo(
+      () => resetToolCallGroupExpansionState(toolCallGroupExpansionState, autoExpandReasoning),
+      [autoExpandReasoning, toolCallGroupExpansionState],
+    );
 
     const handleInlinePathPress = useStableEvent(
       (target: InlinePathTarget, disposition: OpenFileDisposition) => {
@@ -681,8 +695,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     );
     // Keep retained history outside the 48ms live-head flush path.
     const preparedToolCallHistory = useMemo(
-      () => prepareToolCallHistory(toolCallDetailLevel, effectiveStreamItems),
-      [effectiveStreamItems, toolCallDetailLevel],
+      () =>
+        prepareToolCallHistory(toolCallDetailLevel, effectiveStreamItems, effectiveProjectionFolds),
+      [effectiveProjectionFolds, effectiveStreamItems, toolCallDetailLevel],
     );
     const projectedToolCalls = useMemo(
       () =>
@@ -710,7 +725,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         head: projectedToolCalls.head,
         platform: isWeb ? "web" : "native",
         isMobileBreakpoint: isMobile,
-        activityFolds: effectiveProjectionFolds,
+        activityFolds: projectedToolCalls.activityFolds,
       });
     }, [
       isMobile,
@@ -718,7 +733,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       projectedToolCalls.head,
       projectedToolCalls.tail,
       effectiveTurnPresentation.startedAt,
-      effectiveProjectionFolds,
+      projectedToolCalls.activityFolds,
     ]);
     const streamLayout = useMemo(
       () =>
@@ -800,17 +815,18 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [streamRenderStrategy],
     );
 
-    const setToolCallGroupExpanded = useCallback((groupId: string, expanded: boolean) => {
-      setExpandedToolCallGroupIds((previous) => {
-        const next = new Set(previous);
-        if (expanded) {
-          next.add(groupId);
-        } else {
-          next.delete(groupId);
-        }
-        return next;
-      });
-    }, []);
+    const handleToolCallGroupExpandedChange = useCallback(
+      (groupId: string, expanded: boolean) => {
+        setToolCallGroupExpansionState((previous) =>
+          setToolCallGroupExpanded(
+            resetToolCallGroupExpansionState(previous, autoExpandReasoning),
+            groupId,
+            expanded,
+          ),
+        );
+      },
+      [autoExpandReasoning],
+    );
 
     const toggleActivityFold = useCallback((foldId: string, expanded: boolean) => {
       setActivityFoldOverrides((previous) => {
@@ -924,6 +940,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         item: Extract<StreamItem, { kind: "tool_call" }>,
         isLastInSequence: boolean,
         maxDetailHeight?: number,
+        compact = false,
       ) => {
         const { payload } = item;
         const expansionPolicy = resolveToolCallExpansionPolicy(autoExpandReasoning, "tool");
@@ -957,6 +974,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               onOpenFilePath={handleToolCallOpenFile}
               maxDetailHeight={maxDetailHeight}
               defaultExpanded={expansionPolicy.defaultExpanded}
+              compact={compact}
             />
           );
         }
@@ -975,6 +993,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             onOpenFilePath={handleToolCallOpenFile}
             maxDetailHeight={maxDetailHeight}
             defaultExpanded={expansionPolicy.defaultExpanded}
+            compact={compact}
           />
         );
       },
@@ -987,13 +1006,16 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         if (!group) {
           return renderSingleToolCallItem(item, layoutItem.isLastInToolSequence);
         }
-        const expanded = expandedToolCallGroupIds.has(group.run.id);
+        const expanded = isToolCallGroupExpanded(
+          effectiveToolCallGroupExpansionState,
+          group.run.id,
+        );
         return (
           <OverviewToolCallGroupView
             group={group}
             expanded={expanded}
             isLastInSequence={layoutItem.isLastInToolSequence}
-            onExpandedChange={setToolCallGroupExpanded}
+            onExpandedChange={handleToolCallGroupExpandedChange}
           >
             {expanded
               ? group.run.calls.map((call, index) => (
@@ -1002,6 +1024,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                       call,
                       index === group.run.calls.length - 1,
                       GROUPED_TOOL_CALL_DETAIL_MAX_HEIGHT,
+                      group.mode === "overview",
                     )}
                   </React.Fragment>
                 ))
@@ -1011,9 +1034,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       },
       [
         projectedToolCalls.groupsByHostId,
-        expandedToolCallGroupIds,
+        effectiveToolCallGroupExpansionState,
+        handleToolCallGroupExpandedChange,
         renderSingleToolCallItem,
-        setToolCallGroupExpanded,
       ],
     );
 
@@ -1277,7 +1300,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       !streamRenderStrategy.shouldDisableParentScrollOnInlineDetailsExpansion() ||
       expandedInlineToolCallIds.size === 0;
     const streamDisplayStateById = useMemo(() => {
-      const itemIds = new Set(expandedToolCallGroupIds);
+      const itemIds = new Set<string>();
+      for (const groupId of projectedToolCalls.groupsByHostId.keys()) {
+        if (isToolCallGroupExpanded(effectiveToolCallGroupExpansionState, groupId)) {
+          itemIds.add(groupId);
+        }
+      }
       for (const layoutItem of [...streamLayout.history, ...streamLayout.liveHead]) {
         if (
           layoutItem.activityFold &&
@@ -1290,7 +1318,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     }, [
       activityFoldOverrides,
       autoExpandActivity,
-      expandedToolCallGroupIds,
+      effectiveToolCallGroupExpansionState,
+      projectedToolCalls.groupsByHostId,
       streamLayout.history,
       streamLayout.liveHead,
     ]);

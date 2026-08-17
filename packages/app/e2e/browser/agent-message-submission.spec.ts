@@ -931,7 +931,7 @@ test.describe("Agent message submission", () => {
       page.getByTestId("assistant-message").last(),
     );
     const assistantMessageCount = await page.getByTestId("assistant-message").count();
-    const toolCallCount = await page.getByTestId("tool-call-badge").count();
+    const toolCallGroupCount = await page.getByTestId("tool-call-group").count();
     await composer.press("Enter");
     const userMessage = page.getByTestId("user-message").filter({ hasText: prompt }).last();
     await expect(userMessage).toBeVisible();
@@ -939,8 +939,8 @@ test.describe("Agent message submission", () => {
       .poll(async () => page.getByTestId("assistant-message").count())
       .toBeGreaterThan(assistantMessageCount);
     await expect
-      .poll(async () => page.getByTestId("tool-call-badge").count())
-      .toBeGreaterThan(toolCallCount);
+      .poll(async () => page.getByTestId("tool-call-group").count())
+      .toBeGreaterThan(toolCallGroupCount);
     await finishTimelineRowStabilityCheck();
   });
 

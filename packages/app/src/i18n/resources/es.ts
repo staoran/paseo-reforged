@@ -1961,13 +1961,14 @@ export const es: TranslationResources = {
         accessibilityLabel: "Líneas del historial de terminal",
       },
       autoExpandActivity: {
-        label: "Mantener expandida la actividad completada",
-        description: "No contraer automáticamente el trabajo del agente al finalizar un turno",
+        label: "Mostrar todo el proceso tras finalizar",
+        description:
+          "Tras finalizar un turno, mantener visibles el proceso, el razonamiento, las llamadas a herramientas y los planes",
       },
       autoExpandReasoning: {
-        label: "Expandir detalles del razonamiento",
+        label: "Expandir razonamiento y herramientas",
         description:
-          "Mostrar los bloques de razonamiento individuales expandidos de forma predeterminada",
+          "Expandir de forma predeterminada los bloques de razonamiento, los grupos de llamadas a herramientas y sus detalles",
       },
       toolCallDetail: {
         label: "Visualización de llamadas a herramientas",

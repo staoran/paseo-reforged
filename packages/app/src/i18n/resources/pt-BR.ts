@@ -1945,12 +1945,14 @@ export const ptBR: TranslationResources = {
         accessibilityLabel: "Linhas do scrollback do terminal",
       },
       autoExpandActivity: {
-        label: "Manter atividade concluída expandida",
-        description: "Não recolher automaticamente o trabalho do agente ao concluir um turno",
+        label: "Manter todo o processo expandido",
+        description:
+          "Após concluir um turno, manter visíveis o processo, o raciocínio, as chamadas de ferramentas e os planos",
       },
       autoExpandReasoning: {
-        label: "Expandir detalhes do raciocínio",
-        description: "Mostrar blocos de raciocínio individuais expandidos por padrão",
+        label: "Expandir raciocínio e ferramentas",
+        description:
+          "Expandir por padrão os blocos de raciocínio, os grupos de chamadas de ferramentas e seus detalhes",
       },
       toolCallDetail: {
         label: "Exibição de chamadas de ferramentas",

@@ -14,8 +14,8 @@ const REASONING_TEXT =
 
 const STANDARD_FINAL_TEXT = "(end of synthetic stream)";
 const CHUNKED_FINAL_TEXT = "Synthetic load test complete";
-const ACTIVITY_SETTING = "Keep completed activity expanded";
-const REASONING_SETTING = "Expand reasoning details";
+const ACTIVITY_SETTING = "Keep completed turns expanded";
+const REASONING_SETTING = "Expand reasoning and tool details";
 
 test.setTimeout(180_000);
 
@@ -40,6 +40,10 @@ function readTool(page: Page) {
 
 function toolBadge(page: Page, label: RegExp) {
   return page.getByTestId("tool-call-badge").filter({ hasText: label }).first();
+}
+
+function toolGroup(page: Page, label: RegExp) {
+  return page.getByTestId("tool-call-group").filter({ hasText: label }).first();
 }
 
 function thinkingTool(page: Page) {
@@ -77,9 +81,7 @@ async function setExpansionSettings(
   await expectComposerVisible(page);
 }
 
-test("keeps activity folding independent while expanding reasoning and tool details", async ({
-  page,
-}) => {
+test("keeps activity, tool groups, and tool details independently expandable", async ({ page }) => {
   const agent = await seedMockAgentWorkspace({
     repoPrefix: "appearance-reasoning-",
     title: "Appearance reasoning",
@@ -100,7 +102,8 @@ test("keeps activity folding independent while expanding reasoning and tool deta
     await expect(reasoningDetails(page)).toHaveCount(0);
     await expect(thinkingTool(page)).toBeVisible();
     await expect(commentaryDetails(page)).toBeVisible();
-    await expect(readTool(page)).toBeVisible();
+    await expect(toolGroup(page, /read/i)).toBeVisible();
+    await expect(readTool(page)).toHaveCount(0);
 
     await agent.client.waitForFinish(agent.agentId, 30_000);
     await fold.click();
@@ -110,9 +113,9 @@ test("keeps activity folding independent while expanding reasoning and tool deta
     await expect(reasoningDetails(page)).toHaveCount(0);
     await expect(thinkingTool(page)).toBeVisible();
     await expect(commentaryDetails(page)).toBeVisible();
-    await expect(readTool(page)).toBeVisible();
-    await expect(toolBadge(page, /Read/i)).toBeVisible();
-    await expect(toolBadge(page, /Search/i)).toBeVisible();
+    await expect(toolGroup(page, /read/i)).toBeVisible();
+    await expect(toolGroup(page, /search/i)).toBeVisible();
+    await expect(readTool(page)).toHaveCount(0);
 
     await thinkingTool(page).getByRole("button").click();
     await expect(reasoningDetails(page)).toBeVisible();
@@ -120,6 +123,8 @@ test("keeps activity folding independent while expanding reasoning and tool deta
     await expect(reasoningDetails(page)).toHaveCount(0);
 
     await expect(page.getByText(/export function ConversationList/)).toHaveCount(0);
+    await toolGroup(page, /read/i).click();
+    await expect(readTool(page)).toBeVisible();
     await readTool(page).getByRole("button").click();
     await expect(page.getByText(/export function ConversationList/)).toBeVisible();
     await readTool(page).getByRole("button").click();
@@ -136,7 +141,8 @@ test("keeps activity folding independent while expanding reasoning and tool deta
     await expectComposerVisible(page);
     await expect(reasoningDetails(page)).toHaveCount(0);
     await expect(thinkingTool(page)).toBeVisible();
-    await expect(readTool(page)).toBeVisible();
+    await expect(toolGroup(page, /read/i)).toBeVisible();
+    await expect(readTool(page)).toHaveCount(0);
     await expect(page.getByText(STANDARD_FINAL_TEXT, { exact: true })).toBeVisible();
 
     await setExpansionSettings(page, { activity: false, reasoning: true });
@@ -150,6 +156,8 @@ test("keeps activity folding independent while expanding reasoning and tool deta
     await activityFold(page).click();
     await expect(reasoningDetails(page)).toBeVisible();
     await expect(thinkingTool(page)).toBeVisible();
+    await expect(toolGroup(page, /read/i)).toBeVisible();
+    await expect(readTool(page)).toBeVisible();
     await expect(
       page
         .getByText(/export function ConversationList/)

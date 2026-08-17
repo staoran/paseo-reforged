@@ -3161,6 +3161,7 @@ interface ToolCallProps {
   defaultExpanded?: boolean;
   forceInline?: boolean;
   maxDetailHeight?: number;
+  compact?: boolean;
 }
 
 export const ToolCall = memo(function ToolCall({
@@ -3180,6 +3181,7 @@ export const ToolCall = memo(function ToolCall({
   defaultExpanded,
   forceInline = false,
   maxDetailHeight = 400,
+  compact = false,
 }: ToolCallProps) {
   const { openToolCall } = useToolCallSheet();
   const [isExpanded, setIsExpanded] = useState(defaultExpanded ?? false);
@@ -3214,7 +3216,8 @@ export const ToolCall = memo(function ToolCall({
       }),
     [toolName, status, error, effectiveDetail, metadata, cwd],
   );
-  const isInlineDetailsExpanded = shouldRenderInline && presentation.canOpenDetails && isExpanded;
+  const canOpenDetails = !compact && presentation.canOpenDetails;
+  const isInlineDetailsExpanded = shouldRenderInline && canOpenDetails && isExpanded;
   const handleOpenFile = useMemo(() => {
     const openFilePath = presentation.openFilePath;
     if (!openFilePath || !onOpenFilePath) {
@@ -3306,9 +3309,9 @@ export const ToolCall = memo(function ToolCall({
       secondaryLabel={presentation.summary}
       icon={presentation.icon}
       isExpanded={isInlineDetailsExpanded}
-      onToggle={presentation.canOpenDetails ? handleToggle : undefined}
+      onToggle={canOpenDetails ? handleToggle : undefined}
       onOpenFile={handleOpenFile}
-      renderDetails={presentation.canOpenDetails && shouldRenderInline ? renderDetails : undefined}
+      renderDetails={canOpenDetails && shouldRenderInline ? renderDetails : undefined}
       isLoading={status === "running" || status === "executing"}
       isError={status === "failed"}
       isLastInSequence={isLastInSequence}
@@ -3333,5 +3336,6 @@ function areToolCallPropsEqual(previous: ToolCallProps, next: ToolCallProps) {
   if (previous.defaultExpanded !== next.defaultExpanded) return false;
   if (previous.forceInline !== next.forceInline) return false;
   if (previous.maxDetailHeight !== next.maxDetailHeight) return false;
+  if (previous.compact !== next.compact) return false;
   return true;
 }

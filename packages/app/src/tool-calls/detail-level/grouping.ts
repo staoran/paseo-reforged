@@ -20,6 +20,7 @@ export interface GroupedHistory<TGroup> {
   tail: StreamItem[];
   groupsByHostId: Map<string, TGroup>;
   pendingCalls: readonly ToolCallItem[];
+  pendingGroupKey: string | null;
 }
 
 export interface GroupedToolCalls<TGroup> {
@@ -33,6 +34,7 @@ export interface ToolCallGroupLookup<TGroup> {
   readonly size: number;
   get(id: string): TGroup | undefined;
   has(id: string): boolean;
+  keys(): IterableIterator<string>;
 }
 
 const EMPTY_GROUPS = new Map<string, never>();
@@ -110,16 +112,14 @@ function appendRun<TGroup>(input: {
 export function prepareGroupedHistory<TGroup>(input: {
   tail: StreamItem[];
   buildGroup: (run: ToolCallRun) => TGroup;
+  getGroupKey: (call: ToolCallItem) => string;
 }): GroupedHistory<TGroup> {
   const output: StreamItem[] = [];
   const groups = new Map<string, TGroup>();
   let pending: ToolCallItem[] = [];
+  let pendingGroupKey: string | null = null;
 
-  for (const item of input.tail) {
-    if (isGroupableToolCall(item)) {
-      pending.push(item);
-      continue;
-    }
+  const flush = () => {
     appendRun({
       calls: pending,
       isSealed: true,
@@ -128,6 +128,20 @@ export function prepareGroupedHistory<TGroup>(input: {
       buildGroup: input.buildGroup,
     });
     pending = [];
+    pendingGroupKey = null;
+  };
+
+  for (const item of input.tail) {
+    if (isGroupableToolCall(item)) {
+      const groupKey = input.getGroupKey(item);
+      if (pending.length > 0 && pendingGroupKey !== groupKey) {
+        flush();
+      }
+      pendingGroupKey = groupKey;
+      pending.push(item);
+      continue;
+    }
+    flush();
     output.push(item);
   }
 
@@ -143,6 +157,7 @@ export function prepareGroupedHistory<TGroup>(input: {
     tail: groups.size > 0 ? output : input.tail,
     groupsByHostId: groups,
     pendingCalls: pending,
+    pendingGroupKey,
   };
 }
 
@@ -151,10 +166,12 @@ export function groupLiveToolCalls<TGroup>(input: {
   head: StreamItem[];
   isTurnActive: boolean;
   buildGroup: (run: ToolCallRun) => TGroup;
+  getGroupKey: (call: ToolCallItem) => string;
 }): GroupedToolCalls<TGroup> {
   const head: StreamItem[] = [];
   const liveGroups = new Map<string, TGroup>();
   let pending = [...input.history.pendingCalls];
+  let pendingGroupKey = input.history.pendingGroupKey;
   let hostPlacement: "history" | "head" | null = pending.length > 0 ? "history" : null;
   let pendingIncludesHead = false;
 
@@ -170,14 +187,20 @@ export function groupLiveToolCalls<TGroup>(input: {
       liveGroups.set(run.id, input.buildGroup(run));
     }
     pending = [];
+    pendingGroupKey = null;
     hostPlacement = null;
     pendingIncludesHead = false;
   };
 
   for (const item of input.head) {
     if (isGroupableToolCall(item)) {
+      const groupKey = input.getGroupKey(item);
+      if (pending.length > 0 && pendingGroupKey !== groupKey) {
+        flush(true);
+      }
       if (pending.length === 0) {
         hostPlacement = "head";
+        pendingGroupKey = groupKey;
       }
       pending.push(item);
       pendingIncludesHead = true;

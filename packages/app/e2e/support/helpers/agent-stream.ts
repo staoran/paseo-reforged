@@ -8,9 +8,28 @@ export async function awaitAssistantMessage(page: Page, hasText?: string | RegEx
 }
 
 export async function awaitToolCall(page: Page, toolName: string | RegExp): Promise<void> {
-  await expect(
-    page.getByTestId("tool-call-badge").filter({ hasText: toolName }).first(),
-  ).toBeVisible({ timeout: 30_000 });
+  const toolCall = page.getByTestId("tool-call-badge").filter({ hasText: toolName }).first();
+  if (await toolCall.isVisible().catch(() => false)) {
+    return;
+  }
+  await expandVisibleToolCallGroups(page, toolCall);
+  await expect(toolCall).toBeVisible({ timeout: 30_000 });
+}
+
+/** Expands visible category groups until the requested nested content is revealed. */
+async function expandVisibleToolCallGroups(page: Page, content: Locator): Promise<void> {
+  const groups = page.getByTestId("tool-call-group").filter({ visible: true });
+  await expect(groups.first()).toBeVisible({ timeout: 30_000 });
+  const groupCount = await groups.count();
+  for (let index = 0; index < groupCount; index += 1) {
+    if (await content.isVisible().catch(() => false)) {
+      return;
+    }
+    const toggle = groups.nth(index).getByRole("button").first();
+    if ((await toggle.getAttribute("aria-expanded")) !== "true") {
+      await toggle.click();
+    }
+  }
 }
 
 export async function expandCompletedActivity(
@@ -22,7 +41,12 @@ export async function expandCompletedActivity(
   }
   const fold = page.locator('[data-testid^="activity-fold-"]:visible').first();
   await expect(fold).toBeVisible({ timeout: 30_000 });
-  await fold.click();
+  if ((await fold.getAttribute("aria-expanded")) !== "true") {
+    await fold.click();
+  }
+  if (!(await content.isVisible().catch(() => false))) {
+    await expandVisibleToolCallGroups(page, content);
+  }
   await expect(content).toBeVisible({ timeout: 30_000 });
 }
 

@@ -1887,12 +1887,13 @@ export const zhCN: TranslationResources = {
         accessibilityLabel: "终端回滚行数",
       },
       autoExpandActivity: {
-        label: "完成后保持推理过程展开",
-        description: "每轮对话结束时不自动折叠文本、工具调用和计划等处理过程",
+        label: "完成后保持整轮过程展开",
+        description: "轮次完成后仍展示过程文本、推理、工具调用和计划；关闭时整轮过程收起为完成记录",
       },
       autoExpandReasoning: {
-        label: "默认展开推理详情",
-        description: "默认展开单独的 AI 思考与推理内容",
+        label: "默认展开推理与工具详情",
+        description:
+          "控制整轮过程内部的默认状态：开启时展开推理块、工具调用分组及组内详情；关闭时收起",
       },
       toolCallDetail: {
         label: "工具调用显示",

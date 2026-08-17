@@ -1923,12 +1923,14 @@ export const en = {
         accessibilityLabel: "Terminal scrollback lines",
       },
       autoExpandActivity: {
-        label: "Keep completed activity expanded",
-        description: "Do not automatically collapse the agent's work when a turn finishes",
+        label: "Keep completed turns expanded",
+        description:
+          "After a turn completes, keep its process, reasoning, tool calls, and plans visible; when off, collapse the whole turn",
       },
       autoExpandReasoning: {
-        label: "Expand reasoning details",
-        description: "Show individual reasoning blocks fully expanded by default",
+        label: "Expand reasoning and tool details",
+        description:
+          "Controls the default state inside each turn: expand reasoning blocks, tool call groups, and their details when on",
       },
       toolCallDetail: {
         label: "Tool call display",
