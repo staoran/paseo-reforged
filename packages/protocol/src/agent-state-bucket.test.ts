@@ -39,6 +39,17 @@ describe("deriveAgentStateBucket", () => {
     ).toBe("failed");
   });
 
+  it("treats running agents as running", () => {
+    expect(
+      deriveAgentStateBucket({
+        status: "running",
+        pendingPermissionCount: 0,
+        requiresAttention: false,
+        attentionReason: null,
+      }),
+    ).toBe("running");
+  });
+
   it("treats unread finished agents as attention", () => {
     expect(
       deriveAgentStateBucket({
@@ -48,6 +59,39 @@ describe("deriveAgentStateBucket", () => {
         attentionReason: "finished",
       }),
     ).toBe("attention");
+  });
+
+  it("keeps read idle agents in attention", () => {
+    expect(
+      deriveAgentStateBucket({
+        status: "idle",
+        pendingPermissionCount: 0,
+        requiresAttention: false,
+        attentionReason: null,
+      }),
+    ).toBe("attention");
+  });
+
+  it("treats unread closed agents as attention", () => {
+    expect(
+      deriveAgentStateBucket({
+        status: "closed",
+        pendingPermissionCount: 0,
+        requiresAttention: true,
+        attentionReason: "finished",
+      }),
+    ).toBe("attention");
+  });
+
+  it("treats read closed agents as done", () => {
+    expect(
+      deriveAgentStateBucket({
+        status: "closed",
+        pendingPermissionCount: 0,
+        requiresAttention: false,
+        attentionReason: null,
+      }),
+    ).toBe("done");
   });
 
   it("does not count initializing agents as running for workspace buckets", () => {

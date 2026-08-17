@@ -293,6 +293,32 @@ function createAgent(
 }
 
 describe("WorkspaceDirectory", () => {
+  test("maps a running root agent to running", async () => {
+    const workspace = new WorkspaceStatus();
+
+    workspace.hasRootAgent({ id: "root-agent", status: "running" });
+
+    await expect(workspace.workspaceStatus()).resolves.toBe("running");
+  });
+
+  test("maps a read idle root agent to attention", async () => {
+    const workspace = new WorkspaceStatus();
+
+    workspace.hasRootAgent({
+      id: "root-agent",
+      status: "idle",
+      requiresAttention: false,
+    });
+
+    await expect(workspace.workspaceStatus()).resolves.toBe("attention");
+  });
+
+  test("keeps a workspace without agents in done", async () => {
+    const workspace = new WorkspaceStatus();
+
+    await expect(workspace.workspaceStatus()).resolves.toBe("done");
+  });
+
   test("uses root agent activity, not delegated child activity, for workspace status", async () => {
     const workspace = new WorkspaceStatus();
 
@@ -404,7 +430,7 @@ describe("WorkspaceDirectory", () => {
     });
 
     await expect(workspace.workspaceStatuses()).resolves.toEqual({
-      "workspace-1": "done",
+      "workspace-1": "attention",
       "workspace-worktree": "running",
     });
   });
@@ -433,7 +459,7 @@ describe("WorkspaceDirectory", () => {
     workspace.hasDelegatedAgentInWorktree({ id: "child-agent", status: "running" });
 
     await expect(workspace.workspaceStatuses()).resolves.toEqual({
-      "workspace-1": "done",
+      "workspace-1": "attention",
       "workspace-worktree": "running",
     });
   });
@@ -450,7 +476,7 @@ describe("WorkspaceDirectory", () => {
     });
 
     await expect(workspace.workspaceStatuses()).resolves.toEqual({
-      "workspace-1": "done",
+      "workspace-1": "attention",
       "workspace-worktree": "needs_input",
     });
   });
@@ -463,7 +489,7 @@ describe("WorkspaceDirectory", () => {
     workspace.hasDetachedAgentInWorktree({ id: "child-agent", status: "running" });
 
     await expect(workspace.workspaceStatuses()).resolves.toEqual({
-      "workspace-1": "done",
+      "workspace-1": "attention",
       "workspace-worktree": "running",
     });
   });

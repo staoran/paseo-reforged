@@ -158,6 +158,14 @@ Agent lifecycle status stays literal: a parent agent is `idle` when its own turn
 
 Workspace status is an aggregate activity signal computed **per `workspaceId`**. Ownership is never derived from `cwd` — many workspaces may share one directory, and same-`cwd` siblings do not clump under one status. Root agents and cross-workspace subagents contribute their normal state bucket to their own workspace. Same-workspace descendants contribute `running` to the nearest ancestor in that workspace; their non-running attention, permission, and error states stay in the parent's subagents track. This makes a cross-workspace subagent behave like a detached agent for workspace visibility and status without removing its parent relationship.
 
+For the sidebar status grouping, workspace activity follows the same precedence as the
+contributions above: `running` wins first and is shown as **Working**. If no running
+contribution exists, a resident root agent in `idle` is **Ready to review** regardless of
+whether its completion attention has been read. Only when there is no idle contribution
+does an unread attention state remain **Ready to review**; a read, closed/absent agent
+falls back to **Done**. Permission and error buckets retain their higher-priority
+`Needs input` and `Failed` outcomes.
+
 Running provider-native subagents contribute `running` to the workspace owned by their parent agent. Their completed, failed, and canceled states stay in the parent's subagents track.
 
 ## The subagents track

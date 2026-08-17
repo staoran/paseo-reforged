@@ -39,6 +39,17 @@ describe("deriveSidebarStateBucket", () => {
     ).toBe("attention");
   });
 
+  it("keeps read idle agents in attention", () => {
+    expect(
+      deriveSidebarStateBucket({
+        status: "idle",
+        pendingPermissionCount: 0,
+        requiresAttention: false,
+        attentionReason: null,
+      }),
+    ).toBe("attention");
+  });
+
   it("does not count initializing agents as running", () => {
     expect(
       deriveSidebarStateBucket({

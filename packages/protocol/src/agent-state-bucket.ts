@@ -19,6 +19,7 @@ const WORKSPACE_STATE_BUCKET_PRIORITY = {
   done: 4,
 } as const satisfies Record<WorkspaceStateBucket, number>;
 
+/** Derives a workspace state bucket while preserving lifecycle priority over read state. */
 export function deriveAgentStateBucket(input: AgentStateBucketInput): WorkspaceStateBucket {
   if ((input.pendingPermissionCount ?? 0) > 0 || input.attentionReason === "permission") {
     return "needs_input";
@@ -29,7 +30,7 @@ export function deriveAgentStateBucket(input: AgentStateBucketInput): WorkspaceS
   if (input.status === "running") {
     return "running";
   }
-  if (input.requiresAttention) {
+  if (input.status === "idle" || input.requiresAttention) {
     return "attention";
   }
   return "done";
