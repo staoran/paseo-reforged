@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.0-beta.3 - 2026-08-15
+## 0.4.0-beta.4 - 2026-08-17
 
 ### Known limitations
 
@@ -14,6 +14,9 @@
 
 ### Added
 
+- Added category groups for adjacent tool calls in compact and detailed process views ([b076448](https://github.com/staoran/paseo-reforged/commit/b07644857d1cd6eccbbe144fbf1e5ef166bdc23f) by [@staoran](https://github.com/staoran))
+- Added retry actions for Agent lookup and history-loading errors ([97608c0](https://github.com/staoran/paseo-reforged/commit/97608c0e3dc89fa206a8ea7550ccf6f2720c7d8a) by [@staoran](https://github.com/staoran))
+- Added Windows Terminal as a desktop workspace target and branded icons for VS Code Insiders and DataGrip ([ac56348](https://github.com/staoran/paseo-reforged/commit/ac563489151cd33b46d69bff0521082299951aef) by [@staoran](https://github.com/staoran))
 - Added a desktop and mobile setting to restore the last workspace on launch ([cb7530a](https://github.com/staoran/paseo-reforged/commit/cb7530ab10e57107ce48c7921f7017d5c5d2c84e) by [@staoran](https://github.com/staoran))
 - Added host-wide agent profiles for reusable provider, model, mode, thinking, and feature settings ([upstream #3208](https://github.com/getpaseo/paseo/pull/3208))
 - Added workspace file search to Cmd/Ctrl+P ([upstream #3059](https://github.com/getpaseo/paseo/pull/3059))
@@ -26,6 +29,7 @@
 
 ### Improved
 
+- Kept Agent indicators right-aligned in sidebar rows and moved desktop project names into hover cards ([2cbf8bc](https://github.com/staoran/paseo-reforged/commit/2cbf8bc90e5f7cd8d1ad76d7a7a3ac119c8cac8e) by [@staoran](https://github.com/staoran))
 - Applied workspace typography and reasoning-detail expansion preferences to tool calls ([c2548f6](https://github.com/staoran/paseo-reforged/commit/c2548f6dbe66d3479195d239321437170109264e) by [@staoran](https://github.com/staoran))
 - Unified Mermaid rendering for streaming chats and Markdown previews while retaining interactive diagram controls ([upstream #2306](https://github.com/getpaseo/paseo/pull/2306) by [@dmeledon](https://github.com/dmeledon))
 - Added a centered reading layout and formatted YAML front matter to Markdown previews ([upstream #3240](https://github.com/getpaseo/paseo/pull/3240))
@@ -36,6 +40,8 @@
 
 ### Fixed
 
+- Fixed closing the last Agent tab leaving an empty workspace instead of returning to New Workspace ([1a73fe3](https://github.com/staoran/paseo-reforged/commit/1a73fe3b143a80d2ec1d05c0807039e854abc2f0) by [@staoran](https://github.com/staoran))
+- Fixed idle sessions moving to Done after being read ([2e1f49b](https://github.com/staoran/paseo-reforged/commit/2e1f49bfe48ae22ac7c7d8be4a91d6cf3f58b861) by [@staoran](https://github.com/staoran))
 - Fixed editing the latest user message returning an unknown-history error in persisted sessions ([f21eba8e](https://github.com/staoran/paseo-reforged/commit/f21eba8e91968ac1c216784d1e2d4822f5836321) by [@staoran](https://github.com/staoran))
 - Fixed a horizontal desktop titlebar dead zone that could not drag the window ([5470608](https://github.com/staoran/paseo-reforged/commit/54706089c95a720cfe3583a5fed02f466816e433) by [@staoran](https://github.com/staoran))
 - Fixed terminal sessions being lost after host sleep or daemon worker stalls ([upstream #3235](https://github.com/getpaseo/paseo/pull/3235), [upstream #3263](https://github.com/getpaseo/paseo/pull/3263))
