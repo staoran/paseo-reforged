@@ -2,9 +2,9 @@
 
 ## 编号索引
 
-- 当前编号基线：`0074`
-- 下一个建议编号：`0075`
-- 最后更新：`2026-08-16`
+- 当前编号基线：`0077`
+- 下一个建议编号：`0078`
+- 最后更新：`2026-08-17`
 - 迁移说明：既有 `0001` 至 `0014` 任务已于 2026-08-02 合并迁移至 `mydocs/specs/`，旧 `mydocs/tasks/` 目录已删除；这些编号继续占用。
 
 ## 用途
@@ -125,6 +125,7 @@
 | 0072 | 已完成 | micro-spec | 已同步        | [修复 upstream 合并后 CI 合同](micro_specs/0072_修复upstream合并后CI合同.md)                      | 2026-08-15       | `fc9c97515` 已进入 main；精确 CI run `31880050156` 全部 18 个 job 全绿                                                                          |
 | 0073 | 已收口 | micro-spec | 已同步        | [修复 Windows Lefthook PATH](micro_specs/0073_修复Windows_Lefthook_PATH.md)                       | 2026-08-15       | 功能提交 `e955a7d26` 已进入 main；Windows 真实 hook、空格参数与远端 SHA 均已核验                                                                |
 | 0074 | 已收口 | micro-spec | 已同步        | [关闭末个 Workspace 标签后返回新建页](micro_specs/0074_关闭末个Workspace标签后返回新建页.md)      | 2026-08-16 10:52 | 独立提交 `1a73fe3`；原 0069 因远端编号冲突改号；真实 Playwright RED→GREEN，transaction 6/6、静态门禁与资源回收通过                              |
+| 0077 | 已收口 | micro-spec | 已同步        | [整理侧边栏会话元信息](micro_specs/0077_整理侧边栏会话元信息.md)                                  | 2026-08-17 11:52 | Agent 固定最右侧、desktop hover card 项目名及 desktop/compact 差异已完成；Vitest、Playwright、typecheck、lint 与格式检查通过                    |
 
 ## 候选待办
 

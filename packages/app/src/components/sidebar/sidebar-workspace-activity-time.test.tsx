@@ -11,6 +11,7 @@ import { i18n } from "@/i18n/i18next";
 import { SidebarWorkspaceActivityTime } from "./sidebar-workspace-activity-time";
 import { SidebarWorkspaceRowContent } from "./sidebar-workspace-row-content";
 import { SidebarWorkspaceTrailingContent } from "./workspace-trailing";
+import type { WorkspaceServiceSummary } from "./workspace-meta-row";
 
 vi.hoisted(() => {
   (globalThis as unknown as { __DEV__: boolean }).__DEV__ = false;
@@ -101,6 +102,9 @@ const ROW_WITH_RESIDENT_AGENTS: SidebarWorkspaceEntry = {
   ...ROW_WORKSPACE,
   residentAgentCount: 2,
 };
+
+/** Stable service metadata fixture used to verify the Agent's trailing position. */
+const RUNNING_SERVICE_SUMMARY: WorkspaceServiceSummary = { name: "web", health: null };
 
 describe("SidebarWorkspaceActivityTime", () => {
   let root: Root | null = null;
@@ -215,6 +219,36 @@ describe("SidebarWorkspaceActivityTime", () => {
     expect(
       activityTime.compareDocumentPosition(residentIndicator) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
+  it("keeps resident Agent status as the final metadata item without a separator", async () => {
+    await i18n.changeLanguage("en");
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root?.render(
+        <I18nextProvider i18n={i18n}>
+          <SidebarWorkspaceRowContent
+            workspace={ROW_WITH_RESIDENT_AGENTS}
+            serviceSummary={RUNNING_SERVICE_SUMMARY}
+            backdrop="surfaceSidebar"
+            isHovered={false}
+            isLoading={false}
+          />
+        </I18nextProvider>,
+      );
+    });
+
+    const residentIndicator = container.querySelector(
+      '[data-testid="workspace-runtime-resident-indicator"]',
+    );
+    if (!residentIndicator) {
+      throw new Error("Expected resident Agent indicator");
+    }
+    expect(residentIndicator.parentElement?.lastElementChild).toBe(residentIndicator);
+    expect(residentIndicator.previousElementSibling?.textContent).toBe("web");
   });
 
   it("omits the activity time when the workspace has no activity", async () => {

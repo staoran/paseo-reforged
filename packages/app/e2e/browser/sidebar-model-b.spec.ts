@@ -120,7 +120,9 @@ test.describe("Model B sidebar shape", () => {
     }
   });
 
-  test("status grouping shows project names in workspace rows", async ({ page }) => {
+  test("status grouping hides desktop project names and keeps them on compact rows", async ({
+    page,
+  }) => {
     const workspace = await seedWorkspace({ repoPrefix: "model-b-status-project-name-" });
 
     try {
@@ -134,9 +136,7 @@ test.describe("Model B sidebar shape", () => {
       await expect(row).toHaveAccessibleName(
         `${workspace.projectDisplayName}, ${workspace.workspaceName}`,
       );
-      await expect(row.getByText(workspace.projectDisplayName, { exact: true })).toBeVisible({
-        timeout: 1_000,
-      });
+      await expect(row.getByText(workspace.projectDisplayName, { exact: true })).toHaveCount(0);
 
       await page.setViewportSize({ width: 390, height: 844 });
       await openMobileAgentSidebar(page);
@@ -192,6 +192,18 @@ test.describe("Model B sidebar shape", () => {
       await expect(workspaceRow(page, activeMock.workspaceId).first()).toHaveAccessibleName(
         /Working$/,
       );
+
+      const activeResidentAgent = workspaceRow(page, activeMock.workspaceId)
+        .first()
+        .getByTestId("workspace-runtime-resident-indicator");
+      await expect(activeResidentAgent).toBeVisible({ timeout: 60_000 });
+      const residentAgentRightGap = await activeResidentAgent.evaluate((element) => {
+        const indicatorRect = element.getBoundingClientRect();
+        const metadataRect = element.parentElement?.getBoundingClientRect();
+        if (!metadataRect) throw new Error("Resident Agent indicator has no metadata row");
+        return metadataRect.right - indicatorRect.right;
+      });
+      expect(Math.abs(residentAgentRightGap)).toBeLessThanOrEqual(1);
 
       // Only workspace rows are shown — no tab/agent/terminal leaves leak into
       // the status view.

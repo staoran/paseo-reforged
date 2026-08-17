@@ -95,10 +95,7 @@ export function WorkspaceMetaRow({
         </Fragment>
       ))}
       {residentAgentCount > 0 ? (
-        <>
-          {projectName || items.length > 0 ? <Text style={styles.separator}>·</Text> : null}
-          <WorkspaceResidentAgentsIndicator count={residentAgentCount} />
-        </>
+        <WorkspaceResidentAgentsIndicator count={residentAgentCount} />
       ) : null}
     </View>
   );
@@ -354,6 +351,9 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: 2,
+    // The Agent is a stable row affordance rather than another variable-length fact.
+    // Auto margin keeps it aligned across rows and removes the need for a separator dot.
+    marginLeft: "auto",
     flexShrink: 0,
   },
   residentAgentCount: {

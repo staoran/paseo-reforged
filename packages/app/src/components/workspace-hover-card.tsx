@@ -21,6 +21,7 @@ import {
   ExternalLink,
   FileDiff,
   Folder,
+  FolderKanban,
   GitBranch,
   Server,
 } from "lucide-react-native";
@@ -294,6 +295,11 @@ function WorkspaceHoverCardContent({
               {workspace.name}
             </Text>
           </View>
+          <InfoRow
+            icon={ThemedFolderKanban}
+            value={workspace.projectName}
+            testID="hover-card-workspace-project"
+          />
           {prHint ? <PrBadge hint={prHint} style={styles.cardInfoRow} /> : null}
           {workspace.diffStat ? (
             <View style={styles.cardInfoRow}>
@@ -341,6 +347,8 @@ function WorkspaceHoverCardContent({
 
 const ThemedGitBranch = withUnistyles(GitBranch);
 const ThemedFolder = withUnistyles(Folder);
+/** Project identity glyph, kept distinct from the workspace directory glyph. */
+const ThemedFolderKanban = withUnistyles(FolderKanban);
 const ThemedServer = withUnistyles(Server);
 const ThemedFileDiff = withUnistyles(FileDiff);
 
