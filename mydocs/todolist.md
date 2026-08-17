@@ -2,8 +2,8 @@
 
 ## 编号索引
 
-- 当前编号基线：`0077`
-- 下一个建议编号：`0078`
+- 当前编号基线：`0078`
+- 下一个建议编号：`0079`
 - 最后更新：`2026-08-17`
 - 迁移说明：既有 `0001` 至 `0014` 任务已于 2026-08-02 合并迁移至 `mydocs/specs/`，旧 `mydocs/tasks/` 目录已删除；这些编号继续占用。
 
@@ -128,6 +128,7 @@
 | 0075 | 已收口 | micro-spec | 已同步        | [过程展开设置与工具调用分类折叠](micro_specs/0075_过程展开设置与工具调用分类折叠.md)              | 2026-08-17       | Q1-Q7、Activity members/相邻类型/RTK 分类与组级展开均已验证；Vitest、typecheck、lint、格式、4 组隔离 Web smoke 全部通过                         |
 | 0076 | 已收口 | micro-spec | 已同步        | [修复已读活跃会话状态分组](micro_specs/0076_修复已读活跃会话状态分组.md)                          | 2026-08-17 12:27 | running 为 Working，idle 无论已读均为 Ready，仅无 idle 且已读为 Done；协议/daemon/App/Playwright、静态与格式门禁全部通过                        |
 | 0077 | 已收口 | micro-spec | 已同步        | [整理侧边栏会话元信息](micro_specs/0077_整理侧边栏会话元信息.md)                                  | 2026-08-17 11:52 | Agent 固定最右侧、desktop hover card 项目名及 desktop/compact 差异已完成；Vitest、Playwright、typecheck、lint 与格式检查通过                    |
+| 0078 | 已收口 | micro-spec | 已同步        | [会话加载超时重试](micro_specs/0078_会话加载超时重试.md)                                          | 2026-08-17 14:07 | 加载错误态提供 Retry 按钮并显式重启查找/历史初始化；Vitest 30/30、typecheck、lint、format 与 diff 检查通过                                      |
 
 ## 候选待办
 

@@ -1,7 +1,7 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { TFunction } from "i18next";
-import { SquarePen } from "lucide-react-native";
+import { RotateCw, SquarePen } from "lucide-react-native";
 import React, {
   memo,
   useCallback,
@@ -40,6 +40,7 @@ import { ArchivedAgentCallout } from "@/components/archived-agent-callout";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { SidebarCallout } from "@/components/sidebar-callout";
+import { Button } from "@/components/ui/button";
 import { Composer } from "@/composer";
 import { RewindComposerRestoreProvider } from "@/components/rewind/composer-restore";
 import { getProviderIcon } from "@/components/provider-icons";
@@ -233,8 +234,9 @@ function renderChatAgentNonReadyView(args: {
   viewState: AgentScreenViewState;
   effectiveAgent: AgentScreenAgent | null;
   t: TFunction;
+  onRetry: () => void;
 }): React.ReactElement | null {
-  const { viewState, effectiveAgent, t } = args;
+  const { viewState, effectiveAgent, onRetry, t } = args;
   if (viewState.tag === "not_found") {
     return (
       <View style={styles.container} testID="agent-not-found">
@@ -247,10 +249,7 @@ function renderChatAgentNonReadyView(args: {
   if (viewState.tag === "error") {
     return (
       <View style={styles.container} testID="agent-load-error">
-        <View style={styles.errorContainer}>
-          <Text style={styles.errorText}>{t("agentPanel.states.failedToLoad")}</Text>
-          <Text style={styles.statusText}>{viewState.message}</Text>
-        </View>
+        <AgentLoadErrorState message={viewState.message} onRetry={onRetry} t={t} />
       </View>
     );
   }
@@ -264,6 +263,35 @@ function renderChatAgentNonReadyView(args: {
     );
   }
   return null;
+}
+
+// Keep the recovery action alongside the error details so a failed load remains actionable.
+function AgentLoadErrorState({
+  message,
+  onRetry,
+  t,
+}: {
+  message: string;
+  onRetry: () => void;
+  t: TFunction;
+}) {
+  return (
+    <View style={styles.errorContainer}>
+      <Text style={styles.errorText}>{t("agentPanel.states.failedToLoad")}</Text>
+      <Text style={styles.statusText}>{message}</Text>
+      <View style={styles.errorActions}>
+        <Button
+          size="sm"
+          variant="default"
+          leftIcon={RotateCw}
+          onPress={onRetry}
+          testID="agent-load-retry"
+        >
+          {t("common.actions.retry")}
+        </Button>
+      </View>
+    </View>
+  );
 }
 
 function formatProviderLabel(provider: Agent["provider"]): string {
@@ -633,6 +661,11 @@ function AgentPanelBody({
   const workspaceKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
   const resolvePendingAgent = useWorkspaceLayoutStore((state) => state.resolvePendingAgent);
 
+  const handleRetryLookup = useCallback(() => {
+    lookupAttemptTokenRef.current += 1;
+    setLookupState({ tag: "idle" });
+  }, []);
+
   useEffect(() => {
     lookupAttemptTokenRef.current += 1;
     setLookupState({ tag: "idle" });
@@ -654,7 +687,11 @@ function AgentPanelBody({
     if (!client || !isConnected || !hasSession) {
       return;
     }
-    if (lookupState.tag === "loading" || lookupState.tag === "not_found") {
+    if (
+      lookupState.tag === "loading" ||
+      lookupState.tag === "not_found" ||
+      lookupState.tag === "error"
+    ) {
       return;
     }
 
@@ -724,10 +761,7 @@ function AgentPanelBody({
   if (lookupState.tag === "error") {
     return (
       <View style={styles.container} testID="agent-load-error">
-        <View style={styles.errorContainer}>
-          <Text style={styles.errorText}>{t("agentPanel.states.failedToLoad")}</Text>
-          <Text style={styles.statusText}>{lookupState.message}</Text>
-        </View>
+        <AgentLoadErrorState message={lookupState.message} onRetry={handleRetryLookup} t={t} />
       </View>
     );
   }
@@ -879,6 +913,10 @@ function ChatAgentContent({
   const [missingAgentState, setMissingAgentState] = useState<AgentScreenMissingState>({
     kind: "idle",
   });
+  const handleRetryInitialization = useCallback(() => {
+    initAttemptTokenRef.current += 1;
+    setMissingAgentState({ kind: "idle" });
+  }, []);
 
   const hasHydratedHistoryBefore =
     hasAppliedAuthoritativeHistory || replicaTimelineStatus === "painted" || hasProjectionTimeline;
@@ -1188,6 +1226,7 @@ function ChatAgentContent({
   const nonReadyView = renderChatAgentNonReadyView({
     viewState,
     effectiveAgent,
+    onRetry: handleRetryInitialization,
     t,
   });
   if (nonReadyView) return nonReadyView;
@@ -2073,6 +2112,9 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
+  },
+  errorActions: {
+    marginTop: theme.spacing[3],
   },
   errorText: {
     fontSize: theme.fontSize.lg,
