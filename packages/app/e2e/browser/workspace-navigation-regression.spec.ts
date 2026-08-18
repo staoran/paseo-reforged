@@ -140,10 +140,13 @@ test.describe("Workspace navigation regression", () => {
     await expect(page.getByText("Add a project", { exact: true })).toHaveCount(0);
   });
 
-  test("returns to New Workspace after closing the last agent tab and reopens the persisted default agent", async ({
+  test("returns to New Workspace when only closed-Agent workspaces remain and reopens the persisted default agent", async ({
     page,
   }) => {
     const workspace = await seedWorkspace({ repoPrefix: "workspace-runtime-reopen-" });
+    const closedCandidateWorkspace = await seedWorkspace({
+      repoPrefix: "workspace-closed-candidate-",
+    });
     const serverId = getServerId();
 
     try {
@@ -152,9 +155,25 @@ test.describe("Workspace navigation regression", () => {
         workspace,
         `workspace-last-closed-${Date.now()}`,
       );
+      const closedCandidateAgent = await createIdleMockAgent(
+        closedCandidateWorkspace,
+        `workspace-closed-candidate-${Date.now()}`,
+      );
+      await expect(
+        closedCandidateWorkspace.client.closeAgentRuntime(closedCandidateAgent.id),
+      ).resolves.toMatchObject({ closed: true });
+      await closedCandidateWorkspace.client.waitForAgentUpsert(
+        closedCandidateAgent.id,
+        (agent) => agent.status === "closed",
+        30_000,
+      );
 
       await gotoAppShell(page);
       await waitForSidebarHydration(page);
+      await waitForWorkspaceInSidebar(page, {
+        serverId,
+        workspaceId: closedCandidateWorkspace.workspaceId,
+      });
       await openWorkspaceWithAgents(page, [defaultAgent, lastClosedAgent]);
       await expectOnlyWorkspaceAgentTabsVisible(page, [defaultAgent.id, lastClosedAgent.id]);
 
@@ -203,7 +222,49 @@ test.describe("Workspace navigation regression", () => {
       await expect(residentIndicator).toBeVisible({ timeout: 30_000 });
       await expect(residentCount).toHaveCount(0);
     } finally {
+      await closedCandidateWorkspace.cleanup();
       await workspace.cleanup();
+    }
+  });
+
+  test("opens another Agent workspace after closing the last agent tab", async ({ page }) => {
+    const closingWorkspace = await seedWorkspace({ repoPrefix: "workspace-close-source-" });
+    const reviewWorkspace = await seedWorkspace({ repoPrefix: "workspace-close-review-" });
+    const serverId = getServerId();
+
+    try {
+      const closingAgent = await createIdleMockAgent(
+        closingWorkspace,
+        `workspace-close-source-${Date.now()}`,
+      );
+      const reviewAgent = await createIdleMockAgent(
+        reviewWorkspace,
+        `workspace-close-review-${Date.now()}`,
+      );
+
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+      await waitForWorkspaceInSidebar(page, {
+        serverId,
+        workspaceId: reviewWorkspace.workspaceId,
+      });
+      await page.goto(
+        buildHostAgentDetailRoute(serverId, closingAgent.id, closingAgent.workspaceId),
+      );
+      await page.waitForURL(
+        (url) => url.pathname.includes("/workspace/") && !url.searchParams.has("open"),
+        { timeout: 60_000 },
+      );
+      await waitForWorkspaceTabsVisible(page);
+      await expectWorkspaceTabVisible(page, closingAgent.id);
+      await closeWorkspaceAgentTab(page, closingAgent.id);
+
+      await expectAppRoute(page, buildHostWorkspaceRoute(serverId, reviewWorkspace.workspaceId));
+      await expectWorkspaceTabVisible(page, reviewAgent.id);
+      await expectOnlyWorkspaceAgentTabsVisible(page, [reviewAgent.id]);
+    } finally {
+      await reviewWorkspace.cleanup();
+      await closingWorkspace.cleanup();
     }
   });
 

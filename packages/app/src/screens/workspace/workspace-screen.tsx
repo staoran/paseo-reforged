@@ -71,6 +71,7 @@ import { selectIsFileExplorerOpen, usePanelStore } from "@/stores/panel-store";
 import { type ExplorerCheckoutContext } from "@/stores/explorer-checkout-context";
 import { traceInstant } from "@/performance/native-trace";
 import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
+import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import {
   collectAllTabs,
   getFocusedBrowserId,
@@ -173,6 +174,7 @@ import {
   closeAgentRuntimeAndCommit,
   type AgentRuntimeCloseOutcome,
 } from "@/screens/workspace/agent-runtime-close-transaction";
+import { selectLastAgentTabNavigationTarget } from "@/screens/workspace/last-agent-tab-navigation";
 import { resolveCloseAgentTabPolicy } from "@/subagents";
 import { useHostFeature } from "@/runtime/host-features";
 import {
@@ -232,9 +234,10 @@ function isWorkspaceDirectoryMissing(
 }
 
 /** Leaves the current workspace route after its persisted layout has no tabs. */
-function replaceEmptyWorkspaceWithNewWorkspace(input: {
+function navigateFromEmptyWorkspace(input: {
   workspaceKey: string;
   serverId: string;
+  workspaceId: string;
   workspaceDescriptor: WorkspaceDescriptor | null | undefined;
   router: Pick<ReturnType<typeof useRouter>, "replace">;
 }): void {
@@ -242,6 +245,21 @@ function replaceEmptyWorkspaceWithNewWorkspace(input: {
   if (!remainingLayout || collectAllTabs(remainingLayout.root).length > 0) {
     return;
   }
+
+  const target = selectLastAgentTabNavigationTarget({
+    sessions: useSessionStore.getState().sessions,
+    currentServerId: input.serverId,
+    currentWorkspaceId: input.workspaceId,
+  });
+  if (target) {
+    navigateToWorkspace({
+      serverId: target.serverId,
+      workspaceId: target.workspaceId,
+      target: { kind: "agent", agentId: target.agentId },
+    });
+    return;
+  }
+
   input.router.replace(
     buildNewWorkspaceRoute({
       serverId: input.serverId,
@@ -2829,9 +2847,10 @@ function WorkspaceScreenContent({
                 tabId,
                 target: { kind: "agent", agentId },
               });
-              replaceEmptyWorkspaceWithNewWorkspace({
+              navigateFromEmptyWorkspace({
                 workspaceKey: persistenceKey,
                 serverId: normalizedServerId,
+                workspaceId: normalizedWorkspaceId,
                 workspaceDescriptor,
                 router,
               });
@@ -2847,6 +2866,7 @@ function WorkspaceScreenContent({
       closeWorkspaceTabWithCleanup,
       handleAgentRuntimeCloseOutcome,
       normalizedServerId,
+      normalizedWorkspaceId,
       persistenceKey,
       router,
       supportsAgentRuntimeClose,

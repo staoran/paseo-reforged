@@ -2,9 +2,9 @@
 
 ## 编号索引
 
-- 当前编号基线：`0079`
-- 下一个建议编号：`0080`
-- 最后更新：`2026-08-17`
+- 当前编号基线：`0081`
+- 下一个建议编号：`0082`
+- 最后更新：`2026-08-18`
 - 迁移说明：既有 `0001` 至 `0014` 任务已于 2026-08-02 合并迁移至 `mydocs/specs/`，旧 `mydocs/tasks/` 目录已删除；这些编号继续占用。
 
 ## 用途
@@ -131,6 +131,7 @@
 | 0078 | 已收口     | micro-spec | 已同步        | [会话加载超时重试](micro_specs/0078_会话加载超时重试.md)                                          | 2026-08-17 14:07 | 加载错误态提供 Retry 按钮并显式重启查找/历史初始化；Vitest 30/30、typecheck、lint、format 与 diff 检查通过                                      |
 | 0079 | 待手工验收 | micro-spec | 已同步        | [标题栏终端快捷打开与图标准确化](micro_specs/0079_标题栏终端快捷打开与图标准确化.md)              | 2026-08-17 15:36 | 实现与自动验证已完成；真实 Electron 菜单因隔离环境无 workspace 及系统错误对话框阻断，待人工确认 Terminal 与两个品牌图标                         |
 | 0080 | 已收口     | micro-spec | 已同步        | [修复手动停止后消息编辑资格](micro_specs/0080_修复手动停止后消息编辑资格.md)                      | 2026-08-18 01:46 | runtime 恢复后 provider 用户消息 ID 漂移的 replay proof 已安全迁移；Playwright RED→GREEN、Server 回归、typecheck、lint 与格式通过               |
+| 0081 | 已收口     | micro-spec | 已同步        | [关闭末个标签后切换 Workspace](micro_specs/0081_关闭末个标签后切换Workspace.md)                   | 2026-08-18       | 只对 `residentAgentCount > 0` 候选应用三层排序；纯策略 8/8、真实路由 2/2、typecheck、全仓 lint 与格式通过                                       |
 
 ## 候选待办
 
