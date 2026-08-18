@@ -297,6 +297,11 @@ function shouldWithholdUserMessageUntilInterrupt(prompt: AgentPromptInput): bool
   return /withhold synthetic user message until interrupted/i.test(promptToText(prompt));
 }
 
+/** Reads an opt-in boolean behavior from the mock provider configuration. */
+function mockFeatureEnabled(config: AgentSessionConfig, feature: string): boolean {
+  return config.featureValues?.[feature] === true;
+}
+
 function shouldEmitUserMessageBeforeTurnAcceptance(prompt: AgentPromptInput): boolean {
   return /emit synthetic user message before accepting turn/i.test(promptToText(prompt));
 }
@@ -585,16 +590,25 @@ export class MockLoadTestAgentClient implements AgentClient {
   readonly provider: AgentProvider = MOCK_LOAD_TEST_PROVIDER_ID;
   readonly capabilities = CAPABILITIES;
 
+  /** Histories retained only for E2E scenarios that exercise same-daemon session resume. */
+  private readonly persistentHistories = new Map<string, AgentStreamEvent[]>();
+
   constructor(private readonly logger?: Logger) {}
 
   async createSession(
     config: AgentSessionConfig,
     _launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
+    const sessionId = randomUUID();
+    const history = mockFeatureEnabled(config, "mockPersistHistoryAcrossResume") ? [] : undefined;
+    if (history) {
+      this.persistentHistories.set(sessionId, history);
+    }
     return new MockLoadTestAgentSession({
       config,
-      sessionId: randomUUID(),
+      sessionId,
       logger: this.logger,
+      history: history ?? [],
     });
   }
 
@@ -604,15 +618,23 @@ export class MockLoadTestAgentClient implements AgentClient {
     _launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
     const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
+    const config: AgentSessionConfig = {
+      cwd: metadata.cwd ?? overrides?.cwd ?? process.cwd(),
+      ...metadata,
+      ...overrides,
+      provider: MOCK_LOAD_TEST_PROVIDER_ID,
+    };
+    const history = mockFeatureEnabled(config, "mockPersistHistoryAcrossResume")
+      ? (this.persistentHistories.get(handle.sessionId) ?? [])
+      : undefined;
+    if (history) {
+      this.persistentHistories.set(handle.sessionId, history);
+    }
     return new MockLoadTestAgentSession({
-      config: {
-        cwd: metadata.cwd ?? overrides?.cwd ?? process.cwd(),
-        ...metadata,
-        ...overrides,
-        provider: MOCK_LOAD_TEST_PROVIDER_ID,
-      },
+      config,
       sessionId: handle.sessionId,
       logger: this.logger,
+      history: history ?? [],
     });
   }
 
@@ -653,7 +675,8 @@ export class MockLoadTestAgentSession implements AgentSession {
   readonly features: AgentFeature[] = [];
   readonly id: string;
   private readonly listeners = new Set<(event: AgentStreamEvent) => void>();
-  private readonly history: AgentStreamEvent[] = [];
+  /** Provider-native history returned by streamHistory. */
+  private readonly history: AgentStreamEvent[];
   private readonly logger?: Logger;
   private activeTurn: ActiveTurn | null = null;
   private pendingPermissions = new Map<string, AgentPermissionRequest>();
@@ -664,11 +687,19 @@ export class MockLoadTestAgentSession implements AgentSession {
   private readonly streamingAssistantIntervalMs: number;
   private readonly rewindError: string | null;
   private readonly editLastUserMessageDelayMs: number;
+  /** Whether cancellation rewrites the provider-history identity of the latest user item. */
+  private readonly rewriteUserMessageIdOnInterrupt: boolean;
   private remainingPromptRejections: number;
 
-  constructor(options: { config: AgentSessionConfig; sessionId: string; logger?: Logger }) {
+  constructor(options: {
+    config: AgentSessionConfig;
+    sessionId: string;
+    logger?: Logger;
+    history: AgentStreamEvent[];
+  }) {
     this.id = options.sessionId;
     this.logger = options.logger;
+    this.history = options.history;
     this.modeId = options.config.modeId ?? MOCK_LOAD_TEST_MODE_ID;
     this.modelId = options.config.model ?? MOCK_LOAD_TEST_DEFAULT_MODEL_ID;
     this.assistantResponse =
@@ -696,6 +727,10 @@ export class MockLoadTestAgentSession implements AgentSession {
       typeof editDelay === "number" && Number.isFinite(editDelay)
         ? Math.max(0, Math.min(5_000, Math.trunc(editDelay)))
         : 0;
+    this.rewriteUserMessageIdOnInterrupt = mockFeatureEnabled(
+      options.config,
+      "mockRewriteUserMessageIdOnInterrupt",
+    );
     const requestedPromptRejections = options.config.featureValues?.mockPromptRejections;
     this.remainingPromptRejections =
       typeof requestedPromptRejections === "number" &&
@@ -793,6 +828,7 @@ export class MockLoadTestAgentSession implements AgentSession {
           messageId: randomUUID(),
           ...(options?.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
         },
+        ...(this.rewriteUserMessageIdOnInterrupt ? { timestamp: new Date().toISOString() } : {}),
       });
     };
     if (shouldEmitUserMessageBeforeTurnAcceptance(prompt)) {
@@ -943,6 +979,9 @@ export class MockLoadTestAgentSession implements AgentSession {
       turnId: turn.turnId,
     };
     this.emit(event);
+    if (this.rewriteUserMessageIdOnInterrupt) {
+      this.rewriteLatestUserMessageHistoryIdentity(turn.turnId);
+    }
     turn.resolve({
       sessionId: this.id,
       finalText: "",
@@ -1543,6 +1582,30 @@ export class MockLoadTestAgentSession implements AgentSession {
 
   private remember(event: AgentStreamEvent): void {
     this.history.push(event);
+  }
+
+  /** Simulates a provider that assigns a new native item ID when history is read after cancel. */
+  private rewriteLatestUserMessageHistoryIdentity(turnId: string): void {
+    const userMessageIndex = this.history.findLastIndex(
+      (event) =>
+        event.type === "timeline" && event.turnId === turnId && event.item.type === "user_message",
+    );
+    const event = this.history[userMessageIndex];
+    if (event?.type !== "timeline" || event.item.type !== "user_message") {
+      return;
+    }
+    const {
+      clientMessageId: _clientMessageId,
+      replayKind: _replayKind,
+      ...historyItem
+    } = event.item;
+    this.history[userMessageIndex] = {
+      ...event,
+      item: {
+        ...historyItem,
+        messageId: `resumed-${randomUUID()}`,
+      },
+    };
   }
 
   private keepFirstUserMessageHistory(): void {

@@ -130,6 +130,7 @@
 | 0077 | 已收口     | micro-spec | 已同步        | [整理侧边栏会话元信息](micro_specs/0077_整理侧边栏会话元信息.md)                                  | 2026-08-17 11:52 | Agent 固定最右侧、desktop hover card 项目名及 desktop/compact 差异已完成；Vitest、Playwright、typecheck、lint 与格式检查通过                    |
 | 0078 | 已收口     | micro-spec | 已同步        | [会话加载超时重试](micro_specs/0078_会话加载超时重试.md)                                          | 2026-08-17 14:07 | 加载错误态提供 Retry 按钮并显式重启查找/历史初始化；Vitest 30/30、typecheck、lint、format 与 diff 检查通过                                      |
 | 0079 | 待手工验收 | micro-spec | 已同步        | [标题栏终端快捷打开与图标准确化](micro_specs/0079_标题栏终端快捷打开与图标准确化.md)              | 2026-08-17 15:36 | 实现与自动验证已完成；真实 Electron 菜单因隔离环境无 workspace 及系统错误对话框阻断，待人工确认 Terminal 与两个品牌图标                         |
+| 0080 | 已收口     | micro-spec | 已同步        | [修复手动停止后消息编辑资格](micro_specs/0080_修复手动停止后消息编辑资格.md)                      | 2026-08-18 01:46 | runtime 恢复后 provider 用户消息 ID 漂移的 replay proof 已安全迁移；Playwright RED→GREEN、Server 回归、typecheck、lint 与格式通过               |
 
 ## 候选待办
 

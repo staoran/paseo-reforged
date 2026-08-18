@@ -192,6 +192,10 @@ test.describe("Edit latest user message", () => {
       repoPrefix: "edit-last-user-message-gates-e2e-",
       title: "Edit latest user message gates e2e",
       initialPrompt: firstPrompt,
+      featureValues: {
+        mockPersistHistoryAcrossResume: true,
+        mockRewriteUserMessageIdOnInterrupt: true,
+      },
     });
 
     try {
@@ -208,8 +212,25 @@ test.describe("Edit latest user message", () => {
       });
       await expect(page.getByTestId("edit-last-user-message-trigger")).toHaveCount(0);
       await cancelAgent(page);
+      await session.client.waitForFinish(session.agentId, 30_000);
+      await page.goto("about:blank");
+      await session.client.closeAgentRuntime(session.agentId);
+      await openAgentRoute(page, session);
       await expectAgentIdle(page);
       await expectComposerEditable(page);
+
+      const stoppedMessage = userMessage(page, runningPrompt).last();
+      await expect(stoppedMessage).toBeVisible({ timeout: 15_000 });
+      await stoppedMessage.hover();
+      const stoppedEditTrigger = stoppedMessage.getByTestId("edit-last-user-message-trigger");
+      await expect(stoppedEditTrigger).toBeVisible();
+      await stoppedEditTrigger.click();
+      const stoppedEditor = page.getByTestId("edit-last-user-message-editor");
+      await expect(stoppedEditor.getByRole("textbox", { name: "Edit message" })).toHaveValue(
+        runningPrompt,
+      );
+      await stoppedEditor.getByRole("button", { name: "Cancel edit" }).click();
+      await expect(stoppedEditor).toHaveCount(0);
 
       await attachImageFromMenu(page, TEST_IMAGE);
       await expectAttachmentPill(page, "composer-image-attachment-pill");

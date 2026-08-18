@@ -143,6 +143,8 @@ export interface SeedDaemonClient {
   ): Promise<{ status: string; final?: { lastError?: string | null } | null }>;
   archiveAgent(agentId: string): Promise<{ archivedAt: string }>;
   refreshAgent(agentId: string): Promise<unknown>;
+  /** Releases the provider runtime while retaining the durable agent record. */
+  closeAgentRuntime(agentId: string): Promise<{ closed: boolean }>;
   fetchAgent(options: {
     agentId: string;
   }): Promise<{ agent: { id: string; archivedAt?: string | null } } | null>;

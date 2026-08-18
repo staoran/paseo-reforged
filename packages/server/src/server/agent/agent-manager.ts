@@ -94,6 +94,8 @@ import {
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const MAX_DURABLE_LAST_MESSAGE_PAGES = 256;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
+/** Maximum timestamp skew accepted when provider history rewrites a user-message ID. */
+const REPLAYABLE_HISTORY_PROOF_MAX_TIMESTAMP_SKEW_MS = 5_000;
 const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: false,
   supportsSessionPersistence: true,
@@ -599,16 +601,23 @@ type LegacyProviderHistoryEvent =
   | Extract<AgentStreamEvent, { type: "timeline" }>
   | Extract<AgentStreamEvent, { type: "provider_subagent" }>;
 
+interface LegacyProviderHistoryUserMessage {
+  item: Extract<AgentTimelineItem, { type: "user_message" }>;
+  timestamp?: string;
+}
+
 type LegacyProviderHistoryRead =
   | {
       complete: true;
       events: LegacyProviderHistoryEvent[];
       latestUserMessageId: string | null;
+      latestUserMessage: LegacyProviderHistoryUserMessage | null;
     }
   | {
       complete: false;
       events: LegacyProviderHistoryEvent[];
       latestUserMessageId: string | null;
+      latestUserMessage: LegacyProviderHistoryUserMessage | null;
       error: unknown;
     };
 
@@ -617,6 +626,7 @@ async function readLegacyProviderHistory(
 ): Promise<LegacyProviderHistoryRead> {
   const events: LegacyProviderHistoryEvent[] = [];
   let latestUserMessageId: string | null = null;
+  let latestUserMessage: LegacyProviderHistoryUserMessage | null = null;
   try {
     for await (const event of session.streamHistory()) {
       if (event.type === "provider_subagent") {
@@ -632,12 +642,13 @@ async function readLegacyProviderHistory(
       events.push(event);
       if (event.item.type === "user_message") {
         latestUserMessageId = event.item.messageId ?? null;
+        latestUserMessage = { item: event.item, timestamp: event.timestamp };
       }
     }
   } catch (error) {
-    return { complete: false, events, latestUserMessageId, error };
+    return { complete: false, events, latestUserMessageId, latestUserMessage, error };
   }
-  return { complete: true, events, latestUserMessageId };
+  return { complete: true, events, latestUserMessageId, latestUserMessage };
 }
 
 function restoreReplayableHistoryTimelineEvent(
@@ -4147,7 +4158,7 @@ export class AgentManager {
     const history = await readLegacyProviderHistory(agent.session);
     if (!history.complete) {
       await this.markDurableTimelineIncomplete(agent.id);
-      if (this.clearReplayableProofUnlessLatest(agent, null)) {
+      if (await this.clearReplayableProofUnlessLatest(agent, null, null)) {
         this.emitState(agent);
       }
       throw history.error;
@@ -4161,7 +4172,11 @@ export class AgentManager {
         event.type === "provider_subagent",
     );
 
-    this.clearReplayableProofUnlessLatest(agent, history.latestUserMessageId);
+    await this.clearReplayableProofUnlessLatest(
+      agent,
+      history.latestUserMessageId,
+      history.latestUserMessage,
+    );
 
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
     this.timelineStore.delete(agent.id);
@@ -4212,18 +4227,96 @@ export class AgentManager {
     this.emitState(agent);
   }
 
-  private clearReplayableProofUnlessLatest(
+  private async clearReplayableProofUnlessLatest(
     agent: ActiveManagedAgent,
     latestHistoryUserMessageId: string | null,
-  ): boolean {
-    if (
-      !agent.lastReplayableUserMessageId ||
-      agent.lastReplayableUserMessageId === latestHistoryUserMessageId
-    ) {
+    latestHistoryUserMessage: LegacyProviderHistoryUserMessage | null,
+  ): Promise<boolean> {
+    const previousProof = agent.lastReplayableUserMessageId;
+    if (!previousProof) {
       return false;
     }
+    if (previousProof === latestHistoryUserMessageId) {
+      return false;
+    }
+
+    if (
+      latestHistoryUserMessage &&
+      (await this.canMigrateReplayableHistoryProof(agent, previousProof, latestHistoryUserMessage))
+    ) {
+      agent.lastReplayableUserMessageId = latestHistoryUserMessageId;
+      return true;
+    }
+
     agent.lastReplayableUserMessageId = null;
     return true;
+  }
+
+  /**
+   * Accepts a provider ID change only when the durable canonical row and history row
+   * describe the same latest text turn at the same point in time.
+   */
+  private async canMigrateReplayableHistoryProof(
+    agent: ActiveManagedAgent,
+    previousProviderMessageId: string,
+    latestHistoryUserMessage: LegacyProviderHistoryUserMessage,
+  ): Promise<boolean> {
+    const latestHistoryMessageId = latestHistoryUserMessage.item.messageId;
+    if (!latestHistoryMessageId || latestHistoryMessageId === previousProviderMessageId) {
+      return false;
+    }
+
+    let rows = this.timelineStore.getRows(agent.id);
+    let candidate = rows.findLast(
+      (row) =>
+        row.item.type === "user_message" &&
+        row.item.replayKind === "text_only" &&
+        (row.providerMessageId === previousProviderMessageId ||
+          row.item.messageId === previousProviderMessageId),
+    );
+    if (!candidate && this.durableTimelineStore) {
+      try {
+        const page = await this.durableTimelineStore.fetchCommittedPage(agent.id, {
+          direction: "tail",
+          limit: 200,
+        });
+        if (!page) {
+          return false;
+        }
+        rows = page.rows;
+        candidate = rows.findLast(
+          (row) =>
+            row.item.type === "user_message" &&
+            row.item.replayKind === "text_only" &&
+            (row.providerMessageId === previousProviderMessageId ||
+              row.item.messageId === previousProviderMessageId),
+        );
+      } catch {
+        return false;
+      }
+    }
+    if (!candidate || candidate.item.type !== "user_message") {
+      return false;
+    }
+
+    const latestCanonicalUserMessage = rows.findLast((row) => row.item.type === "user_message");
+    if (latestCanonicalUserMessage?.seq !== candidate.seq) {
+      return false;
+    }
+    if (candidate.item.text !== latestHistoryUserMessage.item.text) {
+      return false;
+    }
+
+    const canonicalTimestamp = Date.parse(candidate.timestamp);
+    const historyTimestamp = latestHistoryUserMessage.timestamp
+      ? Date.parse(latestHistoryUserMessage.timestamp)
+      : Number.NaN;
+    return (
+      Number.isFinite(canonicalTimestamp) &&
+      Number.isFinite(historyTimestamp) &&
+      Math.abs(canonicalTimestamp - historyTimestamp) <=
+        REPLAYABLE_HISTORY_PROOF_MAX_TIMESTAMP_SKEW_MS
+    );
   }
 
   private async primeTimelineFromLegacyProviderHistory(
@@ -4250,9 +4343,10 @@ export class AgentManager {
     }
     agent.historyPrimed = history.complete;
 
-    const replayableProofChanged = this.clearReplayableProofUnlessLatest(
+    const replayableProofChanged = await this.clearReplayableProofUnlessLatest(
       agent,
       history.complete ? history.latestUserMessageId : null,
+      history.complete ? history.latestUserMessage : null,
     );
     this.durableTimelineReplacements.add(agent.id);
     try {
