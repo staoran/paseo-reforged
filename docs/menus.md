@@ -150,6 +150,11 @@ its own.
   [floating-panels.md](floating-panels.md).
 - **One overlay per menu.** Submenus render inside their parent's layer and paint no second
   backdrop, so there is exactly one `Modal` on native no matter how deep the menu goes.
+- **Keep Electron's titlebar region stable.** The global interactive-element rule makes a menu's
+  root `Pressable` backdrop `no-drag`. `MenuBackdrop` therefore starts that backdrop below
+  `HEADER_INNER_HEIGHT` and keeps a `TitlebarDragRegion` over the top band; replacing the whole
+  window with `no-drag` while a menu opens can leave Chromium's native hit-test cache in a state
+  where the first titlebar row is `HTCLIENT` while the row below is still `HTCAPTION`.
 - Anchoring, flipping, and edge clamping live in `menu-anchor.ts` and are unit-tested. Fix
   positioning bugs there, not at a call site.
 - Everything else about floating surfaces on Android — Portal/Modal escape, lifecycle gates,

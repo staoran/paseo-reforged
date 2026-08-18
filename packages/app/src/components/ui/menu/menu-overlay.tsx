@@ -13,7 +13,9 @@ import {
 } from "react-native";
 import { Keyframe, runOnJS } from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
+import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { FloatingScrollView, FloatingSurface } from "@/components/ui/floating";
+import { getIsElectronRuntime, HEADER_INNER_HEIGHT } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
 import {
   getOverlayRoot,
@@ -233,6 +235,37 @@ export interface AnchoredSurfaceProps {
   children: ReactElement;
 }
 
+/** Covers the page outside a root menu without replacing Electron's titlebar drag region. */
+function MenuBackdrop({ onClose, testID }: { onClose: () => void; testID?: string }): ReactElement {
+  const { t } = useTranslation();
+  // Keep Electron's titlebar native region stable while a root menu backdrop is mounted.
+  const preservesElectronTitlebarDrag = isWeb && getIsElectronRuntime();
+
+  return (
+    <>
+      <Pressable
+        {...{ onContextMenu: onClose }}
+        accessibilityRole="button"
+        accessibilityLabel={t("menu.backdrop")}
+        style={[
+          styles.backdrop,
+          preservesElectronTitlebarDrag ? styles.backdropBelowTitlebar : null,
+        ]}
+        onPress={onClose}
+        testID={testID ? `${testID}-backdrop` : undefined}
+      />
+      {preservesElectronTitlebarDrag ? (
+        <View
+          style={styles.electronTitlebarBackdrop}
+          testID={testID ? `${testID}-titlebar-drag` : undefined}
+        >
+          <TitlebarDragRegion ownsWindowTopEdge />
+        </View>
+      ) : null}
+    </>
+  );
+}
+
 /**
  * One floating menu surface, positioned against an anchor. The root menu renders one of these
  * against its trigger; every open submenu renders another against the row that opened it.
@@ -260,7 +293,6 @@ export function AnchoredSurface({
   testID,
   children,
 }: AnchoredSurfaceProps): ReactElement | null {
-  const { t } = useTranslation();
   const surfaceNativeID = useId();
   const { position, actualPlacement, contentSize, visibleContentSize, onContentLayout } =
     useAnchoredPosition({
@@ -331,16 +363,7 @@ export function AnchoredSurface({
 
   return (
     <>
-      {backdrop ? (
-        <Pressable
-          {...{ onContextMenu: onClose }}
-          accessibilityRole="button"
-          accessibilityLabel={t("menu.backdrop")}
-          style={styles.backdrop}
-          onPress={onClose}
-          testID={testID ? `${testID}-backdrop` : undefined}
-        />
-      ) : null}
+      {backdrop ? <MenuBackdrop onClose={onClose} testID={testID} /> : null}
       <FloatingSurface
         collapsable={false}
         tabIndex={-1}
@@ -510,6 +533,16 @@ const styles = StyleSheet.create((theme) => ({
     right: 0,
     bottom: 0,
     left: 0,
+  },
+  backdropBelowTitlebar: {
+    top: HEADER_INNER_HEIGHT,
+  },
+  electronTitlebarBackdrop: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    left: 0,
+    height: HEADER_INNER_HEIGHT,
   },
   content: {
     pointerEvents: "auto" as const,

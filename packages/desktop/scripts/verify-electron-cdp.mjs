@@ -1,6 +1,9 @@
+import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 
 const CDP_PORT = process.env.PASEO_ELECTRON_REMOTE_DEBUGGING_PORT ?? "9223";
@@ -9,6 +12,16 @@ const CDP_URL = process.env.CDP_URL ?? `http://127.0.0.1:${CDP_PORT}`;
 const OUTPUT_DIR = process.env.ELECTRON_VERIFY_OUTPUT_DIR ?? "/tmp/electron-verification";
 const APP_URL_FRAGMENT = process.env.ELECTRON_VERIFY_APP_URL_FRAGMENT ?? `localhost:${EXPO_PORT}`;
 const WORKSPACE_ID = process.env.ELECTRON_VERIFY_WORKSPACE_ID?.trim() || null;
+// Windows native menu-drag stress settings; omitted values leave the full verifier portable.
+const WINDOW_PROCESS_ID = Number.parseInt(process.env.ELECTRON_VERIFY_WINDOW_PID ?? "", 10) || null;
+const WORKSPACE_MENU_DRAG_ONLY = process.env.ELECTRON_VERIFY_WORKSPACE_MENU_DRAG_ONLY === "1";
+const WORKSPACE_MENU_TOGGLE_ITERATIONS =
+  Number.parseInt(process.env.ELECTRON_VERIFY_MENU_TOGGLE_ITERATIONS ?? "", 10) || 80;
+const WINDOW_HIT_TEST_SCRIPT = fileURLToPath(
+  new URL("./monitor-window-hit-test.ps1", import.meta.url),
+);
+const TITLEBAR_UPPER_SAMPLE_Y = 22;
+const TITLEBAR_LOWER_SAMPLE_Y = 60;
 const REQUIRED_DESKTOP_KEYS = ["invoke", "events", "window", "dialog", "notification", "opener"];
 const INTERACTIVE_SELECTOR = [
   "button",
@@ -537,6 +550,43 @@ async function navigateToWelcome(page) {
   }
 }
 
+/** Keeps the focused menu regression on the existing workspace page when possible. */
+async function prepareVerifierPage(page) {
+  if (WORKSPACE_MENU_DRAG_ONLY) {
+    await page.waitForLoadState("domcontentloaded");
+    return;
+  }
+  await navigateToWelcome(page);
+}
+
+/** Appends the native workspace-menu result using the same shape in focused and full runs. */
+async function collectWorkspaceMenuDragResult(page, serverId, results) {
+  const details = await inspectWorkspaceMenuDragStability(page, serverId);
+  results.push({
+    check: "workspace-menu-titlebar-drag-stability",
+    pass: details.skipped || details.passed,
+    skipped: details.skipped,
+    details,
+    screenshot: details.screenshot ?? null,
+  });
+}
+
+/** Writes one verifier report and preserves the process exit status for failed checks. */
+async function writeVerificationReport({ page, desktopStatus, results, consoleMessages }) {
+  const report = {
+    cdpUrl: CDP_URL,
+    outputDir: OUTPUT_DIR,
+    pageUrl: page.url(),
+    desktopStatus,
+    results,
+    consoleMessages,
+  };
+  const reportPath = path.join(OUTPUT_DIR, "report.json");
+  await fs.writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+  console.log(JSON.stringify(report, null, 2));
+  if (results.some((result) => !result.pass)) process.exitCode = 1;
+}
+
 async function detectDesktopBridge(page) {
   return page.evaluate(() => {
     const bridge = window.paseoDesktop;
@@ -564,22 +614,337 @@ async function navigateToSettings(page, serverId) {
     .waitFor({ state: "visible", timeout: 30_000 });
 }
 
-async function inspectWorkspaceDragContinuity(page, serverId) {
-  if (!WORKSPACE_ID) {
-    return { skipped: true, reason: "ELECTRON_VERIFY_WORKSPACE_ID is not set" };
+/** Navigates the real Electron renderer to the workspace used by titlebar checks. */
+async function navigateToWorkspace(page, serverId) {
+  assert(WORKSPACE_ID, "ELECTRON_VERIFY_WORKSPACE_ID is required for workspace checks");
+  const workspacePath = `/h/${serverId}/workspace/${WORKSPACE_ID}`;
+  if (new URL(page.url()).pathname !== workspacePath) {
+    await page.evaluate((nextPath) => {
+      window.location.href = nextPath;
+    }, workspacePath);
   }
-
-  await page.evaluate(
-    ({ nextServerId, workspaceId }) => {
-      window.location.href = `/h/${nextServerId}/workspace/${workspaceId}`;
-    },
-    { nextServerId: serverId, workspaceId: WORKSPACE_ID },
-  );
   await page
     .getByTestId("workspace-tabs-row")
     .first()
     .waitFor({ state: "visible", timeout: 30_000 });
   await page.getByTestId("workspace-header-title").waitFor({ state: "visible", timeout: 30_000 });
+}
+
+/** Finds one horizontal point that belongs to both titlebar drag rows while the menu is closed. */
+async function findWorkspaceHitTestPoint(page) {
+  return page.evaluate(
+    ({ upperY, lowerY }) => {
+      /** Reads Chromium's computed native window hit-test region. */
+      function readAppRegion(element) {
+        const style = window.getComputedStyle(element);
+        return style.webkitAppRegion || style.getPropertyValue("-webkit-app-region") || "none";
+      }
+
+      /** Reports whether one CSS point falls inside a client rectangle. */
+      function contains(rect, x, y) {
+        return x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom;
+      }
+
+      const visibleRegions = Array.from(document.querySelectorAll("*"))
+        .filter((node) => node instanceof HTMLElement)
+        .map((node) => ({
+          node,
+          rect: node.getBoundingClientRect(),
+          appRegion: readAppRegion(node),
+        }))
+        .filter(({ rect }) => rect.width > 0 && rect.height > 0)
+        .filter(({ appRegion }) => appRegion === "drag" || appRegion === "no-drag");
+      const dragRects = visibleRegions
+        .filter(({ appRegion }) => appRegion === "drag")
+        .map(({ rect }) => rect);
+      const noDragRects = visibleRegions
+        .filter(({ appRegion }) => appRegion === "no-drag")
+        .map(({ rect }) => rect);
+      const rightLimit = Math.max(16, window.innerWidth - 156);
+      const preferredX = Math.min(rightLimit, Math.round(window.innerWidth * 0.6));
+      const candidateXs = Array.from(
+        { length: Math.floor((rightLimit - 16) / 4) + 1 },
+        (_, index) => 16 + index * 4,
+      ).sort((left, right) => Math.abs(left - preferredX) - Math.abs(right - preferredX));
+
+      for (const x of candidateXs) {
+        const upperIsDrag = dragRects.some((rect) => contains(rect, x, upperY));
+        const lowerIsDrag = dragRects.some((rect) => contains(rect, x, lowerY));
+        const upperIsNoDrag = noDragRects.some((rect) => contains(rect, x, upperY));
+        const lowerIsNoDrag = noDragRects.some((rect) => contains(rect, x, lowerY));
+        if (upperIsDrag && lowerIsDrag && !upperIsNoDrag && !lowerIsNoDrag) {
+          return {
+            cssX: x,
+            upperY,
+            lowerY,
+            devicePixelRatio: window.devicePixelRatio,
+            innerWidth: window.innerWidth,
+            innerHeight: window.innerHeight,
+          };
+        }
+      }
+
+      return null;
+    },
+    { upperY: TITLEBAR_UPPER_SAMPLE_Y, lowerY: TITLEBAR_LOWER_SAMPLE_Y },
+  );
+}
+
+/** Starts the external User32 observer and returns a one-shot stop/read handle. */
+async function startWindowHitTestMonitor({ processId, clientX, devicePixelRatio }) {
+  const physicalX = Math.round(clientX * devicePixelRatio);
+  const stopFile = path.join(OUTPUT_DIR, `window-hit-test-${process.pid}-${randomUUID()}.stop`);
+  await fs.rm(stopFile, { force: true });
+  const child = spawn(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      WINDOW_HIT_TEST_SCRIPT,
+      "-ProcessId",
+      String(processId),
+      "-ClientX",
+      String(physicalX),
+      "-StopFile",
+      stopFile,
+      "-TopClientY",
+      String(Math.round(2 * devicePixelRatio)),
+      "-UpperClientY",
+      String(Math.round(TITLEBAR_UPPER_SAMPLE_Y * devicePixelRatio)),
+      "-LowerClientY",
+      String(Math.round(TITLEBAR_LOWER_SAMPLE_Y * devicePixelRatio)),
+    ],
+    { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
+  );
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+
+  let stdout = "";
+  let stderr = "";
+  let ready = false;
+  let resolveReady;
+  let rejectReady;
+  const readyPromise = new Promise((resolve, reject) => {
+    resolveReady = resolve;
+    rejectReady = reject;
+  });
+  const exitPromise = new Promise((resolve) => {
+    child.once("close", (code, signal) => {
+      if (!ready) {
+        rejectReady(
+          new Error(
+            `Window hit-test monitor exited before READY (code=${code}, signal=${signal}): ${stderr}`,
+          ),
+        );
+      }
+      resolve({ code, signal });
+    });
+  });
+
+  child.once("error", (error) => rejectReady(error));
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk;
+    if (!ready && /(?:^|\r?\n)READY\r?\n/.test(stdout)) {
+      ready = true;
+      resolveReady();
+    }
+  });
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk;
+  });
+
+  const readyTimeout = setTimeout(() => {
+    rejectReady(new Error(`Timed out waiting for window hit-test monitor: ${stderr}`));
+  }, 10_000);
+  try {
+    await readyPromise;
+  } catch (error) {
+    child.kill();
+    await fs.rm(stopFile, { force: true });
+    throw error;
+  } finally {
+    clearTimeout(readyTimeout);
+  }
+
+  let stopPromise = null;
+  return {
+    physicalX,
+    stop() {
+      if (stopPromise) return stopPromise;
+      stopPromise = (async () => {
+        await fs.writeFile(stopFile, "stop\n", "utf8");
+        try {
+          const exit = await exitPromise;
+          assert(
+            exit.code === 0,
+            `Window hit-test monitor failed (code=${exit.code}, signal=${exit.signal}): ${stderr}`,
+          );
+          const resultLine = stdout
+            .trim()
+            .split(/\r?\n/)
+            .toReversed()
+            .find((line) => line.startsWith("{"));
+          assert(resultLine, `Window hit-test monitor returned no JSON result: ${stdout}`);
+          return JSON.parse(resultLine);
+        } finally {
+          await fs.rm(stopFile, { force: true });
+        }
+      })();
+      return stopPromise;
+    },
+  };
+}
+
+/** Returns true only when every native sample has the expected hit-test result. */
+function histogramContainsOnly(histogram, expectedHit) {
+  const entries = Object.entries(histogram ?? {}).filter(([, count]) => count > 0);
+  return entries.length === 1 && entries[0][0] === String(expectedHit);
+}
+
+/** Captures the native-region geometry contributed by the currently open menu backdrop. */
+async function inspectWorkspaceMenuBackdrop(page) {
+  return page.evaluate(() => {
+    /** Reduces one backdrop node to the geometry relevant to native hit testing. */
+    function summarize(element) {
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return {
+        tagName: element.tagName.toLowerCase(),
+        appRegion: style.webkitAppRegion || style.getPropertyValue("-webkit-app-region") || "none",
+        top: rect.top,
+        left: rect.left,
+        width: rect.width,
+        height: rect.height,
+      };
+    }
+
+    const backdrop = document.querySelector('[data-testid="workspace-header-menu-backdrop"]');
+    const titlebarBand = document.querySelector(
+      '[data-testid="workspace-header-menu-titlebar-drag"]',
+    );
+    if (!(backdrop instanceof HTMLElement)) {
+      throw new Error("Workspace menu backdrop is not mounted");
+    }
+
+    return {
+      backdrop: summarize(backdrop),
+      titlebarBand: titlebarBand instanceof HTMLElement ? summarize(titlebarBand) : null,
+      titlebarRegions: Array.from(titlebarBand?.querySelectorAll("*") ?? [])
+        .filter((node) => node instanceof HTMLElement)
+        .map((node) => summarize(node))
+        .filter((entry) => entry.appRegion !== "none"),
+    };
+  });
+}
+
+/** Repeatedly opens and closes the real workspace menu while User32 samples both drag rows. */
+async function inspectWorkspaceMenuDragStability(page, serverId) {
+  if (process.platform !== "win32") {
+    return { skipped: true, reason: "WM_NCHITTEST is only available on Windows" };
+  }
+  if (!WORKSPACE_ID) {
+    return { skipped: true, reason: "ELECTRON_VERIFY_WORKSPACE_ID is not set" };
+  }
+  if (!WINDOW_PROCESS_ID) {
+    return { skipped: true, reason: "ELECTRON_VERIFY_WINDOW_PID is not set" };
+  }
+
+  await navigateToWorkspace(page, serverId);
+  const trigger = page.getByTestId("workspace-header-menu-trigger");
+  const backdrop = page.getByTestId("workspace-header-menu-backdrop");
+  await trigger.waitFor({ state: "visible", timeout: 10_000 });
+  if ((await backdrop.count()) > 0) {
+    await backdrop.evaluate((node) => node.click());
+    await backdrop.waitFor({ state: "detached", timeout: 10_000 });
+  }
+
+  const point = await findWorkspaceHitTestPoint(page);
+  assert(point, "Unable to find one unobstructed drag point shared by both workspace header rows");
+
+  await trigger.evaluate((node) => node.click());
+  await backdrop.waitFor({ state: "attached", timeout: 10_000 });
+  const backdropRegions = await inspectWorkspaceMenuBackdrop(page);
+  const openStateMonitor = await startWindowHitTestMonitor({
+    processId: WINDOW_PROCESS_ID,
+    clientX: point.cssX,
+    devicePixelRatio: point.devicePixelRatio,
+  });
+  await page.waitForTimeout(250);
+  const openStateHitTests = await openStateMonitor.stop();
+  await backdrop.evaluate((node) => node.click());
+  await backdrop.waitFor({ state: "detached", timeout: 10_000 });
+  await page.waitForTimeout(20);
+
+  const transitionMonitor = await startWindowHitTestMonitor({
+    processId: WINDOW_PROCESS_ID,
+    clientX: point.cssX,
+    devicePixelRatio: point.devicePixelRatio,
+  });
+  let toggleError = null;
+  try {
+    for (let iteration = 0; iteration < WORKSPACE_MENU_TOGGLE_ITERATIONS; iteration += 1) {
+      await trigger.evaluate((node) => node.click());
+      await backdrop.waitFor({ state: "attached", timeout: 2_000 });
+      await page.waitForTimeout(1);
+      await backdrop.evaluate((node) => node.click());
+      await backdrop.waitFor({ state: "detached", timeout: 2_000 });
+      await page.waitForTimeout(1);
+    }
+  } catch (error) {
+    toggleError = String(error);
+  } finally {
+    if ((await backdrop.count()) > 0) {
+      await backdrop.evaluate((node) => node.click()).catch(() => undefined);
+      await backdrop.waitFor({ state: "detached", timeout: 2_000 }).catch(() => undefined);
+    }
+  }
+  const transitionHitTests = await transitionMonitor.stop();
+  const closedStateMonitor = await startWindowHitTestMonitor({
+    processId: WINDOW_PROCESS_ID,
+    clientX: point.cssX,
+    devicePixelRatio: point.devicePixelRatio,
+  });
+  await page.waitForTimeout(250);
+  const closedStateHitTests = await closedStateMonitor.stop();
+  const screenshot = await captureScreenshot(page, "09-workspace-menu-drag-stability.png");
+  const openStatePassed =
+    histogramContainsOnly(openStateHitTests.topHistogram, 12) &&
+    histogramContainsOnly(openStateHitTests.upperHistogram, 2) &&
+    histogramContainsOnly(openStateHitTests.lowerHistogram, 1);
+  const closedStatePassed =
+    histogramContainsOnly(closedStateHitTests.topHistogram, 12) &&
+    histogramContainsOnly(closedStateHitTests.upperHistogram, 2) &&
+    histogramContainsOnly(closedStateHitTests.lowerHistogram, 2);
+
+  return {
+    skipped: false,
+    route: page.url(),
+    iterations: WORKSPACE_MENU_TOGGLE_ITERATIONS,
+    point,
+    backdropRegions,
+    openStateHitTests,
+    transitionHitTests,
+    closedStateHitTests,
+    toggleError,
+    screenshot,
+    passed:
+      toggleError === null &&
+      openStatePassed &&
+      closedStatePassed &&
+      transitionHitTests.sampleCount > 0 &&
+      transitionHitTests.deadZoneCount === 0,
+  };
+}
+
+async function inspectWorkspaceDragContinuity(page, serverId) {
+  if (!WORKSPACE_ID) {
+    return { skipped: true, reason: "ELECTRON_VERIFY_WORKSPACE_ID is not set" };
+  }
+
+  await navigateToWorkspace(page, serverId);
 
   const dragRegions = await inspectTitlebarRegions(page);
   const continuity = measureWorkspaceDragContinuity(dragRegions);
@@ -590,7 +955,8 @@ async function inspectWorkspaceDragContinuity(page, serverId) {
     dragRegions,
     continuity,
     screenshot,
-    passed: evaluateTopEdgeResizerOwnership(dragRegions) && continuity.passed,
+    // Ownership is already checked on the settings route; this slice only owns row continuity.
+    passed: continuity.passed,
   };
 }
 
@@ -790,7 +1156,7 @@ async function main() {
     const results = [];
 
     attachConsoleCollector(page, consoleMessages);
-    await navigateToWelcome(page);
+    await prepareVerifierPage(page);
 
     const welcomeScreenshot = await captureScreenshot(page, "01-welcome.png");
     const desktopDetection = await detectDesktopBridge(page);
@@ -819,6 +1185,14 @@ async function main() {
     );
 
     const serverId = desktopStatus.serverId.trim();
+    if (WORKSPACE_MENU_DRAG_ONLY) {
+      assert(WORKSPACE_ID, "ELECTRON_VERIFY_WORKSPACE_ID is required in menu-drag-only mode");
+      assert(WINDOW_PROCESS_ID, "ELECTRON_VERIFY_WINDOW_PID is required in menu-drag-only mode");
+      await collectWorkspaceMenuDragResult(page, serverId, results);
+      await writeVerificationReport({ page, desktopStatus, results, consoleMessages });
+      return;
+    }
+
     await navigateToSettings(page, serverId);
 
     await captureScreenshot(page, "02-settings-page.png");
@@ -863,24 +1237,12 @@ async function main() {
       screenshot: workspaceDragContinuity.screenshot ?? null,
     });
 
+    await collectWorkspaceMenuDragResult(page, serverId, results);
+
     const desktopDetectionScreenshot = await captureScreenshot(page, "07-desktop-detection.png");
     results[0].screenshot = desktopDetectionScreenshot;
 
-    const report = {
-      cdpUrl: CDP_URL,
-      outputDir: OUTPUT_DIR,
-      pageUrl: page.url(),
-      desktopStatus,
-      results,
-      consoleMessages,
-    };
-
-    const reportPath = path.join(OUTPUT_DIR, "report.json");
-    await fs.writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
-
-    const failedChecks = results.filter((result) => !result.pass);
-    console.log(JSON.stringify(report, null, 2));
-    if (failedChecks.length > 0) process.exitCode = 1;
+    await writeVerificationReport({ page, desktopStatus, results, consoleMessages });
   } finally {
     if (page && !page.isClosed()) {
       await clearTitlebarAnnotations(page);
