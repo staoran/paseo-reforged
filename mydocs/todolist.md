@@ -133,6 +133,7 @@
 | 0080 | 已收口     | micro-spec | 已同步        | [修复手动停止后消息编辑资格](micro_specs/0080_修复手动停止后消息编辑资格.md)                      | 2026-08-18 01:46 | runtime 恢复后 provider 用户消息 ID 漂移的 replay proof 已安全迁移；Playwright RED→GREEN、Server 回归、typecheck、lint 与格式通过               |
 | 0081 | 已收口     | micro-spec | 已同步        | [关闭末个标签后切换 Workspace](micro_specs/0081_关闭末个标签后切换Workspace.md)                   | 2026-08-18       | 只对 `residentAgentCount > 0` 候选应用三层排序；纯策略 8/8、真实路由 2/2、typecheck、全仓 lint 与格式通过                                       |
 | 0085 | 待手工验收 | spec       | 已同步        | [Codex Goal 任务完整支持](specs/0085_Codex_Goal任务完整支持.md)                                   | 2026-08-19 11:30 | 协议、daemon/provider、App 与 Browser E2E 已 GREEN；真实 Codex smoke 因凭据条件跳过，待隔离 kill/restart 与实际 App 验收                        |
+| 0096 | 已收口     | micro-spec | 已同步        | [Supervisor 日志容错与语音下载清理](micro_specs/0096_Supervisor日志容错与语音下载清理.md)         | 2026-08-19 11:31 | 两个真实 seam RED→GREEN；7 天清理、目标回归、typecheck/format/diff 通过；全仓 lint 仅受 9 个范围外 App/Relay 错误阻塞；本机空间保持只读         |
 
 ## 候选待办
 

@@ -251,6 +251,10 @@ The supervisor rotates `daemon.log`. Persisted `log.file.rotate` settings in
 `PASEO_LOG_ROTATE_SIZE` and `PASEO_LOG_ROTATE_COUNT` env vars override the
 defaults. The default rotation is `10m` x `3` files everywhere.
 
+If the rotating log stream emits an error, the supervisor reports the failure
+to stderr and continues without durable file logging for the rest of that
+process. Logging degradation must not take the daemon or its agents offline.
+
 ### Git process pressure
 
 If Git refreshes consume too much CPU, disk, or antivirus capacity, especially on Windows, reduce

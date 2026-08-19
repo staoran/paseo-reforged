@@ -1,5 +1,5 @@
 import { createWriteStream } from "node:fs";
-import { mkdir, rename, rm, stat } from "node:fs/promises";
+import { mkdir, readdir, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -7,6 +7,11 @@ import type pino from "pino";
 
 import { getSherpaOnnxModelSpec, type SherpaOnnxModelId } from "./model-catalog.js";
 import { spawnProcess } from "../../../../../utils/spawn.js";
+
+/** Maximum age retained for downloader-owned temporary files. */
+const STALE_DOWNLOAD_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1_000;
+/** Exact suffix emitted by downloadToFile for incomplete downloads. */
+const TEMP_DOWNLOAD_FILE_PATTERN = /\.tmp-\d+$/;
 
 export interface EnsureSherpaOnnxModelOptions {
   modelsDir: string;
@@ -17,6 +22,79 @@ export interface EnsureSherpaOnnxModelOptions {
 export function getSherpaOnnxModelDir(modelsDir: string, modelId: SherpaOnnxModelId): string {
   const spec = getSherpaOnnxModelSpec(modelId);
   return path.join(modelsDir, spec.extractedDir);
+}
+
+/** Removes stale downloader-owned temp files without following directory links. */
+async function cleanupStaleDownloadsInDirectory(options: {
+  directory: string;
+  cutoffMs: number;
+  logger: pino.Logger;
+}): Promise<number> {
+  let entries;
+  try {
+    entries = await readdir(options.directory, { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      options.logger.warn(
+        { err: error, directory: options.directory },
+        "Failed to inspect local speech model downloads during startup cleanup",
+      );
+    }
+    return 0;
+  }
+
+  let removedCount = 0;
+  for (const entry of entries) {
+    const entryPath = path.join(options.directory, entry.name);
+    if (entry.isDirectory()) {
+      removedCount += await cleanupStaleDownloadsInDirectory({
+        ...options,
+        directory: entryPath,
+      });
+      continue;
+    }
+    if (!entry.isFile() || !TEMP_DOWNLOAD_FILE_PATTERN.test(entry.name)) {
+      continue;
+    }
+
+    try {
+      const fileStat = await stat(entryPath);
+      if (fileStat.mtimeMs >= options.cutoffMs) {
+        continue;
+      }
+      await rm(entryPath, { force: true });
+      removedCount += 1;
+    } catch (error) {
+      options.logger.warn(
+        { err: error, filePath: entryPath },
+        "Failed to remove stale local speech model download",
+      );
+    }
+  }
+  return removedCount;
+}
+
+/** Best-effort startup cleanup for model download temp files older than seven days. */
+export async function cleanupStaleSherpaOnnxModelDownloads(options: {
+  modelsDir: string;
+  logger: pino.Logger;
+}): Promise<void> {
+  const logger = options.logger.child({
+    module: "speech",
+    provider: "local",
+    component: "model-downloader",
+  });
+  const removedCount = await cleanupStaleDownloadsInDirectory({
+    directory: options.modelsDir,
+    cutoffMs: Date.now() - STALE_DOWNLOAD_MAX_AGE_MS,
+    logger,
+  });
+  if (removedCount > 0) {
+    logger.info(
+      { modelsDir: options.modelsDir, removedCount, maxAgeDays: 7 },
+      "Removed stale local speech model downloads",
+    );
+  }
 }
 
 async function hasRequiredFiles(modelDir: string, requiredFiles: string[]): Promise<boolean> {

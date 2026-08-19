@@ -1,4 +1,8 @@
-import { ensureSherpaOnnxModels, getSherpaOnnxModelDir } from "./sherpa/model-downloader.js";
+import {
+  cleanupStaleSherpaOnnxModelDownloads,
+  ensureSherpaOnnxModels,
+  getSherpaOnnxModelDir,
+} from "./sherpa/model-downloader.js";
 import {
   DEFAULT_LOCAL_STT_MODEL,
   DEFAULT_LOCAL_TTS_MODEL,
@@ -28,6 +32,14 @@ export function listLocalSpeechModels(): LocalSpeechModelSpec[] {
 
 export function getLocalSpeechModelDir(modelsDir: string, modelId: LocalSpeechModelId): string {
   return getSherpaOnnxModelDir(modelsDir, modelId);
+}
+
+/** Runs best-effort startup cleanup for downloader-owned local model temp files. */
+export async function cleanupStaleLocalSpeechModelDownloads(options: {
+  modelsDir: string;
+  logger: import("pino").Logger;
+}): Promise<void> {
+  await cleanupStaleSherpaOnnxModelDownloads(options);
 }
 
 export async function ensureLocalSpeechModels(options: {

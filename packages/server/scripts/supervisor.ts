@@ -125,7 +125,19 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
   let shuttingDown = false;
   let exiting = false;
   let forceKillTimer: NodeJS.Timeout | null = null;
-  const logStream = createSupervisorLogStream(options.logFile);
+  let logStream = createSupervisorLogStream(options.logFile);
+
+  // File logging is auxiliary; a fatal stream error must not stop supervision.
+  logStream?.on("error", (error) => {
+    if (!logStream) {
+      return;
+    }
+    logStream = null;
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(
+      `[${options.name}] Durable log stream failed; continuing without file logging: ${message}\n`,
+    );
+  });
 
   const writeDurableChunk = (chunk: string | Buffer): void => {
     logStream?.write(chunk);

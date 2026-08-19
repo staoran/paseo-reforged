@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -12,6 +12,7 @@ const supervisorPath = fileURLToPath(new URL("./supervisor.ts", import.meta.url)
 
 async function runSupervisorFixture(options: {
   workerSource: string;
+  logPathIsDirectory?: boolean;
   restartOnCrash?: boolean;
   timeoutMs?: number;
 }): Promise<{
@@ -27,6 +28,9 @@ async function runSupervisorFixture(options: {
   const workerPath = path.join(tempDir, "worker.mjs");
   const runnerPath = path.join(tempDir, "runner.mjs");
 
+  if (options.logPathIsDirectory) {
+    await mkdir(logPath);
+  }
   await writeFile(workerPath, options.workerSource);
   await writeFile(
     runnerPath,
@@ -86,7 +90,7 @@ async function runSupervisorFixture(options: {
     });
   });
 
-  const log = await readFile(logPath, "utf8");
+  const log = options.logPathIsDirectory ? "" : await readFile(logPath, "utf8");
   return { code, signal, elapsedMs: Date.now() - startedAt, log, stdout, stderr };
 }
 
@@ -170,6 +174,27 @@ describe("supervisor durable logging", () => {
 
     expect(result.log).toContain("raw stdout line\n");
     expect(result.log).toContain("raw stderr line\n");
+  });
+
+  test("continues supervising when the durable log stream fails", async () => {
+    const result = await runSupervisorFixture({
+      logPathIsDirectory: true,
+      workerSource: `
+        process.on("disconnect", () => process.exit(90));
+        setTimeout(() => {
+          process.stdout.write("worker stdout after log failure\\n");
+          process.stderr.write("worker stderr after log failure\\n");
+          process.send?.({ type: "paseo:shutdown", reason: "log_failure_test_complete" });
+        }, 250);
+        setInterval(() => {}, 1000);
+      `,
+    });
+
+    expect(result.code).toBe(0);
+    expect(result.signal).toBeNull();
+    expect(result.stdout).toContain("worker stdout after log failure");
+    expect(result.stderr).toContain("worker stderr after log failure");
+    expect(result.stderr).toContain("Durable log stream failed; continuing without file logging");
   });
 
   test("logs the worker shutdown reason before signaling the worker", async () => {
