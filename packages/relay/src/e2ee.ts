@@ -1,5 +1,12 @@
 export { createClientChannel, createDaemonChannel, EncryptedChannel } from "./encrypted-channel.js";
-export type { Transport, TransportMessage, EncryptedChannelEvents } from "./encrypted-channel.js";
+export type {
+  CiphertextEncoding,
+  ConfiguredCiphertextEncoding,
+  DaemonChannelOptions,
+  EncryptedChannelEvents,
+  Transport,
+  TransportMessage,
+} from "./encrypted-channel.js";
 
 export {
   generateKeyPair,

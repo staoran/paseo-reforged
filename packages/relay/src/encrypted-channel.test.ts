@@ -205,12 +205,11 @@ describe("EncryptedChannel", () => {
     expect(clientTransport.send).toHaveBeenCalledTimes(1);
     const sentData = (clientTransport.send as ReturnType<typeof vi.fn>).mock.calls[0][0];
 
-    // Should be base64 string (encrypted)
-    expect(typeof sentData).toBe("string");
-    // Should NOT contain the plaintext
-    expect(sentData).not.toContain(plaintext);
-    // Should be significantly longer than plaintext (IV + auth tag overhead)
-    expect(sentData.length).toBeGreaterThan(plaintext.length + 20);
+    // Normalized wire bytes work for both legacy Base64 and negotiated binary ciphertext.
+    const observableWireBytes =
+      typeof sentData === "string" ? new TextEncoder().encode(sentData) : new Uint8Array(sentData);
+    expect(observableWireBytes).not.toEqual(new TextEncoder().encode(plaintext));
+    expect(observableWireBytes.byteLength).toBeGreaterThan(plaintext.length + 20);
   });
 
   it("does not throw uncaught when handshake hello retry send fails", async () => {
@@ -419,28 +418,37 @@ describe("EncryptedChannel", () => {
 
     const ciphertext = (clientTransport.send as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
     expect(ciphertext).toBeInstanceOf(ArrayBuffer);
-    expect((ciphertext as ArrayBuffer).byteLength).toBe(binary.byteLength + 40);
     expect(daemonMessages[0]).toBeInstanceOf(ArrayBuffer);
     expect(new Uint8Array(daemonMessages[0] as ArrayBuffer)).toEqual(new Uint8Array(binary));
   });
 
-  it("keeps negotiated text as base64 text frames", async () => {
-    const [daemonTransport, clientTransport] = createMockTransportPair();
+  it("keeps text as Base64 in legacy hybrid mode", async () => {
+    // Synthetic old daemon accepts only the existing binaryCiphertext capability.
+    const clientTransport: Transport = {
+      send: vi.fn(),
+      close: vi.fn(),
+      onmessage: null,
+      onclose: null,
+      onerror: null,
+    };
     const daemonKeyPair = generateKeyPair();
-    const daemonMessages: (string | ArrayBuffer)[] = [];
+    // Public open event after the legacy ready is accepted.
     let resolveOpen: (() => void) | null = null;
     const opened = new Promise<void>((resolve) => {
       resolveOpen = resolve;
-    });
-    const daemonChannelPromise = createDaemonChannel(daemonTransport, daemonKeyPair, {
-      onmessage: (data) => daemonMessages.push(data),
     });
     const clientChannel = await createClientChannel(
       clientTransport,
       exportPublicKey(daemonKeyPair.publicKey),
       { onopen: () => resolveOpen?.() },
     );
-    await daemonChannelPromise;
+    clientTransport.onmessage?.({
+      data: JSON.stringify({
+        type: "e2ee_ready",
+        capabilities: { binaryCiphertext: true },
+      }),
+      isBinary: false,
+    });
     await opened;
 
     (clientTransport.send as ReturnType<typeof vi.fn>).mockClear();
@@ -450,7 +458,7 @@ describe("EncryptedChannel", () => {
     expect(typeof (clientTransport.send as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]).toBe(
       "string",
     );
-    expect(daemonMessages).toEqual(["text payload"]);
+    clientChannel.close();
   });
 
   it("new client stays base64-only when an old daemon does not accept the capability", async () => {

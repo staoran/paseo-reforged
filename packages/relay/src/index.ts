@@ -16,4 +16,10 @@ export {
   EncryptedChannel,
   maxBase64EncryptedPlaintextByteLength,
 } from "./encrypted-channel.js";
-export type { Transport, EncryptedChannelEvents } from "./encrypted-channel.js";
+export type {
+  CiphertextEncoding,
+  ConfiguredCiphertextEncoding,
+  DaemonChannelOptions,
+  EncryptedChannelEvents,
+  Transport,
+} from "./encrypted-channel.js";
