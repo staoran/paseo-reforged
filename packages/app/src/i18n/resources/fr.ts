@@ -1179,6 +1179,8 @@ export const fr: TranslationResources = {
         serviceUnhealthy: "Service {{name}} en échec",
         creating: "Création...",
         runtimeResident: "Nombre de runtimes d'agent actifs : {{count}}",
+        agentRunningAtLastExit:
+          "L'agent était en cours d'exécution lors de la dernière fermeture de Paseo",
       },
       actions: {
         menu: "ActionsWorkspace",

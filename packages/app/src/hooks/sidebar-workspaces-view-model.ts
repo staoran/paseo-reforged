@@ -40,6 +40,8 @@ export interface SidebarStatusWorkspacePlacement extends SidebarWorkspacePlaceme
 
 export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
   lastActivityAt: Date | null;
+  /** Whether this workspace had a running root Agent when the desktop app last exited. */
+  hasLastExitActiveMarker: boolean;
   defaultAgentId: string | null;
   residentAgentCount: number;
   workspaceDirectory: string;
@@ -57,6 +59,11 @@ export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
   archiveUnpushedCommitCount: number | null;
   scripts: WorkspaceDescriptor["scripts"];
   hasRunningScripts: boolean;
+}
+
+interface SidebarLastExitActiveMarkerLookup {
+  /** Reports whether a workspace should show the one-time last-exit marker. */
+  has(workspace: { serverId: string; workspaceId: string }): boolean;
 }
 
 export interface SidebarProjectEntry {
@@ -164,6 +171,7 @@ export function createSidebarWorkspaceEntry(input: {
   workspaceAgents?: ReadonlyMap<string, Pick<Agent, "workspaceId" | "archivedAt">>;
   workspaceAgentActivity?: ReadonlyMap<string, WorkspaceAgentActivity>;
   workspaceResidentAgentCounts?: ReadonlyMap<string, number>;
+  lastExitActiveWorkspaceStore?: SidebarLastExitActiveMarkerLookup;
 }): SidebarWorkspaceEntry {
   const projectViewKey = input.projectViewKey ?? input.workspace.projectId;
   const effectiveStatus = deriveEffectiveWorkspaceStatus(input);
@@ -186,6 +194,11 @@ export function createSidebarWorkspaceEntry(input: {
     statusBucket: effectiveStatus.status,
     statusEnteredAt: effectiveStatus.enteredAt,
     lastActivityAt: input.workspaceAgentActivity?.get(input.workspace.id)?.lastActivityAt ?? null,
+    hasLastExitActiveMarker:
+      input.lastExitActiveWorkspaceStore?.has({
+        serverId: input.serverId,
+        workspaceId: input.workspace.id,
+      }) ?? false,
     defaultAgentId: resolveDefaultAgentId(input),
     residentAgentCount: input.workspaceResidentAgentCounts?.get(input.workspace.id) ?? 0,
     archivingAt: input.workspace.archivingAt,
@@ -402,6 +415,7 @@ export function buildSidebarWorkspaceEntries(input: {
   sessions: SidebarWorkspaceSession[];
   pendingCreateAttempts?: Record<string, PendingCreateAttempt>;
   previousEntries?: ReadonlyMap<string, SidebarWorkspaceEntry>;
+  lastExitActiveWorkspaceStore?: SidebarLastExitActiveMarkerLookup;
 }): Map<string, SidebarWorkspaceEntry> {
   if (input.placements.length === 0 || input.sessions.length === 0) {
     return new Map();
@@ -428,6 +442,7 @@ export function buildSidebarWorkspaceEntries(input: {
       workspaceAgents: session.agents,
       workspaceAgentActivity: session.workspaceAgentActivity,
       workspaceResidentAgentCounts: session.workspaceResidentAgentCounts,
+      lastExitActiveWorkspaceStore: input.lastExitActiveWorkspaceStore,
     });
     const previousEntry = input.previousEntries?.get(placement.workspaceKey);
     entries.set(

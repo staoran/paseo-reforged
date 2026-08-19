@@ -30,14 +30,6 @@ vi.hoisted(() => {
   });
 });
 
-vi.mock("react-native-unistyles", () => ({
-  StyleSheet: {
-    create: () => ({ label: {} }),
-  },
-  useUnistyles: () => ({ rt: { breakpoint: "md" } }),
-  withUnistyles: (component: unknown) => component,
-}));
-
 vi.mock("@/hooks/use-settings", () => ({
   useAppSettings: () => ({ settings: { workspaceTitleSource: "title" } }),
 }));
@@ -50,20 +42,32 @@ vi.mock("@/components/ui/loading-spinner", () => ({ LoadingSpinner: () => null }
 vi.mock("@/components/synced-loader", () => ({ SyncedLoader: () => null }));
 vi.mock("@/git/forge-icon", () => ({ ForgeBrandIcon: () => null }));
 vi.mock("@/utils/open-external-url", () => ({ openExternalUrl: () => Promise.resolve() }));
-vi.mock("lucide-react-native", () => ({
-  Bot: () => null,
-  CircleAlert: () => null,
-  ExternalLink: () => null,
-  Folder: () => null,
-  FolderGit2: () => null,
-  GitMerge: () => null,
-  GitPullRequest: () => null,
-  GitPullRequestClosed: () => null,
-  Globe: () => null,
-  Monitor: () => null,
-  Server: () => null,
-  SquareTerminal: () => null,
-}));
+vi.mock("lucide-react-native", async () => {
+  const { createElement } = await import("react");
+
+  return {
+    Bot: ({ uniProps }: { uniProps?: (theme: unknown) => { color?: string } }) =>
+      createElement("svg", {
+        "data-testid": "workspace-runtime-resident-icon",
+        style: {
+          color: uniProps?.({
+            colors: { statusDotWarning: "#b37824", statusSuccess: "#15803d" },
+          }).color,
+        },
+      }),
+    CircleAlert: () => null,
+    ExternalLink: () => null,
+    Folder: () => null,
+    FolderGit2: () => null,
+    GitMerge: () => null,
+    GitPullRequest: () => null,
+    GitPullRequestClosed: () => null,
+    Globe: () => null,
+    Monitor: () => null,
+    Server: () => null,
+    SquareTerminal: () => null,
+  };
+});
 
 const ROW_WORKSPACE: SidebarWorkspaceEntry = {
   workspaceKey: "srv:ws-1",
@@ -80,6 +84,7 @@ const ROW_WORKSPACE: SidebarWorkspaceEntry = {
   title: null,
   currentBranch: null,
   statusBucket: "done",
+  hasLastExitActiveMarker: false,
   statusEnteredAt: null,
   lastActivityAt: new Date("2026-08-03T06:55:00.000Z"),
   defaultAgentId: null,
@@ -101,6 +106,18 @@ const ROW_WITHOUT_ACTIVITY: SidebarWorkspaceEntry = {
 const ROW_WITH_RESIDENT_AGENTS: SidebarWorkspaceEntry = {
   ...ROW_WORKSPACE,
   residentAgentCount: 2,
+};
+
+/** Marked row fixture used to verify the last-exit reminder treatment. */
+const ROW_WITH_LAST_EXIT_ACTIVE_MARKER: SidebarWorkspaceEntry = {
+  ...ROW_WORKSPACE,
+  hasLastExitActiveMarker: true,
+};
+
+/** Marked row with live residents used to verify warning-state precedence. */
+const ROW_WITH_LAST_EXIT_ACTIVE_MARKER_AND_RESIDENT_AGENTS: SidebarWorkspaceEntry = {
+  ...ROW_WITH_RESIDENT_AGENTS,
+  hasLastExitActiveMarker: true,
 };
 
 /** Stable service metadata fixture used to verify the Agent's trailing position. */
@@ -276,5 +293,112 @@ describe("SidebarWorkspaceActivityTime", () => {
     });
 
     expect(container.querySelector('[data-testid="sidebar-workspace-activity-time"]')).toBeNull();
+  });
+
+  it("shows a warning Bot in the resident Agent position until the workspace is opened", async () => {
+    await i18n.changeLanguage("en");
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root?.render(
+        <I18nextProvider i18n={i18n}>
+          <SidebarWorkspaceRowContent
+            workspace={ROW_WITH_LAST_EXIT_ACTIVE_MARKER}
+            backdrop="surfaceSidebar"
+            isHovered={false}
+            isLoading={false}
+          />
+        </I18nextProvider>,
+      );
+    });
+
+    const warningIndicator = container.querySelector<HTMLElement>(
+      '[data-testid="workspace-runtime-resident-indicator"]',
+    );
+    const warningIcon = warningIndicator?.querySelector<HTMLElement>(
+      '[data-testid="workspace-runtime-resident-icon"]',
+    );
+    if (!warningIndicator || !warningIcon) {
+      throw new Error("Expected last-exit warning in the resident Agent position");
+    }
+    expect(window.getComputedStyle(warningIcon).color).toBe("rgb(179, 120, 36)");
+    expect(warningIndicator.getAttribute("aria-label")).toBe(
+      "Agent was running when Paseo last quit",
+    );
+    expect(warningIndicator.getAttribute("role")).toBe("img");
+    expect(container.querySelector('[data-testid="workspace-last-exit-active-marker"]')).toBeNull();
+
+    act(() => {
+      root?.render(
+        <I18nextProvider i18n={i18n}>
+          <SidebarWorkspaceRowContent
+            workspace={ROW_WITH_LAST_EXIT_ACTIVE_MARKER_AND_RESIDENT_AGENTS}
+            backdrop="surfaceSidebar"
+            isHovered={false}
+            isLoading={false}
+          />
+        </I18nextProvider>,
+      );
+    });
+
+    const warningIndicatorWithCount = container.querySelector<HTMLElement>(
+      '[data-testid="workspace-runtime-resident-indicator"]',
+    );
+    const warningIconWithCount = warningIndicatorWithCount?.querySelector<HTMLElement>(
+      '[data-testid="workspace-runtime-resident-icon"]',
+    );
+    if (!warningIconWithCount) {
+      throw new Error("Expected warning Bot while resident Agents remain");
+    }
+    expect(window.getComputedStyle(warningIconWithCount).color).toBe("rgb(179, 120, 36)");
+    expect(
+      warningIndicatorWithCount?.querySelector<HTMLElement>(
+        '[data-testid="workspace-runtime-resident-count"]',
+      )?.textContent,
+    ).toBe("2");
+
+    act(() => {
+      root?.render(
+        <I18nextProvider i18n={i18n}>
+          <SidebarWorkspaceRowContent
+            workspace={ROW_WITH_RESIDENT_AGENTS}
+            backdrop="surfaceSidebar"
+            isHovered={false}
+            isLoading={false}
+          />
+        </I18nextProvider>,
+      );
+    });
+
+    const restoredIndicator = container.querySelector<HTMLElement>(
+      '[data-testid="workspace-runtime-resident-indicator"]',
+    );
+    const restoredIcon = restoredIndicator?.querySelector<HTMLElement>(
+      '[data-testid="workspace-runtime-resident-icon"]',
+    );
+    if (!restoredIndicator || !restoredIcon) {
+      throw new Error("Expected live resident Agent indicator after warning clears");
+    }
+    expect(window.getComputedStyle(restoredIcon).color).toBe("rgb(21, 128, 61)");
+    expect(restoredIndicator.getAttribute("aria-label")).toBe("Resident Agent runtime count: 2");
+
+    act(() => {
+      root?.render(
+        <I18nextProvider i18n={i18n}>
+          <SidebarWorkspaceRowContent
+            workspace={ROW_WORKSPACE}
+            backdrop="surfaceSidebar"
+            isHovered={false}
+            isLoading={false}
+          />
+        </I18nextProvider>,
+      );
+    });
+
+    expect(
+      container.querySelector('[data-testid="workspace-runtime-resident-indicator"]'),
+    ).toBeNull();
   });
 });

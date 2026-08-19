@@ -111,6 +111,31 @@ describe("quit-lifecycle", () => {
     expect(events).toEqual(["feedback", "stop"]);
   });
 
+  it("notifies renderers once before transport sessions close", () => {
+    const events: string[] = [];
+    const stopDecision = deferred<boolean>();
+    const quitLifecycle = createQuitLifecycle({
+      app: { exit: (code) => events.push(`exit:${code}`) },
+      notifyRenderersBeforeQuit: () => events.push("notify-renderers"),
+      closeTransportSessions: () => events.push("close-transports"),
+      stopDesktopManagedDaemonIfNeeded: () => stopDecision.promise,
+      installAppUpdateOnQuit: async () => false,
+      createUpdateDeadlineSignal: () => new AbortController().signal,
+      onStopError: () => {},
+      onUpdateError: () => {},
+    });
+
+    quitLifecycle.handleBeforeQuit({ preventDefault: () => events.push("prevent-default") });
+    quitLifecycle.handleBeforeQuit({ preventDefault: () => events.push("second-prevent-default") });
+
+    expect(events).toEqual([
+      "notify-renderers",
+      "close-transports",
+      "prevent-default",
+      "close-transports",
+    ]);
+  });
+
   it("revalidates updates after daemon shutdown before exiting", async () => {
     const stopDecision = deferred<boolean>();
     const updateDecision = deferred<boolean>();

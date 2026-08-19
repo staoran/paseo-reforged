@@ -1157,6 +1157,7 @@ export const ja: TranslationResources = {
         serviceUnhealthy: "サービス {{name}} 異常",
         creating: "作成中...",
         runtimeResident: "常駐 Agent runtime 数：{{count}}",
+        agentRunningAtLastExit: "Paseo の前回終了時に Agent が実行中でした",
       },
       actions: {
         menu: "ワークスペースアクション",

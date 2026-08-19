@@ -1144,6 +1144,7 @@ export const ar: TranslationResources = {
         serviceUnhealthy: "الخدمة {{name}} غير سليمة",
         creating: "جارٍ الإنشاء...",
         runtimeResident: "عدد runtimes الوكيل النشطة: {{count}}",
+        agentRunningAtLastExit: "كان الوكيل يعمل عند آخر إغلاق لـ Paseo",
       },
       actions: {
         menu: "إجراءات Workspace",

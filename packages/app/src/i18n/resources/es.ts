@@ -1180,6 +1180,8 @@ export const es: TranslationResources = {
         serviceUnhealthy: "Servicio {{name}} con fallos",
         creating: "Creando...",
         runtimeResident: "Cantidad de runtimes de agente activos: {{count}}",
+        agentRunningAtLastExit:
+          "El agente estaba en ejecución cuando Paseo se cerró por última vez",
       },
       actions: {
         menu: "AccionesWorkspace",

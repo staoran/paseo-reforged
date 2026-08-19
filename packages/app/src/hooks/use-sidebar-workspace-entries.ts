@@ -1,7 +1,8 @@
-import { useMemo, useRef } from "react";
+import { useMemo, useRef, useSyncExternalStore } from "react";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { useSessionStore } from "@/stores/session-store";
+import { getLastExitActiveWorkspaceStore } from "@/desktop/last-exit-active-workspaces";
 import {
   areSidebarWorkspaceSessionsEqual,
   buildSidebarWorkspaceEntries,
@@ -32,12 +33,21 @@ export function useSidebarWorkspaceEntries(
   const pendingCreateAttempts = useCreateFlowStore((state) =>
     enabled ? state.pendingByDraftId : EMPTY_PENDING_CREATE_ATTEMPTS,
   );
+  const lastExitActiveWorkspaceStore = getLastExitActiveWorkspaceStore();
+  const lastExitActiveWorkspaceRevision = useSyncExternalStore(
+    lastExitActiveWorkspaceStore.subscribe,
+    lastExitActiveWorkspaceStore.getRevision,
+    () => 0,
+  );
   const previousEntriesRef = useRef<ReadonlyMap<string, SidebarWorkspaceEntry>>(EMPTY_ENTRIES);
 
   // Collection ownership is intentional: retained sidebars have one cheap
   // subscription to structurally shared indexes, never one session-store
   // subscription per mounted row.
   return useMemo(() => {
+    // Reading the revision makes marker changes an explicit recomputation input
+    // even though the projection consumes the store lookup.
+    void lastExitActiveWorkspaceRevision;
     if (!enabled) {
       return previousEntriesRef.current;
     }
@@ -50,8 +60,16 @@ export function useSidebarWorkspaceEntries(
       sessions,
       pendingCreateAttempts,
       previousEntries: previousEntriesRef.current,
+      lastExitActiveWorkspaceStore,
     });
     previousEntriesRef.current = entries;
     return entries;
-  }, [enabled, pendingCreateAttempts, placements, sessions]);
+  }, [
+    enabled,
+    lastExitActiveWorkspaceRevision,
+    lastExitActiveWorkspaceStore,
+    pendingCreateAttempts,
+    placements,
+    sessions,
+  ]);
 }

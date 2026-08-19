@@ -1152,6 +1152,7 @@ export const ko: TranslationResources = {
         serviceUnhealthy: "서비스 {{name}} 비정상",
         creating: "생성하는 중...",
         runtimeResident: "상주 에이전트 런타임 수: {{count}}",
+        agentRunningAtLastExit: "Paseo를 마지막으로 종료할 때 Agent가 실행 중이었습니다",
       },
       actions: {
         menu: "워크스페이스 작업",

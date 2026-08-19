@@ -374,6 +374,43 @@ describe("buildSidebarProjectsFromStructure", () => {
 });
 
 describe("shared sidebar workspace model", () => {
+  it("projects a last-exit active marker without changing the workspace status bucket", () => {
+    const model = buildSidebarWorkspacePlacementModel({
+      projects: [project({ projectKey: "project", workspaceKeys: ["srv:running"] })],
+    });
+    const entries = buildSidebarWorkspaceEntries({
+      placements: model.workspaces,
+      sessions: [
+        {
+          serverId: "srv",
+          agents: new Map(),
+          workspaceAgentActivity: new Map(),
+          workspaceResidentAgentCounts: new Map(),
+          workspaces: new Map([
+            [
+              "running",
+              workspace({
+                id: "running",
+                name: "running",
+                projectId: "project",
+                projectDisplayName: "project",
+                status: "done",
+              }),
+            ],
+          ]),
+        },
+      ],
+      lastExitActiveWorkspaceStore: {
+        has: ({ serverId, workspaceId }) => serverId === "srv" && workspaceId === "running",
+      },
+    });
+
+    expect(entries.get("srv:running")).toMatchObject({
+      statusBucket: "done",
+      hasLastExitActiveMarker: true,
+    });
+  });
+
   it("feeds project placement and status grouping from the same cross-host workspace identities", () => {
     const model = buildSidebarWorkspacePlacementModel({
       projects: [

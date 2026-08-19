@@ -204,6 +204,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
             prHint={workspace.prHint}
             serviceSummary={serviceSummary}
             residentAgentCount={workspace.residentAgentCount}
+            hasLastExitActiveMarker={workspace.hasLastExitActiveMarker}
           />
         </View>
       </View>

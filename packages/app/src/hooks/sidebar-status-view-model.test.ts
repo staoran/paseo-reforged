@@ -25,6 +25,7 @@ function ws(
     title: input.title ?? null,
     currentBranch: input.currentBranch ?? null,
     statusBucket: input.statusBucket ?? "done",
+    hasLastExitActiveMarker: input.hasLastExitActiveMarker ?? false,
     statusEnteredAt: input.statusEnteredAt ?? null,
     lastActivityAt: input.lastActivityAt ?? null,
     defaultAgentId: input.defaultAgentId ?? null,

@@ -1055,8 +1055,17 @@ function showDaemonShutdownDialog(): void {
   }
 }
 
+/** Requests every live renderer to persist its synchronous snapshot before quit. */
+function notifyRenderersBeforeQuit(): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+    win.webContents.send("paseo:event:before-quit", {});
+  }
+}
+
 const quitLifecycle = createQuitLifecycle({
   app,
+  notifyRenderersBeforeQuit,
   closeTransportSessions: closeAllTransportSessions,
   stopDesktopManagedDaemonIfNeeded: () =>
     stopDesktopManagedDaemonOnQuitIfNeeded({

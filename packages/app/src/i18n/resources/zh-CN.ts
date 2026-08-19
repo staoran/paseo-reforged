@@ -1133,6 +1133,7 @@ export const zhCN: TranslationResources = {
         serviceUnhealthy: "服务 {{name}} 异常",
         creating: "正在创建...",
         runtimeResident: "驻留 Agent runtime 数量：{{count}}",
+        agentRunningAtLastExit: "Paseo 上次退出时 Agent 仍在运行",
       },
       actions: {
         menu: "Workspace 操作",

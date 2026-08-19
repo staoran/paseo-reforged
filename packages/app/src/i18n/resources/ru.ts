@@ -1169,6 +1169,7 @@ export const ru: TranslationResources = {
         serviceUnhealthy: "Сервис {{name}} неисправен",
         creating: "Создание...",
         runtimeResident: "Количество активных runtime агента: {{count}}",
+        agentRunningAtLastExit: "Агент работал при последнем выходе из Paseo",
       },
       actions: {
         menu: "Действия Workspace",

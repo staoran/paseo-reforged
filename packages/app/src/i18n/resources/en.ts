@@ -1156,6 +1156,7 @@ export const en = {
         serviceUnhealthy: "Service {{name}} unhealthy",
         creating: "Creating...",
         runtimeResident: "Resident Agent runtime count: {{count}}",
+        agentRunningAtLastExit: "Agent was running when Paseo last quit",
       },
       actions: {
         menu: "Workspace actions",

@@ -5,12 +5,16 @@ const testTheme = {
   colors: {
     foreground: "#111111",
     foregroundMuted: "#666666",
+    foregroundExtraMuted: "#888888",
     statusSuccess: "#15803d",
     statusDanger: "#b91c1c",
     statusWarning: "#d97706",
+    statusDotWarning: "#b37824",
     statusMerged: "#7c3aed",
+    surface0: "#ffffff",
     surface1: "#fafafa",
     surface2: "#f4f4f5",
+    surfaceSidebarHover: "#e9e9ec",
     popover: "#f4f4f5",
     border: "#e4e4e7",
     borderAccent: "#ececf1",
@@ -65,9 +69,11 @@ const testTheme = {
     medium: "500",
   },
   borderRadius: {
+    sm: 2,
     base: 4,
     md: 6,
     xl: 8,
+    full: 9999,
   },
   borderWidth: {
     1: 1,

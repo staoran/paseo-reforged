@@ -93,6 +93,7 @@ function createDeferredUpdateQuit(): DeferredUpdateQuit {
 
 export function createQuitLifecycle({
   app,
+  notifyRenderersBeforeQuit = () => {},
   closeTransportSessions,
   stopDesktopManagedDaemonIfNeeded,
   installAppUpdateOnQuit,
@@ -101,6 +102,8 @@ export function createQuitLifecycle({
   onUpdateError,
 }: {
   app: BeforeQuitApp;
+  /** Requests every renderer to persist its synchronous snapshot before transports close. */
+  notifyRenderersBeforeQuit?: () => void;
   closeTransportSessions: () => void;
   stopDesktopManagedDaemonIfNeeded: () => Promise<boolean>;
   installAppUpdateOnQuit: (signal: AbortSignal) => Promise<boolean>;
@@ -113,9 +116,18 @@ export function createQuitLifecycle({
   // window-all-closed handler, which would veto that second quit.
   let quitting = false;
   let quittingForUpdate = false;
+  let renderersNotified = false;
   const updateQuit = createDeferredUpdateQuit();
 
+  /** Emits the renderer persistence request once across every Electron quit path. */
+  function notifyRenderersOnce(): void {
+    if (renderersNotified) return;
+    renderersNotified = true;
+    notifyRenderersBeforeQuit();
+  }
+
   function handleBeforeQuit(event: BeforeQuitEvent): void {
+    notifyRenderersOnce();
     closeTransportSessions();
     if (quittingForUpdate) return;
     if (quitting) {
@@ -160,6 +172,7 @@ export function createQuitLifecycle({
   return {
     handleBeforeQuit,
     handleBeforeQuitForUpdate() {
+      notifyRenderersOnce();
       quittingForUpdate = true;
       updateQuit.resolve();
     },

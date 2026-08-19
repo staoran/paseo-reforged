@@ -1170,6 +1170,8 @@ export const ptBR: TranslationResources = {
         serviceUnhealthy: "Serviço {{name}} com falha",
         creating: "Criando...",
         runtimeResident: "Quantidade de runtimes de agente ativos: {{count}}",
+        agentRunningAtLastExit:
+          "O agente estava em execução quando o Paseo foi fechado pela última vez",
       },
       actions: {
         menu: "Ações do workspace",

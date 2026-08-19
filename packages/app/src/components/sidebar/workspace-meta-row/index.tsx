@@ -63,12 +63,15 @@ export function WorkspaceMetaRow({
   prHint,
   serviceSummary,
   residentAgentCount = 0,
+  hasLastExitActiveMarker = false,
 }: {
   projectName?: string | null;
   hostBadge: HostBadgeModel | null;
   prHint: PrHint | null;
   serviceSummary: WorkspaceServiceSummary | null;
   residentAgentCount?: number;
+  /** Show the one-time last-exit warning in the resident Agent indicator slot. */
+  hasLastExitActiveMarker?: boolean;
 }) {
   const { rowItems, checksDisplay } = useSidebarMetaPreferences();
   const items = selectMetaRowItems({
@@ -79,7 +82,9 @@ export function WorkspaceMetaRow({
     checksDisplay,
   });
 
-  if (!projectName && items.length === 0 && residentAgentCount <= 0) return null;
+  if (!projectName && items.length === 0 && residentAgentCount <= 0 && !hasLastExitActiveMarker) {
+    return null;
+  }
 
   return (
     <View style={styles.row}>
@@ -94,16 +99,28 @@ export function WorkspaceMetaRow({
           <MetaItemNode item={item} hostBadge={hostBadge} />
         </Fragment>
       ))}
-      {residentAgentCount > 0 ? (
-        <WorkspaceResidentAgentsIndicator count={residentAgentCount} />
+      {residentAgentCount > 0 || hasLastExitActiveMarker ? (
+        <WorkspaceResidentAgentsIndicator
+          count={residentAgentCount}
+          hasLastExitActiveMarker={hasLastExitActiveMarker}
+        />
       ) : null}
     </View>
   );
 }
 
-function WorkspaceResidentAgentsIndicator({ count }: { count: number }) {
+/** Renders either the live resident count or the one-time last-exit warning in one stable slot. */
+function WorkspaceResidentAgentsIndicator({
+  count,
+  hasLastExitActiveMarker,
+}: {
+  count: number;
+  hasLastExitActiveMarker: boolean;
+}) {
   const { t } = useTranslation();
-  const label = t("sidebar.workspace.status.runtimeResident", { count });
+  const label = hasLastExitActiveMarker
+    ? t("sidebar.workspace.status.agentRunningAtLastExit")
+    : t("sidebar.workspace.status.runtimeResident", { count });
 
   return (
     <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
@@ -115,9 +132,18 @@ function WorkspaceResidentAgentsIndicator({ count }: { count: number }) {
           style={styles.residentAgents}
           testID="workspace-runtime-resident-indicator"
         >
-          <ThemedBot size={META_ICON_SIZE} uniProps={successMapping} />
+          <ThemedBot
+            size={META_ICON_SIZE}
+            uniProps={hasLastExitActiveMarker ? warningMapping : successMapping}
+          />
           {count > 1 ? (
-            <Text style={styles.residentAgentCount} testID="workspace-runtime-resident-count">
+            <Text
+              style={[
+                styles.residentAgentCount,
+                hasLastExitActiveMarker && styles.residentAgentCountWarning,
+              ]}
+              testID="workspace-runtime-resident-count"
+            >
               {count}
             </Text>
           ) : null}
@@ -273,6 +299,8 @@ function ServiceItem({ summary }: { summary: WorkspaceServiceSummary }) {
 }
 
 const successMapping = (theme: Theme) => ({ color: theme.colors.statusSuccess });
+/** Warning color used only while the one-time last-exit marker is present. */
+const warningMapping = (theme: Theme) => ({ color: theme.colors.statusDotWarning });
 
 const PR_ICONS = {
   open: ThemedGitPullRequest,
@@ -362,6 +390,9 @@ const styles = StyleSheet.create((theme) => ({
     lineHeight: 16,
     fontWeight: theme.fontWeight.medium,
     fontVariant: ["tabular-nums"],
+  },
+  residentAgentCountWarning: {
+    color: theme.colors.statusDotWarning,
   },
   tooltipText: {
     color: theme.colors.foreground,
