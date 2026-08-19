@@ -6,10 +6,10 @@
 | ------------------ | ------------------------------------------------------- |
 | task_id            | `0089`                                                  |
 | spec layer         | `Feature Spec`                                          |
-| task status        | `已批准`                                                |
-| document status    | `Active`                                                |
+| task status        | `已收口`                                                |
+| document status    | `Completed`                                             |
 | depth              | `standard`                                              |
-| phase              | `Plan`                                                  |
+| phase              | `Review`                                                |
 | Execution Approval | `Approved`                                              |
 | Approval Source    | `User / 2026-08-19；按依赖顺序逐票实施并本地提交`       |
 | file path          | `mydocs/micro_specs/0089_daemon压缩准备与codec门禁.md`  |
@@ -52,9 +52,9 @@
 ## 4. 执行前检查点
 
 - 当前目标：只实现 daemon codec/prepare，不把 hint 分类散落到发送点。
-- 当前进度：固定 level/阈值已在 Spec 决策，代码尚未实现。
+- 当前进度：0088 公共 envelope/parser 已由 `98a110a3f` 收口；Node codec、prepared payload 与全部固定门禁已完成 RED→GREEN。
 - 当前动作是否仍服务核心目标：是；状态追平带宽收益的核心实现。
-- 下一步：0088 parser GREEN 后执行。
+- 下一步：`N/A；0089 已完成，按依赖进入 0093 client fflate 解码与兼容。`
 - 风险与回退：codec 失败回退 identity；实时流压缩尝试计数必须为 0。
 - 验证方式：codec golden vectors、门禁矩阵、typecheck/lint/format；端到端门禁留 0095/0097。
 - TDD 判定、测试 seam 与验收行为：`TDD；FrameCompressionAdapter 与 prepared-frame public contract`。
@@ -63,33 +63,36 @@
 
 ## 5. 执行与变更记录
 
-- 实际改动：本轮未修改生产代码。
-- 偏差与用户决策：无。
+- 实际改动：新增异步 `node:zlib` raw DEFLATE adapter，encoder 由 coordinator 固定 level 1，inflate 使用 `maxOutputLength` 并要求 exact expected length；新增进程级两个非等待槽、traffic/size/peer/config 前置门禁、收益/ratio/error 后置门禁，以及带 authenticated plaintext、original/encoded/wire bytes、encoding、class 和 skip reason 的 prepared payload。
+- 偏差与用户决策：prepared 产物止于 envelope plaintext，不在本 ticket 加密或发送；0090 将对该产物执行一次 NaCl、一次表示编码、FIFO reservation 与最终 high-water。复核父 Spec 后把 4 MiB 恢复为 `MAX_COMPRESSION_INPUT_BYTES`，identity 仍由原业务边界和 `<32 MiB` 最终 wire 限制，修正了 0088 Micro Spec 的过度表述。
 - Change Log：`2026-08-19` 从 0084 执行清单 3/6 拆出。
+- Change Log：`2026-08-19` 完成 Node codec、固定 level、class/size/gain/ratio/busy/error RED→GREEN，进入 Review/已收口。
 
 ## 6. 验证与完成判断
 
-| 验收项   | 命令或步骤                                | 结果   | 证据             |
-| -------- | ----------------------------------------- | ------ | ---------------- |
-| codec    | Node deflate/inflate golden vector        | 待执行 | 待新增测试       |
-| policy   | class/size/gain/ratio/busy/error matrix   | 待执行 | Spec D.2         |
-| fallback | identity byte-for-byte and FIFO admission | 待执行 | 0090 integration |
+| 验收项   | 命令或步骤                                           | 结果 | 证据                                                                                       |
+| -------- | ---------------------------------------------------- | ---- | ------------------------------------------------------------------------------------------ |
+| codec    | `relay-frame-compression.test.ts --bail=1`           | PASS | 18/18；真实 raw roundtrip、fixed level 1、bounded short/oversized output                   |
+| policy   | class/size/gain/ratio/busy/error matrix              | PASS | realtime 零调用、4/16 KiB exact floors、4 MiB cap、64 bytes/5%、128:1、进程级双槽均通过    |
+| fallback | identity byte-for-byte 与 prepared metadata          | PASS | configured/peer/traffic/size/no-gain/ratio/busy/error 全部返回 identity，不传播 codec 错误 |
+| parser   | `framed-ciphertext.test.ts --bail=1`                 | PASS | `68 passed / 1 skipped`；skip 仅归属 0090 opening 入站 FIFO                                |
+| static   | relay rebuild、workspace typecheck、lint/format/diff | PASS | typecheck 退出码 0；目标 oxlint `0/0`；格式与 diff check 通过                              |
 
-- 未验证项与原因：尚未授权实现。
-- 剩余风险：真实 CPU、网络 break-even 和 Hermes decode 不在本 ticket。
-- Done Contract 是否由证据满足：`No；待 Execute`。
+- 未验证项与原因：根 lint 仅被范围外 `mock-load-test-agent.ts` constructor complexity 阻塞；本票 5 个 TS 文件定向 oxlint 通过。prepared frame 尚未接入 FIFO/physical send，按依赖属于 0090。
+- 剩余风险：真实 CPU、网络 break-even、跨实现 vector 和 Hermes decode 分别留给 0095/0097 与 0093。
+- Done Contract 是否由证据满足：`是；0089 scoped contract 已满足，父 Spec 仍在 Execute。`
 
 ## 7. 恢复与同步
 
-- 状态说明：ticket 已登记，依赖 0088。
-- 当前卡点：无设计卡点，仅缺执行授权。
-- 下一步唯一动作：实现 daemon raw DEFLATE adapter 和 prepared-frame 门禁。
-- Resume / Handoff：从 0088 的 codec dispatch 与父 Spec D.2/D.3 接续。
+- 状态说明：`Review / 已收口 / Completed`；daemon codec/prepared payload 可供 0090 消费。
+- 当前卡点：`N/A`；client decoder 与 FIFO 已有独立 ticket。
+- 下一步唯一动作：实现 0093 client fflate bounded decoder 和 Node↔fflate golden vectors。
+- Resume / Handoff：先读本文件第 5、6 节；0090 从 `PreparedDaemonFramedPayload` 与进程级 coordinator 接续。
 - Project Sync Candidates：指标字段交给 0095，架构文档交给 0097。
 - 长期文档同步：待 0097。
 
 ### 提交记录
 
-| 提交信息（Commit Message） | 提交脚注（Commit Footer） | 关联改动或阶段 | 文档同步状态 | 备注     |
-| -------------------------- | ------------------------- | -------------- | ------------ | -------- |
-| `<待提交>`                 | `N/A`                     | `paseo / 0089` | `待填写`     | 未获授权 |
+| 提交信息（Commit Message）                      | 提交脚注（Commit Footer） | 关联改动或阶段 | 文档同步状态 | 备注                   |
+| ----------------------------------------------- | ------------------------- | -------------- | ------------ | ---------------------- |
+| `feat(relay): prepare daemon compressed frames` | `N/A`                     | `paseo / 0089` | `已同步`     | 用户已授权逐票本地提交 |

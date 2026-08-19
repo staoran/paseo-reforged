@@ -24,7 +24,7 @@
 - Done Contract：
   - 实现 8 字节 header、binary flag、codec、uint32 原始长度及认证前后长度计算；header 与 payload 一起进入 NaCl。
   - framed Base64 使用严格 padded alphabet/length 校验；binary/text opcode 与连接选择不匹配时关闭。
-  - identity 长度、deflate 原始长度、UTF-8 fatal decode、32 MiB 单帧 wire、4 MiB logical input、128:1 ratio 等限制在分配/解压前生效。
+  - identity exact length、deflate 4 MiB 原始输入、UTF-8 fatal decode、32 MiB 单帧 wire、128:1 ratio 等限制在分配/解压前生效。
   - codec 未知、header/flag/length/UTF-8 错误均 fail closed；不改变 legacy parser 语义。
   - 导出稳定 `Prepared/Decoded` 或等价类型，供 0089、0090、0092 使用，不复制协议常量。
 
@@ -63,19 +63,19 @@
 
 ## 5. 执行与变更记录
 
-- 实际改动：新增平台无关 `framed-ciphertext.ts`，集中 8-byte envelope、identity/deflate codec、严格 Base64/binary wire、32 MiB exclusive wire cap、4 MiB logical cap、4 KiB compression floor、5%/64-byte 收益、128:1 ratio、bounded inflate 与 fatal UTF-8；`encrypted-channel.ts` 已复用公共 prepare/decode/wire-length seam，并移除重复 header/parser。
+- 实际改动：新增平台无关 `framed-ciphertext.ts`，集中 8-byte envelope、identity/deflate codec、严格 Base64/binary wire、32 MiB exclusive wire cap、4 MiB compression input cap、4 KiB compression floor、5%/64-byte 收益、128:1 ratio、bounded inflate 与 fatal UTF-8；`encrypted-channel.ts` 已复用公共 prepare/decode/wire-length seam，并移除重复 header/parser。
 - 偏差与用户决策：0088 只定义注入式 `FrameCompressionAdapter`，不引入 Node zlib 或 client fflate；framed 接入当前仍只协商 identity，实际 codec advertisement 分别由 0089/0093 完成。
 - Change Log：`2026-08-19` 从 0084 envelope/limits 清单拆出。
 - Change Log：`2026-08-19` 完成逐条 RED→GREEN、legacy compatibility 与静态门禁，进入 Review/已收口。
 
 ## 6. 验证与完成判断
 
-| 验收项        | 命令或步骤                                            | 结果 | 证据                                                                                        |
-| ------------- | ----------------------------------------------------- | ---- | ------------------------------------------------------------------------------------------- |
-| vectors       | `framed-ciphertext.test.ts --bail=1`                  | PASS | `68 passed / 1 skipped`；identity、deflate adapter、Base64/binary、text/binary 四象限       |
-| fail closed   | malformed header/UTF-8/Base64/length/ratio 定向用例   | PASS | strict canonical Base64、32 MiB wire、4 MiB logical、5%/64-byte、128:1、exact output 均通过 |
-| compatibility | legacy channel/crypto 与 framed new/new               | PASS | `encrypted-channel.test.ts` 15/15、`crypto.test.ts` 8/8；legacy URL-safe/unpadded 保持宽松  |
-| static        | `npm run typecheck`、`npm run lint`、目标 format/diff | PASS | workspace typecheck 退出码 0；lint `0 warnings / 0 errors`；目标文件格式与 diff check 通过  |
+| 验收项        | 命令或步骤                                            | 结果 | 证据                                                                                              |
+| ------------- | ----------------------------------------------------- | ---- | ------------------------------------------------------------------------------------------------- |
+| vectors       | `framed-ciphertext.test.ts --bail=1`                  | PASS | `68 passed / 1 skipped`；identity、deflate adapter、Base64/binary、text/binary 四象限             |
+| fail closed   | malformed header/UTF-8/Base64/length/ratio 定向用例   | PASS | strict canonical Base64、32 MiB wire、4 MiB deflate input、5%/64-byte、128:1、exact output 均通过 |
+| compatibility | legacy channel/crypto 与 framed new/new               | PASS | `encrypted-channel.test.ts` 15/15、`crypto.test.ts` 8/8；legacy URL-safe/unpadded 保持宽松        |
+| static        | `npm run typecheck`、`npm run lint`、目标 format/diff | PASS | workspace typecheck 退出码 0；lint `0 warnings / 0 errors`；目标文件格式与 diff check 通过        |
 
 - 未验证项与原因：Node zlib、client fflate、receive reservation、真实 relay/Hermes 不属于 0088；完整 framed 文件唯一 skip 为 0090 的 opening 入站 FIFO。
 - 剩余风险：实际 inflate CPU/内存、跨实现 DEFLATE vector 与 receive 总预算仍由 0089、0093、0090 约束。

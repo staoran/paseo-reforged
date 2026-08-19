@@ -383,7 +383,11 @@ describe("framed ciphertext v1 contract", () => {
 
   it.each([
     { caseName: "below the compression minimum", originalLength: 4095, encodedLength: 64 },
-    { caseName: "above the logical limit", originalLength: 4 * 1024 * 1024 + 1, encodedLength: 64 },
+    {
+      caseName: "above the compression input limit",
+      originalLength: 4 * 1024 * 1024 + 1,
+      encodedLength: 64,
+    },
     { caseName: "without minimum savings", originalLength: 4096, encodedLength: 4032 },
     { caseName: "above the compression ratio limit", originalLength: 4096, encodedLength: 31 },
     { caseName: "with an empty encoded payload", originalLength: 4096, encodedLength: 0 },
