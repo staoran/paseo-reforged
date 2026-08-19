@@ -290,6 +290,58 @@ export class DaemonConfigStore {
   }
 }
 
+/** Persisted relay shape used by the config-store merge boundary. */
+type PersistedRelayConfig = NonNullable<NonNullable<PersistedConfig["daemon"]>["relay"]>;
+
+/** Mutable relay shape accepted by the public config patch boundary. */
+type MutableRelayConfig = NonNullable<MutableDaemonConfig["relay"]>;
+
+/** Inputs for merging launch-visible relay state into persisted user preferences. */
+interface MergeRelayConfigForPersistenceInput {
+  /** Existing persisted relay preference. */
+  persisted: PersistedRelayConfig | undefined;
+  /** Current launch-visible mutable relay state. */
+  mutable: MutableRelayConfig;
+  /** Whether this launch owns the persisted relay availability preference. */
+  persistEnabled: boolean;
+}
+
+/** Merges mutable relay fields without persisting defaults or a one-launch enabled override. */
+function mergeRelayConfigForPersistence(
+  input: MergeRelayConfigForPersistenceInput,
+): PersistedRelayConfig | undefined {
+  const { persisted, mutable, persistEnabled } = input;
+  // Explicit transport fields remain writable when a launch override owns relay.enabled.
+  const mutableTransport = mutable.transport;
+  if (!persistEnabled && mutableTransport === undefined) {
+    return persisted;
+  }
+
+  // Nested compression fields are retained across independent partial patches.
+  const nextTransport =
+    mutableTransport === undefined
+      ? undefined
+      : {
+          ...persisted?.transport,
+          ...mutableTransport,
+          ...(mutableTransport.compression !== undefined
+            ? {
+                compression: {
+                  ...persisted?.transport?.compression,
+                  ...mutableTransport.compression,
+                },
+              }
+            : {}),
+        };
+
+  return {
+    ...persisted,
+    ...(persistEnabled ? { enabled: mutable.enabled } : {}),
+    ...(nextTransport !== undefined ? { transport: nextTransport } : {}),
+  };
+}
+
+/** Merges one validated mutable daemon snapshot into its persisted preferences. */
 function mergeMutableConfigIntoPersistedConfig(params: {
   persisted: PersistedConfig;
   mutable: MutableDaemonConfig;
@@ -316,6 +368,12 @@ function mergeMutableConfigIntoPersistedConfig(params: {
   };
   const shouldPersistMetadataGeneration =
     metadataGenerationProviders.length > 0 || persisted.agents?.metadataGeneration !== undefined;
+  // Relay persistence is independent from the other mutable daemon sections.
+  const nextRelay = mergeRelayConfigForPersistence({
+    persisted: persisted.daemon?.relay,
+    mutable: mutable.relay,
+    persistEnabled: persistRelayEnabled,
+  });
 
   let nextAgents = persistedAgents as PersistedConfig["agents"];
   if (providerOverrides && Object.keys(providerOverrides).length > 0) {
@@ -337,14 +395,7 @@ function mergeMutableConfigIntoPersistedConfig(params: {
     ...persisted,
     daemon: {
       ...persisted.daemon,
-      ...(persistRelayEnabled
-        ? {
-            relay: {
-              ...persisted.daemon?.relay,
-              enabled: mutable.relay.enabled,
-            },
-          }
-        : {}),
+      relay: nextRelay,
       mcp: {
         ...persisted.daemon?.mcp,
         injectIntoAgents: mutable.mcp.injectIntoAgents,

@@ -11,6 +11,7 @@ export type {
   ConfiguredCiphertextEncoding,
   DaemonChannelOptions,
   EncryptedChannelEvents,
+  NegotiatedEncryptedTransport,
   PreparedEncryptedFrame,
   Transport,
   TransportMessage,

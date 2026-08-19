@@ -6,35 +6,61 @@ import {
   type RelaySocketLike,
   type RelayTransportController,
 } from "./relay-transport.js";
+import type { ConfiguredRelayTransportPolicy } from "./relay-transport-policy.js";
 
 export interface RelayRuntimeConfig {
+  /** Whether the daemon currently maintains its relay control transport. */
   enabled: boolean;
+  /** Internal relay endpoint used by the daemon. */
   endpoint: string;
+  /** Public relay endpoint advertised to pairing clients. */
   publicEndpoint: string;
+  /** Whether the daemon connects to its relay endpoint over TLS. */
   useTls: boolean;
+  /** Whether pairing clients connect to the public endpoint over TLS. */
   publicUseTls: boolean;
 }
 
 interface RelayRuntimeOptions {
+  /** Public relay runtime settings exposed through daemon status. */
   config: RelayRuntimeConfig;
+  /** Internal fully defaulted policy read by relay data connections. */
+  transportPolicy: ConfiguredRelayTransportPolicy;
+  /** Logger used for asynchronous transport lifecycle failures. */
   logger: pino.Logger;
+  /** Attaches one accepted relay data socket to the daemon session layer. */
   attachSocket(ws: RelaySocketLike, metadata?: ExternalSocketMetadata): Promise<void>;
+  /** Stable daemon identifier used by relay control and data URLs. */
   serverId: string;
+  /** Long-lived daemon key used to authenticate encrypted data connections. */
   daemonKeyPair: KeyPair;
+  /** Optional transport factory used by focused lifecycle tests. */
   startTransport?: typeof startRelayTransport;
 }
 
 export interface RelayRuntime {
+  /** Returns the current in-memory relay runtime configuration. */
   getConfig(): RelayRuntimeConfig;
+  /** Starts or stops the long-lived relay transport. */
   setEnabled(enabled: boolean): void;
+  /** Replaces the policy read by current and subsequent data connections. */
+  setTransportPolicy(policy: ConfiguredRelayTransportPolicy): void;
+  /** Stops the long-lived relay transport and all data connections. */
   stop(): Promise<void>;
 }
 
+/** Creates the relay lifecycle module with separately scoped public config and private policy. */
 export function createRelayRuntime(options: RelayRuntimeOptions): RelayRuntime {
+  /** Transport factory selected once for this runtime. */
   const startTransport = options.startTransport ?? startRelayTransport;
+  /** Public relay status fields updated only by the enabled lifecycle. */
   let config = options.config;
+  /** Private configured policy read through the long-lived transport provider. */
+  let transportPolicy = options.transportPolicy;
+  /** Current long-lived relay transport controller, if enabled. */
   let transport: RelayTransportController | null = null;
 
+  /** Starts the relay transport once using providers backed by runtime state. */
   function start(): void {
     if (transport) return;
     transport = startTransport({
@@ -44,9 +70,11 @@ export function createRelayRuntime(options: RelayRuntimeOptions): RelayRuntime {
       relayUseTls: config.useTls,
       serverId: options.serverId,
       daemonKeyPair: options.daemonKeyPair,
+      getConfiguredTransportPolicy: () => transportPolicy,
     });
   }
 
+  /** Applies an enabled-state transition without changing transport policy. */
   function setEnabled(enabled: boolean): void {
     if (config.enabled === enabled) return;
     if (enabled) {
@@ -62,6 +90,12 @@ export function createRelayRuntime(options: RelayRuntimeOptions): RelayRuntime {
     });
   }
 
+  /** Replaces transport policy without restarting or re-handshaking existing connections. */
+  function setTransportPolicy(policy: ConfiguredRelayTransportPolicy): void {
+    transportPolicy = policy;
+  }
+
+  /** Stops the current relay transport and waits for its teardown. */
   async function stop(): Promise<void> {
     const current = transport;
     transport = null;
@@ -73,6 +107,7 @@ export function createRelayRuntime(options: RelayRuntimeOptions): RelayRuntime {
   return {
     getConfig: () => config,
     setEnabled,
+    setTransportPolicy,
     stop,
   };
 }

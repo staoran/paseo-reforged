@@ -3,6 +3,7 @@ import pino from "pino";
 import { generateKeyPair } from "@getpaseo/relay";
 import { createRelayRuntime } from "./relay-runtime.js";
 import { startRelayTransport, type RelayTransportController } from "./relay-transport.js";
+import { resolveConfiguredRelayTransportPolicy } from "./relay-transport-policy.js";
 
 describe("RelayRuntime", () => {
   test("starts and stops transport as enabled state changes", async () => {
@@ -22,6 +23,7 @@ describe("RelayRuntime", () => {
         useTls: true,
         publicUseTls: true,
       },
+      transportPolicy: resolveConfiguredRelayTransportPolicy(undefined),
       logger: pino({ level: "silent" }),
       attachSocket: async () => undefined,
       serverId: "relay-runtime-test",
@@ -49,6 +51,7 @@ describe("RelayRuntime", () => {
         useTls: false,
         publicUseTls: false,
       },
+      transportPolicy: resolveConfiguredRelayTransportPolicy(undefined),
       logger: pino({ level: "silent" }),
       attachSocket: async () => undefined,
       serverId: "relay-runtime-test",
@@ -60,5 +63,54 @@ describe("RelayRuntime", () => {
 
     expect(() => runtime.setEnabled(true)).toThrow("Invalid relay endpoint");
     expect(runtime.getConfig().enabled).toBe(false);
+  });
+
+  test("updates transport policy in place for subsequent data-connection reads", () => {
+    // Transport starts captured through the runtime's production adapter seam.
+    const starts: Parameters<typeof startRelayTransport>[0][] = [];
+    // Runtime under test owns one transport while policy is updated in place.
+    const runtime = createRelayRuntime({
+      config: {
+        enabled: true,
+        endpoint: "relay.example.test:443",
+        publicEndpoint: "relay.example.test:443",
+        useTls: true,
+        publicUseTls: true,
+      },
+      transportPolicy: resolveConfiguredRelayTransportPolicy(undefined),
+      logger: pino({ level: "silent" }),
+      attachSocket: async () => undefined,
+      serverId: "relay-runtime-policy-test",
+      daemonKeyPair: generateKeyPair(),
+      startTransport: (options) => {
+        starts.push(options);
+        return { stop: async () => undefined };
+      },
+    });
+
+    expect(starts[0]?.getConfiguredTransportPolicy?.()).toEqual({
+      ciphertextEncoding: "auto",
+      compressionEnabled: true,
+    });
+
+    runtime.setTransportPolicy(
+      resolveConfiguredRelayTransportPolicy({
+        ciphertextEncoding: "base64",
+        compression: { enabled: false },
+      }),
+    );
+
+    expect(starts).toHaveLength(1);
+    expect(starts[0]?.getConfiguredTransportPolicy?.()).toEqual({
+      ciphertextEncoding: "base64",
+      compressionEnabled: false,
+    });
+    expect(runtime.getConfig()).toEqual({
+      enabled: true,
+      endpoint: "relay.example.test:443",
+      publicEndpoint: "relay.example.test:443",
+      useTls: true,
+      publicUseTls: true,
+    });
   });
 });

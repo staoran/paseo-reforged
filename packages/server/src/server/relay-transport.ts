@@ -9,6 +9,17 @@ import {
 } from "@getpaseo/relay/e2ee";
 import { buildRelayWebSocketUrl } from "@getpaseo/protocol/daemon-endpoints";
 import type { ExternalSocketMetadata } from "./websocket-server.js";
+import {
+  createDaemonFrameCompression,
+  createNodeRawDeflateCodec,
+  type DaemonFrameCompression,
+} from "./relay-frame-compression.js";
+import {
+  RELAY_TRANSPORT_COMPRESSION_ALGORITHM,
+  resolveConfiguredRelayTransportPolicy,
+  resolveRelayTransportPolicy,
+  type ConfiguredRelayTransportPolicy,
+} from "./relay-transport-policy.js";
 import { createEncryptedRelaySocket } from "./websocket/encrypted-relay-socket.js";
 
 export interface RelayTransportOptions {
@@ -19,6 +30,8 @@ export interface RelayTransportOptions {
   serverId: string;
   daemonKeyPair?: KeyPair;
   createWebSocket?: RelayWebSocketFactory;
+  /** Reads the latest configured policy when a data connection needs it. */
+  getConfiguredTransportPolicy?: () => ConfiguredRelayTransportPolicy;
 }
 
 export interface RelayTransportController {
@@ -114,8 +127,13 @@ export function startRelayTransport({
   serverId,
   daemonKeyPair,
   createWebSocket = createDefaultRelayWebSocket,
+  getConfiguredTransportPolicy = () => resolveConfiguredRelayTransportPolicy(undefined),
 }: RelayTransportOptions): RelayTransportController {
   const relayLogger = logger.child({ module: "relay-transport" });
+  /** Shared daemon codec coordinator used by every framed data connection. */
+  const frameCompression = daemonKeyPair
+    ? createDaemonFrameCompression({ codec: createNodeRawDeflateCodec() })
+    : null;
 
   let stopped = false;
   let controlWs: RelayWebSocketLike | null = null;
@@ -385,6 +403,8 @@ export function startRelayTransport({
           daemonKeyPair,
           relayLogger.child({ connectionId }),
           attachSocket,
+          getConfiguredTransportPolicy,
+          frameCompression,
           externalMetadata,
         );
       } else {
@@ -418,13 +438,20 @@ async function attachEncryptedSocket(
   daemonKeyPair: KeyPair,
   logger: pino.Logger,
   attachSocket: (ws: RelaySocketLike, metadata?: ExternalSocketMetadata) => Promise<void>,
+  getConfiguredTransportPolicy: () => ConfiguredRelayTransportPolicy,
+  frameCompression: DaemonFrameCompression | null,
   metadata?: ExternalSocketMetadata,
 ): Promise<void> {
   try {
+    /** WebSocket adapter used by the encrypted channel. */
     const relayTransport = createRelayTransportAdapter(socket, logger);
+    /** Event bridge exposed to the daemon session attachment. */
     const emitter = new EventEmitter();
+    /** Decrypted messages retained until the daemon session is attached. */
     const pendingMessages: Array<string | ArrayBuffer> = [];
+    /** Whether decrypted messages can now be emitted directly. */
     let attached = false;
+    /** Delivers or retains one decrypted application message in arrival order. */
     const emitMessage = (data: string | ArrayBuffer) => {
       if (attached) {
         emitter.emit("message", data);
@@ -432,19 +459,57 @@ async function attachEncryptedSocket(
       }
       pendingMessages.push(data);
     };
-    const channel = await createDaemonChannel(relayTransport, daemonKeyPair, {
-      onmessage: emitMessage,
-      onclose: (code, reason) => emitter.emit("close", code, reason),
-      onerror: (error) => {
-        logger.warn({ err: error }, "relay_e2ee_error");
-        emitter.emit("error", error);
+    // Encoding preference is captured once before the handshake and never changes in place.
+    const configuredAtConnectionStart = getConfiguredTransportPolicy();
+    /** Encrypted channel whose negotiated representation is immutable after confirmation. */
+    const channel = await createDaemonChannel(
+      relayTransport,
+      daemonKeyPair,
+      {
+        onmessage: emitMessage,
+        onclose: (code, reason) => emitter.emit("close", code, reason),
+        onerror: (error) => {
+          logger.warn({ err: error }, "relay_e2ee_error");
+          emitter.emit("error", error);
+        },
       },
-    });
+      {
+        ciphertextEncoding: configuredAtConnectionStart.ciphertextEncoding,
+        compressionAlgorithms: [RELAY_TRANSPORT_COMPRESSION_ALGORITHM],
+      },
+    );
+    /** WebSocket-compatible encrypted adapter attached to the daemon session. */
     const encryptedSocket = createEncryptedRelaySocket({
       channel,
       emitter,
       getTransportBufferedAmount: () => socket.bufferedAmount,
       terminateTransport: () => socket.terminate(),
+      ...(channel.usesFramedCiphertextV1() && frameCompression
+        ? {
+            prepareOutboundFrame: async (data: string | ArrayBuffer) => {
+              // Compression setting is re-read only when a new frame begins preparation.
+              const negotiated = channel.getNegotiatedTransport();
+              /** Configured snapshot fixed when this frame begins preparation. */
+              const configuredForFrame = getConfiguredTransportPolicy();
+              /** Per-frame policy combining current compression config with locked negotiation. */
+              const effective = resolveRelayTransportPolicy(configuredForFrame, negotiated);
+              if (effective.mode !== "framed-v1" || negotiated.mode !== "framed-v1") {
+                throw new Error("Framed preparation requires a framed relay connection");
+              }
+              /** Authenticated payload prepared once before channel encryption and representation. */
+              const prepared = await frameCompression.prepare(
+                data,
+                { trafficClass: "realtime" },
+                {
+                  compressionEnabled: configuredForFrame.compressionEnabled,
+                  negotiatedCompressionAlgorithms: negotiated.compressionAlgorithms,
+                  ciphertextEncoding: negotiated.ciphertextEncoding,
+                },
+              );
+              return channel.prepareOutboundFrame(prepared);
+            },
+          }
+        : {}),
     });
     await attachSocket(encryptedSocket, metadata);
     attached = true;

@@ -3,6 +3,7 @@ import type pino from "pino";
 import { createClientChannel, type Transport } from "@getpaseo/relay/e2ee";
 import { exportPublicKey, generateKeyPair } from "@getpaseo/relay";
 import { startRelayTransport } from "./relay-transport";
+import { resolveConfiguredRelayTransportPolicy } from "./relay-transport-policy.js";
 
 function createMockLogger() {
   const messages: { level: "debug" | "info" | "warn" | "error"; args: unknown[] }[] = [];
@@ -255,6 +256,59 @@ describe("relay-transport control lifecycle", () => {
     ]);
   });
 
+  test("locks each encrypted data socket to the policy read when its handshake starts", async () => {
+    // Mutable configured policy models a hot config update without restarting control transport.
+    let configuredPolicy = resolveConfiguredRelayTransportPolicy(undefined);
+    // Stable daemon key reused across both independently negotiated data sockets.
+    const daemonKeyPair = generateKeyPair();
+    // Long-lived transport controller that must not restart during the policy update.
+    const controller = startRelayTransport({
+      logger: createMockLogger() as unknown as pino.Logger,
+      attachSocket: async () => undefined,
+      relayEndpoint: "relay.paseo.sh:443",
+      relayUseTls: true,
+      serverId: "srv_policy_snapshot",
+      daemonKeyPair,
+      createWebSocket: relay.createWebSocket,
+      getConfiguredTransportPolicy: () => configuredPolicy,
+    });
+    controllers.push(controller);
+
+    // One control socket creates the first data connection under default auto encoding.
+    const control = relay.sockets[0];
+    control.open();
+    control.message(JSON.stringify({ type: "sync", connectionIds: [] }), false);
+    control.message(JSON.stringify({ type: "connected", connectionId: "clt_binary" }), false);
+    // First physical data socket whose handshake locks the default binary selection.
+    const binaryDataSocket = relay.sockets[1];
+    binaryDataSocket.open();
+    binaryDataSocket.message(createFramedHello(), false);
+    await vi.waitFor(() => expect(binaryDataSocket.sent).toHaveLength(1));
+
+    // Hot update affects only the subsequently created data connection's handshake snapshot.
+    configuredPolicy = resolveConfiguredRelayTransportPolicy({
+      ciphertextEncoding: "base64",
+      compression: { enabled: false },
+    });
+    control.message(JSON.stringify({ type: "connected", connectionId: "clt_base64" }), false);
+    // Second physical data socket whose handshake observes the updated Base64 preference.
+    const base64DataSocket = relay.sockets[2];
+    base64DataSocket.open();
+    base64DataSocket.message(createFramedHello(), false);
+    await vi.waitFor(() => expect(base64DataSocket.sent).toHaveLength(1));
+
+    expect([binaryDataSocket.sent[0], base64DataSocket.sent[0]].map(parseReadySelection)).toEqual([
+      {
+        ciphertextEncoding: "binary",
+        compressionAlgorithms: ["deflate-raw"],
+      },
+      {
+        ciphertextEncoding: "base64",
+        compressionAlgorithms: ["deflate-raw"],
+      },
+    ]);
+  });
+
   test("encrypted sends wait for the physical data socket callback", async () => {
     const logger = createMockLogger();
     const daemonKeyPair = generateKeyPair();
@@ -316,12 +370,16 @@ describe("relay-transport control lifecycle", () => {
       send: (data: Uint8Array) => void | Promise<void>;
     };
     let completed = false;
+    // Physical writes observed before invoking the encrypted socket send.
+    const sentBeforeApplication = dataSocket.sent.length;
 
     const sending = Promise.resolve(encryptedSocket.send(new Uint8Array([1, 2, 3]))).then(() => {
       completed = true;
       return undefined;
     });
-    await Promise.resolve();
+    await vi.waitFor(() => {
+      expect(dataSocket.sent).toHaveLength(sentBeforeApplication + 1);
+    });
     expect(completed).toBe(false);
 
     dataSocket.completeNextSend();
@@ -350,3 +408,32 @@ describe("relay-transport control lifecycle", () => {
     expect(relay.sockets[1]?.url).toMatch(/^wss:\/\/\[::1\]\/ws\?/);
   });
 });
+
+/** Creates one valid client hello offering both framed representations and raw DEFLATE. */
+function createFramedHello(): string {
+  // Fresh client key used only to produce a structurally valid hello.
+  const clientKeyPair = generateKeyPair();
+  return JSON.stringify({
+    type: "e2ee_hello",
+    key: exportPublicKey(clientKeyPair.publicKey),
+    capabilities: {
+      binaryCiphertext: true,
+      framedCiphertextV1: {
+        ciphertextEncodings: ["base64", "binary"],
+        compressionAlgorithms: ["deflate-raw"],
+      },
+    },
+  });
+}
+
+/** Extracts the framed selection from one plaintext daemon ready wire. */
+function parseReadySelection(wire: string | Uint8Array | ArrayBuffer): unknown {
+  if (typeof wire !== "string") throw new Error("Expected a plaintext ready frame");
+  // Minimal parsed ready shape needed to observe the public selection.
+  const ready = JSON.parse(wire) as {
+    capabilities?: {
+      framedCiphertextV1?: unknown;
+    };
+  };
+  return ready.capabilities?.framedCiphertextV1;
+}

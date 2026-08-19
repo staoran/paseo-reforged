@@ -169,11 +169,17 @@ import { createConfiguredTerminalManager } from "../terminal/terminal-manager-fa
 import { applyTerminalAgentHookSetting } from "../terminal/agent-hooks/terminal-agent-hook-setting.js";
 import { loadOrCreateDaemonKeyPair } from "./daemon-keypair.js";
 import { createRelayRuntime, type RelayRuntime } from "./relay-runtime.js";
+import { resolveConfiguredRelayTransportPolicy } from "./relay-transport-policy.js";
 import type { PushNotificationSender } from "./push/index.js";
 import { getOrCreateServerId } from "./server-id.js";
 import { resolveDaemonVersion } from "./daemon-version.js";
 import type { AgentClient, AgentProvider } from "./agent/agent-sdk-types.js";
-import type { AgentProfile, FirstAgentContext, TerminalProfile } from "@getpaseo/protocol/messages";
+import type {
+  AgentProfile,
+  FirstAgentContext,
+  RelayTransportConfig,
+  TerminalProfile,
+} from "@getpaseo/protocol/messages";
 import type {
   AgentProviderRuntimeSettingsMap,
   ProviderOverride,
@@ -414,6 +420,8 @@ export interface PaseoDaemonConfig {
   relayPublicEndpoint?: string;
   relayUseTls?: boolean;
   relayPublicUseTls?: boolean;
+  /** Explicit persisted relay transport policy restored during startup. */
+  relayTransport?: RelayTransportConfig;
   serviceProxy?: {
     publicBaseUrl: string | null;
     standaloneListen: string | null;
@@ -527,7 +535,10 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
   );
 
   const initialConfig: MutableDaemonConfig = {
-    relay: { enabled: config.relayEnabled ?? true },
+    relay: {
+      enabled: config.relayEnabled ?? true,
+      ...(config.relayTransport !== undefined ? { transport: config.relayTransport } : {}),
+    },
     mcp: { injectIntoAgents: config.mcpInjectIntoAgents ?? true },
     browserTools: { enabled: config.browserToolsEnabled ?? false },
     providers,
@@ -1591,6 +1602,9 @@ export async function createPaseoDaemon(
                 useTls: relayUseTls,
                 publicUseTls: relayPublicUseTls,
               },
+              transportPolicy: resolveConfiguredRelayTransportPolicy(
+                daemonConfigStore.get().relay?.transport,
+              ),
               logger,
               attachSocket: async (ws, metadata) => {
                 if (!wsServer) throw new Error("WebSocket server is not ready");
@@ -1602,6 +1616,20 @@ export async function createPaseoDaemon(
             daemonConfigStore.onFieldChange("relay.enabled", (value) => {
               relayRuntime?.setEnabled(value === true);
             });
+            /** Applies current transport settings without restarting the relay control socket. */
+            const refreshRelayTransportPolicy = (): void => {
+              relayRuntime?.setTransportPolicy(
+                resolveConfiguredRelayTransportPolicy(daemonConfigStore.get().relay?.transport),
+              );
+            };
+            daemonConfigStore.onFieldChange(
+              "relay.transport.ciphertextEncoding",
+              refreshRelayTransportPolicy,
+            );
+            daemonConfigStore.onFieldChange(
+              "relay.transport.compression.enabled",
+              refreshRelayTransportPolicy,
+            );
             await hubRelationships.start();
           };
 

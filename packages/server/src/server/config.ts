@@ -19,6 +19,7 @@ import type {
 } from "./agent/provider-launch-config.js";
 import { ProviderOverrideSchema } from "./agent/provider-launch-config.js";
 import { AgentProviderSchema } from "@getpaseo/protocol/provider-manifest";
+import type { RelayTransportConfig } from "@getpaseo/protocol/messages";
 import { hashDaemonPassword } from "./auth.js";
 import { resolveSpeechConfig } from "./speech/speech-config-resolver.js";
 import { mergeHostnames, parseHostnamesEnv, type HostnamesConfig } from "./hostnames.js";
@@ -203,6 +204,8 @@ interface ResolvedRelay {
   publicEndpoint: string;
   useTls: boolean;
   publicUseTls: boolean;
+  /** Explicit persisted transport policy, if one exists. */
+  transport?: RelayTransportConfig;
 }
 
 interface ResolvedServiceProxy {
@@ -221,6 +224,14 @@ function resolveTlsFromEnv(
   return persistedValue ?? fallback;
 }
 
+/** Returns only an explicitly persisted relay transport policy. */
+function resolvePersistedRelayTransport(
+  persisted: ReturnType<typeof loadPersistedConfig>,
+): RelayTransportConfig | undefined {
+  return persisted.daemon?.relay?.transport;
+}
+
+/** Resolves relay availability, endpoints, TLS, and explicit persisted transport policy. */
 function resolveRelayConfig(input: ResolveRelayInput): ResolvedRelay {
   const environmentEnabled = parseBooleanEnv(input.env.PASEO_RELAY_ENABLED);
   // COMPAT(relayOptInDefault): configs created before v0.2.6 may omit this field.
@@ -247,6 +258,8 @@ function resolveRelayConfig(input: ResolveRelayInput): ResolvedRelay {
     input.persisted.daemon?.relay?.publicUseTls,
     useTls,
   );
+  // Transport policy is persisted-only in v1; absent policy must stay absent.
+  const transport = resolvePersistedRelayTransport(input.persisted);
   return {
     enabled,
     enabledMutable: input.cliRelayEnabled === undefined && environmentEnabled === undefined,
@@ -254,6 +267,7 @@ function resolveRelayConfig(input: ResolveRelayInput): ResolvedRelay {
     publicEndpoint,
     useTls,
     publicUseTls,
+    transport,
   };
 }
 
@@ -545,6 +559,7 @@ export function loadConfig(
     relayPublicEndpoint: relay.publicEndpoint,
     relayUseTls: relay.useTls,
     relayPublicUseTls: relay.publicUseTls,
+    ...(relay.transport !== undefined ? { relayTransport: relay.transport } : {}),
     serviceProxy,
     webUi,
     appBaseUrl,

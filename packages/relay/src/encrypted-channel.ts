@@ -59,7 +59,28 @@ export type ConfiguredCiphertextEncoding = "auto" | CiphertextEncoding;
 export interface DaemonChannelOptions {
   /** Selects framed binary, framed Base64, or legacy fallback behavior. */
   ciphertextEncoding?: ConfiguredCiphertextEncoding;
+  /** Compression codecs implemented by the daemon runtime for this data connection. */
+  compressionAlgorithms?: readonly string[];
 }
+
+/** Immutable encrypted transport result exposed after one connection handshakes. */
+export type NegotiatedEncryptedTransport =
+  | {
+      /** Legacy encrypted transport without authenticated framing. */
+      readonly mode: "legacy";
+      /** Legacy Base64-only or binary-payload hybrid representation. */
+      readonly ciphertextEncoding: "base64" | "hybrid";
+      /** Legacy transport never negotiates framed compression codecs. */
+      readonly compressionAlgorithms: readonly string[];
+    }
+  | {
+      /** Authenticated framed ciphertext transport. */
+      readonly mode: "framed-v1";
+      /** WebSocket representation locked by exact confirmation. */
+      readonly ciphertextEncoding: CiphertextEncoding;
+      /** Ordered framed compression codecs shared by both peers. */
+      readonly compressionAlgorithms: readonly string[];
+    };
 
 /** Optional client runtime capabilities supplied when a data connection is created. */
 export interface ClientChannelOptions {
@@ -252,6 +273,7 @@ function parseFramedCiphertextV1Offer(message: E2EEHelloMessage): FramedCipherte
 function resolveDaemonFramedSelection(
   offer: FramedCiphertextV1Offer | null,
   configuredEncoding: ConfiguredCiphertextEncoding,
+  supportedCompressionAlgorithms: readonly string[],
 ): FramedCiphertextV1Selection | null {
   // COMPAT(framedCiphertextV1): introduced in v0.4.0-beta.4; remove legacy fallback after 2027-08-18.
   if (!offer) return null;
@@ -266,7 +288,7 @@ function resolveDaemonFramedSelection(
 
   return {
     ciphertextEncoding,
-    compressionAlgorithms: SUPPORTED_FRAMED_COMPRESSION_ALGORITHMS.filter((algorithm) =>
+    compressionAlgorithms: supportedCompressionAlgorithms.filter((algorithm) =>
       offer.compressionAlgorithms.includes(algorithm),
     ),
   };
@@ -777,6 +799,7 @@ export async function createDaemonChannel(
         framedSelection = resolveDaemonFramedSelection(
           parseFramedCiphertextV1Offer(msg),
           configuredEncoding,
+          options.compressionAlgorithms ?? SUPPORTED_FRAMED_COMPRESSION_ALGORITHMS,
         );
         binaryCiphertext = framedSelection
           ? framedSelection.ciphertextEncoding === "binary"
@@ -1176,6 +1199,23 @@ export class EncryptedChannel {
   /** Returns whether this open channel is locked to framed-v1 application traffic. */
   usesFramedCiphertextV1(): boolean {
     return this.options.framedCiphertextV1 !== undefined;
+  }
+
+  /** Returns the immutable encrypted transport selection for this open channel. */
+  getNegotiatedTransport(): NegotiatedEncryptedTransport {
+    const selection = this.options.framedCiphertextV1;
+    if (selection) {
+      return {
+        mode: "framed-v1",
+        ciphertextEncoding: selection.ciphertextEncoding,
+        compressionAlgorithms: [...selection.compressionAlgorithms],
+      };
+    }
+    return {
+      mode: "legacy",
+      ciphertextEncoding: this.options.binaryCiphertext ? "hybrid" : "base64",
+      compressionAlgorithms: [],
+    };
   }
 
   /** Writes a prepared frame while the handshake opening flush still owns the channel. */

@@ -9,7 +9,11 @@ import {
 } from "./agent/provider-launch-config.js";
 import type { AgentProviderRuntimeSettingsMap } from "./agent/provider-launch-config.js";
 import { ensurePrivateFile, writePrivateFileAtomicSync } from "./private-files.js";
-import { AgentProfileSchema, TerminalProfileSchema } from "@getpaseo/protocol/messages";
+import {
+  AgentProfileSchema,
+  RelayTransportConfigSchema,
+  TerminalProfileSchema,
+} from "@getpaseo/protocol/messages";
 import { PaseoServicePortAllocationSchema } from "@getpaseo/protocol/paseo-config-schema";
 
 export const LogLevelSchema = z.enum(["trace", "debug", "info", "warn", "error", "fatal"]);
@@ -273,6 +277,8 @@ export const PersistedConfigSchema = z
             publicEndpoint: z.string().optional(),
             useTls: z.boolean().optional(),
             publicUseTls: z.boolean().optional(),
+            // Explicit transport preferences only; runtime defaults are resolved separately.
+            transport: RelayTransportConfigSchema.optional(),
           })
           .strict()
           .optional(),

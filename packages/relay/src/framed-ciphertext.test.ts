@@ -93,6 +93,8 @@ function startDaemonFramedHandshake(args: {
   binaryCiphertext?: boolean;
   /** Immutable daemon encoding preference for this synthetic data connection. */
   configuredEncoding?: ConfiguredCiphertextEncoding;
+  /** Compression codecs implemented by the synthetic daemon runtime. */
+  daemonCompressionAlgorithms?: readonly string[];
   /** Holds the ready transport write so FIFO frames can be delivered before attach. */
   holdReadySend?: boolean;
   /** Optional application callbacks observed after daemon attach. */
@@ -163,6 +165,7 @@ function startDaemonFramedHandshake(args: {
   // Public daemon channel promise whose resolution represents application attach.
   const channelPromise = createDaemonChannel(transport, daemonKeyPair, args.events, {
     ciphertextEncoding: args.configuredEncoding ?? "auto",
+    compressionAlgorithms: args.daemonCompressionAlgorithms,
   });
   // Exact client hello retained for duplicate-delivery tests.
   const helloText = JSON.stringify({
@@ -915,6 +918,7 @@ describe("framed ciphertext v1 contract", () => {
     const closeCallsBeforeReady = close.mock.calls.length;
 
     fixture.releaseReady();
+    // Public channel carries the negotiated snapshot after exact confirmation.
     const channel = await fixture.channelPromise;
     if (channel.isOpen()) channel.close();
 
@@ -1183,6 +1187,34 @@ describe("framed ciphertext v1 contract", () => {
     const daemonChannel = await fixture.channelPromise;
     expect(daemonChannel.isOpen()).toBe(true);
     if (daemonChannel.isOpen()) daemonChannel.close();
+  });
+
+  it("exposes the authenticated framed selection with the daemon codec intersection", async () => {
+    // Both peers explicitly implement the fixed raw DEFLATE framed codec.
+    const fixture = startDaemonFramedHandshake({
+      ciphertextEncodings: ["binary"],
+      compressionAlgorithms: ["deflate-raw"],
+      daemonCompressionAlgorithms: ["deflate-raw"],
+    });
+    await fixture.readySent;
+    // Exact authenticated echo completes the daemon's immutable connection selection.
+    deliverLegacyEncryptedText(
+      fixture,
+      JSON.stringify({
+        type: "e2ee_mode_confirm",
+        mode: "framed-ciphertext-v1",
+        ciphertextEncoding: "binary",
+        compressionAlgorithms: ["deflate-raw"],
+      }),
+    );
+    const channel = await fixture.channelPromise;
+
+    expect(channel.getNegotiatedTransport()).toEqual({
+      mode: "framed-v1",
+      ciphertextEncoding: "binary",
+      compressionAlgorithms: ["deflate-raw"],
+    });
+    channel.close();
   });
 
   it("configured auto selects framed Base64 from a Base64-only offer", async () => {

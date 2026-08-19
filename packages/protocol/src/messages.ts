@@ -177,9 +177,30 @@ const MutableBrowserToolsConfigSchema = z
   })
   .passthrough();
 
+/** Strict user-configurable relay transport shape shared by RPC and persistence. */
+export const RelayTransportConfigSchema = z
+  .object({
+    // Preferred ciphertext representation for subsequent relay connections.
+    ciphertextEncoding: z.enum(["auto", "base64", "binary"]).optional(),
+    // Eligible outbound compression switch; codec and level are intentionally not configurable.
+    compression: z
+      .object({
+        // Enables compression attempts for eligible daemon outbound frames.
+        enabled: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
+/** User-configurable relay transport policy shared by config and runtime seams. */
+export type RelayTransportConfig = z.infer<typeof RelayTransportConfigSchema>;
+
 const MutableRelayConfigSchema = z
   .object({
     enabled: z.boolean(),
+    // Optional user policy kept separate from relay availability.
+    transport: RelayTransportConfigSchema.optional(),
   })
   .passthrough();
 export const MutableDaemonConfigSchema = z
@@ -3207,6 +3228,8 @@ export const ServerInfoStatusPayloadSchema = z
         daemonStatusRpc: z.boolean().optional(),
         // COMPAT(relayConfig): added in v0.2.6, remove gate after 2027-01-31.
         relayConfig: z.boolean().optional(),
+        // COMPAT(relayTransportPolicy): added in v0.4.0-beta.4, remove gate after 2027-02-18.
+        relayTransportPolicy: z.boolean().optional(),
         // COMPAT(pushTokenRevocation): added in v0.3.2, remove gate after 2027-02-10.
         pushTokenRevocation: z.boolean().optional(),
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.

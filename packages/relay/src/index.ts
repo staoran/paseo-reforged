@@ -25,5 +25,6 @@ export type {
   ConfiguredCiphertextEncoding,
   DaemonChannelOptions,
   EncryptedChannelEvents,
+  NegotiatedEncryptedTransport,
   Transport,
 } from "./encrypted-channel.js";
