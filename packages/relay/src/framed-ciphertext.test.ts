@@ -713,6 +713,352 @@ describe("framed ciphertext v1 contract", () => {
     },
   );
 
+  it("delivers asynchronously decoded framed messages in transport order", async () => {
+    // Portable codec generates independent authenticated input vectors.
+    const codec = createFflateFrameCompressionAdapter();
+    // Barrier keeps the first decode incomplete while the second wire arrives.
+    let releaseFirstDecode: (() => void) | null = null;
+    const firstDecodeReleased = new Promise<void>((resolve) => {
+      releaseFirstDecode = resolve;
+    });
+    // Signal proving the first decoder invocation reached its async boundary.
+    let resolveFirstDecodeStarted: (() => void) | null = null;
+    const firstDecodeStarted = new Promise<void>((resolve) => {
+      resolveFirstDecodeStarted = resolve;
+    });
+    // Number of decoder calls observable through the public adapter seam.
+    let decodeCount = 0;
+    // Decoder whose first operation is deliberately slower than later operations.
+    const compressionAdapter: FrameCompressionAdapter = {
+      inflateRaw: async (input, expectedLength, maxOutputLength) => {
+        decodeCount += 1;
+        if (decodeCount === 1) {
+          resolveFirstDecodeStarted?.();
+          await firstDecodeReleased;
+        }
+        return codec.inflateRaw(input, expectedLength, maxOutputLength);
+      },
+    };
+    // Application messages observed only through the ordered public callback.
+    const received: string[] = [];
+    // Completion signal after both application messages are delivered.
+    let resolveReceivedBoth: (() => void) | null = null;
+    const receivedBoth = new Promise<void>((resolve) => {
+      resolveReceivedBoth = resolve;
+    });
+    // Open framed binary channel with raw DEFLATE selected.
+    const fixture = await openClientFramedChannel({
+      ciphertextEncoding: "binary",
+      compressionAdapter,
+      compressionAlgorithms: ["deflate-raw"],
+      events: {
+        onmessage: (data) => {
+          if (typeof data === "string") received.push(data);
+          if (received.length === 2) resolveReceivedBoth?.();
+        },
+      },
+    });
+    // Ordered logical payloads whose compressed frames can finish out of order.
+    const payloads = ["first-state-sync\n".repeat(256), "second-state-sync\n".repeat(256)];
+    // Independent framed ciphertext wires delivered in transport order.
+    const wires: ArrayBuffer[] = [];
+    for (const payload of payloads) {
+      const bytes = new TextEncoder().encode(payload).buffer;
+      const compressed = await codec.deflateRaw(bytes, 1);
+      const prepared = prepareDeflateFramedPayload(payload, compressed);
+      wires.push(encrypt(fixture.sharedKey, prepared.plaintext));
+    }
+
+    fixture.transport.onmessage?.({ data: wires[0], isBinary: true });
+    await firstDecodeStarted;
+    fixture.transport.onmessage?.({ data: wires[1], isBinary: true });
+    await Promise.resolve();
+    expect(decodeCount).toBe(1);
+
+    releaseFirstDecode?.();
+    await receivedBoth;
+    if (fixture.channel.isOpen()) fixture.channel.close();
+
+    expect(received).toEqual(payloads);
+  });
+
+  it("closes before queued framed wire exceeds the receive high-water mark", async () => {
+    // Portable codec prepares one valid frame that can hold the receive FIFO open.
+    const codec = createFflateFrameCompressionAdapter();
+    // Barrier retains the first raw-wire reservation during asynchronous decode.
+    let releaseDecode: (() => void) | null = null;
+    const decodeReleased = new Promise<void>((resolve) => {
+      releaseDecode = resolve;
+    });
+    // Signal proving the first item is active rather than merely queued.
+    let resolveDecodeStarted: (() => void) | null = null;
+    const decodeStarted = new Promise<void>((resolve) => {
+      resolveDecodeStarted = resolve;
+    });
+    // Decoder holds exactly one valid frame at the public adapter boundary.
+    const compressionAdapter: FrameCompressionAdapter = {
+      inflateRaw: async (input, expectedLength, maxOutputLength) => {
+        resolveDecodeStarted?.();
+        await decodeReleased;
+        return codec.inflateRaw(input, expectedLength, maxOutputLength);
+      },
+    };
+    // First physical close request caused by aggregate raw-wire pressure.
+    let resolveClosed: (() => void) | null = null;
+    const closed = new Promise<void>((resolve) => {
+      resolveClosed = resolve;
+    });
+    // No application value may escape after a high-water failure.
+    const received: (string | ArrayBuffer)[] = [];
+    // Open client whose decoder and close seam are controlled by the test.
+    const fixture = await openClientFramedChannel({
+      ciphertextEncoding: "binary",
+      compressionAdapter,
+      compressionAlgorithms: ["deflate-raw"],
+      close: () => resolveClosed?.(),
+      events: { onmessage: (data) => received.push(data) },
+    });
+    // Small valid compressed frame holds the active reservation.
+    const payload = "receive-reservation\n".repeat(256);
+    const payloadBytes = new TextEncoder().encode(payload).buffer;
+    const compressed = await codec.deflateRaw(payloadBytes, 1);
+    const prepared = prepareDeflateFramedPayload(payload, compressed);
+    const firstWire = encrypt(fixture.sharedKey, prepared.plaintext);
+
+    fixture.transport.onmessage?.({ data: firstWire, isBinary: true });
+    await decodeStarted;
+    // Each queued frame is below 32 MiB, while both plus the active item exceed 64 MiB.
+    const largeWireBytes = MAX_FRAMED_WIRE_BYTES - 1;
+    fixture.transport.onmessage?.({ data: new ArrayBuffer(largeWireBytes), isBinary: true });
+    fixture.transport.onmessage?.({ data: new ArrayBuffer(largeWireBytes), isBinary: true });
+    const closeState = await observePromiseState(closed);
+
+    releaseDecode?.();
+    await Promise.resolve();
+    if (fixture.channel.isOpen()) fixture.channel.close();
+
+    expect({ closeState, received }).toEqual({ closeState: "fulfilled", received: [] });
+  });
+
+  it("reserves framed client wire that arrives in the same turn as ready", async () => {
+    // Daemon identity transferred to the client through the pairing boundary.
+    const daemonKeyPair = generateKeyPair();
+    // Physical close observer must fire before asynchronous ready processing begins.
+    const close = vi.fn();
+    // Public transport captures the client hello and accepts synthetic daemon frames.
+    const transport: Transport = {
+      send: vi.fn(),
+      close,
+      onmessage: null,
+      onclose: null,
+      onerror: null,
+    };
+    // New client always offers framed-v1, even without a compression decoder.
+    const channel = await createClientChannel(transport, exportPublicKey(daemonKeyPair.publicKey));
+
+    // Ready and all following wires arrive before the receive promise tail runs.
+    deliverFramedBinaryReady(transport);
+    transport.onmessage?.({ data: new ArrayBuffer(30 * 1024 * 1024), isBinary: true });
+    transport.onmessage?.({ data: new ArrayBuffer(30 * 1024 * 1024), isBinary: true });
+    transport.onmessage?.({ data: new ArrayBuffer(5 * 1024 * 1024), isBinary: true });
+    const closeCallsInTransportTurn = close.mock.calls.length;
+    if (channel.isOpen()) channel.close();
+
+    expect(closeCallsInTransportTurn).toBe(1);
+  });
+
+  it("closes before the daemon handshake backlog exceeds the receive high-water mark", async () => {
+    // First physical close request while the daemon ready write remains pending.
+    let resolveClosed: (() => void) | null = null;
+    const closed = new Promise<void>((resolve) => {
+      resolveClosed = resolve;
+    });
+    // Daemon factory holds ready so all following wires remain in its pre-attach FIFO.
+    const fixture = startDaemonFramedHandshake({
+      ciphertextEncodings: ["binary"],
+      holdReadySend: true,
+      close: () => resolveClosed?.(),
+    });
+    // Observe rejection from the public factory without leaving an unhandled promise.
+    const channelOutcome = fixture.channelPromise.then(
+      () => "opened" as const,
+      () => "rejected" as const,
+    );
+    await fixture.readySent;
+    // Each raw frame is individually below 32 MiB; their aggregate crosses 64 MiB.
+    const largeWireBytes = MAX_FRAMED_WIRE_BYTES - 1;
+    fixture.transport.onmessage?.({ data: new ArrayBuffer(largeWireBytes), isBinary: true });
+    fixture.transport.onmessage?.({ data: new ArrayBuffer(largeWireBytes), isBinary: true });
+    fixture.transport.onmessage?.({ data: new ArrayBuffer(3), isBinary: true });
+
+    const closeState = await observePromiseState(closed);
+    fixture.releaseReady();
+
+    expect({ closeState, channelOutcome: await channelOutcome }).toEqual({
+      closeState: "fulfilled",
+      channelOutcome: "rejected",
+    });
+  });
+
+  it("preserves the legacy daemon handshake backlog without framed receive limits", async () => {
+    // Legacy hybrid selection has no common framed representation.
+    const close = vi.fn();
+    const fixture = startDaemonFramedHandshake({
+      ciphertextEncodings: [],
+      holdReadySend: true,
+      close,
+    });
+    await fixture.readySent;
+    // Existing legacy behavior retains these opaque frames until ready completes.
+    fixture.transport.onmessage?.({ data: new ArrayBuffer(33 * 1024 * 1024), isBinary: true });
+    fixture.transport.onmessage?.({ data: new ArrayBuffer(33 * 1024 * 1024), isBinary: true });
+    const closeCallsBeforeReady = close.mock.calls.length;
+
+    fixture.releaseReady();
+    const channel = await fixture.channelPromise;
+    if (channel.isOpen()) channel.close();
+
+    expect(closeCallsBeforeReady).toBe(0);
+  });
+
+  it("shares the receive budget while the daemon hands backlog ownership to the channel", async () => {
+    // Physical close observer distinguishes immediate shared-budget rejection from later decode failure.
+    const close = vi.fn();
+    // Daemon transport becomes available before the deferred ready write is released.
+    let transport: Transport | null = null;
+    // Close count captured synchronously inside the public open callback.
+    let closeCallsDuringOpen = -1;
+    // Factory backlog can remain below 64 MiB before the channel receives new traffic.
+    const fixture = startDaemonFramedHandshake({
+      ciphertextEncodings: ["binary"],
+      holdReadySend: true,
+      close,
+      events: {
+        onopen: () => {
+          transport?.onmessage?.({ data: new ArrayBuffer(5 * 1024 * 1024), isBinary: true });
+          closeCallsDuringOpen = close.mock.calls.length;
+        },
+      },
+    });
+    transport = fixture.transport;
+    await fixture.readySent;
+    // Exact confirm leads the retained FIFO and attaches the framed channel.
+    deliverLegacyEncryptedText(
+      fixture,
+      JSON.stringify({
+        type: "e2ee_mode_confirm",
+        mode: "framed-ciphertext-v1",
+        ciphertextEncoding: "binary",
+        compressionAlgorithms: [],
+      }),
+    );
+    // Two individually valid raw wires consume nearly all factory receive capacity.
+    const largeWireBytes = 30 * 1024 * 1024;
+    fixture.transport.onmessage?.({ data: new ArrayBuffer(largeWireBytes), isBinary: true });
+    fixture.transport.onmessage?.({ data: new ArrayBuffer(largeWireBytes), isBinary: true });
+
+    fixture.releaseReady();
+    const channel = await fixture.channelPromise;
+
+    expect({ closeCallsDuringOpen, channelOpen: channel.isOpen() }).toEqual({
+      closeCallsDuringOpen: 1,
+      channelOpen: false,
+    });
+  });
+
+  it("closes a framed channel and suppresses an in-flight decode after transport error", async () => {
+    // Portable codec prepares one valid compressed ciphertext vector.
+    const codec = createFflateFrameCompressionAdapter();
+    // Barrier retains decoded output until after transport failure.
+    let releaseDecode: (() => void) | null = null;
+    const decodeReleased = new Promise<void>((resolve) => {
+      releaseDecode = resolve;
+    });
+    // Signal proving the decoder has started before the error arrives.
+    let resolveDecodeStarted: (() => void) | null = null;
+    const decodeStarted = new Promise<void>((resolve) => {
+      resolveDecodeStarted = resolve;
+    });
+    // Framed decoder controlled at the runtime adapter seam.
+    const compressionAdapter: FrameCompressionAdapter = {
+      inflateRaw: async (input, expectedLength, maxOutputLength) => {
+        resolveDecodeStarted?.();
+        await decodeReleased;
+        return codec.inflateRaw(input, expectedLength, maxOutputLength);
+      },
+    };
+    // Public close signal expected immediately from transport failure.
+    let resolveClosed: (() => void) | null = null;
+    const closed = new Promise<void>((resolve) => {
+      resolveClosed = resolve;
+    });
+    // Application callback must not receive work completed after failure.
+    const received: (string | ArrayBuffer)[] = [];
+    const fixture = await openClientFramedChannel({
+      ciphertextEncoding: "binary",
+      compressionAdapter,
+      compressionAlgorithms: ["deflate-raw"],
+      close: () => resolveClosed?.(),
+      events: { onmessage: (data) => received.push(data) },
+    });
+    // Independently prepared valid compressed frame enters asynchronous decode.
+    const payload = "transport-error\n".repeat(256);
+    const bytes = new TextEncoder().encode(payload).buffer;
+    const compressed = await codec.deflateRaw(bytes, 1);
+    const prepared = prepareDeflateFramedPayload(payload, compressed);
+    fixture.transport.onmessage?.({
+      data: encrypt(fixture.sharedKey, prepared.plaintext),
+      isBinary: true,
+    });
+    await decodeStarted;
+
+    fixture.transport.onerror?.(new Error("transport failed"));
+    const closeState = await observePromiseState(closed);
+    releaseDecode?.();
+    await Promise.resolve();
+
+    expect({ closeState, received, channelOpen: fixture.channel.isOpen() }).toEqual({
+      closeState: "fulfilled",
+      received: [],
+      channelOpen: false,
+    });
+  });
+
+  it.each(["binary", "base64"] as const)(
+    "sends an already prepared framed payload once through $ciphertextEncoding",
+    async (ciphertextEncoding) => {
+      // Daemon fixture negotiates the requested representation before the prepared send.
+      const fixture = startDaemonFramedHandshake({ ciphertextEncodings: [ciphertextEncoding] });
+      await fixture.readySent;
+      deliverLegacyEncryptedText(
+        fixture,
+        JSON.stringify({
+          type: "e2ee_mode_confirm",
+          mode: "framed-ciphertext-v1",
+          ciphertextEncoding,
+          compressionAlgorithms: [],
+        }),
+      );
+      const channel = await fixture.channelPromise;
+      fixture.sent.length = 0;
+      // Envelope prepared once at the public framed-payload boundary.
+      const prepared = prepareIdentityFramedPayload("prepared-once");
+
+      const outbound = channel.prepareOutboundFrame(prepared);
+      await channel.sendPreparedFrame(outbound);
+      // Prepared wire decoded only at the selected representation boundary.
+      const wire = fixture.sent[0];
+      const ciphertext =
+        ciphertextEncoding === "binary"
+          ? (wire as ArrayBuffer)
+          : base64ToArrayBuffer(wire as string);
+      const authenticatedPlaintext = decrypt(fixture.sharedKey, ciphertext);
+      if (channel.isOpen()) channel.close();
+
+      expect(new Uint8Array(authenticatedPlaintext)).toEqual(new Uint8Array(prepared.plaintext));
+    },
+  );
+
   it("keeps client outbound payloads identity after deflate-raw is selected", async () => {
     // Portable decoder authorizing the synthetic daemon selection.
     const compressionAdapter = createFflateFrameCompressionAdapter();
@@ -2208,7 +2554,7 @@ describe("framed ciphertext v1 contract", () => {
     expect(applicationPayloads).toEqual(["pending-before-ready", "from-onopen"]);
   });
 
-  it.skip("delivers legacy application frames that arrive while the handshake backlog is flushing", async () => {
+  it("delivers legacy application frames that arrive while the handshake backlog is flushing", async () => {
     // Daemon identity used to derive the synthetic legacy inbound ciphertext.
     const daemonKeyPair = generateKeyPair();
     // Application payloads observed through the public channel callback.

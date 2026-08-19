@@ -110,6 +110,67 @@ describe("EncryptedChannel", () => {
     expect(completed).toBe(true);
   });
 
+  it("preserves an open legacy channel when an application transport write rejects", async () => {
+    // Legacy transport failure remains observable only through the returned send promise.
+    const transport: Transport = {
+      send: () => Promise.reject(new Error("legacy send failed")),
+      close: vi.fn(),
+      onmessage: null,
+      onclose: null,
+      onerror: null,
+    };
+    // Independent key pairs establish a valid shared channel key.
+    const first = generateKeyPair();
+    const second = generateKeyPair();
+    const channel = new EncryptedChannel(
+      transport,
+      deriveSharedKey(first.secretKey, second.publicKey),
+      {},
+      { binaryCiphertext: true },
+    );
+    channel.setState("open");
+
+    await expect(channel.send(new Uint8Array([1]).buffer)).rejects.toThrow("legacy send failed");
+
+    expect({
+      channelOpen: channel.isOpen(),
+      closeCalls: vi.mocked(transport.close).mock.calls,
+    }).toEqual({ channelOpen: true, closeCalls: [] });
+  });
+
+  it("closes a framed channel when an application transport write rejects", async () => {
+    // Framed send failure must fail closed so no later prepared frame can overtake it.
+    const transport: Transport = {
+      send: () => Promise.reject(new Error("framed send failed")),
+      close: vi.fn(),
+      onmessage: null,
+      onclose: null,
+      onerror: null,
+    };
+    // Independent key pairs establish a valid shared channel key.
+    const first = generateKeyPair();
+    const second = generateKeyPair();
+    const channel = new EncryptedChannel(
+      transport,
+      deriveSharedKey(first.secretKey, second.publicKey),
+      {},
+      {
+        framedCiphertextV1: {
+          ciphertextEncoding: "binary",
+          compressionAlgorithms: [],
+        },
+      },
+    );
+    channel.setState("open");
+
+    await expect(channel.send("framed payload")).rejects.toThrow("framed send failed");
+
+    expect({
+      channelOpen: channel.isOpen(),
+      closeCalls: vi.mocked(transport.close).mock.calls,
+    }).toEqual({ channelOpen: false, closeCalls: [[1011, "framed send failed"]] });
+  });
+
   it("establishes encrypted channel between daemon and client", async () => {
     const [daemonTransport, clientTransport] = createMockTransportPair();
 

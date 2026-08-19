@@ -21,8 +21,10 @@ import {
   decodeFramedCiphertextWire,
   decodeFramedPayload,
   framedCiphertextWireByteLength,
+  MAX_FRAMED_WIRE_BYTES,
   prepareIdentityFramedPayload,
   type FrameCompressionAdapter,
+  type PreparedFramedPayload,
 } from "./framed-ciphertext.js";
 
 export interface Transport {
@@ -65,6 +67,21 @@ export interface ClientChannelOptions {
   compressionAdapter?: FrameCompressionAdapter;
 }
 
+/** Fully encrypted and representation-encoded application frame ready for one transport write. */
+export interface PreparedEncryptedFrame {
+  /** Exact text or binary value passed unchanged to the transport. */
+  readonly wireData: string | ArrayBuffer;
+  /** Exact number of bytes occupied by the WebSocket application payload. */
+  readonly wireByteLength: number;
+  /** Whether the frame uses the authenticated framed-v1 contract. */
+  readonly framedCiphertextV1: boolean;
+}
+
+/** Returns the actual WebSocket application bytes carried by one prepared encrypted frame. */
+export function preparedEncryptedFrameWireByteLength(frame: PreparedEncryptedFrame): number {
+  return utf8ByteLength(frame.wireData);
+}
+
 interface EncryptedChannelOptions {
   /**
    * If set, the channel can validate repeated plaintext `{type:"e2ee_hello"}`
@@ -85,6 +102,10 @@ interface EncryptedChannelOptions {
   offeredCompressionAlgorithms?: readonly string[];
   /** Runtime decoder for framed payloads selected on this connection. */
   compressionAdapter?: FrameCompressionAdapter;
+  /** Shared raw-wire budget retained while daemon factory ownership is handed off. */
+  receiveWireBudget?: ReceiveWireBudget;
+  /** Reserves ready-adjacent client traffic until the offered framed mode is accepted or declined. */
+  framedCiphertextV1Offered?: boolean;
 }
 
 interface FramedCiphertextV1Offer {
@@ -318,6 +339,8 @@ const HANDSHAKE_RETRY_MS = 1000;
 const MAX_PENDING_SENDS = 200;
 const REHANDSHAKE_KEY_MISMATCH_CLOSE_CODE = 1008;
 const ENCRYPTED_PAYLOAD_OVERHEAD_BYTES = 40;
+/** Aggregate raw inbound WebSocket bytes retained by one encrypted channel. */
+export const MAX_PENDING_RECEIVE_WIRE_BYTES = 64 * 1024 * 1024;
 /** Framed ciphertext representations implemented by this relay package. */
 const SUPPORTED_FRAMED_CIPHERTEXT_ENCODINGS: readonly CiphertextEncoding[] = ["base64", "binary"];
 /** Compression decoders implemented by this relay package in the identity-only slice. */
@@ -336,6 +359,20 @@ const REHANDSHAKE_KEY_MISMATCH_CLOSE_REASON = "E2EE re-handshake key mismatch";
 
 interface TimeoutWithUnref {
   unref(): void;
+}
+
+/** Idempotent reservation held until one inbound transport item finishes processing. */
+interface ReceiveWireReservation {
+  /** Raw WebSocket byte count charged to this item. */
+  bytes: number;
+  /** Prevents close cleanup and FIFO completion from releasing twice. */
+  released: boolean;
+}
+
+/** Mutable byte counter shared only across one connection's receive ownership handoff. */
+interface ReceiveWireBudget {
+  /** Active and queued raw WebSocket bytes retained by factory and channel. */
+  pendingBytes: number;
 }
 
 function hasUnref(timeout: unknown): timeout is TimeoutWithUnref {
@@ -373,6 +410,7 @@ export async function createClientChannel(
   const channel = new EncryptedChannel(transport, sharedKey, events, {
     offeredCompressionAlgorithms: compressionAlgorithms,
     compressionAdapter: options.compressionAdapter,
+    framedCiphertextV1Offered: true,
   });
 
   // Send e2ee_hello with our public key
@@ -461,8 +499,19 @@ export async function createDaemonChannel(
       | "open"
       | "closed";
 
+    /** One pre-attach transport item and its shared raw-wire reservation. */
+    interface BufferedHandshakeMessage {
+      /** Original transport item retained without decoding or decrypting. */
+      message: TransportMessage;
+      /** Raw-wire reservation owned by the factory until channel handoff. */
+      reservation: ReceiveWireReservation;
+    }
     // Messages retained while ready or a same-key replay is crossing the transport boundary.
-    const bufferedMessages: TransportMessage[] = [];
+    const bufferedMessages: BufferedHandshakeMessage[] = [];
+    // Shared raw-byte counter retained across the factory-to-channel ownership handoff.
+    const receiveWireBudget: ReceiveWireBudget = { pendingBytes: 0 };
+    // Individual factory reservations used for idempotent failure cleanup.
+    const handshakeReservations = new Set<ReceiveWireReservation>();
     // Current factory phase used to keep handshake messages in one receive FIFO.
     let phase: DaemonHandshakePhase = "awaiting-hello";
     // Prevents two async drains from consuming the same buffered FIFO.
@@ -497,9 +546,27 @@ export async function createDaemonChannel(
     /** Re-reads the mutable phase after an asynchronous transport boundary. */
     const isHandshakeClosed = (): boolean => phase === "closed";
 
+    /** Releases one pre-attach raw-wire reservation exactly once. */
+    const releaseHandshakeReservation = (reservation: ReceiveWireReservation): void => {
+      if (reservation.released) return;
+      reservation.released = true;
+      handshakeReservations.delete(reservation);
+      receiveWireBudget.pendingBytes -= reservation.bytes;
+      if (receiveWireBudget.pendingBytes < 0) receiveWireBudget.pendingBytes = 0;
+    };
+
+    /** Releases every queued and active factory reservation during teardown. */
+    const releaseAllHandshakeReservations = (): void => {
+      for (const reservation of handshakeReservations) {
+        releaseHandshakeReservation(reservation);
+      }
+      bufferedMessages.length = 0;
+    };
+
     /** Rejects the unattached factory once without requesting a physical close. */
     const rejectFactory = (error: Error): void => {
       phase = "closed";
+      releaseAllHandshakeReservations();
       if (factorySettled) return;
       factorySettled = true;
       reject(error);
@@ -511,6 +578,7 @@ export async function createDaemonChannel(
       // Normalized protocol error shared by the promise and physical close reason.
       const err = error instanceof Error ? error : new Error(String(error));
       phase = "closed";
+      releaseAllHandshakeReservations();
       channel?.setState("closed");
       if (!factorySettled) {
         factorySettled = true;
@@ -525,6 +593,25 @@ export async function createDaemonChannel(
       }
     };
 
+    /** Reserves one framed handshake-backlog item before any wire decoding or decryption. */
+    const reserveHandshakeMessage = (message: TransportMessage): ReceiveWireReservation | null => {
+      if (!framedSelection) return { bytes: 0, released: false };
+      // Raw WebSocket bytes counted before Base64 allocation or authenticated parsing.
+      const bytes = transportMessageWireByteLength(message);
+      if (framedSelection && bytes >= MAX_FRAMED_WIRE_BYTES) {
+        failHandshake(new Error("Framed ciphertext exceeds the wire byte limit"), 1009);
+        return null;
+      }
+      if (receiveWireBudget.pendingBytes + bytes > MAX_PENDING_RECEIVE_WIRE_BYTES) {
+        failHandshake(new Error("Encrypted channel exceeded its inbound high-water mark"), 1009);
+        return null;
+      }
+      const reservation: ReceiveWireReservation = { bytes, released: false };
+      receiveWireBudget.pendingBytes += bytes;
+      handshakeReservations.add(reservation);
+      return reservation;
+    };
+
     /** Attaches one channel after legacy ready or an exact framed confirmation. */
     const attachChannel = (): EncryptedChannel => {
       if (!sharedKey || !savedReadyText) {
@@ -537,6 +624,7 @@ export async function createDaemonChannel(
         binaryCiphertext,
         ...(framedSelection ? { framedCiphertextV1: framedSelection } : {}),
         daemonReadyText: savedReadyText,
+        receiveWireBudget,
       });
       attachedChannel.setState("open");
       channel = attachedChannel;
@@ -601,6 +689,20 @@ export async function createDaemonChannel(
       attachChannel();
     };
 
+    /** Processes one handshake backlog item under the current factory phase. */
+    const deliverBufferedMessage = async (buffered: BufferedHandshakeMessage): Promise<boolean> => {
+      if (phase === "pending-confirm") {
+        await handlePendingConfirm(buffered.message);
+        return true;
+      }
+      if (phase !== "open") return false;
+      if (shouldIgnoreBufferedReady(buffered.message)) return true;
+      // Ownership moves synchronously to EncryptedChannel's receive reservation.
+      releaseHandshakeReservation(buffered.reservation);
+      transport.onmessage?.(buffered.message);
+      return true;
+    };
+
     /** Drains handshake backlog serially and hands post-attach frames to the channel in order. */
     const drainBufferedMessages = async (): Promise<void> => {
       if (drainingBufferedMessages || phase === "sending-ready" || phase === "closed") return;
@@ -610,16 +712,11 @@ export async function createDaemonChannel(
           // FIFO head retained across every awaited transport or crypto boundary.
           const buffered = bufferedMessages.shift();
           if (!buffered) continue;
-          if (phase === "pending-confirm") {
-            await handlePendingConfirm(buffered);
-            continue;
+          try {
+            if (!(await deliverBufferedMessage(buffered))) break;
+          } finally {
+            releaseHandshakeReservation(buffered.reservation);
           }
-          if (phase === "open") {
-            if (shouldIgnoreBufferedReady(buffered)) continue;
-            await transport.onmessage?.(buffered);
-            continue;
-          }
-          break;
         }
       } catch (error) {
         const closeCode =
@@ -637,7 +734,9 @@ export async function createDaemonChannel(
 
     /** Buffers every post-hello message until ready and optional confirm complete in FIFO. */
     const bufferPostHelloMessage = (message: TransportMessage): void => {
-      bufferedMessages.push(message);
+      const reservation = reserveHandshakeMessage(message);
+      if (!reservation) return;
+      bufferedMessages.push({ message, reservation });
       if (phase === "pending-confirm" || phase === "open") {
         void drainBufferedMessages();
       }
@@ -730,6 +829,16 @@ export class EncryptedChannel {
   private pendingSends: Array<string | ArrayBuffer> = [];
   private onOpenCallbacks: Array<() => void> = [];
   private onCloseCallbacks: Array<() => void> = [];
+  /** Serial receive tail covering handshake transitions and application decode. */
+  private receiveTail: Promise<void> = Promise.resolve();
+  /** Serial transport-write tail preserving application send invocation order. */
+  private sendTail: Promise<void> = Promise.resolve();
+  /** Aggregate raw-byte counter shared with a daemon factory during ownership handoff. */
+  private readonly receiveWireBudget: ReceiveWireBudget;
+  /** Individual inbound reservations used for idempotent close cleanup. */
+  private readonly receiveReservations = new Set<ReceiveWireReservation>();
+  /** Whether inbound application traffic is locked to the framed-v1 contract. */
+  private framedReceiveExpected: boolean;
 
   constructor(
     transport: Transport,
@@ -741,18 +850,90 @@ export class EncryptedChannel {
     this.sharedKey = sharedKey;
     this.events = events;
     this.options = options;
+    this.receiveWireBudget = options.receiveWireBudget ?? { pendingBytes: 0 };
+    this.framedReceiveExpected =
+      options.framedCiphertextV1 !== undefined || options.framedCiphertextV1Offered === true;
 
     Object.assign(transport, {
-      onmessage: (message: TransportMessage) => this.handleMessage(message),
+      onmessage: (message: TransportMessage) => this.enqueueMessage(message),
       onclose: (code: number, reason: string) => {
         this.state = "closed";
+        this.releaseAllReceiveReservations();
         this.events.onclose?.(code, reason);
         for (const cb of this.onCloseCallbacks) cb();
       },
       onerror: (error: Error) => {
+        if (this.options.framedCiphertextV1) {
+          this.failReceive(error);
+        } else {
+          this.releaseAllReceiveReservations();
+        }
         this.events.onerror?.(error);
       },
     });
+  }
+
+  /** Appends one transport message to the connection-wide receive FIFO. */
+  private enqueueMessage(message: TransportMessage): void {
+    if (!this.framedReceiveExpected) {
+      this.receiveTail = this.receiveTail
+        .then(() => this.handleMessage(message))
+        .catch((error: unknown) => this.failReceive(error));
+      return;
+    }
+    const reservation = this.reserveReceiveWire(message);
+    if (!reservation) return;
+    this.receiveTail = this.receiveTail
+      .then(() => this.handleMessage(message))
+      .catch((error: unknown) => {
+        this.failReceive(error);
+      })
+      .finally(() => this.releaseReceiveWire(reservation));
+  }
+
+  /** Reserves raw ingress bytes before Base64 decoding, decryption, or decompression. */
+  private reserveReceiveWire(message: TransportMessage): ReceiveWireReservation | null {
+    if (this.state === "closed") return null;
+    const bytes = transportMessageWireByteLength(message);
+    if (this.options.framedCiphertextV1 && bytes >= MAX_FRAMED_WIRE_BYTES) {
+      this.failReceive(new Error("Framed ciphertext exceeds the wire byte limit"), 1009);
+      return null;
+    }
+    if (this.receiveWireBudget.pendingBytes + bytes > MAX_PENDING_RECEIVE_WIRE_BYTES) {
+      this.failReceive(new Error("Encrypted channel exceeded its inbound high-water mark"), 1009);
+      return null;
+    }
+    const reservation: ReceiveWireReservation = { bytes, released: false };
+    this.receiveWireBudget.pendingBytes += bytes;
+    this.receiveReservations.add(reservation);
+    return reservation;
+  }
+
+  /** Releases one inbound reservation exactly once after FIFO processing completes. */
+  private releaseReceiveWire(reservation: ReceiveWireReservation): void {
+    if (reservation.released) return;
+    reservation.released = true;
+    this.receiveReservations.delete(reservation);
+    this.receiveWireBudget.pendingBytes -= reservation.bytes;
+    if (this.receiveWireBudget.pendingBytes < 0) this.receiveWireBudget.pendingBytes = 0;
+  }
+
+  /** Releases all active and queued ingress reservations during connection teardown. */
+  private releaseAllReceiveReservations(): void {
+    for (const reservation of this.receiveReservations) this.releaseReceiveWire(reservation);
+  }
+
+  /** Fails the current connection without allowing a partially decoded frame to escape. */
+  private failReceive(error: unknown, closeCode = 1011): void {
+    if (this.state === "closed") return;
+    const err = error instanceof Error ? error : new Error(String(error));
+    this.state = "closed";
+    this.releaseAllReceiveReservations();
+    try {
+      this.transport.close(closeCode, err.message);
+    } catch {
+      // The protocol failure remains observable through channel state and pending promises.
+    }
   }
 
   setState(state: ChannelState): void {
@@ -839,6 +1020,7 @@ export class EncryptedChannel {
         const plaintext = this.options.framedCiphertextV1
           ? (await decodeFramedPayload(plaintextBytes, this.options.compressionAdapter)).data
           : decodePlaintext(plaintextBytes, ciphertext.isBinary);
+        if (this.state !== "open") return;
         if (typeof plaintext === "string" && isReservedModeConfirmText(plaintext)) {
           throw new Error("Received reserved e2ee_mode_confirm outside a pending selection");
         }
@@ -846,6 +1028,8 @@ export class EncryptedChannel {
       }
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
+
+      if (this.isClosed()) return;
 
       // Treat decryption/protocol errors as fatal so the peer can reconnect and
       // re-handshake. Emitting an error event here can cause higher-level code
@@ -889,9 +1073,12 @@ export class EncryptedChannel {
       this.options.offeredCompressionAlgorithms ?? SUPPORTED_FRAMED_COMPRESSION_ALGORITHMS,
     );
     if (framedSelection) {
+      this.framedReceiveExpected = true;
       this.state = "confirming";
       if (!(await this.tryConfirmFramedMode(framedSelection))) return;
       if (this.state !== "confirming") return;
+    } else {
+      this.framedReceiveExpected = false;
     }
 
     this.options.binaryCiphertext = supportsBinaryCiphertext(message);
@@ -932,27 +1119,112 @@ export class EncryptedChannel {
 
   /** Encrypts and writes one application frame after the channel mode is fixed. */
   private async sendApplicationFrame(data: string | ArrayBuffer): Promise<void> {
-    // Authenticated plaintext selected by the negotiated connection mode.
-    const authenticatedPlaintext = this.options.framedCiphertextV1
-      ? prepareIdentityFramedPayload(data).plaintext
-      : data;
-    // NaCl bundle containing the nonce, authenticated ciphertext, and MAC.
-    const ciphertext = encrypt(this.sharedKey, authenticatedPlaintext);
-    if (this.options.framedCiphertextV1) {
-      if (this.options.framedCiphertextV1.ciphertextEncoding === "binary") {
-        await this.transport.send(ciphertext);
-        return;
+    const prepared = this.prepareOutboundFrame(data);
+    await this.writePreparedFrame(prepared, this.state === "opening");
+  }
+
+  /** Encrypts and representation-encodes one logical or already-framed payload exactly once. */
+  prepareOutboundFrame(data: string | ArrayBuffer | PreparedFramedPayload): PreparedEncryptedFrame {
+    // Caller-supplied envelopes are local trusted values produced by the framed preparation API.
+    const suppliedEnvelope = typeof data !== "string" && !(data instanceof ArrayBuffer);
+    const selection = this.options.framedCiphertextV1;
+    if (suppliedEnvelope && !selection) {
+      throw new Error("Prepared framed payload requires a framed-v1 connection");
+    }
+
+    if (selection) {
+      // Authenticated envelope is reused when compression already prepared it upstream.
+      const framedPayload = suppliedEnvelope ? data : prepareIdentityFramedPayload(data);
+      if (
+        framedPayload.codec !== "identity" &&
+        !selection.compressionAlgorithms.includes(framedPayload.codec)
+      ) {
+        throw new Error("Prepared framed payload uses an unnegotiated compression codec");
       }
-      await this.transport.send(arrayBufferToBase64(ciphertext));
+      const wireByteLength = framedCiphertextWireByteLength(
+        framedPayload.encodedByteLength,
+        selection.ciphertextEncoding,
+      );
+      if (wireByteLength >= MAX_FRAMED_WIRE_BYTES) {
+        throw new Error("Framed ciphertext exceeds the wire byte limit");
+      }
+      // NaCl output and its selected WebSocket representation are materialized once.
+      const ciphertext = encrypt(this.sharedKey, framedPayload.plaintext);
+      const wireData =
+        selection.ciphertextEncoding === "binary" ? ciphertext : arrayBufferToBase64(ciphertext);
+      return { wireData, wireByteLength, framedCiphertextV1: true };
+    }
+
+    // Legacy plaintext kind still controls its pre-framed hybrid representation.
+    const ciphertext = encrypt(this.sharedKey, data as string | ArrayBuffer);
+    const wireData =
+      this.options.binaryCiphertext && data instanceof ArrayBuffer
+        ? ciphertext
+        : arrayBufferToBase64(ciphertext);
+    return {
+      wireData,
+      wireByteLength: typeof wireData === "string" ? wireData.length : wireData.byteLength,
+      framedCiphertextV1: false,
+    };
+  }
+
+  /** Writes one fully prepared frame through the connection-wide send FIFO. */
+  async sendPreparedFrame(frame: PreparedEncryptedFrame): Promise<void> {
+    await this.writePreparedFrame(frame, false);
+  }
+
+  /** Returns whether this open channel is locked to framed-v1 application traffic. */
+  usesFramedCiphertextV1(): boolean {
+    return this.options.framedCiphertextV1 !== undefined;
+  }
+
+  /** Writes a prepared frame while the handshake opening flush still owns the channel. */
+  private async writePreparedFrame(
+    frame: PreparedEncryptedFrame,
+    allowOpening: boolean,
+  ): Promise<void> {
+    if (preparedEncryptedFrameWireByteLength(frame) !== frame.wireByteLength) {
+      throw new Error("Prepared encrypted frame wire length mismatch");
+    }
+    const selection = this.options.framedCiphertextV1;
+    if (frame.framedCiphertextV1 !== (selection !== undefined)) {
+      throw new Error("Prepared encrypted frame mode does not match the channel");
+    }
+    if (selection?.ciphertextEncoding === "binary" && !(frame.wireData instanceof ArrayBuffer)) {
+      throw new Error("Prepared framed binary ciphertext requires binary wire data");
+    }
+    if (selection?.ciphertextEncoding === "base64" && typeof frame.wireData !== "string") {
+      throw new Error("Prepared framed Base64 ciphertext requires text wire data");
+    }
+    if (this.state !== "open" && !(allowOpening && this.state === "opening")) {
+      throw new Error("Channel not open");
+    }
+    if (!frame.framedCiphertextV1) {
+      await this.transport.send(frame.wireData);
       return;
     }
-    if (this.options.binaryCiphertext && data instanceof ArrayBuffer) {
-      await this.transport.send(ciphertext);
-      return;
+    const sendOperation = this.sendTail.then(async () => {
+      if (this.state !== "open" && !(allowOpening && this.state === "opening")) {
+        throw new Error("Channel not open");
+      }
+      return this.transport.send(frame.wireData);
+    });
+    // A rejected write must not strand later queued operations on a rejected tail.
+    this.sendTail = sendOperation.catch(() => undefined);
+    try {
+      await sendOperation;
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      if (frame.framedCiphertextV1 && !this.isClosed()) {
+        this.state = "closed";
+        try {
+          this.transport.close(1011, err.message);
+        } catch {
+          // The original write failure remains the observable send result.
+        }
+      }
+      throw err;
     }
-    // COMPAT(binaryCiphertext): added in v0.2.3, remove base64 binary sends
-    // after 2027-01-27 once the supported peer floor includes negotiation.
-    await this.transport.send(arrayBufferToBase64(ciphertext));
   }
 
   outboundWireByteLength(data: string | ArrayBuffer): number {
@@ -1037,11 +1309,17 @@ export class EncryptedChannel {
 
   close(code = 1000, reason = "Normal closure"): void {
     this.state = "closed";
+    this.releaseAllReceiveReservations();
     this.transport.close(code, reason);
   }
 
   isOpen(): boolean {
     return this.state === "open";
+  }
+
+  /** Returns current closed state without retaining control-flow narrowing across awaits. */
+  private isClosed(): boolean {
+    return this.state === "closed";
   }
 
   onTransitionToOpen(cb: () => void): void {
@@ -1055,6 +1333,11 @@ export class EncryptedChannel {
 
 function decodeTransportText(data: string | ArrayBuffer): string {
   return typeof data === "string" ? data : new TextDecoder().decode(data);
+}
+
+/** Returns exact raw WebSocket application bytes before any representation decoding. */
+function transportMessageWireByteLength(message: TransportMessage): number {
+  return utf8ByteLength(message.data);
 }
 
 function requireArrayBuffer(data: string | ArrayBuffer): ArrayBuffer {
@@ -1076,8 +1359,31 @@ function decodePlaintext(data: ArrayBuffer, isBinary: boolean | null): string | 
   return decodeLegacyPlaintext(data);
 }
 
+/** Counts UTF-8 wire bytes without allocating an encoded copy before budget checks. */
 function utf8ByteLength(data: string | ArrayBuffer): number {
-  return typeof data === "string" ? new TextEncoder().encode(data).byteLength : data.byteLength;
+  if (data instanceof ArrayBuffer) return data.byteLength;
+  let bytes = 0;
+  for (let index = 0; index < data.length; index += 1) {
+    const codeUnit = data.charCodeAt(index);
+    if (codeUnit <= 0x7f) {
+      bytes += 1;
+    } else if (codeUnit <= 0x7ff) {
+      bytes += 2;
+    } else if (
+      codeUnit >= 0xd800 &&
+      codeUnit <= 0xdbff &&
+      index + 1 < data.length &&
+      data.charCodeAt(index + 1) >= 0xdc00 &&
+      data.charCodeAt(index + 1) <= 0xdfff
+    ) {
+      bytes += 4;
+      index += 1;
+    } else {
+      // Unpaired surrogates match TextEncoder's three-byte U+FFFD replacement.
+      bytes += 3;
+    }
+  }
+  return bytes;
 }
 
 function keysEqual(a: Uint8Array, b: Uint8Array): boolean {

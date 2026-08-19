@@ -1,10 +1,17 @@
-export { createClientChannel, createDaemonChannel, EncryptedChannel } from "./encrypted-channel.js";
+export {
+  createClientChannel,
+  createDaemonChannel,
+  EncryptedChannel,
+  MAX_PENDING_RECEIVE_WIRE_BYTES,
+  preparedEncryptedFrameWireByteLength,
+} from "./encrypted-channel.js";
 export type {
   CiphertextEncoding,
   ClientChannelOptions,
   ConfiguredCiphertextEncoding,
   DaemonChannelOptions,
   EncryptedChannelEvents,
+  PreparedEncryptedFrame,
   Transport,
   TransportMessage,
 } from "./encrypted-channel.js";
@@ -23,6 +30,7 @@ export type { KeyPair, SharedKey } from "./crypto.js";
 
 export {
   framedCiphertextWireByteLength,
+  MAX_FRAMED_WIRE_BYTES,
   MAX_COMPRESSION_RATIO,
   MAX_COMPRESSION_INPUT_BYTES,
   MIN_COMPRESSION_BYTES,
