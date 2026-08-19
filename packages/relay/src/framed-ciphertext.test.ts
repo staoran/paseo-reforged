@@ -17,12 +17,15 @@ import {
   importPublicKey,
 } from "./crypto.js";
 import { arrayBufferToBase64, base64ToArrayBuffer } from "./base64.js";
+import { createFflateFrameCompressionAdapter } from "./fflate-frame-compression.js";
 import {
   decodeFramedCiphertextWire,
   decodeFramedPayload,
   framedCiphertextWireByteLength,
   MAX_FRAMED_WIRE_BYTES,
+  prepareDeflateFramedPayload,
   prepareIdentityFramedPayload,
+  type FrameCompressionAdapter,
 } from "./framed-ciphertext.js";
 
 /** Plaintext ready frame selecting identity-only framed binary ciphertext. */
@@ -254,6 +257,10 @@ async function openClientFramedChannel(args: {
   events?: EncryptedChannelEvents;
   /** Optional physical close observer for protocol failures. */
   close?: Transport["close"];
+  /** Optional runtime decoder controlling the client's compression advertisement. */
+  compressionAdapter?: FrameCompressionAdapter;
+  /** Compression algorithms selected by the synthetic daemon. */
+  compressionAlgorithms?: readonly string[];
 }): Promise<ClientFramedChannelFixture> {
   // Daemon identity used to derive the same channel key as the client.
   const daemonKeyPair = generateKeyPair();
@@ -276,19 +283,38 @@ async function openClientFramedChannel(args: {
     onerror: null,
   };
   // Client channel observed only through its public factory and events.
-  const channel = await createClientChannel(transport, exportPublicKey(daemonKeyPair.publicKey), {
-    ...args.events,
-    onopen: () => {
-      args.events?.onopen?.();
-      resolveOpened?.();
+  const channel = await createClientChannel(
+    transport,
+    exportPublicKey(daemonKeyPair.publicKey),
+    {
+      ...args.events,
+      onopen: () => {
+        args.events?.onopen?.();
+        resolveOpened?.();
+      },
     },
-  });
+    { compressionAdapter: args.compressionAdapter },
+  );
   // Client hello carrying the ephemeral key for independent key derivation.
   const hello = JSON.parse(sent[0] as string) as { key: string };
   // Shared key independently derived on the synthetic daemon side.
   const sharedKey = deriveSharedKey(daemonKeyPair.secretKey, importPublicKey(hello.key));
 
-  if (args.ciphertextEncoding === "binary") {
+  if (args.compressionAlgorithms) {
+    transport.onmessage?.({
+      data: JSON.stringify({
+        type: "e2ee_ready",
+        capabilities: {
+          ...(args.ciphertextEncoding === "binary" ? { binaryCiphertext: true } : {}),
+          framedCiphertextV1: {
+            ciphertextEncoding: args.ciphertextEncoding,
+            compressionAlgorithms: [...args.compressionAlgorithms],
+          },
+        },
+      }),
+      isBinary: false,
+    });
+  } else if (args.ciphertextEncoding === "binary") {
     deliverFramedBinaryReady(transport);
   } else {
     deliverFramedBase64Ready(transport);
@@ -505,6 +531,208 @@ describe("framed ciphertext v1 contract", () => {
         compressionAlgorithms: [],
       },
     });
+  });
+
+  it("advertises deflate-raw only when a client compression decoder is configured", async () => {
+    // Daemon identity transferred to the client through the pairing channel.
+    const daemonKeyPair = generateKeyPair();
+    // Open signal used to stop the client's legacy handshake retry timer.
+    let resolveOpen: (() => void) | null = null;
+    // Client open promise completed after the synthetic old-daemon ready frame.
+    const opened = new Promise<void>((resolve) => {
+      resolveOpen = resolve;
+    });
+    // Capturing public transport seam for the plaintext hello frame.
+    const transport: Transport = {
+      send: vi.fn(),
+      close: vi.fn(),
+      onmessage: null,
+      onclose: null,
+      onerror: null,
+    };
+    // Runtime decoder whose presence gates the advertised codec.
+    const compressionAdapter = { inflateRaw: vi.fn(async () => new ArrayBuffer(0)) };
+    // Client channel under test.
+    const channel = await createClientChannel(
+      transport,
+      exportPublicKey(daemonKeyPair.publicKey),
+      { onopen: () => resolveOpen?.() },
+      { compressionAdapter },
+    );
+    // First client wire frame is the plaintext capability offer.
+    const hello = JSON.parse(
+      (transport.send as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as string,
+    ) as { capabilities?: unknown };
+
+    transport.onmessage?.({ data: JSON.stringify({ type: "e2ee_ready" }), isBinary: false });
+    await opened;
+    channel.close();
+
+    expect(hello.capabilities).toEqual({
+      binaryCiphertext: true,
+      framedCiphertextV1: {
+        ciphertextEncodings: ["base64", "binary"],
+        compressionAlgorithms: ["deflate-raw"],
+      },
+    });
+  });
+
+  it("opens after a daemon selects the advertised deflate-raw decoder", async () => {
+    // Daemon identity used to inspect the authenticated mode confirmation.
+    const daemonKeyPair = generateKeyPair();
+    // All client writes observed at the public transport boundary.
+    const sent: (string | ArrayBuffer)[] = [];
+    // First public handshake outcome after the daemon selection arrives.
+    let resolveOutcome: ((outcome: "opened" | "closed") => void) | null = null;
+    // Outcome promise prevents an invalid selection from hanging the test.
+    const outcome = new Promise<"opened" | "closed">((resolve) => {
+      resolveOutcome = resolve;
+    });
+    // Capturing transport used for hello, confirm, and protocol closure.
+    const transport: Transport = {
+      send: (data) => sent.push(data),
+      close: () => resolveOutcome?.("closed"),
+      onmessage: null,
+      onclose: null,
+      onerror: null,
+    };
+    // Runtime decoder whose presence authorizes the selected codec.
+    const compressionAdapter = { inflateRaw: vi.fn(async () => new ArrayBuffer(0)) };
+    // Client channel under test.
+    const channel = await createClientChannel(
+      transport,
+      exportPublicKey(daemonKeyPair.publicKey),
+      { onopen: () => resolveOutcome?.("opened") },
+      { compressionAdapter },
+    );
+    // Client hello carrying the ephemeral key used for independent confirm inspection.
+    const hello = JSON.parse(sent[0] as string) as { key: string };
+    // Shared key independently derived on the synthetic daemon side.
+    const sharedKey = deriveSharedKey(daemonKeyPair.secretKey, importPublicKey(hello.key));
+
+    transport.onmessage?.({
+      data: JSON.stringify({
+        type: "e2ee_ready",
+        capabilities: {
+          binaryCiphertext: true,
+          framedCiphertextV1: {
+            ciphertextEncoding: "binary",
+            compressionAlgorithms: ["deflate-raw"],
+          },
+        },
+      }),
+      isBinary: false,
+    });
+    const firstOutcome = await outcome;
+    // Confirm remains legacy Base64 even when the selected application wire is binary.
+    const confirm =
+      typeof sent[1] === "string"
+        ? JSON.parse(new TextDecoder().decode(decrypt(sharedKey, base64ToArrayBuffer(sent[1]))))
+        : null;
+    if (channel.isOpen()) channel.close();
+
+    expect({ firstOutcome, confirm }).toEqual({
+      firstOutcome: "opened",
+      confirm: {
+        type: "e2ee_mode_confirm",
+        mode: "framed-ciphertext-v1",
+        ciphertextEncoding: "binary",
+        compressionAlgorithms: ["deflate-raw"],
+      },
+    });
+  });
+
+  it.each([
+    { ciphertextEncoding: "binary" as const, payloadKind: "text" as const },
+    { ciphertextEncoding: "binary" as const, payloadKind: "binary" as const },
+    { ciphertextEncoding: "base64" as const, payloadKind: "text" as const },
+    { ciphertextEncoding: "base64" as const, payloadKind: "binary" as const },
+  ])(
+    "restores daemon raw DEFLATE $payloadKind through framed $ciphertextEncoding",
+    async ({ ciphertextEncoding, payloadKind }) => {
+      // First public result of the compressed inbound frame.
+      let resolveOutcome: ((outcome: "application" | "closed") => void) | null = null;
+      // Outcome promise prevents a decoder integration failure from hanging the test.
+      const outcome = new Promise<"application" | "closed">((resolve) => {
+        resolveOutcome = resolve;
+      });
+      // Exact application values exposed by the client channel.
+      const received: (string | ArrayBuffer)[] = [];
+      // Portable codec used for both the compatibility vector and client decode path.
+      const compressionAdapter = createFflateFrameCompressionAdapter();
+      // Open client with raw DEFLATE selected on the requested framed representation.
+      const fixture = await openClientFramedChannel({
+        ciphertextEncoding,
+        compressionAdapter,
+        compressionAlgorithms: ["deflate-raw"],
+        close: () => resolveOutcome?.("closed"),
+        events: {
+          onmessage: (data) => {
+            received.push(data);
+            resolveOutcome?.("application");
+          },
+        },
+      });
+      // Compressible state-sync bytes satisfying every authenticated metadata gate.
+      const originalBytes = new TextEncoder().encode(
+        '{"line":"state-sync","value":12345}\n'.repeat(128),
+      );
+      // Original application type represented independently from its shared bytes.
+      const original =
+        payloadKind === "text" ? new TextDecoder().decode(originalBytes) : originalBytes.buffer;
+      // Raw DEFLATE bytes generated through the portable adapter.
+      const compressed = await compressionAdapter.deflateRaw(originalBytes.buffer, 1);
+      // Authenticated envelope built independently from the channel receive path.
+      const prepared = prepareDeflateFramedPayload(original, compressed);
+      // Encrypted wire represented exactly as selected for this connection.
+      const encrypted = encrypt(fixture.sharedKey, prepared.plaintext);
+      const wire = ciphertextEncoding === "binary" ? encrypted : arrayBufferToBase64(encrypted);
+
+      fixture.transport.onmessage?.({
+        data: wire,
+        isBinary: ciphertextEncoding === "binary",
+      });
+      const firstOutcome = await outcome;
+      // Public result normalized only after retaining the original observable type.
+      const restored =
+        typeof received[0] === "string"
+          ? { kind: "text", value: received[0] }
+          : {
+              kind: "binary",
+              value: Array.from(new Uint8Array(received[0] as ArrayBuffer)),
+            };
+      if (fixture.channel.isOpen()) fixture.channel.close();
+
+      expect({ firstOutcome, restored }).toEqual({
+        firstOutcome: "application",
+        restored:
+          payloadKind === "text"
+            ? { kind: "text", value: original }
+            : { kind: "binary", value: Array.from(originalBytes) },
+      });
+    },
+  );
+
+  it("keeps client outbound payloads identity after deflate-raw is selected", async () => {
+    // Portable decoder authorizing the synthetic daemon selection.
+    const compressionAdapter = createFflateFrameCompressionAdapter();
+    // Open binary channel whose peer may compress daemon-to-client traffic.
+    const fixture = await openClientFramedChannel({
+      ciphertextEncoding: "binary",
+      compressionAdapter,
+      compressionAlgorithms: ["deflate-raw"],
+    });
+    fixture.sent.length = 0;
+    // Large compressible upload that must still remain identity in protocol v1.
+    const original = '{"direction":"client-to-daemon"}\n'.repeat(256);
+
+    await fixture.channel.send(original);
+    // Authenticated application envelope inspected independently at the wire boundary.
+    const plaintext = decrypt(fixture.sharedKey, fixture.sent[0] as ArrayBuffer);
+    if (fixture.channel.isOpen()) fixture.channel.close();
+
+    expect(new Uint8Array(plaintext)[3]).toBe(0x00);
+    expect(new TextDecoder().decode(plaintext.slice(8))).toBe(original);
   });
 
   it.each([

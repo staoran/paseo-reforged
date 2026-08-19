@@ -22,6 +22,7 @@ import {
   decodeFramedPayload,
   framedCiphertextWireByteLength,
   prepareIdentityFramedPayload,
+  type FrameCompressionAdapter,
 } from "./framed-ciphertext.js";
 
 export interface Transport {
@@ -58,6 +59,12 @@ export interface DaemonChannelOptions {
   ciphertextEncoding?: ConfiguredCiphertextEncoding;
 }
 
+/** Optional client runtime capabilities supplied when a data connection is created. */
+export interface ClientChannelOptions {
+  /** Enables safe decoding and advertisement of framed raw DEFLATE payloads. */
+  compressionAdapter?: FrameCompressionAdapter;
+}
+
 interface EncryptedChannelOptions {
   /**
    * If set, the channel can validate repeated plaintext `{type:"e2ee_hello"}`
@@ -74,6 +81,10 @@ interface EncryptedChannelOptions {
   framedCiphertextV1?: FramedCiphertextV1Selection;
   /** Exact plaintext ready frame to replay for this daemon connection. */
   daemonReadyText?: string;
+  /** Compression algorithms included in this client's immutable hello offer. */
+  offeredCompressionAlgorithms?: readonly string[];
+  /** Runtime decoder for framed payloads selected on this connection. */
+  compressionAdapter?: FrameCompressionAdapter;
 }
 
 interface FramedCiphertextV1Offer {
@@ -167,6 +178,7 @@ function isCiphertextEncoding(value: unknown): value is CiphertextEncoding {
 /** Reads a valid framed-v1 selection limited to capabilities offered by this client. */
 function parseFramedCiphertextV1Selection(
   message: E2EEReadyMessage,
+  offeredCompressionAlgorithms: readonly string[],
 ): FramedCiphertextV1Selection | null {
   // Untrusted framed selection carried by the plaintext ready message.
   const value = message.capabilities?.framedCiphertextV1;
@@ -185,7 +197,7 @@ function parseFramedCiphertextV1Selection(
   }
   if (
     !value.compressionAlgorithms.every((algorithm) =>
-      SUPPORTED_FRAMED_COMPRESSION_ALGORITHMS.includes(algorithm),
+      offeredCompressionAlgorithms.includes(algorithm),
     )
   ) {
     throw new Error("Framed-v1 selection uses an unoffered compression algorithm");
@@ -310,6 +322,8 @@ const ENCRYPTED_PAYLOAD_OVERHEAD_BYTES = 40;
 const SUPPORTED_FRAMED_CIPHERTEXT_ENCODINGS: readonly CiphertextEncoding[] = ["base64", "binary"];
 /** Compression decoders implemented by this relay package in the identity-only slice. */
 const SUPPORTED_FRAMED_COMPRESSION_ALGORITHMS: readonly string[] = [];
+/** Framed compression codec enabled when a client runtime provides its decoder. */
+const CLIENT_FRAMED_COMPRESSION_ALGORITHMS: readonly string[] = ["deflate-raw"];
 
 export function base64EncryptedWireByteLength(plaintextBytes: number): number {
   return 4 * Math.ceil((plaintextBytes + ENCRYPTED_PAYLOAD_OVERHEAD_BYTES) / 3);
@@ -346,12 +360,20 @@ export async function createClientChannel(
   transport: Transport,
   daemonPublicKeyB64: string,
   events: EncryptedChannelEvents = {},
+  options: ClientChannelOptions = {},
 ): Promise<EncryptedChannel> {
   const keyPair = generateKeyPair();
   const daemonPublicKey = importPublicKey(daemonPublicKeyB64);
   const sharedKey = deriveSharedKey(keyPair.secretKey, daemonPublicKey);
+  // Decoder-backed codecs offered for this immutable client connection.
+  const compressionAlgorithms = options.compressionAdapter
+    ? CLIENT_FRAMED_COMPRESSION_ALGORITHMS
+    : [];
 
-  const channel = new EncryptedChannel(transport, sharedKey, events);
+  const channel = new EncryptedChannel(transport, sharedKey, events, {
+    offeredCompressionAlgorithms: compressionAlgorithms,
+    compressionAdapter: options.compressionAdapter,
+  });
 
   // Send e2ee_hello with our public key
   const ourPublicKeyB64 = exportPublicKey(keyPair.publicKey);
@@ -362,7 +384,7 @@ export async function createClientChannel(
       binaryCiphertext: true,
       framedCiphertextV1: {
         ciphertextEncodings: [...SUPPORTED_FRAMED_CIPHERTEXT_ENCODINGS],
-        compressionAlgorithms: [...SUPPORTED_FRAMED_COMPRESSION_ALGORITHMS],
+        compressionAlgorithms: [...compressionAlgorithms],
       } satisfies FramedCiphertextV1Offer,
     },
   };
@@ -815,7 +837,7 @@ export class EncryptedChannel {
       if (ciphertext) {
         const plaintextBytes = decrypt(this.sharedKey, ciphertext.data);
         const plaintext = this.options.framedCiphertextV1
-          ? (await decodeFramedPayload(plaintextBytes)).data
+          ? (await decodeFramedPayload(plaintextBytes, this.options.compressionAdapter)).data
           : decodePlaintext(plaintextBytes, ciphertext.isBinary);
         if (typeof plaintext === "string" && isReservedModeConfirmText(plaintext)) {
           throw new Error("Received reserved e2ee_mode_confirm outside a pending selection");
@@ -862,7 +884,10 @@ export class EncryptedChannel {
   private async transitionFromReady(message: E2EEReadyMessage): Promise<void> {
     // COMPAT(framedCiphertextV1): introduced in v0.4.0-beta.4; remove after
     // 2027-08-18 once the supported peer floor requires framed-v1.
-    const framedSelection = parseFramedCiphertextV1Selection(message);
+    const framedSelection = parseFramedCiphertextV1Selection(
+      message,
+      this.options.offeredCompressionAlgorithms ?? SUPPORTED_FRAMED_COMPRESSION_ALGORITHMS,
+    );
     if (framedSelection) {
       this.state = "confirming";
       if (!(await this.tryConfirmFramedMode(framedSelection))) return;

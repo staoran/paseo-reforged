@@ -6,10 +6,10 @@
 | ------------------ | ------------------------------------------------------- |
 | task_id            | `0093`                                                  |
 | spec layer         | `Feature Spec`                                          |
-| task status        | `已批准`                                                |
-| document status    | `Active`                                                |
+| task status        | `已收口`                                                |
+| document status    | `Completed`                                             |
 | depth              | `standard`                                              |
-| phase              | `Plan`                                                  |
+| phase              | `Review`                                                |
 | Execution Approval | `Approved`                                              |
 | Approval Source    | `User / 2026-08-19；按依赖顺序逐票实施并本地提交`       |
 | file path          | `mydocs/micro_specs/0093_client_fflate解码与兼容.md`    |
@@ -64,33 +64,37 @@
 
 ## 5. 执行与变更记录
 
-- 实际改动：本轮未修改生产代码。
-- 偏差与用户决策：无。
+- 实际改动：新增 `fflate@0.8.2` direct runtime dependency 与 portable raw DEFLATE adapter；使用 `expectedLength + 1` 哨兵缓冲，严格拒绝 overflow/underflow，并保留对称 deflate 仅供 vectors/跨实现验证。
+- 实际改动：`createClientChannel` 增加可选 decoder capability gate；只有注入 decoder 才 advertisement `deflate-raw`，selection/confirm 精确回显；framed 入站将 adapter 交给唯一 envelope parser。
+- 实际改动：client relay transport 默认注入共享 fflate adapter；v1 client 出站继续固定 identity；补齐 Node↔fflate vectors、Base64/binary × text/ArrayBuffer 四象限和真实 transport events 测试。
+- 偏差与用户决策：无；未引入 Node-only API，daemon encoder 仍由 0089/后续 server adapter 负责。
 - Change Log：`2026-08-19` 从父 Spec 执行清单 10 拆出。
+- Change Log：`2026-08-19` 完成 adapter、capability gate、framed decode、跨实现 vectors 和 client transport GREEN，进入 Review/已收口。
 
 ## 6. 验证与完成判断
 
-| 验收项        | 命令或步骤                                  | 结果   | 证据           |
-| ------------- | ------------------------------------------- | ------ | -------------- |
-| vectors       | Node zlib output decoded by fflate          | 待执行 | 待新增 tests   |
-| capability    | supported/unsupported runtime advertisement | 待执行 | current hello  |
-| compatibility | old/new and four payload quadrants          | 待执行 | RED-3 baseline |
+| 验收项        | 命令或步骤                                                      | 结果 | 证据                                                                                 |
+| ------------- | --------------------------------------------------------------- | ---- | ------------------------------------------------------------------------------------ |
+| vectors       | `fflate-frame-compression.test.ts --bail=1`                     | PASS | 5/5；Node→fflate、fflate→Node、4 MiB sentinel、exact overflow/underflow              |
+| capability    | `framed-ciphertext.test.ts --bail=1`                            | PASS | 75 passed / 1 skipped；decoder gate、selection/confirm、四象限、client identity 出站 |
+| compatibility | `daemon-client-relay-e2ee-transport.test.ts --bail=1`           | PASS | 2/2；真实 base transport advertisement 与 daemon compressed text event               |
+| static        | relay/client build、typecheck、target oxlint、format/diff check | PASS | relay/client typecheck 通过；目标 oxlint 0/0；格式和 diff check 通过                 |
 
-- 未验证项与原因：Hermes 真机尚未可用。
+- 未验证项与原因：Hermes 真机尚未可用；根 workspace typecheck 仍被范围外 `packages/server/src/server/agent/file-agent-timeline-store.ts` 缺失方法阻塞。
 - 剩余风险：移动端 p95、GC、OOM 和耗电由 0097 验证。
-- Done Contract 是否由证据满足：`No；待 Execute/真机`。
+- Done Contract 是否由证据满足：`是；0093 scoped contract 已满足，Hermes p95/OOM 和 mixed-version 仍留 0097`。
 
 ## 7. 恢复与同步
 
-- 状态说明：ticket 已登记，依赖 0088。
-- 当前卡点：无设计卡点，仅缺执行授权和真机环境。
-- 下一步唯一动作：接入 fflate bounded inflate 与 capability gate。
+- 状态说明：`Review / 已收口 / Completed`；client decoder 与 capability advertisement 可供 0090/0091 消费。
+- 当前卡点：`N/A`；真机环境验证保留到 0097。
+- 下一步唯一动作：实现 0090 加密帧 FIFO、reservation 与最终 wire high-water。
 - Resume / Handoff：从 0088 decoded frame 类型和 client transport 入口接续。
 - Project Sync Candidates：Hermes capability 结论回写 `SECURITY.md` 和父 Spec。
 - 长期文档同步：待 0097。
 
 ### 提交记录
 
-| 提交信息（Commit Message） | 提交脚注（Commit Footer） | 关联改动或阶段 | 文档同步状态 | 备注     |
-| -------------------------- | ------------------------- | -------------- | ------------ | -------- |
-| `<待提交>`                 | `N/A`                     | `paseo / 0093` | `待填写`     | 未获授权 |
+| 提交信息（Commit Message）                      | 提交脚注（Commit Footer） | 关联改动或阶段 | 文档同步状态 | 备注                   |
+| ----------------------------------------------- | ------------------------- | -------------- | ------------ | ---------------------- |
+| `feat(relay): add client fflate framed decoder` | `N/A`                     | `paseo / 0093` | `已同步`     | 用户已授权逐票本地提交 |

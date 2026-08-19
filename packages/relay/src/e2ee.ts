@@ -1,12 +1,16 @@
 export { createClientChannel, createDaemonChannel, EncryptedChannel } from "./encrypted-channel.js";
 export type {
   CiphertextEncoding,
+  ClientChannelOptions,
   ConfiguredCiphertextEncoding,
   DaemonChannelOptions,
   EncryptedChannelEvents,
   Transport,
   TransportMessage,
 } from "./encrypted-channel.js";
+
+export { createFflateFrameCompressionAdapter } from "./fflate-frame-compression.js";
+export type { FflateFrameCompressionAdapter } from "./fflate-frame-compression.js";
 
 export {
   generateKeyPair,

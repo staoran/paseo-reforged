@@ -1,5 +1,6 @@
 import {
   createClientChannel,
+  createFflateFrameCompressionAdapter,
   type EncryptedChannel,
   type Transport as RelayTransport,
 } from "@getpaseo/relay/e2ee";
@@ -14,6 +15,9 @@ type OpenHandler = () => void;
 type CloseHandler = (event?: unknown) => void;
 type ErrorHandler = (event?: unknown) => void;
 type MessageHandler = (data: unknown, isBinary: boolean) => void;
+
+/** Stateless browser/Hermes decoder shared by client relay connections. */
+const relayCompressionAdapter = createFflateFrameCompressionAdapter();
 
 export function createRelayE2eeTransportFactory(args: {
   baseFactory: DaemonTransportFactory;
@@ -94,12 +98,17 @@ export function createEncryptedTransport(
 
   const startHandshake = async () => {
     try {
-      channel = await createClientChannel(relayTransport, daemonPublicKeyB64, {
-        onopen: emitOpen,
-        onmessage: (data) => emitMessage(data),
-        onclose: (code, reason) => emitClose({ code, reason }),
-        onerror: (error) => emitError(error),
-      });
+      channel = await createClientChannel(
+        relayTransport,
+        daemonPublicKeyB64,
+        {
+          onopen: emitOpen,
+          onmessage: (data) => emitMessage(data),
+          onclose: (code, reason) => emitClose({ code, reason }),
+          onerror: (error) => emitError(error),
+        },
+        { compressionAdapter: relayCompressionAdapter },
+      );
     } catch (error) {
       logger.warn({ err: normalizeTransportError(error) }, "relay_e2ee_handshake_failed");
       emitError(error);

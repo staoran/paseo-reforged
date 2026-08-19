@@ -9,6 +9,9 @@ export {
   decrypt,
 } from "./crypto.js";
 
+export { createFflateFrameCompressionAdapter } from "./fflate-frame-compression.js";
+export type { FflateFrameCompressionAdapter } from "./fflate-frame-compression.js";
+
 export {
   base64EncryptedWireByteLength,
   createClientChannel,
@@ -18,6 +21,7 @@ export {
 } from "./encrypted-channel.js";
 export type {
   CiphertextEncoding,
+  ClientChannelOptions,
   ConfiguredCiphertextEncoding,
   DaemonChannelOptions,
   EncryptedChannelEvents,
