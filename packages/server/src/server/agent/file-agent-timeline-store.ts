@@ -102,11 +102,13 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
       const parsedRows = TimelineRowSchema.array().parse(input.rows);
       let state = (await this.readState(agentId)) ?? this.createState(agentId);
       let manifest: GenerationManifest | undefined;
+      /** Segment files owned by the working generation being replaced. */
       let supersededWorkingSegmentFiles: string[] = [];
 
       if (input.mode === "replace" || !state.workingGenerationId) {
         if (state.workingGenerationId) {
           try {
+            /** Previous working manifest whose files become candidates after pointer publication. */
             const superseded = await this.readGeneration(agentId, state.workingGenerationId);
             supersededWorkingSegmentFiles = superseded.segments.map((segment) => segment.file);
           } catch {
@@ -151,34 +153,24 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
         throw new Error(`Timeline generation for '${agentId}' was not created`);
       }
 
-      let obsoleteSegmentFiles: string[] = [];
-      let unpublishedSegmentFiles: string[] = [];
+      /** Next working manifest produced by appending the requested rows. */
+      let nextManifest: GenerationManifest;
       try {
-        const nextManifest = await this.appendRows(agentId, manifest, parsedRows);
-        const previouslyPublished = new Set(manifest.segments.map((segment) => segment.file));
-        unpublishedSegmentFiles = nextManifest.segments
-          .map((segment) => segment.file)
-          .filter((file) => !previouslyPublished.has(file));
-        await this.injectFault("working_manifest");
-        await this.writeGeneration(agentId, { ...nextManifest, status: "building" });
-        unpublishedSegmentFiles = [];
-        const retained = new Set(nextManifest.segments.map((segment) => segment.file));
-        obsoleteSegmentFiles = [
-          ...supersededWorkingSegmentFiles,
-          ...manifest.segments.map((segment) => segment.file),
-        ].filter((file) => !retained.has(file));
+        nextManifest = await this.appendRows(agentId, manifest, parsedRows);
       } catch (error) {
-        this.queueSegmentDeletes(agentId, [
-          ...supersededWorkingSegmentFiles,
-          ...unpublishedSegmentFiles,
-        ]);
-        this.sweptSegmentAgents.delete(agentId);
-        await this.writeIncompleteBestEffort(agentId, manifest.generationId);
+        await this.markWorkingMutationFailedBestEffort(
+          agentId,
+          manifest.generationId,
+          supersededWorkingSegmentFiles,
+        );
         throw error;
       }
-      this.queueSegmentDeletes(agentId, obsoleteSegmentFiles);
-      await this.injectFault("working_manifest_published");
-      await this.reclaimSegmentsBestEffort(agentId, []);
+      await this.publishWorkingManifest(
+        agentId,
+        manifest,
+        nextManifest,
+        supersededWorkingSegmentFiles,
+      );
     });
   }
 
@@ -196,8 +188,8 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
       if (manifest.status === "incomplete") {
         throw new Error(`Timeline generation for '${agentId}' is incomplete`);
       }
-      let obsoleteSegmentFile: string | undefined;
-      let unpublishedSegmentFile: string | undefined;
+      /** Next working manifest containing the staged-row replacement. */
+      let nextManifest: GenerationManifest;
       try {
         const row = TimelineRowSchema.parse(input.row);
         const segmentIndex = manifest.segments.findIndex(
@@ -213,31 +205,14 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
         }
         existingRows[rowIndex] = cloneRow(row);
         const replacement = await this.writeSegment(agentId, existingRows);
-        const replacedSegmentFile = manifest.segments[segmentIndex].file;
-        if (replacement.file !== replacedSegmentFile) {
-          unpublishedSegmentFile = replacement.file;
-        }
         const segments = [...manifest.segments];
         segments[segmentIndex] = replacement;
-        await this.injectFault("working_manifest");
-        await this.writeGeneration(agentId, { ...manifest, status: "building", segments });
-        unpublishedSegmentFile = undefined;
-        obsoleteSegmentFile = replacedSegmentFile;
+        nextManifest = { ...manifest, status: "building", segments };
       } catch (error) {
-        this.queueSegmentDeletes(
-          agentId,
-          unpublishedSegmentFile === undefined ? [] : [unpublishedSegmentFile],
-        );
-        this.sweptSegmentAgents.delete(agentId);
-        await this.writeIncompleteBestEffort(agentId, manifest.generationId);
+        await this.markWorkingMutationFailedBestEffort(agentId, manifest.generationId, []);
         throw error;
       }
-      this.queueSegmentDeletes(
-        agentId,
-        obsoleteSegmentFile === undefined ? [] : [obsoleteSegmentFile],
-      );
-      await this.injectFault("working_manifest_published");
-      await this.reclaimSegmentsBestEffort(agentId, []);
+      await this.publishWorkingManifest(agentId, manifest, nextManifest, []);
     });
   }
 
@@ -749,12 +724,64 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
     }
   }
 
+  /** Publishes one working manifest and applies the shared post-publication reclamation boundary. */
+  private async publishWorkingManifest(
+    agentId: string,
+    previousManifest: GenerationManifest,
+    nextManifest: GenerationManifest,
+    additionalObsoleteCandidates: readonly string[],
+  ): Promise<void> {
+    /** Segment files reachable from the manifest that is currently published. */
+    const previouslyPublishedSegmentFiles = new Set(
+      previousManifest.segments.map((segment) => segment.file),
+    );
+    /** Newly written segment files that are orphaned if manifest publication fails. */
+    const unpublishedSegmentFiles = nextManifest.segments
+      .map((segment) => segment.file)
+      .filter((file) => !previouslyPublishedSegmentFiles.has(file));
+    try {
+      await this.injectFault("working_manifest");
+      await this.writeGeneration(agentId, { ...nextManifest, status: "building" });
+    } catch (error) {
+      await this.markWorkingMutationFailedBestEffort(agentId, previousManifest.generationId, [
+        ...additionalObsoleteCandidates,
+        ...unpublishedSegmentFiles,
+      ]);
+      throw error;
+    }
+
+    /** Segment files reachable from the newly published working manifest. */
+    const retainedSegmentFiles = new Set(nextManifest.segments.map((segment) => segment.file));
+    /** Previously reachable files that became unreferenced at publication. */
+    const obsoleteSegmentFiles = [
+      ...additionalObsoleteCandidates,
+      ...previousManifest.segments.map((segment) => segment.file),
+    ].filter((file) => !retainedSegmentFiles.has(file));
+    this.queueSegmentDeletes(agentId, obsoleteSegmentFiles);
+    await this.injectFault("working_manifest_published");
+    await this.reclaimSegmentsBestEffort(agentId, []);
+  }
+
+  /** Records orphan candidates and preserves the existing fail-closed mutation failure state. */
+  private async markWorkingMutationFailedBestEffort(
+    agentId: string,
+    generationId: string,
+    orphanCandidates: readonly string[],
+  ): Promise<void> {
+    this.queueSegmentDeletes(agentId, orphanCandidates);
+    this.sweptSegmentAgents.delete(agentId);
+    await this.writeIncompleteBestEffort(agentId, generationId);
+  }
+
   /** Discovers crash-orphaned segments once per Agent and retries pending cleanup. */
   private async prepareSegmentReclamationBestEffort(agentId: string): Promise<void> {
+    /** Hash-addressed orphan files found by the first per-Agent directory scan. */
     let discovered: string[] = [];
     if (!this.sweptSegmentAgents.has(agentId)) {
       try {
+        /** Complete active and current-working reference closure used by discovery. */
         const referenced = await this.readCurrentSegmentReferences(agentId);
+        /** Physical entries in the Agent segment directory. */
         let names: string[];
         try {
           names = await fs.readdir(this.segmentsDir(agentId));
@@ -778,8 +805,10 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
     agentId: string,
     candidates: readonly string[],
   ): Promise<void> {
+    /** Per-Agent retry set after adding candidates from this reclamation attempt. */
     const pending = this.queueSegmentDeletes(agentId, candidates);
     if (!pending) return;
+    /** Fresh active and current-working reference closure checked before deletion. */
     let referenced: Set<string>;
     try {
       referenced = await this.readCurrentSegmentReferences(agentId);
@@ -804,7 +833,9 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
 
   /** Adds safe segment candidates to the per-Agent retry set. */
   private queueSegmentDeletes(agentId: string, candidates: readonly string[]): Set<string> | null {
+    /** Existing retry set, when this Agent already has deferred deletions. */
     const existing = this.pendingSegmentDeletes.get(agentId);
+    /** Mutable retry set used for the current Agent. */
     const pending = existing ?? new Set<string>();
     for (const file of candidates) {
       if (this.isSafeSegmentFileName(file)) pending.add(file);
@@ -816,12 +847,16 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
 
   /** Reads the complete segment reference closure for the current Agent state. */
   private async readCurrentSegmentReferences(agentId: string): Promise<Set<string>> {
+    /** Persisted state selecting the currently reachable generations. */
     const state = await this.requireState(agentId);
+    /** Segment file names reachable from active and current working manifests. */
     const referenced = new Set<string>();
+    /** Non-null generation identifiers selected by the persisted state. */
     const generationIds = [state.activeGenerationId, state.workingGenerationId].filter(
       (generationId): generationId is string => generationId !== null,
     );
     for (const generationId of generationIds) {
+      /** Current manifest whose full reference set must be retained. */
       const manifest = await this.readGeneration(agentId, generationId);
       this.validateManifestRanges(manifest);
       for (const segment of manifest.segments) {
@@ -833,6 +868,7 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
 
   /** Checks that a candidate is a content-addressed segment file, not an arbitrary path. */
   private isSafeSegmentFileName(file: string): boolean {
+    /** Candidate checksum encoded by the segment file name. */
     const checksum = path.basename(file, ".json");
     return file === `${checksum}.json` && SHA256_RE.test(checksum);
   }
@@ -946,6 +982,7 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
   /** Serializes each Agent mutation and retries deferred segment cleanup first. */
   private enqueueMutation<T>(agentId: string, operation: () => Promise<T>): Promise<T> {
     const previous = this.pendingMutations.get(agentId) ?? Promise.resolve();
+    /** Current serialized mutation, including its best-effort reclamation preflight. */
     const run = previous.then(async () => {
       await this.prepareSegmentReclamationBestEffort(agentId);
       return await operation();

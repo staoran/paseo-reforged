@@ -1,6 +1,6 @@
 # Timeline 增量回收与崩溃安全 Spec
 
-本 Spec 约束 `FileAgentTimelineStore` 在长时间 `working` generation 中的 segment 回收。用户已明确批准 Plan；实现和自动验证已完成，未清理现有 `$PASEO_HOME/timelines`，也未重启 daemon。
+本 Spec 约束 `FileAgentTimelineStore` 在长时间 `working` generation 中的 segment 回收。用户已明确批准 Plan；首轮实现和自动验证已完成，本轮静态审查修复与验证也已完成，未清理现有 `$PASEO_HOME/timelines`，也未重启 daemon。
 
 ## 0. 状态与索引
 
@@ -8,7 +8,7 @@
 | ----------------- | ----------------------------------------------------------------------- |
 | task_id           | `0098`                                                                  |
 | spec layer        | `Feature Spec`                                                          |
-| task status       | `已提交`                                                                |
+| task status       | `已收口`                                                                |
 | mode              | `single_project`                                                        |
 | phase             | `Review`                                                                |
 | approval status   | `Plan Approved`                                                         |
@@ -16,8 +16,8 @@
 | spec path         | `mydocs/specs/0098_Timeline增量回收与崩溃安全.md`                       |
 | parent spec       | `N/A`                                                                   |
 | supersedes        | `N/A`                                                                   |
-| current task unit | `实现与定向验证完成；提交授权已取得，提交后执行静态审查`                |
-| created / updated | `2026-08-19 11:26 +08:00 / 2026-08-19 17:15 +08:00`                     |
+| current task unit | `全部 3 条 Standards findings 已修复、验证并通过本次提交收口`           |
+| created / updated | `2026-08-19 11:26 +08:00 / 2026-08-19 21:26 +08:00`                     |
 
 ## 1. 目标、范围与完成契约
 
@@ -173,7 +173,7 @@
 ### 2.4 下一步动作
 
 - 下一步动作 1：`已完成`；首个 RED 观察到物理 segment 为 `5` 而非期望的 `3`，最小 GREEN 在 manifest 发布后回收旧 working 尾段并保留 active 引用。
-- 下一步动作 2：`已完成`；Adapter 私有回收、lazy sweep、pending retry、故障矩阵、restart/commit/paging 回归和 `docs/timeline-sync.md` 均已落地。用户已授权创建本地提交，提交后对该提交执行静态审查。
+- 下一步动作 2：`已完成`；Adapter 私有回收、lazy sweep、pending retry、故障矩阵、restart/commit/paging 回归和 `docs/timeline-sync.md` 均已落地。首轮提交后的 3 条 Standards findings 已修复、通过定向验证并由本次提交收口。
 
 ## 3. 计划与执行前检查点
 
@@ -220,9 +220,9 @@
 ### 3.5 执行前检查点
 
 - 当前目标与任务单元：在 `FileAgentTimelineStore` 内按 manifest publication 边界增量回收未引用 segment；实现与验证已完成。
-- 当前 phase：`Review`；下一动作是提交后以该提交父提交为 fixed point 执行双轴静态审查。
+- 当前 phase：`Review`；首轮提交的静态审查与本轮 Standards findings 修复验证均已完成。
 - approval status / source：`Plan Approved / User；2026-08-19 “将该方案写入 Heavy Spec，完成 Plan Approved 检查点”`。
-- 下一步：不再修改行为；等待用户确认结果，或明确授权创建提交。
+- 下一步：`已完成`；用户已授权只提交 0098 四个文件，本次提交不带入 0099 或其他并行改动。
 - 风险与回退：最高风险是误删 canonical 引用；通过 `deleteTargets ∩ (A ∪ Wnext) = ∅`、per-agent queue、fail-closed 引用快照和真实重启测试约束。失败即移除回收实现并保留 RED，不迁移格式。
 - 验证方式：物理文件集合断言 + 真实 Adapter 临时目录重启 + fault injection + committed paging 结果比较 + 既有目标测试 + typecheck/lint/format。
 - TDD 判定、测试 seam 与验收行为：`TDD；使用现有 FileAgentTimelineStoreFaultPoint 和真实临时目录，先观察文件集合与恢复行为 RED，再实现最小 Adapter 内部变化。`
@@ -234,40 +234,41 @@
 
 ## 5. 执行记录
 
-| 步骤/子项     | 实际变化或子 Spec 锚点                                                     | 状态   | 偏差与处理                                                       |
-| ------------- | -------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------- |
-| Research      | 完成目录只读诊断、源码路径核对、现有恢复/跨端合同分析和临时目录可行性实验  | `完成` | 用户所称“内容相同”校正为 hash 不同的近似累计版本；根因判断不变   |
-| Plan          | 完成本 Spec 的 Adapter 边界、集合不变量、崩溃矩阵、跨端证明与 TDD 验收     | `完成` | `N/A`                                                            |
-| Plan Approved | 记录用户 2026-08-19 明确指令                                               | `完成` | 用户随后明确要求按 0098 开始 RED 并完成实现                      |
-| Execute       | Adapter 增量回收、lazy sweep、pending retry、fault seam 与 15 个回归已完成 | `完成` | 11 个行为先观察明确 RED；4 个 fail-closed/安全证明直接保持 GREEN |
-| Review        | 目标测试、静态门禁、格式、diff 与长期文档同步                              | `完成` | 未修改 public store、persisted schema、wire、client 或现有数据   |
+| 步骤/子项     | 实际变化或子 Spec 锚点                                                     | 状态   | 偏差与处理                                                                                           |
+| ------------- | -------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------- |
+| Research      | 完成目录只读诊断、源码路径核对、现有恢复/跨端合同分析和临时目录可行性实验  | `完成` | 用户所称“内容相同”校正为 hash 不同的近似累计版本；根因判断不变                                       |
+| Plan          | 完成本 Spec 的 Adapter 边界、集合不变量、崩溃矩阵、跨端证明与 TDD 验收     | `完成` | `N/A`                                                                                                |
+| Plan Approved | 记录用户 2026-08-19 明确指令                                               | `完成` | 用户随后明确要求按 0098 开始 RED 并完成实现                                                          |
+| Execute       | Adapter 增量回收、lazy sweep、pending retry、fault seam 与 15 个回归已完成 | `完成` | 11 个行为先观察明确 RED；4 个 fail-closed/安全证明直接保持 GREEN                                     |
+| Review        | 目标测试、静态门禁、格式、diff 与长期文档同步                              | `完成` | 3 条 Standards findings 已修复并验证；未修改 public store、persisted schema、wire、client 或现有数据 |
 
 ## 6. 验证
 
-| 项目/验收项      | 命令或步骤                                                                                   | 结果                | 证据                                                                                        | 未验证原因             |
-| ---------------- | -------------------------------------------------------------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------- | ---------------------- |
-| 诊断数据         | 只读统计目标与全局 timeline 目录、manifest 引用和 hash                                       | `PASS`              | 目标 `1008 / 548.7 MiB`；全局未引用约 `1264.86 MiB`；文件名与内容 SHA-256 一致              | `N/A`                  |
-| 方案可行性       | 真实 Adapter + 临时目录裁剪、restart、append、commit、paging 与 manifest failure 实验        | `PASS（Plan 证据）` | `40 -> 11` 文件；重启 working/eligibility 和 `tail/before/after` 合同保持                   | 尚未成为仓库自动化测试 |
-| 任务文件格式     | `npm run format:check:files -- <5 个任务文件>`                                               | `PASS`              | `2026-08-19 17:15 +08:00`，五个目标文件全部符合格式                                         | `N/A`                  |
-| Adapter 定向测试 | `npx vitest run packages/server/src/server/agent/file-agent-timeline-store.test.ts --bail=1` | `PASS`              | 既有 9 个加新增 15 个，共 `24/24`；覆盖空间收敛、全部故障边界和分页恢复                     | `N/A`                  |
-| TypeScript       | `npm run typecheck`                                                                          | `PASS`              | 退出码 `0`                                                                                  | `N/A`                  |
-| 目标 Lint        | `npx oxlint <2 个目标 TypeScript 文件>`                                                      | `PASS`              | `0 warnings / 0 errors`                                                                     | `N/A`                  |
-| 全仓 Lint        | `npm run lint`                                                                               | `BLOCKED`           | 本任务文件零错误；范围外新增 `packages/relay/src/framed-ciphertext.ts:121` 有嵌套三元表达式 | 未经授权不修改并行工作 |
+| 项目/验收项      | 命令或步骤                                                                                   | 结果                | 证据                                                                              | 未验证原因             |
+| ---------------- | -------------------------------------------------------------------------------------------- | ------------------- | --------------------------------------------------------------------------------- | ---------------------- |
+| 诊断数据         | 只读统计目标与全局 timeline 目录、manifest 引用和 hash                                       | `PASS`              | 目标 `1008 / 548.7 MiB`；全局未引用约 `1264.86 MiB`；文件名与内容 SHA-256 一致    | `N/A`                  |
+| 方案可行性       | 真实 Adapter + 临时目录裁剪、restart、append、commit、paging 与 manifest failure 实验        | `PASS（Plan 证据）` | `40 -> 11` 文件；重启 working/eligibility 和 `tail/before/after` 合同保持         | 尚未成为仓库自动化测试 |
+| 任务文件格式     | `npm run format:check:files -- <4 个 Standards 修复文件>`                                    | `PASS`              | `2026-08-19 19:31 +08:00`，四个目标文件全部符合格式                               | `N/A`                  |
+| Adapter 定向测试 | `npx vitest run packages/server/src/server/agent/file-agent-timeline-store.test.ts --bail=1` | `PASS`              | 既有 9 个加新增 15 个，共 `24/24`；覆盖空间收敛、全部故障边界和分页恢复           | `N/A`                  |
+| TypeScript       | `npm run typecheck`                                                                          | `PASS`              | 退出码 `0`                                                                        | `N/A`                  |
+| 目标 Lint        | `npx oxlint <2 个目标 TypeScript 文件>`                                                      | `PASS`              | `0 warnings / 0 errors`                                                           | `N/A`                  |
+| 全仓 Lint        | `npm run lint`                                                                               | `PASS`              | `3546` 个文件，`0 warnings / 0 errors`                                            | `N/A`                  |
+| Standards 修复   | 控制流静态复核 + `git diff --check`                                                          | `PASS`              | 发布失败、发布后中断与 pending retry 语义保持；目标及全仓 diff 检查退出码均为 `0` | `N/A`                  |
 
 - 集成验证：真实 `FileAgentTimelineStore` 临时目录在 publication 后中断并重启，继续 append/commit 后 active revision 合格，`tail/before/after` 结果与 cursor/window 合同保持。
 - 剩余风险：首次回收仍需要一个 replacement segment 的瞬时空间；不活动 Agent 不会自动触发 lazy sweep；突然断电 durability 不在现有原子写合同内。
-- Done Contract 是否由证据满足：`是；24/24 定向测试、typecheck、目标 lint、格式和 diff 检查通过；全仓 lint 仅受范围外新增文件阻塞，未覆盖突然断电 durability。`
+- Done Contract 是否由证据满足：`是；24/24 定向测试、typecheck、目标与全仓 lint、格式和 diff 检查通过；未覆盖突然断电 durability。`
 
 ## 7. 评审（Review）
 
-| 评审轴             | 结论   | 证据或阻塞问题                                                                |
-| ------------------ | ------ | ----------------------------------------------------------------------------- |
-| 目标与 Spec 完成度 | `PASS` | 范围、删除不变量、故障矩阵、跨端路径、测试 seam 和回退均已明确                |
-| Spec 与执行一致性  | `PASS` | 实现保持 Adapter 内部边界；实际 helper/fault 名称和补充故障窗口已回写         |
-| 实现质量与风险     | `PASS` | 每次删除前重验 active/current working 引用；24/24、typecheck 和目标 lint 通过 |
+| 评审轴             | 结论   | 证据或阻塞问题                                                                    |
+| ------------------ | ------ | --------------------------------------------------------------------------------- |
+| 目标与 Spec 完成度 | `PASS` | 范围、删除不变量、故障矩阵、跨端路径、测试 seam 和回退均已明确                    |
+| Spec 与执行一致性  | `PASS` | 实现保持 Adapter 内部边界；实际 helper/fault 名称和补充故障窗口已回写             |
+| 实现质量与风险     | `PASS` | 两条 mutation 路径共用发布/失败收口；每次删除前重验引用；24/24 与全部静态门禁通过 |
 
 - Overall Verdict：`PASS`
-- Blocking Issues：`None for task；全仓 lint 的范围外阻塞已作为验证例外记录。`
+- Blocking Issues：`None`。
 - Cross-project consistency：`N/A`
 
 ### 7.1 回归风险
@@ -285,21 +286,22 @@
 ## 8. 偏差、变更与反向同步
 
 - Plan-Execution Diff：实现未新增内部 append result 类型，而是在 publication 边界记录候选并在 pre-publication 失败后重新武装 lazy sweep；额外覆盖批量 append 部分写入、replacement pointer 失败和 Agent 删除后重建三个同边界故障，未扩大公开范围。
-- Change Log：`2026-08-19：创建 Heavy Spec 0098 并完成 Plan Approved；随后以 TDD 实现 manifest publication 后增量回收、lazy orphan sweep、pending retry 和两个 fault points，新增 15 个回归并同步 timeline 文档。`
+- Change Log：`2026-08-19：创建 Heavy Spec 0098 并完成 Plan Approved；随后以 TDD 实现 manifest publication 后增量回收、lazy orphan sweep、pending retry 和两个 fault points，新增 15 个回归并同步 timeline 文档；首轮提交后修复任务状态/编号、重复状态转换和变量名称注释 3 条 Standards findings。`
 - 用户决策：接受 Adapter 内部修复边界；不把近似重复 segment 解释为跨端同步副本，不通过提前删除或原地覆盖换取空间。
-- Spec 反向同步结果：任务已更新为 `0098 / 已提交 / spec / 已同步`；并行后续任务已把总表编号基线推进到 `0099`、下一建议编号推进到 `0100`，本任务未回退该更新。
+- Spec 反向同步结果：任务已更新为 `0098 / 已收口 / spec / 已同步`；总表当前编号基线为 `0099`、下一建议编号为 `0100`，并行后续任务保持不变。
 
 ## 9. 恢复、长期知识与提交关联
 
-- 状态说明：实现、测试和长期文档已完成并获本地提交授权；没有清理现有 timeline 数据、修改 wire/client 或重启 daemon。
+- 状态说明：首轮实现、测试和长期文档已提交；本轮全部 3 条 Standards findings 已修复、验证并通过本次提交收口；没有清理现有 timeline 数据、修改 wire/client 或重启 daemon。
 - 当前卡点：`无`。
-- 下一步唯一动作：以本提交的父提交为 fixed point，对本提交执行 Standards 与 Spec 双轴静态审查。
+- 下一步唯一动作：`N/A - 0098 已收口。`
 - Resume / Handoff 锚点：核心实现位于 `reclaimSegmentsBestEffort()` 与 `prepareSegmentReclamationBestEffort()`；任何后续改动继续保持删除前重验引用和回收错误不污染 stage。
 - Project Sync Candidates：`无；稳定合同已同步到 docs/timeline-sync.md。`
 - 长期文档同步：`已完成；docs/timeline-sync.md 记录增量回收、lazy sweep、fail-closed 和非 fsync 证明边界。`
 
 ### 提交记录
 
-| 提交信息（Commit Message）                             | 提交脚注（Commit Footer） | 关联项目 / 改动或阶段 | 文档同步状态 | 备注                               |
-| ------------------------------------------------------ | ------------------------- | --------------------- | ------------ | ---------------------------------- |
-| `fix(server): incrementally reclaim timeline segments` | `N/A`                     | `paseo / 实现与验证`  | `已同步`     | 本提交；用户于 2026-08-19 明确授权 |
+| 提交信息（Commit Message）                                  | 提交脚注（Commit Footer） | 关联项目 / 改动或阶段    | 文档同步状态 | 备注                               |
+| ----------------------------------------------------------- | ------------------------- | ------------------------ | ------------ | ---------------------------------- |
+| `fix(server): incrementally reclaim timeline segments`      | `N/A`                     | `paseo / 实现与验证`     | `已同步`     | 本提交；用户于 2026-08-19 明确授权 |
+| `fix(server): address timeline reclamation review findings` | `N/A`                     | `paseo / Standards 修复` | `已同步`     | 本次提交；只包含 0098 四个文件     |

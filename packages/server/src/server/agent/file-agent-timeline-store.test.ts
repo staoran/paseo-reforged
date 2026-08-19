@@ -85,7 +85,9 @@ describe("FileAgentTimelineStore", () => {
   });
 
   it("bounds working segment files without deleting the active generation", async () => {
+    /** Isolated filesystem root for the bounded-growth scenario. */
     const root = await createRoot();
+    /** Store under test with a small segment limit that forces tail replacement. */
     const store = new FileAgentTimelineStore(root, { segmentRowLimit: 4 });
     await store.stageRows("agent-1", {
       epoch: "epoch-1",
@@ -94,6 +96,7 @@ describe("FileAgentTimelineStore", () => {
     });
     await store.commit("agent-1");
 
+    /** seq is the next row appended while the working generation remains open. */
     for (let seq = 3; seq <= 6; seq += 1) {
       await store.stageRows("agent-1", {
         epoch: "epoch-1",
@@ -109,7 +112,9 @@ describe("FileAgentTimelineStore", () => {
   });
 
   it("reclaims a replaced staged segment without deleting active references", async () => {
+    /** Isolated filesystem root for the staged-row replacement scenario. */
     const root = await createRoot();
+    /** Store under test with one active segment and one mutable working segment. */
     const store = new FileAgentTimelineStore(root, { segmentRowLimit: 2 });
     await store.stageRows("agent-1", {
       epoch: "epoch-1",
@@ -135,7 +140,9 @@ describe("FileAgentTimelineStore", () => {
   });
 
   it("reclaims a superseded working generation after replacement is published", async () => {
+    /** Isolated filesystem root for the working-generation replacement scenario. */
     const root = await createRoot();
+    /** Store under test with deterministic two-row segment boundaries. */
     const store = new FileAgentTimelineStore(root, { segmentRowLimit: 2 });
     await store.stageRows("agent-1", {
       epoch: "epoch-1",
@@ -166,8 +173,11 @@ describe("FileAgentTimelineStore", () => {
   });
 
   it("keeps a published stage successful when deletion fails and retries next mutation", async () => {
+    /** Isolated filesystem root for the deletion-retry scenario. */
     const root = await createRoot();
+    /** Number of injected deletion attempts that must fail before retry succeeds. */
     let remainingDeleteFailures = 1;
+    /** Store under test with a one-shot segment-deletion fault. */
     const store = new FileAgentTimelineStore(root, {
       segmentRowLimit: 2,
       faultInjector: (point) => {
@@ -211,8 +221,11 @@ describe("FileAgentTimelineStore", () => {
   });
 
   it("recovers after interruption between manifest publication and segment reclamation", async () => {
+    /** Isolated filesystem root shared across the simulated restart. */
     const root = await createRoot();
+    /** Whether the next post-publication boundary should simulate process interruption. */
     let interruptAfterPublication = false;
+    /** Store instance interrupted after durable manifest publication. */
     const store = new FileAgentTimelineStore(root, {
       segmentRowLimit: 2,
       faultInjector: (point) => {
@@ -227,6 +240,7 @@ describe("FileAgentTimelineStore", () => {
       mode: "replace",
       rows: rows(1, 2),
     });
+    /** Active generation that must remain readable through the interruption. */
     const active = await store.commit("agent-1");
     await store.stageRows("agent-1", {
       epoch: "epoch-1",
@@ -244,6 +258,7 @@ describe("FileAgentTimelineStore", () => {
     ).rejects.toThrow("interruption after working manifest publication");
     await expect(listSegmentFiles(root)).resolves.toHaveLength(3);
 
+    /** Fresh store instance that performs lazy orphan discovery after interruption. */
     const restarted = new FileAgentTimelineStore(root, { segmentRowLimit: 2 });
     await expect(
       restarted.getCoverage("agent-1", { expectedRevision: active.timelineRevision }),
@@ -259,7 +274,9 @@ describe("FileAgentTimelineStore", () => {
     });
     await expect(listSegmentFiles(root)).resolves.toHaveLength(3);
 
+    /** Generation committed after recovery and continued staging. */
     const committed = await restarted.commit("agent-1");
+    /** Second restart used to verify durable committed coverage and paging. */
     const reopened = new FileAgentTimelineStore(root, { segmentRowLimit: 2 });
     await expect(
       reopened.getCoverage("agent-1", { expectedRevision: committed.timelineRevision }),
@@ -284,8 +301,11 @@ describe("FileAgentTimelineStore", () => {
   });
 
   it("retries an orphan left by working manifest publication failure", async () => {
+    /** Isolated filesystem root for the append publication-failure scenario. */
     const root = await createRoot();
+    /** Whether the next working-manifest publication should fail. */
     let failWorkingManifest = false;
+    /** Store under test with a one-shot working-manifest fault. */
     const store = new FileAgentTimelineStore(root, {
       segmentRowLimit: 2,
       faultInjector: (point) => {
@@ -326,8 +346,11 @@ describe("FileAgentTimelineStore", () => {
   });
 
   it("retries a staged update orphan after manifest publication failure", async () => {
+    /** Isolated filesystem root for the staged-update publication failure. */
     const root = await createRoot();
+    /** Whether the next staged-update manifest publication should fail. */
     let failWorkingManifest = false;
+    /** Store under test with a one-shot staged-update publication fault. */
     const store = new FileAgentTimelineStore(root, {
       segmentRowLimit: 2,
       faultInjector: (point) => {
@@ -363,9 +386,13 @@ describe("FileAgentTimelineStore", () => {
   });
 
   it("retries old and new orphans after replacement manifest publication fails", async () => {
+    /** Isolated filesystem root for the replacement publication failure. */
     const root = await createRoot();
+    /** Whether the working pointer currently belongs to the replacement attempt. */
     let replacingWorking = false;
+    /** Whether the manifest publication following the replacement pointer should fail. */
     let failNextWorkingManifest = false;
+    /** Store under test with coordinated pointer and manifest fault state. */
     const store = new FileAgentTimelineStore(root, {
       segmentRowLimit: 2,
       faultInjector: (point) => {
@@ -408,7 +435,9 @@ describe("FileAgentTimelineStore", () => {
   });
 
   it("lazily sweeps hash-addressed orphans but leaves unknown files untouched", async () => {
+    /** Isolated filesystem root for orphan discovery and unknown-file retention. */
     const root = await createRoot();
+    /** Seed store that creates the committed reference set before restart. */
     const seed = new FileAgentTimelineStore(root);
     await seed.stageRows("agent-1", {
       epoch: "epoch-1",
@@ -416,12 +445,15 @@ describe("FileAgentTimelineStore", () => {
       rows: rows(1, 1),
     });
     await seed.commit("agent-1");
+    /** Hash-addressed orphan expected to be discovered and removed. */
     const orphan = await writeOrphanSegment(root);
     await writeFile(path.join(await findSegmentsDirectory(root), "notes.json"), "{}", "utf8");
 
+    /** Fresh store instance that performs the first lazy sweep. */
     const restarted = new FileAgentTimelineStore(root);
     await restarted.markIncomplete("agent-1");
 
+    /** Physical files remaining after the lazy sweep. */
     const files = await listSegmentFiles(root);
     expect(files).not.toContain(orphan);
     expect(files).toContain("notes.json");
@@ -429,7 +461,9 @@ describe("FileAgentTimelineStore", () => {
   });
 
   it("does not sweep any segment when the Agent state is malformed", async () => {
+    /** Isolated filesystem root for malformed-state fail-closed behavior. */
     const root = await createRoot();
+    /** Seed store that creates one referenced segment and one later orphan. */
     const seed = new FileAgentTimelineStore(root);
     await seed.stageRows("agent-1", {
       epoch: "epoch-1",
@@ -439,15 +473,19 @@ describe("FileAgentTimelineStore", () => {
     await seed.commit("agent-1");
     await writeOrphanSegment(root);
     await writeFile(path.join(await findAgentDirectory(root), "state.json"), "{", "utf8");
+    /** Physical segment snapshot that must remain unchanged. */
     const before = await listSegmentFiles(root);
 
+    /** Fresh store instance that encounters the malformed state. */
     const restarted = new FileAgentTimelineStore(root);
     await expect(restarted.markIncomplete("agent-1")).rejects.toThrow();
     await expect(listSegmentFiles(root)).resolves.toEqual(before);
   });
 
   it("does not sweep any segment when the current active manifest is malformed", async () => {
+    /** Isolated filesystem root for malformed-active-manifest behavior. */
     const root = await createRoot();
+    /** Seed store that creates the active manifest before corruption. */
     const seed = new FileAgentTimelineStore(root);
     await seed.stageRows("agent-1", {
       epoch: "epoch-1",
@@ -456,18 +494,24 @@ describe("FileAgentTimelineStore", () => {
     });
     await seed.commit("agent-1");
     await writeOrphanSegment(root);
+    /** Path to the manifest selected by the active generation pointer. */
     const activeManifest = await findCurrentManifest(root, "activeGenerationId");
+    /** Parsed active manifest used to introduce a deterministic range defect. */
     const manifest = JSON.parse(await readFile(activeManifest, "utf8")) as Record<string, unknown>;
     await writeFile(activeManifest, JSON.stringify({ ...manifest, nextSeq: 99 }, null, 2), "utf8");
+    /** Physical segment snapshot that must remain unchanged. */
     const before = await listSegmentFiles(root);
 
+    /** Fresh store instance that encounters the malformed active manifest. */
     const restarted = new FileAgentTimelineStore(root);
     await restarted.markIncomplete("agent-1");
     await expect(listSegmentFiles(root)).resolves.toEqual(before);
   });
 
   it("does not sweep any segment when the current working manifest is malformed", async () => {
+    /** Isolated filesystem root for malformed-working-manifest behavior. */
     const root = await createRoot();
+    /** Seed store that creates distinct active and working segments. */
     const seed = new FileAgentTimelineStore(root, { segmentRowLimit: 1 });
     await seed.stageRows("agent-1", {
       epoch: "epoch-1",
@@ -482,15 +526,19 @@ describe("FileAgentTimelineStore", () => {
     });
     await writeOrphanSegment(root);
     await writeFile(await findCurrentManifest(root, "workingGenerationId"), "{", "utf8");
+    /** Physical segment snapshot that must remain unchanged. */
     const before = await listSegmentFiles(root);
 
+    /** Fresh store instance that encounters the malformed working manifest. */
     const restarted = new FileAgentTimelineStore(root, { segmentRowLimit: 1 });
     await restarted.markIncomplete("agent-1");
     await expect(listSegmentFiles(root)).resolves.toEqual(before);
   });
 
   it("starts a fresh lazy sweep lifecycle after an Agent is deleted and recreated", async () => {
+    /** Isolated filesystem root reused by the deleted and recreated Agent. */
     const root = await createRoot();
+    /** Store under test whose per-Agent sweep marker must reset on deletion. */
     const store = new FileAgentTimelineStore(root);
     await store.stageRows("agent-1", {
       epoch: "epoch-1",
@@ -553,7 +601,9 @@ describe("FileAgentTimelineStore", () => {
   });
 
   it("sweeps an orphan written before a later segment in the same append fails", async () => {
+    /** Isolated filesystem root for the partial multi-segment append failure. */
     const root = await createRoot();
+    /** Seed store that creates the active generation before the failing append. */
     const seed = new FileAgentTimelineStore(root, { segmentRowLimit: 1 });
     await seed.stageRows("agent-1", {
       epoch: "epoch-1",
@@ -562,7 +612,9 @@ describe("FileAgentTimelineStore", () => {
     });
     await seed.commit("agent-1");
 
+    /** Number of segment write boundaries observed by the fault injector. */
     let segmentWrites = 0;
+    /** Store instance that fails the second segment write in one append. */
     const failing = new FileAgentTimelineStore(root, {
       segmentRowLimit: 1,
       faultInjector: (point) => {
@@ -626,7 +678,9 @@ describe("FileAgentTimelineStore", () => {
   });
 
   it("retries a superseded working orphan after replacement pointer failure", async () => {
+    /** Isolated filesystem root for the replacement-pointer failure. */
     const root = await createRoot();
+    /** Seed store that creates both active and working generations. */
     const seed = new FileAgentTimelineStore(root, { segmentRowLimit: 1 });
     await seed.stageRows("agent-1", {
       epoch: "epoch-1",
@@ -640,7 +694,9 @@ describe("FileAgentTimelineStore", () => {
       rows: rows(2, 2),
     });
 
+    /** Whether the next replacement working-pointer publication should fail. */
     let failWorkingPointer = true;
+    /** Store instance that injects the one-shot replacement pointer failure. */
     const failing = new FileAgentTimelineStore(root, {
       segmentRowLimit: 1,
       faultInjector: (point) => {
@@ -835,7 +891,9 @@ function row(seq: number, text = `row-${seq}`): AgentTimelineRow {
 }
 
 async function findFirstSegment(root: string): Promise<string> {
+  /** Physical segment directory belonging to the test Agent. */
   const segmentsDirectory = await findSegmentsDirectory(root);
+  /** First physical segment entry selected for corruption tests. */
   const [segment] = await readdir(segmentsDirectory);
   if (!segment) throw new Error("expected timeline segment");
   return path.join(segmentsDirectory, segment);
@@ -848,6 +906,7 @@ async function listSegmentFiles(root: string): Promise<string[]> {
 
 /** Resolves the single Agent directory created by each isolated test. */
 async function findAgentDirectory(root: string): Promise<string> {
+  /** Single content-addressed Agent directory created under the test root. */
   const [agentDirectory] = await readdir(root);
   if (!agentDirectory) throw new Error("expected timeline agent directory");
   return path.join(root, agentDirectory);
@@ -860,7 +919,9 @@ async function findSegmentsDirectory(root: string): Promise<string> {
 
 /** Writes a valid content-addressed file that no generation references. */
 async function writeOrphanSegment(root: string): Promise<string> {
+  /** Canonical JSON bytes used to derive a valid content-addressed file name. */
   const content = JSON.stringify([row(99, "orphan")], null, 2);
+  /** Hash-addressed segment file name derived from the orphan content. */
   const file = `${createHash("sha256").update(content).digest("hex")}.json`;
   await writeFile(path.join(await findSegmentsDirectory(root), file), content, "utf8");
   return file;
@@ -871,10 +932,13 @@ async function findCurrentManifest(
   root: string,
   key: "activeGenerationId" | "workingGenerationId",
 ): Promise<string> {
+  /** Physical directory containing the current test Agent state. */
   const agentDirectory = await findAgentDirectory(root);
+  /** Parsed persisted state used to resolve the selected generation pointer. */
   const state = JSON.parse(
     await readFile(path.join(agentDirectory, "state.json"), "utf8"),
   ) as Record<string, unknown>;
+  /** Generation identifier selected by the requested active or working key. */
   const generationId = state[key];
   if (typeof generationId !== "string") throw new Error(`expected ${key}`);
   return path.join(agentDirectory, "generations", `${generationId}.json`);
