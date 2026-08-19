@@ -135,6 +135,7 @@
 | 0085 | 待手工验收 | spec       | 已同步        | [Codex Goal 任务完整支持](specs/0085_Codex_Goal任务完整支持.md)                                   | 2026-08-19 11:30 | 协议、daemon/provider、App 与 Browser E2E 已 GREEN；真实 Codex smoke 因凭据条件跳过，待隔离 kill/restart 与实际 App 验收                        |
 | 0086 | 待手工验收 | micro-spec | 已同步        | [退出时活跃会话标记](micro_specs/0086_退出时活跃会话标记.md)                                      | 2026-08-19 14:37 | 黄色 Bot UI seam RED→GREEN，目标测试、共享列表、根 typecheck 与目标 lint 通过；根 lint 被无关 server 改动阻塞，待真实 Electron 冷启动验收       |
 | 0096 | 已收口     | micro-spec | 已同步        | [Supervisor 日志容错与语音下载清理](micro_specs/0096_Supervisor日志容错与语音下载清理.md)         | 2026-08-19 11:31 | 两个真实 seam RED→GREEN；7 天清理、目标回归、typecheck/format/diff 通过；全仓 lint 仅受 9 个范围外 App/Relay 错误阻塞；本机空间保持只读         |
+| 0098 | 已提交     | spec       | 已同步        | [Timeline 增量回收与崩溃安全](specs/0098_Timeline增量回收与崩溃安全.md)                           | 2026-08-19 17:15 | 增量回收、lazy sweep、失败重试与崩溃/分页证明完成；24/24、typecheck、目标 lint、格式通过；全仓 lint 仅受范围外 relay 文件阻塞                   |
 
 ## 候选待办
 

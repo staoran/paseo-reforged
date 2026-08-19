@@ -67,7 +67,9 @@ export type FileAgentTimelineStoreFaultPoint =
   | "working_pointer"
   | "complete_manifest"
   | "active_pointer"
-  | "invalidate_pointer";
+  | "invalidate_pointer"
+  | "segment_delete"
+  | "working_manifest_published";
 
 export interface FileAgentTimelineStoreOptions {
   segmentRowLimit?: number;
@@ -80,6 +82,10 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
   private readonly segmentRowLimit: number;
   private readonly faultInjector?: FileAgentTimelineStoreOptions["faultInjector"];
   private readonly pendingMutations = new Map<string, Promise<void>>();
+  /** Segment files whose best-effort deletion must be retried for each Agent. */
+  private readonly pendingSegmentDeletes = new Map<string, Set<string>>();
+  /** Agents whose segment directory received one successful orphan discovery pass. */
+  private readonly sweptSegmentAgents = new Set<string>();
 
   constructor(baseDir: string, options: FileAgentTimelineStoreOptions = {}) {
     const segmentRowLimit = options.segmentRowLimit ?? DEFAULT_SEGMENT_ROW_LIMIT;
@@ -96,8 +102,17 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
       const parsedRows = TimelineRowSchema.array().parse(input.rows);
       let state = (await this.readState(agentId)) ?? this.createState(agentId);
       let manifest: GenerationManifest | undefined;
+      let supersededWorkingSegmentFiles: string[] = [];
 
       if (input.mode === "replace" || !state.workingGenerationId) {
+        if (state.workingGenerationId) {
+          try {
+            const superseded = await this.readGeneration(agentId, state.workingGenerationId);
+            supersededWorkingSegmentFiles = superseded.segments.map((segment) => segment.file);
+          } catch {
+            // Replacement may repair a bad working pointer, but cleanup must remain fail closed.
+          }
+        }
         const pendingGenerationId = randomUUID();
         try {
           manifest = await this.createWorkingGeneration(agentId, state, input, pendingGenerationId);
@@ -118,6 +133,7 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
             ...state,
             workingGenerationId: manifest?.generationId ?? pendingGenerationId,
           });
+          this.queueSegmentDeletes(agentId, supersededWorkingSegmentFiles);
           throw error;
         }
       } else {
@@ -135,14 +151,34 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
         throw new Error(`Timeline generation for '${agentId}' was not created`);
       }
 
+      let obsoleteSegmentFiles: string[] = [];
+      let unpublishedSegmentFiles: string[] = [];
       try {
         const nextManifest = await this.appendRows(agentId, manifest, parsedRows);
+        const previouslyPublished = new Set(manifest.segments.map((segment) => segment.file));
+        unpublishedSegmentFiles = nextManifest.segments
+          .map((segment) => segment.file)
+          .filter((file) => !previouslyPublished.has(file));
         await this.injectFault("working_manifest");
         await this.writeGeneration(agentId, { ...nextManifest, status: "building" });
+        unpublishedSegmentFiles = [];
+        const retained = new Set(nextManifest.segments.map((segment) => segment.file));
+        obsoleteSegmentFiles = [
+          ...supersededWorkingSegmentFiles,
+          ...manifest.segments.map((segment) => segment.file),
+        ].filter((file) => !retained.has(file));
       } catch (error) {
+        this.queueSegmentDeletes(agentId, [
+          ...supersededWorkingSegmentFiles,
+          ...unpublishedSegmentFiles,
+        ]);
+        this.sweptSegmentAgents.delete(agentId);
         await this.writeIncompleteBestEffort(agentId, manifest.generationId);
         throw error;
       }
+      this.queueSegmentDeletes(agentId, obsoleteSegmentFiles);
+      await this.injectFault("working_manifest_published");
+      await this.reclaimSegmentsBestEffort(agentId, []);
     });
   }
 
@@ -160,6 +196,8 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
       if (manifest.status === "incomplete") {
         throw new Error(`Timeline generation for '${agentId}' is incomplete`);
       }
+      let obsoleteSegmentFile: string | undefined;
+      let unpublishedSegmentFile: string | undefined;
       try {
         const row = TimelineRowSchema.parse(input.row);
         const segmentIndex = manifest.segments.findIndex(
@@ -175,14 +213,31 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
         }
         existingRows[rowIndex] = cloneRow(row);
         const replacement = await this.writeSegment(agentId, existingRows);
+        const replacedSegmentFile = manifest.segments[segmentIndex].file;
+        if (replacement.file !== replacedSegmentFile) {
+          unpublishedSegmentFile = replacement.file;
+        }
         const segments = [...manifest.segments];
         segments[segmentIndex] = replacement;
         await this.injectFault("working_manifest");
         await this.writeGeneration(agentId, { ...manifest, status: "building", segments });
+        unpublishedSegmentFile = undefined;
+        obsoleteSegmentFile = replacedSegmentFile;
       } catch (error) {
+        this.queueSegmentDeletes(
+          agentId,
+          unpublishedSegmentFile === undefined ? [] : [unpublishedSegmentFile],
+        );
+        this.sweptSegmentAgents.delete(agentId);
         await this.writeIncompleteBestEffort(agentId, manifest.generationId);
         throw error;
       }
+      this.queueSegmentDeletes(
+        agentId,
+        obsoleteSegmentFile === undefined ? [] : [obsoleteSegmentFile],
+      );
+      await this.injectFault("working_manifest_published");
+      await this.reclaimSegmentsBestEffort(agentId, []);
     });
   }
 
@@ -348,6 +403,8 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
   async deleteAgent(agentId: string): Promise<void> {
     await this.enqueueMutation(agentId, async () => {
       await fs.rm(this.agentDir(agentId), { recursive: true, force: true });
+      this.pendingSegmentDeletes.delete(agentId);
+      this.sweptSegmentAgents.delete(agentId);
     });
   }
 
@@ -692,6 +749,94 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
     }
   }
 
+  /** Discovers crash-orphaned segments once per Agent and retries pending cleanup. */
+  private async prepareSegmentReclamationBestEffort(agentId: string): Promise<void> {
+    let discovered: string[] = [];
+    if (!this.sweptSegmentAgents.has(agentId)) {
+      try {
+        const referenced = await this.readCurrentSegmentReferences(agentId);
+        let names: string[];
+        try {
+          names = await fs.readdir(this.segmentsDir(agentId));
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") return;
+          names = [];
+        }
+        discovered = names.filter(
+          (file) => this.isSafeSegmentFileName(file) && !referenced.has(file),
+        );
+        this.sweptSegmentAgents.add(agentId);
+      } catch {
+        return;
+      }
+    }
+    await this.reclaimSegmentsBestEffort(agentId, discovered);
+  }
+
+  /** Deletes only candidates that no current active or working manifest references. */
+  private async reclaimSegmentsBestEffort(
+    agentId: string,
+    candidates: readonly string[],
+  ): Promise<void> {
+    const pending = this.queueSegmentDeletes(agentId, candidates);
+    if (!pending) return;
+    let referenced: Set<string>;
+    try {
+      referenced = await this.readCurrentSegmentReferences(agentId);
+    } catch {
+      return;
+    }
+    for (const file of pending) {
+      if (referenced.has(file)) {
+        pending.delete(file);
+        continue;
+      }
+      try {
+        await this.injectFault("segment_delete");
+        await fs.rm(path.join(this.segmentsDir(agentId), file), { force: true });
+        pending.delete(file);
+      } catch {
+        // A published manifest remains authoritative; a later mutation retries cleanup.
+      }
+    }
+    if (pending.size === 0) this.pendingSegmentDeletes.delete(agentId);
+  }
+
+  /** Adds safe segment candidates to the per-Agent retry set. */
+  private queueSegmentDeletes(agentId: string, candidates: readonly string[]): Set<string> | null {
+    const existing = this.pendingSegmentDeletes.get(agentId);
+    const pending = existing ?? new Set<string>();
+    for (const file of candidates) {
+      if (this.isSafeSegmentFileName(file)) pending.add(file);
+    }
+    if (pending.size === 0) return null;
+    if (!existing) this.pendingSegmentDeletes.set(agentId, pending);
+    return pending;
+  }
+
+  /** Reads the complete segment reference closure for the current Agent state. */
+  private async readCurrentSegmentReferences(agentId: string): Promise<Set<string>> {
+    const state = await this.requireState(agentId);
+    const referenced = new Set<string>();
+    const generationIds = [state.activeGenerationId, state.workingGenerationId].filter(
+      (generationId): generationId is string => generationId !== null,
+    );
+    for (const generationId of generationIds) {
+      const manifest = await this.readGeneration(agentId, generationId);
+      this.validateManifestRanges(manifest);
+      for (const segment of manifest.segments) {
+        referenced.add(segment.file);
+      }
+    }
+    return referenced;
+  }
+
+  /** Checks that a candidate is a content-addressed segment file, not an arbitrary path. */
+  private isSafeSegmentFileName(file: string): boolean {
+    const checksum = path.basename(file, ".json");
+    return file === `${checksum}.json` && SHA256_RE.test(checksum);
+  }
+
   private async removeUnreferencedFiles(
     directory: string,
     retain: (name: string) => boolean,
@@ -798,9 +943,13 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
     await this.faultInjector?.(point);
   }
 
+  /** Serializes each Agent mutation and retries deferred segment cleanup first. */
   private enqueueMutation<T>(agentId: string, operation: () => Promise<T>): Promise<T> {
     const previous = this.pendingMutations.get(agentId) ?? Promise.resolve();
-    const run = previous.then(operation);
+    const run = previous.then(async () => {
+      await this.prepareSegmentReclamationBestEffort(agentId);
+      return await operation();
+    });
     const tracked = run.then(
       () => undefined,
       () => undefined,

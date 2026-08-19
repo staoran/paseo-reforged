@@ -64,6 +64,29 @@ bounded detail request. The App installs this summary in a display-only projecti
 advance the canonical timeline cursor, and a live event or ordinary canonical fetch supersedes it
 atomically.
 
+### Incremental segment reclamation
+
+Segments remain immutable, content-addressed files. A working append or staged-row replacement first
+writes the replacement segment and atomically publishes the new working manifest. Only after that
+publication does the file adapter attempt best-effort deletion of files that are absent from both the
+current active manifest and the current working manifest. A segment shared by those generations is
+always retained.
+
+Deletion is maintenance, not an authoritative timeline write. A failed delete leaves the published
+working generation successful and places the file in a per-Agent retry set; the next mutation retries
+after rebuilding the current reference set. The first mutation for an Agent in a new store instance
+also performs one lazy sweep of that Agent's segment directory, which recovers valid hash-named
+orphans left by a process crash without scanning every Agent at daemon startup. Unknown file names,
+and any sweep whose state or active/working manifest cannot be read completely, are left untouched.
+
+This ordering makes the process-crash boundary additive: a crash before manifest publication can leave
+a new orphan, and a crash after publication but before deletion can leave an old orphan, but neither
+case can remove a segment referenced by the active or current working manifest. Committed reads,
+`agent_stream`, cursor/epoch/revision handling, and stored-session eligibility do not consult
+unreferenced files and are unchanged. The atomic file helper still uses rename without `fsync`, so
+this contract covers the existing process-crash/atomic-visibility boundary, not sudden power-loss
+durability.
+
 ## Durable item anchors
 
 Provider message IDs are not guaranteed for every displayed item. Paseo-generated system errors are one example. Rendered item indices are not durable either because pagination and projection can merge source rows.
