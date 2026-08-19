@@ -17,6 +17,12 @@ import {
   type SharedKey,
 } from "./crypto.js";
 import { arrayBufferToBase64, base64ToArrayBuffer } from "./base64.js";
+import {
+  decodeFramedCiphertextWire,
+  decodeFramedPayload,
+  framedCiphertextWireByteLength,
+  prepareIdentityFramedPayload,
+} from "./framed-ciphertext.js";
 
 export interface Transport {
   send(data: string | ArrayBuffer): void | Promise<void>;
@@ -164,18 +170,25 @@ function parseFramedCiphertextV1Selection(
 ): FramedCiphertextV1Selection | null {
   // Untrusted framed selection carried by the plaintext ready message.
   const value = message.capabilities?.framedCiphertextV1;
-  if (!isRecord(value) || !isCiphertextEncoding(value.ciphertextEncoding)) return null;
-  if (!SUPPORTED_FRAMED_CIPHERTEXT_ENCODINGS.includes(value.ciphertextEncoding)) return null;
-  if (!Array.isArray(value.compressionAlgorithms)) return null;
+  if (value === undefined) return null;
+  if (!isRecord(value) || !isCiphertextEncoding(value.ciphertextEncoding)) {
+    throw new Error("Invalid framed-v1 selection");
+  }
+  if (!SUPPORTED_FRAMED_CIPHERTEXT_ENCODINGS.includes(value.ciphertextEncoding)) {
+    throw new Error("Framed-v1 selection uses an unoffered ciphertext encoding");
+  }
+  if (!Array.isArray(value.compressionAlgorithms)) {
+    throw new Error("Invalid framed-v1 compression selection");
+  }
   if (!value.compressionAlgorithms.every((algorithm) => typeof algorithm === "string")) {
-    return null;
+    throw new Error("Invalid framed-v1 compression selection");
   }
   if (
     !value.compressionAlgorithms.every((algorithm) =>
       SUPPORTED_FRAMED_COMPRESSION_ALGORITHMS.includes(algorithm),
     )
   ) {
-    return null;
+    throw new Error("Framed-v1 selection uses an unoffered compression algorithm");
   }
 
   return {
@@ -293,16 +306,6 @@ const HANDSHAKE_RETRY_MS = 1000;
 const MAX_PENDING_SENDS = 200;
 const REHANDSHAKE_KEY_MISMATCH_CLOSE_CODE = 1008;
 const ENCRYPTED_PAYLOAD_OVERHEAD_BYTES = 40;
-/** Byte marker identifying an authenticated Paseo envelope. */
-const FRAMED_CIPHERTEXT_MAGIC = 0x50;
-/** Current authenticated envelope version. */
-const FRAMED_CIPHERTEXT_VERSION = 0x01;
-/** Number of bytes before the encoded payload in a v1 envelope. */
-const FRAMED_CIPHERTEXT_HEADER_BYTES = 8;
-/** Envelope codec value for an uncompressed payload. */
-const FRAMED_CIPHERTEXT_IDENTITY_CODEC = 0x00;
-/** Bit indicating that the original application payload was binary. */
-const FRAMED_CIPHERTEXT_BINARY_FLAG = 0x01;
 /** Framed ciphertext representations implemented by this relay package. */
 const SUPPORTED_FRAMED_CIPHERTEXT_ENCODINGS: readonly CiphertextEncoding[] = ["base64", "binary"];
 /** Compression decoders implemented by this relay package in the identity-only slice. */
@@ -775,6 +778,16 @@ export class EncryptedChannel {
           // decoding ciphertext below.
         }
 
+        if (this.options.framedCiphertextV1) {
+          // Ciphertext bytes validated against the immutable connection representation.
+          const framedWire = decodeFramedCiphertextWire(
+            message.data,
+            message.isBinary,
+            this.options.framedCiphertextV1.ciphertextEncoding,
+          );
+          return { data: framedWire, isBinary: null };
+        }
+
         if (this.options.binaryCiphertext) {
           return message.isBinary
             ? { data: requireArrayBuffer(message.data), isBinary: true as const }
@@ -802,7 +815,7 @@ export class EncryptedChannel {
       if (ciphertext) {
         const plaintextBytes = decrypt(this.sharedKey, ciphertext.data);
         const plaintext = this.options.framedCiphertextV1
-          ? decodeIdentityEnvelope(plaintextBytes)
+          ? (await decodeFramedPayload(plaintextBytes)).data
           : decodePlaintext(plaintextBytes, ciphertext.isBinary);
         if (typeof plaintext === "string" && isReservedModeConfirmText(plaintext)) {
           throw new Error("Received reserved e2ee_mode_confirm outside a pending selection");
@@ -826,14 +839,22 @@ export class EncryptedChannel {
 
   /** Parses plaintext client-side handshake traffic and accepts valid ready messages. */
   private async handleHandshakeMessage(message: TransportMessage): Promise<void> {
+    if (message.isBinary) return;
+    let parsed: unknown;
     try {
-      if (message.isBinary) return;
       const text = decodeTransportText(message.data);
-      const parsed: unknown = JSON.parse(text);
-      if (!isE2EEReadyMessage(parsed)) return;
-      await this.transitionFromReady(parsed);
+      parsed = JSON.parse(text);
     } catch {
-      // ignore non-ready handshake traffic
+      // Ignore non-JSON traffic until a ready message arrives.
+      return;
+    }
+    if (!isE2EEReadyMessage(parsed)) return;
+    try {
+      await this.transitionFromReady(parsed);
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      this.state = "closed";
+      this.transport.close(1011, err.message);
     }
   }
 
@@ -888,7 +909,7 @@ export class EncryptedChannel {
   private async sendApplicationFrame(data: string | ArrayBuffer): Promise<void> {
     // Authenticated plaintext selected by the negotiated connection mode.
     const authenticatedPlaintext = this.options.framedCiphertextV1
-      ? encodeIdentityEnvelope(data)
+      ? prepareIdentityFramedPayload(data).plaintext
       : data;
     // NaCl bundle containing the nonce, authenticated ciphertext, and MAC.
     const ciphertext = encrypt(this.sharedKey, authenticatedPlaintext);
@@ -912,12 +933,10 @@ export class EncryptedChannel {
   outboundWireByteLength(data: string | ArrayBuffer): number {
     const plaintextBytes = utf8ByteLength(data);
     if (this.options.framedCiphertextV1) {
-      // Encrypted bytes include the authenticated envelope header.
-      const encryptedBytes =
-        plaintextBytes + FRAMED_CIPHERTEXT_HEADER_BYTES + ENCRYPTED_PAYLOAD_OVERHEAD_BYTES;
-      return this.options.framedCiphertextV1.ciphertextEncoding === "binary"
-        ? encryptedBytes
-        : 4 * Math.ceil(encryptedBytes / 3);
+      return framedCiphertextWireByteLength(
+        plaintextBytes,
+        this.options.framedCiphertextV1.ciphertextEncoding,
+      );
     }
     const encryptedBytes = plaintextBytes + ENCRYPTED_PAYLOAD_OVERHEAD_BYTES;
     if (this.options.binaryCiphertext && data instanceof ArrayBuffer) {
@@ -1016,52 +1035,6 @@ function decodeTransportText(data: string | ArrayBuffer): string {
 function requireArrayBuffer(data: string | ArrayBuffer): ArrayBuffer {
   if (data instanceof ArrayBuffer) return data;
   throw new Error("Binary WebSocket frame did not contain bytes");
-}
-
-/** Encodes an application payload in the exact authenticated v1 identity envelope. */
-function encodeIdentityEnvelope(data: string | ArrayBuffer): ArrayBuffer {
-  // Original application bytes preserved after the fixed header.
-  const payload = typeof data === "string" ? new TextEncoder().encode(data) : new Uint8Array(data);
-  if (payload.byteLength > 0xffffffff) {
-    throw new Error("Framed ciphertext payload exceeds uint32 length");
-  }
-
-  // Contiguous authenticated plaintext passed to the existing NaCl primitive.
-  const envelope = new Uint8Array(FRAMED_CIPHERTEXT_HEADER_BYTES + payload.byteLength);
-  envelope[0] = FRAMED_CIPHERTEXT_MAGIC;
-  envelope[1] = FRAMED_CIPHERTEXT_VERSION;
-  envelope[2] = data instanceof ArrayBuffer ? FRAMED_CIPHERTEXT_BINARY_FLAG : 0;
-  envelope[3] = FRAMED_CIPHERTEXT_IDENTITY_CODEC;
-  new DataView(envelope.buffer).setUint32(4, payload.byteLength, false);
-  envelope.set(payload, FRAMED_CIPHERTEXT_HEADER_BYTES);
-  return envelope.buffer;
-}
-
-/** Decodes an authenticated v1 identity envelope into its original payload type. */
-function decodeIdentityEnvelope(data: ArrayBuffer): string | ArrayBuffer {
-  if (data.byteLength < FRAMED_CIPHERTEXT_HEADER_BYTES) {
-    throw new Error("Framed ciphertext envelope is truncated");
-  }
-
-  const header = new Uint8Array(data, 0, FRAMED_CIPHERTEXT_HEADER_BYTES);
-  if (header[0] !== FRAMED_CIPHERTEXT_MAGIC || header[1] !== FRAMED_CIPHERTEXT_VERSION) {
-    throw new Error("Unsupported framed ciphertext envelope");
-  }
-  if (header[2] !== 0 && header[2] !== FRAMED_CIPHERTEXT_BINARY_FLAG) {
-    throw new Error("Unsupported framed ciphertext flags");
-  }
-  if (header[3] !== FRAMED_CIPHERTEXT_IDENTITY_CODEC) {
-    throw new Error("Unsupported framed ciphertext codec");
-  }
-
-  const payloadLength = new DataView(data).getUint32(4, false);
-  if (payloadLength !== data.byteLength - FRAMED_CIPHERTEXT_HEADER_BYTES) {
-    throw new Error("Framed ciphertext payload length mismatch");
-  }
-
-  const payload = data.slice(FRAMED_CIPHERTEXT_HEADER_BYTES);
-  if (header[2] === FRAMED_CIPHERTEXT_BINARY_FLAG) return payload;
-  return new TextDecoder("utf-8", { fatal: true }).decode(payload);
 }
 
 function decodeLegacyPlaintext(data: ArrayBuffer): string | ArrayBuffer {

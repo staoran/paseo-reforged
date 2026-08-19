@@ -6,10 +6,10 @@
 | ------------------ | ------------------------------------------------------- |
 | task_id            | `0088`                                                  |
 | spec layer         | `Feature Spec`                                          |
-| task status        | `已批准`                                                |
-| document status    | `Active`                                                |
+| task status        | `已收口`                                                |
+| document status    | `Completed`                                             |
 | depth              | `standard`                                              |
-| phase              | `Plan`                                                  |
+| phase              | `Review`                                                |
 | Execution Approval | `Approved`                                              |
 | Approval Source    | `User / 2026-08-19；按依赖顺序逐票实施并本地提交`       |
 | file path          | `mydocs/micro_specs/0088_framed_envelope与解码安全.md`  |
@@ -52,9 +52,9 @@
 ## 4. 执行前检查点
 
 - 当前目标：锁定 wire/parser 安全契约，不实现压缩 adapter。
-- 当前进度：基础 identity 出站/入站 GREEN，严格 limits 尚未覆盖。
+- 当前进度：0087 已提交；越权 ready selection、locked opcode、公共 envelope/parser、严格 Base64、wire 与 decode limits 均已转 GREEN。
 - 当前动作是否仍服务核心目标：是；后续所有压缩和 queue 代码依赖同一 parser。
-- 下一步：在 0087 selection GREEN 后实现 parser。
+- 下一步：`N/A；0088 已完成，按依赖进入 0089 daemon 压缩准备与 codec 门禁。`
 - 风险与回退：parser 失败保持 legacy path；不得放宽生产 relay 32 MiB 或 receive 64 MiB 限制。
 - 验证方式：relay framed test、crypto regression、typecheck/lint/format。
 - TDD 判定、测试 seam 与验收行为：`TDD；公共 encode/decode、Transport wire 和 channel events`。
@@ -63,33 +63,35 @@
 
 ## 5. 执行与变更记录
 
-- 实际改动：本轮未修改生产代码。
-- 偏差与用户决策：无。
+- 实际改动：新增平台无关 `framed-ciphertext.ts`，集中 8-byte envelope、identity/deflate codec、严格 Base64/binary wire、32 MiB exclusive wire cap、4 MiB logical cap、4 KiB compression floor、5%/64-byte 收益、128:1 ratio、bounded inflate 与 fatal UTF-8；`encrypted-channel.ts` 已复用公共 prepare/decode/wire-length seam，并移除重复 header/parser。
+- 偏差与用户决策：0088 只定义注入式 `FrameCompressionAdapter`，不引入 Node zlib 或 client fflate；framed 接入当前仍只协商 identity，实际 codec advertisement 分别由 0089/0093 完成。
 - Change Log：`2026-08-19` 从 0084 envelope/limits 清单拆出。
+- Change Log：`2026-08-19` 完成逐条 RED→GREEN、legacy compatibility 与静态门禁，进入 Review/已收口。
 
 ## 6. 验证与完成判断
 
-| 验收项        | 命令或步骤                                 | 结果   | 证据                     |
-| ------------- | ------------------------------------------ | ------ | ------------------------ |
-| vectors       | identity text/binary 与 Base64/binary wire | 待执行 | 现有 RED-3 payload tests |
-| fail closed   | malformed header/UTF-8/Base64/length/ratio | 待执行 | 待补 parser RED          |
-| compatibility | legacy old/new 与 framed new/new           | 待执行 | 0087、0090 回归          |
+| 验收项        | 命令或步骤                                            | 结果 | 证据                                                                                        |
+| ------------- | ----------------------------------------------------- | ---- | ------------------------------------------------------------------------------------------- |
+| vectors       | `framed-ciphertext.test.ts --bail=1`                  | PASS | `68 passed / 1 skipped`；identity、deflate adapter、Base64/binary、text/binary 四象限       |
+| fail closed   | malformed header/UTF-8/Base64/length/ratio 定向用例   | PASS | strict canonical Base64、32 MiB wire、4 MiB logical、5%/64-byte、128:1、exact output 均通过 |
+| compatibility | legacy channel/crypto 与 framed new/new               | PASS | `encrypted-channel.test.ts` 15/15、`crypto.test.ts` 8/8；legacy URL-safe/unpadded 保持宽松  |
+| static        | `npm run typecheck`、`npm run lint`、目标 format/diff | PASS | workspace typecheck 退出码 0；lint `0 warnings / 0 errors`；目标文件格式与 diff check 通过  |
 
-- 未验证项与原因：尚未授权实现。
-- 剩余风险：实际 inflate CPU/内存不在本 ticket。
-- Done Contract 是否由证据满足：`No；待 Execute`。
+- 未验证项与原因：Node zlib、client fflate、receive reservation、真实 relay/Hermes 不属于 0088；完整 framed 文件唯一 skip 为 0090 的 opening 入站 FIFO。
+- 剩余风险：实际 inflate CPU/内存、跨实现 DEFLATE vector 与 receive 总预算仍由 0089、0093、0090 约束。
+- Done Contract 是否由证据满足：`是；0088 scoped contract 已满足，父 Spec 仍在 Execute。`
 
 ## 7. 恢复与同步
 
-- 状态说明：ticket 已登记，依赖 0087。
-- 当前卡点：无设计卡点，仅缺执行授权。
-- 下一步唯一动作：实现共享 framed parser 和严格限额。
-- Resume / Handoff：从父 Spec 附录 D 与 0087 的 selection output 接续。
+- 状态说明：`Review / 已收口 / Completed`；公共 framed parser 与 channel 接入已完成。
+- 当前卡点：`N/A`；后续 codec 实现与队列边界已有独立 ticket。
+- 下一步唯一动作：执行 0089 Node raw DEFLATE、level 1、收益与两槽位门禁。
+- Resume / Handoff：从本文件公共 `PreparedFramedPayload` / `FrameCompressionAdapter` 与父 Spec D.2 接续。
 - Project Sync Candidates：实现后回写 `SECURITY.md` 候选。
 - 长期文档同步：待 0097。
 
 ### 提交记录
 
-| 提交信息（Commit Message） | 提交脚注（Commit Footer） | 关联改动或阶段 | 文档同步状态 | 备注     |
-| -------------------------- | ------------------------- | -------------- | ------------ | -------- |
-| `<待提交>`                 | `N/A`                     | `paseo / 0088` | `待填写`     | 未获授权 |
+| 提交信息（Commit Message）                       | 提交脚注（Commit Footer） | 关联改动或阶段 | 文档同步状态 | 备注                   |
+| ------------------------------------------------ | ------------------------- | -------------- | ------------ | ---------------------- |
+| `feat(relay): harden framed ciphertext decoding` | `N/A`                     | `paseo / 0088` | `已同步`     | 用户已授权逐票本地提交 |

@@ -17,6 +17,13 @@ import {
   importPublicKey,
 } from "./crypto.js";
 import { arrayBufferToBase64, base64ToArrayBuffer } from "./base64.js";
+import {
+  decodeFramedCiphertextWire,
+  decodeFramedPayload,
+  framedCiphertextWireByteLength,
+  MAX_FRAMED_WIRE_BYTES,
+  prepareIdentityFramedPayload,
+} from "./framed-ciphertext.js";
 
 /** Plaintext ready frame selecting identity-only framed binary ciphertext. */
 const FRAMED_BINARY_READY = JSON.stringify({
@@ -292,6 +299,171 @@ async function openClientFramedChannel(args: {
 }
 
 describe("framed ciphertext v1 contract", () => {
+  it("encodes and decodes the exact authenticated identity envelope", async () => {
+    const prepared = prepareIdentityFramedPayload("ok");
+    expect(new Uint8Array(prepared.plaintext)).toEqual(
+      new Uint8Array([0x50, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x6f, 0x6b]),
+    );
+
+    await expect(decodeFramedPayload(prepared.plaintext)).resolves.toEqual({
+      data: "ok",
+      binary: false,
+      codec: "identity",
+      originalByteLength: 2,
+      encodedByteLength: 2,
+    });
+  });
+
+  it("computes exact framed binary and Base64 wire lengths", () => {
+    expect({
+      binary: framedCiphertextWireByteLength(2, "binary"),
+      base64: framedCiphertextWireByteLength(2, "base64"),
+    }).toEqual({ binary: 50, base64: 68 });
+  });
+
+  it("accepts only canonical padded Base64 for framed ciphertext", () => {
+    // Canonical one-byte ciphertext representation with required padding.
+    const canonical = "AQ==";
+    // Non-canonical forms forbidden before framed ciphertext allocation or decryption.
+    const malformed = ["AQ", " AQ==", "AQ==\n", "-Q==", "_Q==", "AQ==="];
+
+    expect(new Uint8Array(decodeFramedCiphertextWire(canonical, false, "base64"))).toEqual(
+      new Uint8Array([0x01]),
+    );
+    for (const wire of malformed) {
+      expect(() => decodeFramedCiphertextWire(wire, false, "base64")).toThrow(
+        "canonical padded Base64",
+      );
+    }
+  });
+
+  it("preserves permissive URL-safe unpadded Base64 decoding for legacy traffic", () => {
+    expect(new Uint8Array(base64ToArrayBuffer("  _w\n"))).toEqual(new Uint8Array([0xff]));
+  });
+
+  it("rejects framed text and binary ciphertext at the relay wire limit", () => {
+    // Largest binary wire that remains strictly below the production relay cap.
+    const acceptedBinary = new ArrayBuffer(MAX_FRAMED_WIRE_BYTES - 1);
+    // Canonical Base64 text whose ASCII wire length reaches the forbidden boundary.
+    const rejectedBase64 = "AAAA".repeat(MAX_FRAMED_WIRE_BYTES / 4);
+
+    expect(decodeFramedCiphertextWire(acceptedBinary, true, "binary")).toBe(acceptedBinary);
+    expect(() =>
+      decodeFramedCiphertextWire(new ArrayBuffer(MAX_FRAMED_WIRE_BYTES), true, "binary"),
+    ).toThrow("wire byte limit");
+    expect(() => decodeFramedCiphertextWire(rejectedBase64, false, "base64")).toThrow(
+      "wire byte limit",
+    );
+  });
+
+  it("inflates a safe authenticated deflate envelope through the decoder adapter", async () => {
+    // Encoded bytes chosen independently from the adapter output for the parser contract.
+    const encoded = new Uint8Array(64).fill(0x7a);
+    // Authenticated binary envelope with a valid 64:1 compression ratio.
+    const envelope = new Uint8Array(8 + encoded.byteLength);
+    envelope.set([0x50, 0x01, 0x01, 0x01, 0x00, 0x00, 0x10, 0x00]);
+    envelope.set(encoded, 8);
+    // Exact logical bytes returned by the bounded platform decoder.
+    const original = new Uint8Array(4096).fill(0x2a);
+    // Adapter observation at the public framed parser boundary.
+    const inflateRaw = vi.fn(async () => original.buffer);
+
+    const decoded = await decodeFramedPayload(envelope.buffer, { inflateRaw });
+
+    expect(inflateRaw).toHaveBeenCalledOnce();
+    expect(inflateRaw).toHaveBeenCalledWith(encoded.buffer, 4096, 4097);
+    expect(decoded).toEqual({
+      data: original.buffer,
+      binary: true,
+      codec: "deflate-raw",
+      originalByteLength: 4096,
+      encodedByteLength: 64,
+    });
+  });
+
+  it.each([
+    { caseName: "below the compression minimum", originalLength: 4095, encodedLength: 64 },
+    { caseName: "above the logical limit", originalLength: 4 * 1024 * 1024 + 1, encodedLength: 64 },
+    { caseName: "without minimum savings", originalLength: 4096, encodedLength: 4032 },
+    { caseName: "above the compression ratio limit", originalLength: 4096, encodedLength: 31 },
+    { caseName: "with an empty encoded payload", originalLength: 4096, encodedLength: 0 },
+  ])(
+    "rejects deflate metadata $caseName before invoking the decoder",
+    async ({ originalLength, encodedLength }) => {
+      // Authenticated envelope whose declared lengths exercise one parser guard.
+      const envelope = new Uint8Array(8 + encodedLength);
+      envelope.set([0x50, 0x01, 0x01, 0x01]);
+      new DataView(envelope.buffer).setUint32(4, originalLength, false);
+      envelope.fill(0x61, 8);
+      // Decoder boundary that must remain untouched for unsafe metadata.
+      const inflateRaw = vi.fn(async () => new ArrayBuffer(0));
+
+      await expect(decodeFramedPayload(envelope.buffer, { inflateRaw })).rejects.toThrow();
+      expect(inflateRaw).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects deflate output that differs from the authenticated original length", async () => {
+    // Safe authenticated deflate envelope declaring a 4096-byte binary result.
+    const envelope = new Uint8Array(8 + 64);
+    envelope.set([0x50, 0x01, 0x01, 0x01, 0x00, 0x00, 0x10, 0x00]);
+    envelope.fill(0x61, 8);
+    // Bounded adapter returns one byte fewer than the authenticated declaration.
+    const inflateRaw = vi.fn(async () => new ArrayBuffer(4095));
+
+    await expect(decodeFramedPayload(envelope.buffer, { inflateRaw })).rejects.toThrow(
+      "output length mismatch",
+    );
+  });
+
+  it.each([
+    { caseName: "a truncated header", envelope: new Uint8Array(7).buffer },
+    {
+      caseName: "an unknown magic byte",
+      envelope: new Uint8Array([0x51, 0x01, 0x00, 0x00, 0, 0, 0, 0]).buffer,
+    },
+    {
+      caseName: "an unknown version",
+      envelope: new Uint8Array([0x50, 0x02, 0x00, 0x00, 0, 0, 0, 0]).buffer,
+    },
+    {
+      caseName: "reserved flags",
+      envelope: new Uint8Array([0x50, 0x01, 0x02, 0x00, 0, 0, 0, 0]).buffer,
+    },
+    {
+      caseName: "an unknown codec",
+      envelope: new Uint8Array([0x50, 0x01, 0x00, 0x02, 0, 0, 0, 0]).buffer,
+    },
+    {
+      caseName: "an identity length mismatch",
+      envelope: new Uint8Array([0x50, 0x01, 0x00, 0x00, 0, 0, 0, 1]).buffer,
+    },
+  ])("rejects authenticated envelope metadata with $caseName", async ({ envelope }) => {
+    await expect(decodeFramedPayload(envelope)).rejects.toThrow();
+  });
+
+  it.each(["identity", "deflate-raw"] as const)(
+    "rejects invalid UTF-8 restored from a $codec text envelope",
+    async (codec) => {
+      // Text envelope bytes selected independently for each codec path.
+      const envelope =
+        codec === "identity"
+          ? new Uint8Array([0x50, 0x01, 0x00, 0x00, 0, 0, 0, 1, 0xff])
+          : new Uint8Array(8 + 64);
+      if (codec === "deflate-raw") {
+        envelope.set([0x50, 0x01, 0x00, 0x01, 0x00, 0x00, 0x10, 0x00]);
+        envelope.fill(0x61, 8);
+      }
+      // Decoder output containing no valid UTF-8 start byte.
+      const invalidText = new Uint8Array(4096).fill(0xff);
+      // Adapter used only by the compressed vector.
+      const adapter =
+        codec === "deflate-raw" ? { inflateRaw: async () => invalidText.buffer } : undefined;
+
+      await expect(decodeFramedPayload(envelope.buffer, adapter)).rejects.toThrow();
+    },
+  );
+
   it("advertises framed identity when no compression decoder is configured", async () => {
     // Daemon identity transferred to the client through the pairing channel.
     const daemonKeyPair = generateKeyPair();
@@ -331,7 +503,7 @@ describe("framed ciphertext v1 contract", () => {
     });
   });
 
-  it.skip.each([
+  it.each([
     {
       selectionViolation: "an unoffered compression algorithm",
       selection: {
@@ -1627,7 +1799,7 @@ describe("framed ciphertext v1 contract", () => {
     },
   );
 
-  it.skip.each([
+  it.each([
     { selectedEncoding: "base64" as const, wrongOpcode: "binary" },
     { selectedEncoding: "binary" as const, wrongOpcode: "text" },
   ])(
@@ -1681,6 +1853,26 @@ describe("framed ciphertext v1 contract", () => {
       });
     },
   );
+
+  it("closes framed Base64 traffic before decryption when its wire is non-canonical", async () => {
+    // Completion signal for the asynchronous framed receive decision.
+    let resolveClosed: (() => void) | null = null;
+    // Promise completed only through the public transport close boundary.
+    const closed = new Promise<void>((resolve) => {
+      resolveClosed = resolve;
+    });
+    // Physical close observation exposing the framed parser's protocol reason.
+    const close = vi.fn(() => resolveClosed?.());
+    // Open client locked to strict framed Base64 receive semantics.
+    const fixture = await openClientFramedChannel({ ciphertextEncoding: "base64", close });
+
+    fixture.transport.onmessage?.({ data: "AQ", isBinary: false });
+    await closed;
+
+    expect(close).toHaveBeenCalledOnce();
+    expect(close).toHaveBeenCalledWith(1011, "Framed ciphertext requires canonical padded Base64");
+    expect(fixture.channel.isOpen()).toBe(false);
+  });
 
   it("forwards ordinary application JSON as the exact original string", async () => {
     // Daemon identity used to derive an independently encrypted application frame.
