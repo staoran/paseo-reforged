@@ -26,6 +26,14 @@ export {
 
 export type LocalSpeechModelSpec = ReturnType<typeof listSherpaOnnxModels>[number];
 
+/** Options for one-shot cleanup of downloader-owned local speech temp files. */
+export interface CleanupStaleLocalSpeechModelDownloadsOptions {
+  /** Root configured for local speech model storage. */
+  modelsDir: string;
+  /** Logger used for best-effort cleanup diagnostics. */
+  logger: import("pino").Logger;
+}
+
 export function listLocalSpeechModels(): LocalSpeechModelSpec[] {
   return listSherpaOnnxModels();
 }
@@ -35,10 +43,9 @@ export function getLocalSpeechModelDir(modelsDir: string, modelId: LocalSpeechMo
 }
 
 /** Runs best-effort startup cleanup for downloader-owned local model temp files. */
-export async function cleanupStaleLocalSpeechModelDownloads(options: {
-  modelsDir: string;
-  logger: import("pino").Logger;
-}): Promise<void> {
+export async function cleanupStaleLocalSpeechModelDownloads(
+  options: CleanupStaleLocalSpeechModelDownloadsOptions,
+): Promise<void> {
   await cleanupStaleSherpaOnnxModelDownloads(options);
 }
 

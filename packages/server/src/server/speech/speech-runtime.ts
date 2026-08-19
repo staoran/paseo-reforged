@@ -5,6 +5,7 @@ import type { Logger } from "pino";
 import type { PaseoOpenAIConfig, PaseoSpeechConfig } from "../bootstrap.js";
 import type { LocalSpeechModelId } from "./providers/local/config.js";
 import {
+  cleanupStaleLocalSpeechModelDownloads,
   ensureLocalSpeechModels,
   getLocalSpeechModelDir,
   listLocalSpeechModels,
@@ -677,6 +678,12 @@ export function createSpeechService(params: {
     started = true;
     void (async () => {
       try {
+        if (speechConfig?.local) {
+          await cleanupStaleLocalSpeechModelDownloads({
+            modelsDir: speechConfig.local.modelsDir,
+            logger,
+          });
+        }
         await runReconcile();
         const snapshot = computeReadinessSnapshot();
         if (snapshot.voiceFeature.enabled && !snapshot.voiceFeature.available) {

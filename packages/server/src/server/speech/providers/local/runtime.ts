@@ -5,7 +5,6 @@ import type { SpeechToTextProvider, TextToSpeechProvider } from "../../speech-pr
 import type { RequestedSpeechProviders } from "../../speech-types.js";
 import type { TurnDetectionProvider } from "../../turn-detection-provider.js";
 import {
-  cleanupStaleLocalSpeechModelDownloads,
   DEFAULT_LOCAL_STT_MODEL,
   DEFAULT_LOCAL_TTS_MODEL,
   LocalSttModelIdSchema,
@@ -143,13 +142,6 @@ export async function initializeLocalSpeechServices(params: {
   const { providers, logger, speechConfig } = params;
   const localConfig = speechConfig?.local ?? null;
   const localModels = resolveConfiguredLocalModels(speechConfig);
-
-  if (localConfig) {
-    await cleanupStaleLocalSpeechModelDownloads({
-      modelsDir: localConfig.modelsDir,
-      logger,
-    });
-  }
 
   let sttService: SpeechToTextProvider | null = null;
   let ttsService: TextToSpeechProvider | null = null;
