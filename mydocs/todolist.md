@@ -2,9 +2,9 @@
 
 ## 编号索引
 
-- 当前编号基线：`0081`
-- 下一个建议编号：`0082`
-- 最后更新：`2026-08-18`
+- 当前编号基线：`0085`
+- 下一个建议编号：`0086`
+- 最后更新：`2026-08-19`
 - 迁移说明：既有 `0001` 至 `0014` 任务已于 2026-08-02 合并迁移至 `mydocs/specs/`，旧 `mydocs/tasks/` 目录已删除；这些编号继续占用。
 
 ## 用途
@@ -132,6 +132,7 @@
 | 0079 | 待手工验收 | micro-spec | 已同步        | [标题栏终端快捷打开与图标准确化](micro_specs/0079_标题栏终端快捷打开与图标准确化.md)              | 2026-08-19 11:12 | WindowsApps `.exe` alias fallback 与反例回归已 GREEN；真实编译产物解析 `wt.exe` 且菜单枚举包含 `terminal`，待客户端重启后确认                   |
 | 0080 | 已收口     | micro-spec | 已同步        | [修复手动停止后消息编辑资格](micro_specs/0080_修复手动停止后消息编辑资格.md)                      | 2026-08-18 01:46 | runtime 恢复后 provider 用户消息 ID 漂移的 replay proof 已安全迁移；Playwright RED→GREEN、Server 回归、typecheck、lint 与格式通过               |
 | 0081 | 已收口     | micro-spec | 已同步        | [关闭末个标签后切换 Workspace](micro_specs/0081_关闭末个标签后切换Workspace.md)                   | 2026-08-18       | 只对 `residentAgentCount > 0` 候选应用三层排序；纯策略 8/8、真实路由 2/2、typecheck、全仓 lint 与格式通过                                       |
+| 0085 | 待手工验收 | spec       | 已同步        | [Codex Goal 任务完整支持](specs/0085_Codex_Goal任务完整支持.md)                                   | 2026-08-19 11:30 | 协议、daemon/provider、App 与 Browser E2E 已 GREEN；真实 Codex smoke 因凭据条件跳过，待隔离 kill/restart 与实际 App 验收                        |
 
 ## 候选待办
 

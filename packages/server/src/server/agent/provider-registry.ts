@@ -446,6 +446,7 @@ function mergeModelAdditions(
 }
 
 export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession): AgentSession {
+  const goalControl = inner.goalControl;
   return {
     provider,
     id: inner.id,
@@ -453,6 +454,15 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
     get features() {
       return inner.features;
     },
+    goalControl: goalControl
+      ? {
+          get: () => goalControl.get(),
+          set: (input) => goalControl.set(input),
+          clear: () => goalControl.clear(),
+        }
+      : undefined,
+    getExecutionStatus: inner.getExecutionStatus?.bind(inner),
+    flushPreSubscriptionEvents: inner.flushPreSubscriptionEvents?.bind(inner),
     run: (prompt, options) => inner.run(prompt, options),
     startTurn: (prompt, options) => inner.startTurn(prompt, options),
     subscribe: (callback) => inner.subscribe((event) => callback(mapStreamEvent(provider, event))),

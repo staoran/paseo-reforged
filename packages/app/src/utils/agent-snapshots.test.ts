@@ -3,12 +3,21 @@ import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { normalizeAgentSnapshot } from "./agent-snapshots";
 
-function createSnapshot(
-  input: Partial<Omit<AgentSnapshotPayload, "labels">> & {
-    labels?: Record<string, unknown>;
-  } = {},
-): AgentSnapshotPayload {
-  return {
+/** Inputs accepted by the Agent snapshot test builder. */
+type SnapshotInput = Partial<Omit<AgentSnapshotPayload, "labels">> & {
+  labels?: Record<string, unknown>;
+};
+
+/** Applies optional Goal fields while preserving omitted-versus-null semantics. */
+function applyGoalInput(snapshot: AgentSnapshotPayload, input: SnapshotInput): void {
+  if (input.goal !== undefined) snapshot.goal = input.goal;
+  if (input.goalStep !== undefined) snapshot.goalStep = input.goalStep;
+  if (input.goalSync !== undefined) snapshot.goalSync = input.goalSync;
+}
+
+/** Builds one complete wire snapshot for normalization tests. */
+function createSnapshot(input: SnapshotInput = {}): AgentSnapshotPayload {
+  const snapshot: AgentSnapshotPayload = {
     id: input.id ?? "agent-1",
     provider: input.provider ?? "codex",
     cwd: input.cwd ?? "/repo",
@@ -37,6 +46,8 @@ function createSnapshot(
     title: input.title ?? null,
     labels: (input.labels ?? {}) as AgentSnapshotPayload["labels"],
   };
+  applyGoalInput(snapshot, input);
+  return snapshot;
 }
 
 describe("normalizeAgentSnapshot", () => {
@@ -122,5 +133,36 @@ describe("normalizeAgentSnapshot", () => {
     expect(normalized.lastMessageAt).toEqual(messageAt);
     expect(normalized.lastActivityAt).toEqual(new Date("2026-08-05T07:03:00.000Z"));
     expect(legacy.lastMessageAt).toBeNull();
+  });
+
+  it("preserves the Goal projection's undefined, null, and object states", () => {
+    const missing = normalizeAgentSnapshot(createSnapshot(), "server-1");
+    const absent = normalizeAgentSnapshot(createSnapshot({ goal: null }), "server-1");
+    const goal = {
+      objective: "Ship Goal controls",
+      status: "active" as const,
+      tokenBudget: 10_000,
+      tokensUsed: 2_500,
+      timeUsedSeconds: 90,
+      createdAt: "2026-08-18T08:00:00.000Z",
+      updatedAt: "2026-08-18T08:01:30.000Z",
+    };
+    const goalStep = {
+      generation: goal.createdAt,
+      ordinal: 1,
+      text: "Build the App control",
+      status: "in_progress" as const,
+      activeForm: "Building the App control",
+    };
+    const active = normalizeAgentSnapshot(
+      createSnapshot({ goal, goalStep, goalSync: "synced" }),
+      "server-1",
+    );
+
+    expect(missing.goal).toBeUndefined();
+    expect(absent.goal).toBeNull();
+    expect(active.goal).toEqual(goal);
+    expect(active.goalStep).toEqual(goalStep);
+    expect(active.goalSync).toBe("synced");
   });
 });

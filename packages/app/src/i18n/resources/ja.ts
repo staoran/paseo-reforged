@@ -251,6 +251,44 @@ export const ja: TranslationResources = {
       unarchive: "アーカイブ解除",
     },
   },
+  goals: {
+    status: {
+      active: "実行中",
+      paused: "一時停止中",
+      blocked: "ブロック中",
+      usageLimited: "使用量制限",
+      budgetLimited: "予算上限に到達",
+      complete: "完了",
+    },
+    actions: {
+      pause: "Goalを一時停止",
+      resume: "Goalを再開",
+      edit: "Goalを編集",
+      terminate: "Goalを終了",
+      retry: "Goalの同期を再試行",
+    },
+    usage: {
+      withBudget: "{{used}} / {{budget}}トークン · {{time}}",
+      withoutBudget: "{{used}}トークン · {{time}}",
+    },
+    editor: {
+      title: "Goalを編集",
+      objectiveLabel: "Goalの目的",
+      resetWarning: "保存すると新しいGoal世代が始まり、使用量カウンターがリセットされます。",
+      save: "Goalを保存",
+      validation: {
+        empty: "Goalの目的を入力してください。",
+        tooLong: "Goalの目的は{{max}}文字以内にしてください。",
+      },
+    },
+    errors: {
+      actionFailed: "Goalの操作に失敗しました: {{message}}",
+    },
+    accessibility: {
+      track: "Goalの状態と操作",
+      currentStep: "現在のステップ: {{step}}",
+    },
+  },
   sessions: {
     title: "履歴",
     empty: "セッションがまだありません",

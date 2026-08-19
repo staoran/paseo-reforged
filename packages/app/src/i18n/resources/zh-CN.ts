@@ -248,6 +248,44 @@ export const zhCN: TranslationResources = {
       unarchive: "取消归档",
     },
   },
+  goals: {
+    status: {
+      active: "进行中",
+      paused: "已暂停",
+      blocked: "已阻塞",
+      usageLimited: "用量受限",
+      budgetLimited: "已达到预算上限",
+      complete: "已完成",
+    },
+    actions: {
+      pause: "暂停 Goal",
+      resume: "恢复 Goal",
+      edit: "编辑 Goal",
+      terminate: "终止 Goal",
+      retry: "重试 Goal 同步",
+    },
+    usage: {
+      withBudget: "{{used}} / {{budget}} token · {{time}}",
+      withoutBudget: "{{used}} token · {{time}}",
+    },
+    editor: {
+      title: "编辑 Goal",
+      objectiveLabel: "Goal 目标",
+      resetWarning: "保存后会启动新一代 Goal，并重置用量统计。",
+      save: "保存 Goal",
+      validation: {
+        empty: "请输入 Goal 目标。",
+        tooLong: "Goal 目标不能超过 {{max}} 个字符。",
+      },
+    },
+    errors: {
+      actionFailed: "Goal 操作失败：{{message}}",
+    },
+    accessibility: {
+      track: "Goal 状态与控制",
+      currentStep: "当前步骤：{{step}}",
+    },
+  },
   sessions: {
     title: "历史",
     empty: "还没有会话",

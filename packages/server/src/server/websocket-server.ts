@@ -1572,6 +1572,8 @@ export class VoiceAssistantWebSocketServer {
         agentTimelineSummaryDetail: true,
         // COMPAT(agentHistorySearch): added in v0.3.0, remove gate after 2027-02-07.
         agentHistorySearch: true,
+        // COMPAT(agentGoalControl): added in v0.4.0-beta.4, remove after 2027-08-18.
+        agentGoalControl: true,
         // COMPAT(checkoutRefresh): added in v0.1.86, remove gate after 2026-11-29.
         checkoutRefresh: true,
         // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97

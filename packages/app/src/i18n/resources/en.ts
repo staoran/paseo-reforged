@@ -247,6 +247,44 @@ export const en = {
       unarchive: "Unarchive",
     },
   },
+  goals: {
+    status: {
+      active: "Active",
+      paused: "Paused",
+      blocked: "Blocked",
+      usageLimited: "Usage limited",
+      budgetLimited: "Budget reached",
+      complete: "Complete",
+    },
+    actions: {
+      pause: "Pause Goal",
+      resume: "Resume Goal",
+      edit: "Edit Goal",
+      terminate: "Terminate Goal",
+      retry: "Retry Goal sync",
+    },
+    usage: {
+      withBudget: "{{used}} / {{budget}} tokens · {{time}}",
+      withoutBudget: "{{used}} tokens · {{time}}",
+    },
+    editor: {
+      title: "Edit Goal",
+      objectiveLabel: "Goal objective",
+      resetWarning: "Saving starts a new Goal generation and resets its usage counters.",
+      save: "Save Goal",
+      validation: {
+        empty: "Enter a Goal objective.",
+        tooLong: "Keep the Goal objective within {{max}} characters.",
+      },
+    },
+    errors: {
+      actionFailed: "Goal action failed: {{message}}",
+    },
+    accessibility: {
+      track: "Goal status and controls",
+      currentStep: "Current step: {{step}}",
+    },
+  },
   sessions: {
     title: "History",
     empty: "No sessions yet",

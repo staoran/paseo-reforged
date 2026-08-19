@@ -1,5 +1,6 @@
 import type {
   AgentMessagePhase,
+  AgentGoalSnapshot,
   AgentProviderNotice,
   AgentTaskItem,
   ProviderOptions,
@@ -8,7 +9,7 @@ import type {
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { PaseoToolCatalog } from "./tools/types.js";
 
-export type { AgentMessagePhase, AgentProviderNotice, AgentTaskItem };
+export type { AgentGoalSnapshot, AgentMessagePhase, AgentProviderNotice, AgentTaskItem };
 
 export type AgentProvider = string;
 
@@ -405,6 +406,8 @@ export type AgentTimelineItem =
 export type AgentStreamEvent =
   | { type: "thread_started"; sessionId: string; provider: AgentProvider }
   | { type: "provider_retry"; provider: AgentProvider; message: string | null }
+  | { type: "goal_changed"; provider: AgentProvider; goal: AgentGoalSnapshot | null }
+  | { type: "thread_status_changed"; provider: AgentProvider; status: AgentThreadStatus }
   | { type: "turn_started"; provider: AgentProvider; turnId?: string }
   | { type: "turn_completed"; provider: AgentProvider; usage?: AgentUsage; turnId?: string }
   | { type: "usage_updated"; provider: AgentProvider; usage: AgentUsage; turnId?: string }
@@ -648,11 +651,42 @@ export interface AgentPermissionResult {
   followUpPrompt?: AgentPromptInput;
 }
 
+/** Provider-neutral runtime status of a native Agent thread. */
+export type AgentThreadStatus =
+  | { status: "notLoaded" }
+  | { status: "idle" }
+  | { status: "systemError"; message?: string }
+  | {
+      status: "active";
+      activeFlags: Array<"waitingOnApproval" | "waitingOnUserInput">;
+    };
+
+/** Optional provider-owned Goal control exposed by an Agent session. */
+export interface AgentGoalControl {
+  /** Reads the current authoritative Goal without mutating it. */
+  get(): Promise<AgentGoalSnapshot | null>;
+  /** Creates or updates the current Goal using provider-neutral fields. */
+  set(input: {
+    /** Replacement objective, when requested. */
+    objective?: string;
+    /** Supported interactive Goal state transition. */
+    status?: "active" | "paused";
+  }): Promise<AgentGoalSnapshot>;
+  /** Clears the current Goal without interrupting an active turn. */
+  clear(): Promise<void>;
+}
+
 export interface AgentSession {
   readonly provider: AgentProvider;
   readonly id: string | null;
   readonly capabilities: AgentCapabilityFlags;
   readonly features?: AgentFeature[];
+  /** Provider-owned Goal API when the native runtime supports it. */
+  readonly goalControl?: AgentGoalControl;
+  /** Reads the provider-owned execution status during resume hydration. */
+  getExecutionStatus?(): Promise<AgentThreadStatus>;
+  /** Delivers provider events captured before the first subscriber was installed. */
+  flushPreSubscriptionEvents?(): void;
   run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult>;
   startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<{ turnId: string }>;
   subscribe(callback: (event: AgentStreamEvent) => void): () => void;

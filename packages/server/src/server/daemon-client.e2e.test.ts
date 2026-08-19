@@ -1243,6 +1243,7 @@ test("receives server_info on websocket connect", async () => {
   expect(serverInfo?.features?.worktreeRestore).toBe(true);
   expect(serverInfo?.features?.workspaceRecovery).toBe(true);
   expect(serverInfo?.features).toMatchObject({
+    agentGoalControl: true,
     agentProviderOptions: true,
     agentToolPolicy: true,
   });

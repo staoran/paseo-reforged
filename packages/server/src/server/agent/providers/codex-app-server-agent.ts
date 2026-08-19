@@ -5,6 +5,8 @@ import {
   type AgentClient,
   type AgentCreateSessionOptions,
   type AgentFeature,
+  type AgentGoalControl,
+  type AgentGoalSnapshot,
   type AgentLaunchContext,
   type AgentResumeSessionOptions,
   type AgentMode,
@@ -25,6 +27,7 @@ import {
   type AgentMessagePhase,
   type AgentSlashCommand,
   type AgentStreamEvent,
+  type AgentThreadStatus,
   type AgentTimelineItem,
   type ToolCallTimelineItem,
   type AgentUsage,
@@ -192,6 +195,126 @@ type GoalSubcommand =
   | { kind: "resume" }
   | { kind: "clear" }
   | { kind: "usage" };
+
+const CODEX_GOAL_OBJECTIVE_MAX_CHARS = 4_000;
+
+const CodexThreadGoalStatusSchema = z.enum([
+  "active",
+  "paused",
+  "blocked",
+  "usageLimited",
+  "budgetLimited",
+  "complete",
+]);
+
+const CodexThreadGoalSchema = z.object({
+  threadId: z.string(),
+  objective: z.string(),
+  status: CodexThreadGoalStatusSchema,
+  tokenBudget: z.number().finite().nonnegative().nullable(),
+  tokensUsed: z.number().finite().nonnegative(),
+  timeUsedSeconds: z.number().finite().nonnegative(),
+  createdAt: z.number().finite().nonnegative(),
+  updatedAt: z.number().finite().nonnegative(),
+});
+
+const CodexThreadGoalGetResponseSchema = z.object({
+  goal: CodexThreadGoalSchema.nullable(),
+});
+
+const CodexThreadGoalSetResponseSchema = z.object({
+  goal: CodexThreadGoalSchema,
+});
+
+const CodexThreadGoalClearResponseSchema = z.object({
+  cleared: z.boolean(),
+});
+
+const CodexThreadGoalUpdatedNotificationSchema = z
+  .object({
+    threadId: z.string(),
+    goal: CodexThreadGoalSchema,
+  })
+  .refine(({ threadId, goal }) => goal.threadId === threadId, {
+    path: ["goal", "threadId"],
+    message: "Goal threadId must match notification threadId",
+  });
+
+const CodexThreadGoalClearedNotificationSchema = z.object({
+  threadId: z.string(),
+});
+
+const CodexThreadStatusSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("notLoaded") }),
+  z.object({ type: z.literal("idle") }),
+  z.object({ type: z.literal("systemError"), message: z.string().optional() }),
+  z.object({
+    type: z.literal("active"),
+    activeFlags: z.array(z.enum(["waitingOnApproval", "waitingOnUserInput"])),
+  }),
+]);
+
+const CodexThreadStatusChangedNotificationSchema = z.object({
+  threadId: z.string(),
+  status: CodexThreadStatusSchema,
+});
+
+const CodexThreadReadStatusResponseSchema = z.object({
+  thread: z.object({
+    id: z.string(),
+    status: CodexThreadStatusSchema,
+  }),
+});
+
+/** Converts one native Codex thread status into the provider-neutral shape. */
+function toAgentThreadStatus(status: z.infer<typeof CodexThreadStatusSchema>): AgentThreadStatus {
+  switch (status.type) {
+    case "notLoaded":
+      return { status: "notLoaded" };
+    case "idle":
+      return { status: "idle" };
+    case "systemError":
+      return {
+        status: "systemError",
+        ...(status.message !== undefined ? { message: status.message } : {}),
+      };
+    case "active":
+      return { status: "active", activeFlags: status.activeFlags };
+  }
+}
+
+/** Converts one native Codex Goal into Paseo's provider-neutral projection. */
+function toAgentGoalSnapshot(
+  goal: z.infer<typeof CodexThreadGoalSchema>,
+  expectedThreadId: string,
+): AgentGoalSnapshot {
+  if (goal.threadId !== expectedThreadId) {
+    throw new Error(
+      `Codex Goal thread ${goal.threadId} does not match active thread ${expectedThreadId}`,
+    );
+  }
+  return {
+    objective: goal.objective,
+    status: goal.status,
+    tokenBudget: goal.tokenBudget,
+    tokensUsed: goal.tokensUsed,
+    timeUsedSeconds: goal.timeUsedSeconds,
+    createdAt: new Date(goal.createdAt * 1_000).toISOString(),
+    updatedAt: new Date(goal.updatedAt * 1_000).toISOString(),
+  };
+}
+
+/** Normalizes and validates a user-authored Goal objective at the provider seam. */
+function normalizeGoalObjective(objective: string): string {
+  const normalized = objective.trim();
+  if (normalized.length === 0) {
+    throw new Error("Goal objective must not be empty");
+  }
+  if (Array.from(normalized).length > CODEX_GOAL_OBJECTIVE_MAX_CHARS) {
+    throw new Error(`Goal objective must not exceed ${CODEX_GOAL_OBJECTIVE_MAX_CHARS} characters`);
+  }
+  return normalized;
+}
 
 function parseGoalSubcommand(args: string | undefined): GoalSubcommand {
   const trimmed = (args ?? "").trim();
@@ -2369,6 +2492,8 @@ const CodexEventThreadRolledBackNotificationSchema = z
 
 type ParsedCodexNotification =
   | { kind: "thread_started"; threadId: string }
+  | { kind: "goal_changed"; threadId: string; goal: AgentGoalSnapshot | null }
+  | { kind: "thread_status_changed"; threadId: string; status: AgentThreadStatus }
   | {
       kind: "error";
       message: string;
@@ -2535,6 +2660,63 @@ const CodexNotificationSchema = z.union([
       }),
     ),
   z.object({ method: z.literal("thread/started"), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({
+      kind: "invalid_payload",
+      method,
+      params,
+    }),
+  ),
+  z
+    .object({
+      method: z.literal("thread/goal/updated"),
+      params: CodexThreadGoalUpdatedNotificationSchema,
+    })
+    .transform(
+      ({ params }): ParsedCodexNotification => ({
+        kind: "goal_changed",
+        threadId: params.threadId,
+        goal: toAgentGoalSnapshot(params.goal, params.threadId),
+      }),
+    ),
+  z.object({ method: z.literal("thread/goal/updated"), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({
+      kind: "invalid_payload",
+      method,
+      params,
+    }),
+  ),
+  z
+    .object({
+      method: z.literal("thread/goal/cleared"),
+      params: CodexThreadGoalClearedNotificationSchema,
+    })
+    .transform(
+      ({ params }): ParsedCodexNotification => ({
+        kind: "goal_changed",
+        threadId: params.threadId,
+        goal: null,
+      }),
+    ),
+  z.object({ method: z.literal("thread/goal/cleared"), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({
+      kind: "invalid_payload",
+      method,
+      params,
+    }),
+  ),
+  z
+    .object({
+      method: z.literal("thread/status/changed"),
+      params: CodexThreadStatusChangedNotificationSchema,
+    })
+    .transform(
+      ({ params }): ParsedCodexNotification => ({
+        kind: "thread_status_changed",
+        threadId: params.threadId,
+        status: toAgentThreadStatus(params.status),
+      }),
+    ),
+  z.object({ method: z.literal("thread/status/changed"), params: z.unknown() }).transform(
     ({ method, params }): ParsedCodexNotification => ({
       kind: "invalid_payload",
       method,
@@ -3256,6 +3438,7 @@ interface ConsumedRootCompaction {
 export class CodexAppServerAgentSession implements AgentSession {
   readonly provider = CODEX_PROVIDER;
   readonly capabilities = CODEX_APP_SERVER_CAPABILITIES;
+  readonly goalControl?: AgentGoalControl;
 
   private readonly logger: Logger;
   private readonly config: AgentSessionConfig;
@@ -3275,6 +3458,8 @@ export class CodexAppServerAgentSession implements AgentSession {
   } | null = null;
   private client: CodexAppServerClient | null = null;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
+  private readonly preSubscriptionEvents: AgentStreamEvent[] = [];
+  private preSubscriptionEventsFlushed = false;
   private nextTurnOrdinal = 0;
   private activeForegroundTurnId: string | null = null;
   private activeClientMessageId: string | null = null;
@@ -3377,6 +3562,14 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.planModeEnabled = true;
     }
 
+    if (this.goalsEnabled) {
+      this.goalControl = {
+        get: () => this.getGoal(),
+        set: (input) => this.setGoal(input),
+        clear: () => this.clearGoal(),
+      };
+    }
+
     if (this.resumeHandle?.sessionId) {
       this.currentThreadId = this.resumeHandle.sessionId;
       this.historyPending = true;
@@ -3394,6 +3587,79 @@ export class CodexAppServerAgentSession implements AgentSession {
       planModeEnabled: this.planModeEnabled,
       planModeAvailable: this.hasPlanCollaborationMode(),
     });
+  }
+
+  /** Reads the authoritative native thread status without loading turn history. */
+  async getExecutionStatus(): Promise<AgentThreadStatus> {
+    await this.connect();
+    if (!this.client || !this.currentThreadId) {
+      return { status: "notLoaded" };
+    }
+    const threadId = this.currentThreadId;
+    const response = CodexThreadReadStatusResponseSchema.parse(
+      await this.client.request("thread/read", { threadId, includeTurns: false }),
+    );
+    if (response.thread.id !== threadId) {
+      throw new Error(
+        `Codex status thread ${response.thread.id} does not match active thread ${threadId}`,
+      );
+    }
+    return toAgentThreadStatus(response.thread.status);
+  }
+
+  /** Returns an initialized native client and materialized thread for Goal RPCs. */
+  private async requireGoalContext(): Promise<{
+    client: CodexAppServerClientLike;
+    threadId: string;
+  }> {
+    await this.connect();
+    if (this.currentThreadId) {
+      await this.ensureThreadLoaded();
+    } else {
+      await this.ensureThread();
+    }
+    if (!this.client || !this.currentThreadId) {
+      throw new Error("Codex thread is not available for Goal control");
+    }
+    return { client: this.client, threadId: this.currentThreadId };
+  }
+
+  /** Reads and normalizes the current native Codex Goal. */
+  private async getGoal(): Promise<AgentGoalSnapshot | null> {
+    const { client, threadId } = await this.requireGoalContext();
+    const response = CodexThreadGoalGetResponseSchema.parse(
+      await client.request("thread/goal/get", { threadId }),
+    );
+    return response.goal ? toAgentGoalSnapshot(response.goal, threadId) : null;
+  }
+
+  /** Applies a provider-neutral update through Codex's native Goal RPC. */
+  private async setGoal(input: {
+    objective?: string;
+    status?: "active" | "paused";
+  }): Promise<AgentGoalSnapshot> {
+    if (input.objective === undefined && input.status === undefined) {
+      throw new Error("Codex Goal update requires an objective or status");
+    }
+    const { client, threadId } = await this.requireGoalContext();
+    const response = CodexThreadGoalSetResponseSchema.parse(
+      await client.request("thread/goal/set", {
+        threadId,
+        ...(input.objective !== undefined
+          ? { objective: normalizeGoalObjective(input.objective) }
+          : {}),
+        ...(input.status !== undefined ? { status: input.status } : {}),
+      }),
+    );
+    return toAgentGoalSnapshot(response.goal, threadId);
+  }
+
+  /** Clears the native Goal without interrupting the current turn. */
+  private async clearGoal(): Promise<void> {
+    const { client, threadId } = await this.requireGoalContext();
+    CodexThreadGoalClearResponseSchema.parse(
+      await client.request("thread/goal/clear", { threadId }),
+    );
   }
 
   async connect(): Promise<void> {
@@ -4216,6 +4482,17 @@ export class CodexAppServerAgentSession implements AgentSession {
     };
   }
 
+  /** Delivers events captured before subscription exactly once in original order. */
+  flushPreSubscriptionEvents(): void {
+    if (this.preSubscriptionEventsFlushed || this.subscribers.size === 0) {
+      return;
+    }
+    this.preSubscriptionEventsFlushed = true;
+    for (const event of this.preSubscriptionEvents.splice(0)) {
+      this.deliverEventToSubscribers(event);
+    }
+  }
+
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
     if (
       (!this.historyPending || this.persistedHistory.length === 0) &&
@@ -4764,42 +5041,27 @@ export class CodexAppServerAgentSession implements AgentSession {
       return "Usage: /goal <objective>|pause|resume|clear";
     }
     try {
-      await this.connect();
-      if (this.currentThreadId) {
-        await this.ensureThreadLoaded();
-      } else {
-        await this.ensureThread();
-      }
-      if (!this.client || !this.currentThreadId) {
-        throw new Error("Codex thread is not available");
+      if (!this.goalControl) {
+        throw new Error("Codex Goal control is unavailable");
       }
       switch (subcommand.kind) {
         case "set": {
-          await this.client.request("thread/goal/set", {
-            threadId: this.currentThreadId,
+          await this.goalControl.set({
             objective: subcommand.objective,
             status: "active",
           });
           return `Goal set: ${subcommand.objective}`;
         }
         case "pause": {
-          await this.client.request("thread/goal/set", {
-            threadId: this.currentThreadId,
-            status: "paused",
-          });
+          await this.goalControl.set({ status: "paused" });
           return "Goal paused.";
         }
         case "resume": {
-          await this.client.request("thread/goal/set", {
-            threadId: this.currentThreadId,
-            status: "active",
-          });
+          await this.goalControl.set({ status: "active" });
           return "Goal resumed.";
         }
         case "clear": {
-          await this.client.request("thread/goal/clear", {
-            threadId: this.currentThreadId,
-          });
+          await this.goalControl.clear();
           return "Goal cleared.";
         }
       }
@@ -4960,7 +5222,12 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private notifySubscribers(event: AgentStreamEvent): void {
-    const turnId = event.type === "provider_retry" ? null : this.activeForegroundTurnId;
+    const turnId =
+      event.type === "provider_retry" ||
+      event.type === "goal_changed" ||
+      event.type === "thread_status_changed"
+        ? null
+        : (this.activeForegroundTurnId ?? this.currentTurnId);
     const tagged = turnId ? { ...event, turnId } : event;
     this.logger.trace(
       {
@@ -4972,9 +5239,18 @@ export class CodexAppServerAgentSession implements AgentSession {
       },
       "provider.codex.event_emit",
     );
+    if (!this.preSubscriptionEventsFlushed && this.subscribers.size === 0) {
+      this.preSubscriptionEvents.push(tagged);
+      return;
+    }
+    this.deliverEventToSubscribers(tagged);
+  }
+
+  /** Delivers one already-tagged event to the current subscriber set. */
+  private deliverEventToSubscribers(event: AgentStreamEvent): void {
     for (const callback of this.subscribers) {
       try {
-        callback(tagged);
+        callback(event);
       } catch (error) {
         this.logger.warn({ err: error }, "Subscriber callback threw");
       }
@@ -5154,6 +5430,16 @@ export class CodexAppServerAgentSession implements AgentSession {
     switch (parsed.kind) {
       case "thread_started":
         this.handleThreadStartedNotification(parsed);
+        return;
+      case "goal_changed":
+        this.emitEvent({ type: "goal_changed", provider: CODEX_PROVIDER, goal: parsed.goal });
+        return;
+      case "thread_status_changed":
+        this.emitEvent({
+          type: "thread_status_changed",
+          provider: CODEX_PROVIDER,
+          status: parsed.status,
+        });
         return;
       case "turn_started":
         this.handleTurnStartedNotification(parsed);

@@ -570,6 +570,60 @@ describe("ReplicaCache", () => {
     });
   });
 
+  it("persists and restores an authoritative Goal projection", async () => {
+    const storage = new MemoryStorage();
+    const cache = new ReplicaCache(storage);
+    startedCaches.add(cache);
+    cache.setHosts([SERVER_ID]);
+    seedSession();
+    const current = useSessionStore.getState().sessions[SERVER_ID]?.agents.get("agent-1");
+    if (!current) throw new Error("Expected seeded agent");
+    const goal = {
+      objective: "Ship Goal controls",
+      status: "paused" as const,
+      tokenBudget: 10_000,
+      tokensUsed: 2_500,
+      timeUsedSeconds: 90,
+      createdAt: "2026-08-18T08:00:00.000Z",
+      updatedAt: "2026-08-18T08:01:30.000Z",
+    };
+    const goalStep = {
+      generation: goal.createdAt,
+      ordinal: 1,
+      text: "Build the App control",
+      status: "in_progress" as const,
+    };
+    useSessionStore.getState().setAgents(
+      SERVER_ID,
+      new Map([
+        [
+          current.id,
+          {
+            ...current,
+            goal,
+            goalStep,
+            goalSync: "synced" as const,
+          },
+        ],
+      ]),
+    );
+    await cache.flush();
+
+    const stored = persistedHost(storage.values.get("@paseo:replica-cache") ?? "", SERVER_ID);
+    expect(stored?.agents[0]?.snapshot).toMatchObject({ goal, goalStep, goalSync: "synced" });
+
+    useSessionStore.getState().clearSession(SERVER_ID);
+    const reader = new ReplicaCache(storage);
+    reader.setHosts([SERVER_ID]);
+    await reader.restore();
+
+    expect(useSessionStore.getState().sessions[SERVER_ID]?.agents.get("agent-1")).toMatchObject({
+      goal,
+      goalStep,
+      goalSync: "stale",
+    });
+  });
+
   it("restores legacy cache snapshots without lastMessageAt as null", async () => {
     const storage = new MemoryStorage();
     const writer = new ReplicaCache(storage);

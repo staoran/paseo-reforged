@@ -1,4 +1,8 @@
 import type {
+  AgentGoalGetResponsePayload,
+  AgentGoalTerminateResponsePayload,
+  AgentGoalUpdateMutation,
+  AgentGoalUpdateResponsePayload,
   AgentSnapshotPayload,
   CreateAgentRequestMessage,
   FetchWorkspacesRequestMessage,
@@ -245,11 +249,34 @@ export interface PaseoAgentTimelineHandle {
   subscribe(handler: (event: PaseoAgentStream) => void): () => void;
 }
 
+/** Optional correlation values accepted by Agent Goal mutations. */
+export interface PaseoAgentGoalMutationOptions {
+  /** Goal generation the caller expects to mutate. */
+  expectedGeneration?: string;
+  /** Caller-supplied correlation id. */
+  requestId?: string;
+}
+
+/** Provider-neutral Goal controls scoped to one Agent handle. */
+export interface PaseoAgentGoalHandle {
+  /** Reads the daemon's authoritative Goal projection. */
+  get(options?: { requestId?: string }): Promise<AgentGoalGetResponsePayload>;
+  /** Applies one mutation to the current Goal generation. */
+  update(
+    mutation: AgentGoalUpdateMutation,
+    options?: PaseoAgentGoalMutationOptions,
+  ): Promise<AgentGoalUpdateResponsePayload>;
+  /** Clears the Goal and requests interruption of its active turn. */
+  terminate(options?: PaseoAgentGoalMutationOptions): Promise<AgentGoalTerminateResponsePayload>;
+}
+
 export interface PaseoAgentHandle {
   readonly id: string;
   readonly workspaceId: string | null;
   readonly cwd: string | null;
   readonly status: PaseoAgent["status"] | null;
+  /** Provider-neutral Goal controls for this Agent. */
+  readonly goal: PaseoAgentGoalHandle;
   readonly timeline: PaseoAgentTimelineHandle;
   current(): PaseoAgent | null;
   refresh(requestId?: string): Promise<PaseoAgentRefetchResult | null>;
@@ -548,6 +575,11 @@ function createAgentHandleFactory(daemonClient: DaemonClient): AgentHandleFactor
 
     const handle: PaseoAgentHandle = {
       id,
+      goal: {
+        get: (options) => daemonClient.getAgentGoal(id, options?.requestId),
+        update: (mutation, options) => daemonClient.updateAgentGoal(id, mutation, options),
+        terminate: (options) => daemonClient.terminateAgentGoal(id, options),
+      },
       timeline: {
         refetch: async (options) => {
           const result = await daemonClient.fetchAgentTimeline(id, options);

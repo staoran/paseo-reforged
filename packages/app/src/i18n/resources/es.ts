@@ -251,6 +251,45 @@ export const es: TranslationResources = {
       unarchive: "Desarchivar",
     },
   },
+  goals: {
+    status: {
+      active: "Activo",
+      paused: "En pausa",
+      blocked: "Bloqueado",
+      usageLimited: "Uso limitado",
+      budgetLimited: "Presupuesto agotado",
+      complete: "Completado",
+    },
+    actions: {
+      pause: "Pausar objetivo",
+      resume: "Reanudar objetivo",
+      edit: "Editar objetivo",
+      terminate: "Finalizar objetivo",
+      retry: "Reintentar sincronización del objetivo",
+    },
+    usage: {
+      withBudget: "{{used}} / {{budget}} tokens · {{time}}",
+      withoutBudget: "{{used}} tokens · {{time}}",
+    },
+    editor: {
+      title: "Editar objetivo",
+      objectiveLabel: "Descripción del objetivo",
+      resetWarning:
+        "Al guardar se inicia una nueva generación del objetivo y se reinician sus contadores de uso.",
+      save: "Guardar objetivo",
+      validation: {
+        empty: "Introduce un objetivo.",
+        tooLong: "El objetivo no puede superar los {{max}} caracteres.",
+      },
+    },
+    errors: {
+      actionFailed: "La acción del objetivo falló: {{message}}",
+    },
+    accessibility: {
+      track: "Estado y controles del objetivo",
+      currentStep: "Paso actual: {{step}}",
+    },
+  },
   sessions: {
     title: "Historial",
     empty: "Aún no hay sesiones",

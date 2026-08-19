@@ -1184,6 +1184,89 @@ describe("Codex app-server provider", () => {
     appServer.assertNoErrors();
   });
 
+  test("drains notifications emitted before resume returns in FIFO order once", async () => {
+    let appServer: FakeCodexAppServer;
+    appServer = createFakeCodexAppServer({
+      "thread/resume": () => {
+        appServer.updatesGoal({
+          threadId: "thread-1",
+          objective: "Recover autonomous Goal work",
+          status: "active",
+          tokenBudget: 20_000,
+          tokensUsed: 4_000,
+          timeUsedSeconds: 300,
+          createdAt: 0,
+          updatedAt: 60,
+        });
+        appServer.changesThreadStatus({
+          threadId: "thread-1",
+          status: { type: "active", activeFlags: ["waitingOnUserInput"] },
+        });
+        appServer.startsTurn({ threadId: "thread-1", turnId: "autonomous-turn" });
+        appServer.updatesPlan({ threadId: "thread-1", steps: ["Recover autonomous work"] });
+        return {};
+      },
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+    const session = await provider.resumeSession({
+      sessionId: "thread-1",
+      metadata: {
+        cwd: "/tmp/codex-question-test",
+        modeId: "auto",
+        model: "gpt-5.4",
+      },
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    expect(events).toEqual([]);
+    if (!session.flushPreSubscriptionEvents) {
+      throw new Error("Expected Codex pre-subscription event drain");
+    }
+    session.flushPreSubscriptionEvents();
+    session.flushPreSubscriptionEvents();
+
+    expect(events).toEqual([
+      {
+        type: "goal_changed",
+        provider: "codex",
+        goal: {
+          objective: "Recover autonomous Goal work",
+          status: "active",
+          tokenBudget: 20_000,
+          tokensUsed: 4_000,
+          timeUsedSeconds: 300,
+          createdAt: "1970-01-01T00:00:00.000Z",
+          updatedAt: "1970-01-01T00:01:00.000Z",
+        },
+      },
+      {
+        type: "thread_status_changed",
+        provider: "codex",
+        status: { status: "active", activeFlags: ["waitingOnUserInput"] },
+      },
+      { type: "turn_started", provider: "codex", turnId: "autonomous-turn" },
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "autonomous-turn",
+        item: {
+          type: "todo",
+          items: [
+            {
+              id: "0",
+              text: "Recover autonomous work",
+              status: "pending",
+              completed: false,
+            },
+          ],
+        },
+      },
+    ]);
+    await session.close();
+    appServer.assertNoErrors();
+  });
+
   test("closes Codex app-server when an interactive resume fails", async () => {
     const appServer = createFakeCodexAppServer({
       "thread/resume": () =>
@@ -4465,6 +4548,241 @@ describe("Codex app-server provider", () => {
     ]);
   });
 
+  test("exposes native Goal get, set, and clear through the provider-neutral control", async () => {
+    // Native requests are recorded to verify that the provider seam owns Codex RPC details.
+    const requests: Array<{ method: string; params: unknown }> = [];
+    const session = createSession({}, { goalsEnabled: true });
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        requests.push({ method, params });
+        if (method === "thread/loaded/list") {
+          return { data: ["test-thread"] };
+        }
+        if (method === "thread/goal/get") {
+          return {
+            goal: {
+              threadId: "test-thread",
+              objective: "Implement Goal support",
+              status: "active",
+              tokenBudget: 10_000,
+              tokensUsed: 2_000,
+              timeUsedSeconds: 120,
+              createdAt: 0,
+              updatedAt: 60,
+            },
+          };
+        }
+        if (method === "thread/goal/set") {
+          return {
+            goal: {
+              threadId: "test-thread",
+              objective: "Implement Goal support",
+              status: "paused",
+              tokenBudget: 10_000,
+              tokensUsed: 2_100,
+              timeUsedSeconds: 180,
+              createdAt: 0,
+              updatedAt: 120,
+            },
+          };
+        }
+        if (method === "thread/goal/clear") {
+          return { cleared: true };
+        }
+        throw new Error(`Unexpected request: ${method}`);
+      }),
+    };
+
+    const control = session.goalControl;
+    expect(control).toBeDefined();
+    if (!control) {
+      throw new Error("Expected Codex Goal control");
+    }
+
+    await expect(control.get()).resolves.toEqual({
+      objective: "Implement Goal support",
+      status: "active",
+      tokenBudget: 10_000,
+      tokensUsed: 2_000,
+      timeUsedSeconds: 120,
+      createdAt: "1970-01-01T00:00:00.000Z",
+      updatedAt: "1970-01-01T00:01:00.000Z",
+    });
+    await expect(control.set({ status: "paused" })).resolves.toMatchObject({
+      status: "paused",
+      updatedAt: "1970-01-01T00:02:00.000Z",
+    });
+    await expect(control.clear()).resolves.toBeUndefined();
+
+    expect(requests.filter(({ method }) => method.startsWith("thread/goal/"))).toEqual([
+      { method: "thread/goal/get", params: { threadId: "test-thread" } },
+      {
+        method: "thread/goal/set",
+        params: { threadId: "test-thread", status: "paused" },
+      },
+      { method: "thread/goal/clear", params: { threadId: "test-thread" } },
+    ]);
+  });
+
+  test("routes slash Goal updates through the provider objective validation", async () => {
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/loaded/list") {
+        return { data: ["test-thread"] };
+      }
+      if (method === "thread/goal/set") {
+        return {};
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    const session = createSession({}, { goalsEnabled: true });
+    session.client = { request };
+
+    const handler = session.tryHandleOutOfBand?.(`/goal ${"a".repeat(4_001)}`);
+    const events: AgentStreamEvent[] = [];
+    await handler?.run({ emit: (event) => events.push(event) });
+
+    expect(request.mock.calls.some(([method]) => method === "thread/goal/set")).toBe(false);
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "assistant_message",
+          text: "Failed to update goal: Goal objective must not exceed 4000 characters\n\n",
+        },
+      },
+    ]);
+  });
+
+  test("projects native Goal update and clear notifications for the active thread", () => {
+    const session = createSession({}, { goalsEnabled: true });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const internals = castInternals<CodexSessionTestAccess>(session);
+
+    internals.handleNotification("thread/goal/updated", {
+      threadId: "test-thread",
+      goal: {
+        threadId: "test-thread",
+        objective: "Recover autonomous Goal work",
+        status: "active",
+        tokenBudget: 20_000,
+        tokensUsed: 4_000,
+        timeUsedSeconds: 300,
+        createdAt: 0,
+        updatedAt: 60,
+      },
+    });
+    internals.handleNotification("thread/goal/cleared", { threadId: "test-thread" });
+
+    expect(events).toEqual([
+      {
+        type: "goal_changed",
+        provider: "codex",
+        goal: {
+          objective: "Recover autonomous Goal work",
+          status: "active",
+          tokenBudget: 20_000,
+          tokensUsed: 4_000,
+          timeUsedSeconds: 300,
+          createdAt: "1970-01-01T00:00:00.000Z",
+          updatedAt: "1970-01-01T00:01:00.000Z",
+        },
+      },
+      {
+        type: "goal_changed",
+        provider: "codex",
+        goal: null,
+      },
+    ]);
+  });
+
+  test("ignores invalid and foreign-thread Goal notifications", () => {
+    const session = createSession({}, { goalsEnabled: true });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const internals = castInternals<CodexSessionTestAccess>(session);
+    const goal = {
+      objective: "Do not leak this Goal",
+      status: "active",
+      tokenBudget: null,
+      tokensUsed: 0,
+      timeUsedSeconds: 0,
+      createdAt: 0,
+      updatedAt: 0,
+    } as const;
+
+    expect(() =>
+      internals.handleNotification("thread/goal/updated", {
+        threadId: "test-thread",
+        goal: { ...goal, threadId: "different-thread" },
+      }),
+    ).not.toThrow();
+    internals.handleNotification("thread/goal/updated", {
+      threadId: "foreign-thread",
+      goal: { ...goal, threadId: "foreign-thread" },
+    });
+
+    expect(events).toEqual([]);
+  });
+
+  test("projects native thread status changes without foreground turn identity", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const internals = castInternals<CodexSessionTestAccess>(session);
+
+    internals.handleNotification("thread/status/changed", {
+      threadId: "test-thread",
+      status: { type: "active", activeFlags: ["waitingOnApproval"] },
+    });
+    internals.handleNotification("thread/status/changed", {
+      threadId: "foreign-thread",
+      status: { type: "idle" },
+    });
+
+    expect(events).toEqual([
+      {
+        type: "thread_status_changed",
+        provider: "codex",
+        status: { status: "active", activeFlags: ["waitingOnApproval"] },
+      },
+    ]);
+  });
+
+  test("reads native thread status without loading turns", async () => {
+    const requests: Array<{ method: string; params: unknown }> = [];
+    const session = createSession();
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        requests.push({ method, params });
+        if (method === "thread/read") {
+          return {
+            thread: {
+              id: "test-thread",
+              status: { type: "active", activeFlags: ["waitingOnUserInput"] },
+            },
+          };
+        }
+        throw new Error(`Unexpected request: ${method}`);
+      }),
+    };
+
+    if (!session.getExecutionStatus) {
+      throw new Error("Expected Codex execution status reader");
+    }
+    await expect(session.getExecutionStatus()).resolves.toEqual({
+      status: "active",
+      activeFlags: ["waitingOnUserInput"],
+    });
+    expect(requests).toEqual([
+      {
+        method: "thread/read",
+        params: { threadId: "test-thread", includeTurns: false },
+      },
+    ]);
+  });
+
   test("appends blank-line spacing to /goal status messages", async () => {
     const requests: Array<{ method: string; params: unknown }> = [];
     const session = createSession({}, { goalsEnabled: true });
@@ -4473,6 +4791,20 @@ describe("Codex app-server provider", () => {
         requests.push({ method, params });
         if (method === "thread/loaded/list") {
           return { data: ["test-thread"] };
+        }
+        if (method === "thread/goal/set") {
+          return {
+            goal: {
+              threadId: "test-thread",
+              objective: "ship feature",
+              status: "active",
+              tokenBudget: null,
+              tokensUsed: 0,
+              timeUsedSeconds: 0,
+              createdAt: 0,
+              updatedAt: 0,
+            },
+          };
         }
         return {};
       }),

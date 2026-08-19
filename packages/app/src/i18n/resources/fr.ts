@@ -252,6 +252,45 @@ export const fr: TranslationResources = {
       unarchive: "Désarchiver",
     },
   },
+  goals: {
+    status: {
+      active: "Actif",
+      paused: "En pause",
+      blocked: "Bloqué",
+      usageLimited: "Utilisation limitée",
+      budgetLimited: "Budget atteint",
+      complete: "Terminé",
+    },
+    actions: {
+      pause: "Mettre l’objectif en pause",
+      resume: "Reprendre l’objectif",
+      edit: "Modifier l’objectif",
+      terminate: "Arrêter l’objectif",
+      retry: "Réessayer la synchronisation de l’objectif",
+    },
+    usage: {
+      withBudget: "{{used}} / {{budget}} jetons · {{time}}",
+      withoutBudget: "{{used}} jetons · {{time}}",
+    },
+    editor: {
+      title: "Modifier l’objectif",
+      objectiveLabel: "Objectif",
+      resetWarning:
+        "L’enregistrement démarre une nouvelle génération de l’objectif et réinitialise ses compteurs d’utilisation.",
+      save: "Enregistrer l’objectif",
+      validation: {
+        empty: "Saisissez un objectif.",
+        tooLong: "Limitez l’objectif à {{max}} caractères.",
+      },
+    },
+    errors: {
+      actionFailed: "Échec de l’action sur l’objectif : {{message}}",
+    },
+    accessibility: {
+      track: "État et commandes de l’objectif",
+      currentStep: "Étape actuelle : {{step}}",
+    },
+  },
   sessions: {
     title: "Historique",
     empty: "Aucune séance pour l'instant",

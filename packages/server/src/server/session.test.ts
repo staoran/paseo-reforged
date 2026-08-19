@@ -21,7 +21,11 @@ import {
 import { isSessionRpcAllowed, Session } from "./session.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
-import type { AgentMetadataEntry, StoredAgentRecord } from "./agent/agent-storage.js";
+import {
+  parseStoredAgentRecord,
+  type AgentMetadataEntry,
+  type StoredAgentRecord,
+} from "./agent/agent-storage.js";
 import type { AgentManagerEvent } from "./agent/agent-manager.js";
 import type { AgentTimelineFetchResult } from "./agent/agent-timeline-store-types.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
@@ -542,6 +546,472 @@ describe("session authorization scopes", () => {
         },
       },
     ]);
+  });
+});
+
+describe("Agent Goal RPCs", () => {
+  test("returns the correlated provider-authoritative Goal projection", async () => {
+    const agentId = "00000000-0000-4000-8000-000000000223";
+    const goal = {
+      objective: "Expose Goal state over the daemon RPC",
+      status: "active",
+      tokenBudget: 10_000,
+      tokensUsed: 2_000,
+      timeUsedSeconds: 180,
+      createdAt: "2026-08-19T00:00:00.000Z",
+      updatedAt: "2026-08-19T00:03:00.000Z",
+    } as const;
+    const getAgentGoal = vi.fn().mockResolvedValue({
+      ok: true,
+      goal,
+      goalStep: null,
+      goalSync: "synced",
+      error: null,
+    });
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({
+      messages,
+      agentManager: {
+        getAgent: vi.fn(() => ({ id: agentId, provider: "codex", lifecycle: "idle" })),
+        getAgentGoal,
+      },
+    });
+
+    await session.handleMessage({
+      type: "agent.goal.get.request",
+      requestId: "goal-get-request",
+      agentId,
+    });
+
+    expect(getAgentGoal).toHaveBeenCalledWith(agentId);
+    expect(messages).toEqual([
+      {
+        type: "agent.goal.get.response",
+        payload: {
+          requestId: "goal-get-request",
+          agentId,
+          ok: true,
+          goal,
+          goalStep: null,
+          goalSync: "synced",
+          error: null,
+        },
+      },
+    ]);
+  });
+
+  test("forwards a correlated Goal mutation and expected generation", async () => {
+    const agentId = "00000000-0000-4000-8000-000000000224";
+    const goal = {
+      objective: "Pause through the daemon RPC",
+      status: "paused",
+      tokenBudget: null,
+      tokensUsed: 2_400,
+      timeUsedSeconds: 210,
+      createdAt: "2026-08-19T00:10:00.000Z",
+      updatedAt: "2026-08-19T00:13:30.000Z",
+    } as const;
+    const updateAgentGoal = vi.fn().mockResolvedValue({
+      ok: true,
+      goal,
+      goalStep: null,
+      goalSync: "synced",
+      error: null,
+    });
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({
+      messages,
+      agentManager: {
+        getAgent: vi.fn(() => ({ id: agentId, provider: "codex", lifecycle: "idle" })),
+        updateAgentGoal,
+      },
+    });
+
+    await session.handleMessage({
+      type: "agent.goal.update.request",
+      requestId: "goal-update-request",
+      agentId,
+      expectedGeneration: goal.createdAt,
+      mutation: { kind: "pause" },
+    });
+
+    expect(updateAgentGoal).toHaveBeenCalledWith(agentId, { kind: "pause" }, goal.createdAt);
+    expect(messages).toEqual([
+      {
+        type: "agent.goal.update.response",
+        payload: {
+          requestId: "goal-update-request",
+          agentId,
+          ok: true,
+          goal,
+          goalStep: null,
+          goalSync: "synced",
+          error: null,
+        },
+      },
+    ]);
+  });
+
+  test("preserves correlated partial-success details for Goal termination", async () => {
+    const agentId = "00000000-0000-4000-8000-000000000225";
+    const terminateAgentGoal = vi.fn().mockResolvedValue({
+      ok: false,
+      goal: null,
+      goalStep: null,
+      clear: "cleared",
+      interrupt: "failed",
+      outcome: "goal_cleared_turn_running",
+      error: {
+        code: "interrupt_failed",
+        retryable: true,
+        message: "The Goal was cleared, but its active turn could not be interrupted.",
+      },
+    });
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({
+      messages,
+      agentManager: {
+        getAgent: vi.fn(() => ({ id: agentId, provider: "codex", lifecycle: "running" })),
+        terminateAgentGoal,
+      },
+    });
+
+    await session.handleMessage({
+      type: "agent.goal.terminate.request",
+      requestId: "goal-terminate-request",
+      agentId,
+      expectedGeneration: "2026-08-19T00:20:00.000Z",
+    });
+
+    expect(terminateAgentGoal).toHaveBeenCalledWith(agentId, "2026-08-19T00:20:00.000Z");
+    expect(messages).toEqual([
+      {
+        type: "agent.goal.terminate.response",
+        payload: {
+          requestId: "goal-terminate-request",
+          agentId,
+          ok: false,
+          goal: null,
+          goalStep: null,
+          clear: "cleared",
+          interrupt: "failed",
+          outcome: "goal_cleared_turn_running",
+          error: {
+            code: "interrupt_failed",
+            retryable: true,
+            message: "The Goal was cleared, but its active turn could not be interrupted.",
+          },
+        },
+      },
+    ]);
+  });
+
+  test("returns a structured Goal not-found response before loading a missing Agent", async () => {
+    const agentId = "00000000-0000-4000-8000-000000000226";
+    const getAgentGoal = vi.fn();
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({
+      messages,
+      agentManager: {
+        getAgent: vi.fn(() => null),
+        getAgentGoal,
+      },
+      agentStorage: {
+        get: vi.fn().mockResolvedValue(null),
+      },
+    });
+
+    await session.handleMessage({
+      type: "agent.goal.get.request",
+      requestId: "goal-get-missing-request",
+      agentId,
+    });
+
+    expect(getAgentGoal).not.toHaveBeenCalled();
+    expect(messages).toEqual([
+      {
+        type: "agent.goal.get.response",
+        payload: {
+          requestId: "goal-get-missing-request",
+          agentId,
+          ok: false,
+          goal: null,
+          goalStep: null,
+          goalSync: "stale",
+          error: {
+            code: "not_found",
+            retryable: false,
+            message: "Agent not found.",
+          },
+        },
+      },
+    ]);
+  });
+
+  test("returns provider-unavailable when a stored Agent cannot be resumed", async () => {
+    const agentId = "00000000-0000-4000-8000-000000000227";
+    const getAgentGoal = vi.fn();
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({
+      messages,
+      agentManager: {
+        getAgent: vi.fn(() => null),
+        getRegisteredProviderIds: vi.fn(() => ["claude"]),
+        getAgentGoal,
+      },
+      agentStorage: {
+        get: vi.fn().mockResolvedValue({
+          id: agentId,
+          provider: "codex",
+          archivedAt: null,
+        }),
+      },
+    });
+
+    await session.handleMessage({
+      type: "agent.goal.get.request",
+      requestId: "goal-get-provider-unavailable-request",
+      agentId,
+    });
+
+    expect(getAgentGoal).not.toHaveBeenCalled();
+    expect(messages).toEqual([
+      {
+        type: "agent.goal.get.response",
+        payload: {
+          requestId: "goal-get-provider-unavailable-request",
+          agentId,
+          ok: false,
+          goal: null,
+          goalStep: null,
+          goalSync: "stale",
+          error: {
+            code: "provider_unavailable",
+            retryable: false,
+            message: "The Agent provider is unavailable.",
+          },
+        },
+      },
+    ]);
+  });
+
+  test("blocks Goal updates when the Agent cannot be loaded", async () => {
+    const agentId = "00000000-0000-4000-8000-000000000228";
+    const updateAgentGoal = vi.fn();
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({
+      messages,
+      agentManager: {
+        getAgent: vi.fn(() => null),
+        updateAgentGoal,
+      },
+      agentStorage: {
+        get: vi.fn().mockResolvedValue(null),
+      },
+    });
+
+    await session.handleMessage({
+      type: "agent.goal.update.request",
+      requestId: "goal-update-missing-request",
+      agentId,
+      mutation: { kind: "pause" },
+    });
+
+    expect(updateAgentGoal).not.toHaveBeenCalled();
+    expect(messages).toEqual([
+      {
+        type: "agent.goal.update.response",
+        payload: {
+          requestId: "goal-update-missing-request",
+          agentId,
+          ok: false,
+          goal: null,
+          goalStep: null,
+          goalSync: "stale",
+          error: {
+            code: "not_found",
+            retryable: false,
+            message: "Agent not found.",
+          },
+        },
+      },
+    ]);
+  });
+
+  test("skips both Goal termination phases when the Agent cannot be loaded", async () => {
+    const agentId = "00000000-0000-4000-8000-000000000229";
+    const terminateAgentGoal = vi.fn();
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({
+      messages,
+      agentManager: {
+        getAgent: vi.fn(() => null),
+        terminateAgentGoal,
+      },
+      agentStorage: {
+        get: vi.fn().mockResolvedValue(null),
+      },
+    });
+
+    await session.handleMessage({
+      type: "agent.goal.terminate.request",
+      requestId: "goal-terminate-missing-request",
+      agentId,
+    });
+
+    expect(terminateAgentGoal).not.toHaveBeenCalled();
+    expect(messages).toEqual([
+      {
+        type: "agent.goal.terminate.response",
+        payload: {
+          requestId: "goal-terminate-missing-request",
+          agentId,
+          ok: false,
+          goal: null,
+          goalStep: null,
+          clear: "failed",
+          interrupt: "skipped",
+          outcome: "failed",
+          error: {
+            code: "not_found",
+            retryable: false,
+            message: "Agent not found.",
+          },
+        },
+      },
+    ]);
+  });
+
+  test("resumes a persisted Agent before reading its Goal", async () => {
+    const agentId = "00000000-0000-4000-8000-000000000230";
+    const timestamp = "2026-08-19T00:30:00.000Z";
+    const record = parseStoredAgentRecord({
+      id: agentId,
+      provider: "codex",
+      cwd: "/tmp/goal-rpc-resume",
+      workspaceId: "workspace-goal-rpc-resume",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      lastUserMessageAt: null,
+      title: null,
+      labels: {},
+      lastStatus: "closed",
+      lastModeId: null,
+      config: null,
+      persistence: {
+        provider: "codex",
+        sessionId: "native-goal-rpc-resume-thread",
+        metadata: { provider: "codex", cwd: "/tmp/goal-rpc-resume" },
+      },
+    });
+    const goal = {
+      objective: "Recover Goal control after daemon restart",
+      status: "active",
+      tokenBudget: null,
+      tokensUsed: 3_000,
+      timeUsedSeconds: 240,
+      createdAt: timestamp,
+      updatedAt: "2026-08-19T00:34:00.000Z",
+    } as const;
+    const resumedAgent = {
+      id: agentId,
+      provider: "codex",
+      lifecycle: "running",
+      hubExecutionContract: undefined,
+    };
+    const getAgent = vi
+      .fn()
+      .mockReturnValueOnce(null)
+      .mockReturnValueOnce(null)
+      .mockReturnValue(resumedAgent);
+    const resumeAgentFromPersistence = vi.fn().mockResolvedValue(resumedAgent);
+    const hydrateTimelineFromProvider = vi.fn().mockResolvedValue(undefined);
+    const getAgentGoal = vi.fn().mockResolvedValue({
+      ok: true,
+      goal,
+      goalStep: null,
+      goalSync: "synced",
+      error: null,
+    });
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({
+      messages,
+      agentManager: {
+        getAgent,
+        waitForAgentClose: vi.fn().mockResolvedValue(undefined),
+        getRegisteredProviderIds: vi.fn(() => ["codex"]),
+        resumeAgentFromPersistence,
+        hydrateTimelineFromProvider,
+        getAgentGoal,
+      },
+      agentStorage: {
+        get: vi.fn().mockResolvedValue(record),
+      },
+    });
+
+    await session.handleMessage({
+      type: "agent.goal.get.request",
+      requestId: "goal-get-resume-request",
+      agentId,
+    });
+
+    expect(resumeAgentFromPersistence).toHaveBeenCalled();
+    expect(hydrateTimelineFromProvider).toHaveBeenCalledWith(agentId, {
+      broadcast: expect.any(Function),
+    });
+    expect(getAgentGoal).toHaveBeenCalledWith(agentId);
+    expect(messages).toEqual([
+      {
+        type: "agent.goal.get.response",
+        payload: {
+          requestId: "goal-get-resume-request",
+          agentId,
+          ok: true,
+          goal,
+          goalStep: null,
+          goalSync: "synced",
+          error: null,
+        },
+      },
+    ]);
+  });
+
+  test("sanitizes unexpected provider failures into the Goal response", async () => {
+    const agentId = "00000000-0000-4000-8000-000000000231";
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({
+      messages,
+      agentManager: {
+        getAgent: vi.fn(() => ({ id: agentId, provider: "codex", lifecycle: "idle" })),
+        getAgentGoal: vi.fn().mockRejectedValue(new Error("provider secret details")),
+      },
+    });
+
+    await session.handleMessage({
+      type: "agent.goal.get.request",
+      requestId: "goal-get-provider-error-request",
+      agentId,
+    });
+
+    expect(messages).toEqual([
+      {
+        type: "agent.goal.get.response",
+        payload: {
+          requestId: "goal-get-provider-error-request",
+          agentId,
+          ok: false,
+          goal: null,
+          goalStep: null,
+          goalSync: "stale",
+          error: {
+            code: "provider_error",
+            retryable: true,
+            message: "Failed to read the Agent Goal.",
+          },
+        },
+      },
+    ]);
+    expect(JSON.stringify(messages)).not.toContain("provider secret details");
   });
 });
 

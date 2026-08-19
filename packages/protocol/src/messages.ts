@@ -4,7 +4,15 @@ import { CLIENT_CAPS } from "./client-capabilities.js";
 import { AGENT_LIFECYCLE_STATUSES } from "./agent-lifecycle.js";
 import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from "./agent-title-limits.js";
 import { AgentProviderSchema } from "./provider-manifest.js";
-import { TOOL_CALL_ICON_NAMES } from "./agent-types.js";
+import {
+  AGENT_GOAL_ERROR_CODES,
+  AGENT_GOAL_STATUSES,
+  TOOL_CALL_ICON_NAMES,
+  type AgentGoalError,
+  type AgentGoalSnapshot,
+  type AgentGoalStepSnapshot,
+  type AgentGoalSyncStatus,
+} from "./agent-types.js";
 import {
   ChatCreateRequestSchema,
   ChatListRequestSchema,
@@ -168,6 +176,7 @@ const MutableBrowserToolsConfigSchema = z
     enabled: z.boolean().default(false),
   })
   .passthrough();
+
 const MutableRelayConfigSchema = z
   .object({
     enabled: z.boolean(),
@@ -782,6 +791,36 @@ const AgentActiveTurnPayloadSchema = z.object({
   startedAt: z.string().nullable(),
 });
 
+/** Provider-neutral Goal state accepted on the wire. */
+export const AgentGoalStatusSchema = z.enum(AGENT_GOAL_STATUSES);
+
+/** Authoritative provider-owned Goal projection accepted on the wire. */
+export const AgentGoalSnapshotSchema: z.ZodType<AgentGoalSnapshot> = z.object({
+  objective: z.string(),
+  status: AgentGoalStatusSchema,
+  tokenBudget: z.number().nullable(),
+  tokensUsed: z.number(),
+  timeUsedSeconds: z.number(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+/** Current provider-owned Goal plan step accepted on the wire. */
+export const AgentGoalStepSnapshotSchema: z.ZodType<AgentGoalStepSnapshot> = z.object({
+  generation: z.string(),
+  ordinal: z.number().int().nonnegative(),
+  text: z.string(),
+  status: z.enum(["pending", "in_progress", "completed"]),
+  activeForm: z.string().optional(),
+});
+
+/** Freshness marker for the daemon's Goal projection. */
+export const AgentGoalSyncStatusSchema: z.ZodType<AgentGoalSyncStatus> = z.enum([
+  "hydrating",
+  "synced",
+  "stale",
+]);
+
 export const AgentSnapshotPayloadSchema = z.object({
   id: z.string(),
   provider: AgentProviderSchema,
@@ -813,6 +852,12 @@ export const AgentSnapshotPayloadSchema = z.object({
   attentionTimestamp: z.string().nullable().optional(),
   archivedAt: z.string().nullable().optional(),
   providerUnavailable: z.boolean().optional(),
+  // COMPAT(agentGoalControl): added in v0.4.0-beta.4, remove optional parsing after 2027-08-18.
+  goal: AgentGoalSnapshotSchema.nullable().optional(),
+  // COMPAT(agentGoalControl): current step belongs to the Goal generation in `goal.createdAt`.
+  goalStep: AgentGoalStepSnapshotSchema.nullable().optional(),
+  // COMPAT(agentGoalControl): omitted means an old daemon, unsupported provider, or no hydrate yet.
+  goalSync: AgentGoalSyncStatusSchema.optional(),
 });
 
 export type AgentSnapshotPayload = z.infer<typeof AgentSnapshotPayloadSchema>;
@@ -903,6 +948,37 @@ export const AgentRuntimeCloseRequestMessageSchema = z.object({
   type: z.literal("agent.runtime.close.request"),
   agentId: z.string(),
   requestId: z.string(),
+});
+
+/** Correlated request for the daemon's authoritative Agent Goal projection. */
+export const AgentGoalGetRequestMessageSchema = z.object({
+  type: z.literal("agent.goal.get.request"),
+  requestId: z.string(),
+  agentId: z.string(),
+});
+
+/** Supported mutations for an existing Agent Goal. */
+export const AgentGoalUpdateMutationSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("pause") }),
+  z.object({ kind: z.literal("resume") }),
+  z.object({ kind: z.literal("replace_objective"), objective: z.string() }),
+]);
+
+/** Correlated mutation request for an existing Agent Goal. */
+export const AgentGoalUpdateRequestMessageSchema = z.object({
+  type: z.literal("agent.goal.update.request"),
+  requestId: z.string(),
+  agentId: z.string(),
+  expectedGeneration: z.string().optional(),
+  mutation: AgentGoalUpdateMutationSchema,
+});
+
+/** Correlated request to clear a Goal and then interrupt its active turn. */
+export const AgentGoalTerminateRequestMessageSchema = z.object({
+  type: z.literal("agent.goal.terminate.request"),
+  requestId: z.string(),
+  agentId: z.string(),
+  expectedGeneration: z.string().optional(),
 });
 
 export const CloseItemsRequestMessageSchema = z.object({
@@ -2791,6 +2867,9 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   DeleteAgentRequestMessageSchema,
   ArchiveAgentRequestMessageSchema,
   AgentRuntimeCloseRequestMessageSchema,
+  AgentGoalGetRequestMessageSchema,
+  AgentGoalUpdateRequestMessageSchema,
+  AgentGoalTerminateRequestMessageSchema,
   CloseItemsRequestMessageSchema,
   UpdateAgentRequestMessageSchema,
   ProjectRenameRequestSchema,
@@ -3144,6 +3223,8 @@ export const ServerInfoStatusPayloadSchema = z
         agentTimelinePromptIndex: z.boolean().optional(),
         // COMPAT(agentTimelineSummaryDetail): added in v0.3.0, remove after 2027-02-09.
         agentTimelineSummaryDetail: z.boolean().optional(),
+        // COMPAT(agentGoalControl): added in v0.4.0-beta.4, remove after 2027-08-18.
+        agentGoalControl: z.boolean().optional(),
         // COMPAT(agentHistorySearch): added in v0.3.0, remove gate after 2027-02-07.
         agentHistorySearch: z.boolean().optional(),
         // COMPAT(checkoutRefresh): added in v0.1.86, remove gate after 2026-11-29.
@@ -4428,6 +4509,75 @@ const AgentRuntimeClosePayloadSchema = z.union([
 export const AgentRuntimeCloseResponseMessageSchema = z.object({
   type: z.literal("agent.runtime.close.response"),
   payload: AgentRuntimeClosePayloadSchema,
+});
+
+/** Structured non-sensitive Agent Goal control failure accepted on the wire. */
+export const AgentGoalErrorSchema: z.ZodType<AgentGoalError> = z.object({
+  code: z.enum(AGENT_GOAL_ERROR_CODES),
+  retryable: z.boolean(),
+  message: z.string(),
+});
+
+/** Correlated response containing the daemon's authoritative Agent Goal projection. */
+export const AgentGoalGetResponseMessageSchema = z.object({
+  type: z.literal("agent.goal.get.response"),
+  payload: z.object({
+    requestId: z.string(),
+    agentId: z.string(),
+    ok: z.boolean(),
+    goal: AgentGoalSnapshotSchema.nullable(),
+    goalStep: AgentGoalStepSnapshotSchema.nullable(),
+    goalSync: AgentGoalSyncStatusSchema,
+    error: AgentGoalErrorSchema.nullable(),
+  }),
+});
+
+/** Correlated response containing the authoritative projection after a Goal mutation. */
+export const AgentGoalUpdateResponseMessageSchema = z.object({
+  type: z.literal("agent.goal.update.response"),
+  payload: z.object({
+    requestId: z.string(),
+    agentId: z.string(),
+    ok: z.boolean(),
+    goal: AgentGoalSnapshotSchema.nullable(),
+    goalStep: AgentGoalStepSnapshotSchema.nullable(),
+    goalSync: AgentGoalSyncStatusSchema,
+    error: AgentGoalErrorSchema.nullable(),
+  }),
+});
+
+/** Outcome of the provider-owned Goal clear phase. */
+export const AgentGoalClearResultSchema = z.enum(["cleared", "already_absent", "failed"]);
+
+/** Outcome of the Agent turn interrupt phase. */
+export const AgentGoalInterruptResultSchema = z.enum([
+  "interrupted",
+  "not_running",
+  "failed",
+  "skipped",
+]);
+
+/** User-visible aggregate result of an Agent Goal termination. */
+export const AgentGoalTerminateOutcomeSchema = z.enum([
+  "stopped",
+  "goal_cleared_turn_running",
+  "failed",
+]);
+
+/** Correlated response exposing both phases of an Agent Goal termination. */
+export const AgentGoalTerminateResponseMessageSchema = z.object({
+  type: z.literal("agent.goal.terminate.response"),
+  payload: z.object({
+    requestId: z.string(),
+    agentId: z.string(),
+    ok: z.boolean(),
+    goal: AgentGoalSnapshotSchema.nullable(),
+    goalStep: AgentGoalStepSnapshotSchema.nullable(),
+    clear: AgentGoalClearResultSchema,
+    interrupt: AgentGoalInterruptResultSchema,
+    outcome: AgentGoalTerminateOutcomeSchema,
+    error: AgentGoalErrorSchema.nullable(),
+  }),
 });
 
 const CloseItemsAgentResultSchema = z.object({
@@ -5887,6 +6037,9 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentDeletedMessageSchema,
   AgentArchivedMessageSchema,
   AgentRuntimeCloseResponseMessageSchema,
+  AgentGoalGetResponseMessageSchema,
+  AgentGoalUpdateResponseMessageSchema,
+  AgentGoalTerminateResponseMessageSchema,
   CloseItemsResponseSchema,
   CheckoutStatusResponseSchema,
   CheckoutStatusUpdateSchema,
@@ -6419,6 +6572,20 @@ export type CloseItemsResponse = z.infer<typeof CloseItemsResponseSchema>;
 export type AgentRuntimeCloseRequest = z.infer<typeof AgentRuntimeCloseRequestMessageSchema>;
 export type AgentRuntimeCloseResponse = z.infer<typeof AgentRuntimeCloseResponseMessageSchema>;
 export type AgentRuntimeClosePayload = z.infer<typeof AgentRuntimeClosePayloadSchema>;
+export type AgentGoalGetRequestMessage = z.infer<typeof AgentGoalGetRequestMessageSchema>;
+export type AgentGoalGetResponseMessage = z.infer<typeof AgentGoalGetResponseMessageSchema>;
+export type AgentGoalGetResponsePayload = AgentGoalGetResponseMessage["payload"];
+export type AgentGoalUpdateMutation = z.infer<typeof AgentGoalUpdateMutationSchema>;
+export type AgentGoalUpdateRequestMessage = z.infer<typeof AgentGoalUpdateRequestMessageSchema>;
+export type AgentGoalUpdateResponseMessage = z.infer<typeof AgentGoalUpdateResponseMessageSchema>;
+export type AgentGoalUpdateResponsePayload = AgentGoalUpdateResponseMessage["payload"];
+export type AgentGoalTerminateRequestMessage = z.infer<
+  typeof AgentGoalTerminateRequestMessageSchema
+>;
+export type AgentGoalTerminateResponseMessage = z.infer<
+  typeof AgentGoalTerminateResponseMessageSchema
+>;
+export type AgentGoalTerminateResponsePayload = AgentGoalTerminateResponseMessage["payload"];
 export type KillTerminalRequest = z.infer<typeof KillTerminalRequestSchema>;
 export type KillTerminalResponse = z.infer<typeof KillTerminalResponseSchema>;
 export type CaptureTerminalRequest = z.infer<typeof CaptureTerminalRequestSchema>;

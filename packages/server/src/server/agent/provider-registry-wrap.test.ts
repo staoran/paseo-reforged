@@ -26,6 +26,8 @@ const OPTIONAL_AGENT_SESSION_METHOD_NAMES = [
   "revertFiles",
   "revertBoth",
   "tryHandleOutOfBand",
+  "getExecutionStatus",
+  "flushPreSubscriptionEvents",
 ] as const satisfies readonly OptionalAgentSessionMethodName[];
 
 type MissingOptionalAgentSessionMethod = Exclude<
@@ -60,6 +62,36 @@ class FakeSession implements AgentSession {
   readonly capabilities = CAPABILITIES;
   readonly features = [];
   readonly recordedCalls: string[] = [];
+  readonly goalControl: NonNullable<AgentSession["goalControl"]> = {
+    get: async () => {
+      this.recordedCalls.push("goalControl.get");
+      return null;
+    },
+    set: async () => {
+      this.recordedCalls.push("goalControl.set");
+      return {
+        objective: "Wrapped Goal",
+        status: "paused",
+        tokenBudget: null,
+        tokensUsed: 0,
+        timeUsedSeconds: 0,
+        createdAt: "2026-08-18T00:00:00.000Z",
+        updatedAt: "2026-08-18T00:00:00.000Z",
+      };
+    },
+    clear: async () => {
+      this.recordedCalls.push("goalControl.clear");
+    },
+  };
+
+  async getExecutionStatus() {
+    this.recordedCalls.push("getExecutionStatus");
+    return { status: "idle" } as const;
+  }
+
+  flushPreSubscriptionEvents() {
+    this.recordedCalls.push("flushPreSubscriptionEvents");
+  }
 
   async run() {
     this.recordedCalls.push("run");
@@ -181,6 +213,11 @@ describe("wrapSessionProvider", () => {
     await wrapped.revertBoth?.({ messageId: "message-1" });
     const handler = wrapped.tryHandleOutOfBand?.("/compact");
     await handler?.run({ emit: () => {} });
+    await wrapped.goalControl?.get();
+    await wrapped.goalControl?.set({ status: "paused" });
+    await wrapped.goalControl?.clear();
+    await wrapped.getExecutionStatus?.();
+    wrapped.flushPreSubscriptionEvents?.();
 
     expect(session.recordedCalls).toEqual([
       "listCommands",
@@ -192,6 +229,11 @@ describe("wrapSessionProvider", () => {
       "revertBoth",
       "tryHandleOutOfBand",
       "tryHandleOutOfBand.run",
+      "goalControl.get",
+      "goalControl.set",
+      "goalControl.clear",
+      "getExecutionStatus",
+      "flushPreSubscriptionEvents",
     ]);
   });
 });

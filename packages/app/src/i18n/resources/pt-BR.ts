@@ -251,6 +251,44 @@ export const ptBR: TranslationResources = {
       unarchive: "Desarquivar",
     },
   },
+  goals: {
+    status: {
+      active: "Ativa",
+      paused: "Pausada",
+      blocked: "Bloqueada",
+      usageLimited: "Uso limitado",
+      budgetLimited: "Orçamento esgotado",
+      complete: "Concluída",
+    },
+    actions: {
+      pause: "Pausar meta",
+      resume: "Retomar meta",
+      edit: "Editar meta",
+      terminate: "Encerrar meta",
+      retry: "Tentar sincronizar a meta novamente",
+    },
+    usage: {
+      withBudget: "{{used}} / {{budget}} tokens · {{time}}",
+      withoutBudget: "{{used}} tokens · {{time}}",
+    },
+    editor: {
+      title: "Editar meta",
+      objectiveLabel: "Objetivo da meta",
+      resetWarning: "Salvar inicia uma nova geração da meta e redefine os contadores de uso.",
+      save: "Salvar meta",
+      validation: {
+        empty: "Informe um objetivo para a meta.",
+        tooLong: "Mantenha o objetivo da meta em até {{max}} caracteres.",
+      },
+    },
+    errors: {
+      actionFailed: "Falha na ação da meta: {{message}}",
+    },
+    accessibility: {
+      track: "Status e controles da meta",
+      currentStep: "Etapa atual: {{step}}",
+    },
+  },
   sessions: {
     title: "Histórico de agentes",
     empty: "Nenhuma sessão ainda",

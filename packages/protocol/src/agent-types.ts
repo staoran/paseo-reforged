@@ -184,6 +184,84 @@ export interface AgentUsage {
   contextWindowUsedTokens?: number;
 }
 
+/** Provider-neutral Goal states exposed by an Agent session. */
+export const AGENT_GOAL_STATUSES = [
+  "active",
+  "paused",
+  "blocked",
+  "usageLimited",
+  "budgetLimited",
+  "complete",
+] as const;
+
+/** Provider-neutral state of a Goal. */
+export type AgentGoalStatus = (typeof AGENT_GOAL_STATUSES)[number];
+
+/** Authoritative provider-owned Goal projection. */
+export interface AgentGoalSnapshot {
+  /** User-editable Goal objective. */
+  objective: string;
+  /** Current provider-owned Goal state. */
+  status: AgentGoalStatus;
+  /** Optional token budget configured for the Goal. */
+  tokenBudget: number | null;
+  /** Tokens consumed by the current Goal generation. */
+  tokensUsed: number;
+  /** Wall-clock seconds consumed by the current Goal generation. */
+  timeUsedSeconds: number;
+  /** ISO timestamp that also identifies the Goal generation. */
+  createdAt: string;
+  /** ISO timestamp of the latest provider-owned Goal update. */
+  updatedAt: string;
+}
+
+/** Provider-neutral state of a Goal plan step. */
+export type AgentGoalStepStatus = "pending" | "in_progress" | "completed";
+
+/** Current Goal step projected from the provider's authoritative plan. */
+export interface AgentGoalStepSnapshot {
+  /** Goal generation this step belongs to. */
+  generation: string;
+  /** Zero-based position in the provider plan. */
+  ordinal: number;
+  /** Stable step description. */
+  text: string;
+  /** Current progress state. */
+  status: AgentGoalStepStatus;
+  /** Optional present-progress wording. */
+  activeForm?: string;
+}
+
+/** Freshness of the Goal projection held by Paseo. */
+export type AgentGoalSyncStatus = "hydrating" | "synced" | "stale";
+
+/** Stable public error codes returned by Agent Goal control RPCs. */
+export const AGENT_GOAL_ERROR_CODES = [
+  "unsupported",
+  "not_found",
+  "invalid_objective",
+  "invalid_transition",
+  "conflict",
+  "sync_required",
+  "provider_unavailable",
+  "provider_error",
+  "clear_failed",
+  "interrupt_failed",
+] as const;
+
+/** Stable public code for an Agent Goal control failure. */
+export type AgentGoalErrorCode = (typeof AGENT_GOAL_ERROR_CODES)[number];
+
+/** Non-sensitive failure returned by an Agent Goal control RPC. */
+export interface AgentGoalError {
+  /** Stable machine-readable failure code. */
+  code: AgentGoalErrorCode;
+  /** Whether retrying without user changes can succeed. */
+  retryable: boolean;
+  /** Non-sensitive human-readable failure summary. */
+  message: string;
+}
+
 export const TOOL_CALL_ICON_NAMES = [
   "wrench",
   "square_terminal",

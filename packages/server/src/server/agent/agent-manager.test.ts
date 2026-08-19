@@ -2913,6 +2913,2369 @@ test("resumeAgentFromPersistence keeps metadata config, applies overrides, and p
   });
 });
 
+test("resumeAgentFromPersistence drains autonomous start events before publishing ready state", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-resume-event-"));
+  const agentId = "00000000-0000-4000-8000-000000000185";
+
+  class BufferedResumeSession extends TestAgentSession {
+    flushCalls = 0;
+
+    flushPreSubscriptionEvents(): void {
+      this.flushCalls += 1;
+      if (this.flushCalls !== 1) {
+        return;
+      }
+      this.pushEvent({ type: "turn_started", provider: "codex" });
+    }
+  }
+
+  const session = new BufferedResumeSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  try {
+    const resumed = await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "native-goal-thread",
+        metadata: { cwd: workdir },
+      },
+      undefined,
+      agentId,
+    );
+
+    expect({ flushCalls: session.flushCalls, lifecycle: resumed.lifecycle }).toEqual({
+      flushCalls: 1,
+      lifecycle: "running",
+    });
+    expect(manager.getAgent(agentId)?.lifecycle).toBe("running");
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("resumeAgentFromPersistence projects an authoritative active thread as running", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-resume-status-"));
+  const agentId = "00000000-0000-4000-8000-000000000186";
+
+  class ActiveResumeSession extends TestAgentSession {
+    executionStatusCalls = 0;
+
+    async getExecutionStatus() {
+      this.executionStatusCalls += 1;
+      return { status: "active", activeFlags: ["waitingOnUserInput"] } as const;
+    }
+  }
+
+  const session = new ActiveResumeSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  try {
+    const resumed = await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "native-active-goal-thread",
+        metadata: { cwd: workdir },
+      },
+      undefined,
+      agentId,
+    );
+
+    expect({
+      executionStatusCalls: session.executionStatusCalls,
+      lifecycle: resumed.lifecycle,
+      activeTurnId: resumed.activeTurnId,
+    }).toEqual({
+      executionStatusCalls: 1,
+      lifecycle: "running",
+      activeTurnId: null,
+    });
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("resumeAgentFromPersistence applies buffered active thread status without inventing a turn", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-resume-status-event-"));
+  const agentId = "00000000-0000-4000-8000-000000000187";
+
+  class BufferedStatusSession extends TestAgentSession {
+    flushPreSubscriptionEvents(): void {
+      this.pushEvent({
+        type: "thread_status_changed",
+        provider: "codex",
+        status: { status: "active", activeFlags: ["waitingOnApproval"] },
+      });
+    }
+  }
+
+  const session = new BufferedStatusSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  try {
+    const resumed = await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "native-status-event-thread",
+        metadata: { cwd: workdir },
+      },
+      undefined,
+      agentId,
+    );
+
+    expect({ lifecycle: resumed.lifecycle, activeTurnId: resumed.activeTurnId }).toEqual({
+      lifecycle: "running",
+      activeTurnId: null,
+    });
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("resumeAgentFromPersistence lets authoritative idle supersede an earlier buffered start", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-resume-idle-"));
+  const agentId = "00000000-0000-4000-8000-000000000188";
+
+  class IdleAfterStartSession extends TestAgentSession {
+    flushPreSubscriptionEvents(): void {
+      this.pushEvent({ type: "turn_started", provider: "codex" });
+    }
+
+    async getExecutionStatus() {
+      return { status: "idle" } as const;
+    }
+  }
+
+  const session = new IdleAfterStartSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+  const streamEvents: AgentStreamEvent[] = [];
+  manager.subscribe(
+    (event) => {
+      if (event.type === "agent_stream") {
+        streamEvents.push(event.event);
+      }
+    },
+    { agentId, replayState: false },
+  );
+
+  try {
+    const resumed = await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "native-idle-goal-thread",
+        metadata: { cwd: workdir },
+      },
+      undefined,
+      agentId,
+    );
+
+    expect({ lifecycle: resumed.lifecycle, activeTurnId: resumed.activeTurnId }).toEqual({
+      lifecycle: "idle",
+      activeTurnId: null,
+    });
+    expect(streamEvents.some((event) => event.type === "turn_completed")).toBe(false);
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("resumeAgentFromPersistence hydrates the authoritative Goal into the public snapshot", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-hydrate-"));
+  const agentId = "00000000-0000-4000-8000-000000000189";
+  const goal = {
+    objective: "Finish Goal recovery",
+    status: "active",
+    tokenBudget: 12_000,
+    tokensUsed: 3_000,
+    timeUsedSeconds: 240,
+    createdAt: "2026-08-18T01:00:00.000Z",
+    updatedAt: "2026-08-18T01:04:00.000Z",
+  } as const;
+
+  class GoalResumeSession extends TestAgentSession {
+    goalGetCalls = 0;
+    readonly goalControl: NonNullable<AgentSession["goalControl"]> = {
+      get: async () => {
+        this.goalGetCalls += 1;
+        return goal;
+      },
+      set: async () => goal,
+      clear: async () => {},
+    };
+  }
+
+  const session = new GoalResumeSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  try {
+    const resumed = await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "native-goal-hydrate-thread",
+        metadata: { cwd: workdir },
+      },
+      undefined,
+      agentId,
+    );
+
+    expect(session.goalGetCalls).toBe(1);
+    expect(toAgentPayload(resumed)).toMatchObject({
+      goal,
+      goalStep: null,
+      goalSync: "synced",
+    });
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("resumeAgentFromPersistence preserves buffered Goal state when hydrate fails", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-hydrate-stale-"));
+  const agentId = "00000000-0000-4000-8000-000000000190";
+  const goal = {
+    objective: "Keep recovering after reconnect",
+    status: "active",
+    tokenBudget: null,
+    tokensUsed: 5_000,
+    timeUsedSeconds: 360,
+    createdAt: "2026-08-18T02:00:00.000Z",
+    updatedAt: "2026-08-18T02:06:00.000Z",
+  } as const;
+
+  class StaleGoalResumeSession extends TestAgentSession {
+    readonly goalControl: NonNullable<AgentSession["goalControl"]> = {
+      get: async () => {
+        throw new Error("temporary Goal read failure");
+      },
+      set: async () => goal,
+      clear: async () => {},
+    };
+
+    flushPreSubscriptionEvents(): void {
+      this.pushEvent({ type: "goal_changed", provider: "codex", goal });
+    }
+  }
+
+  const session = new StaleGoalResumeSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  try {
+    const resumed = await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "native-stale-goal-thread",
+        metadata: { cwd: workdir },
+      },
+      undefined,
+      agentId,
+    );
+
+    expect(toAgentPayload(resumed)).toMatchObject({
+      goal,
+      goalStep: null,
+      goalSync: "stale",
+    });
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("projects the in-progress plan item as the current Goal step", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-current-step-"));
+  const agentId = "00000000-0000-4000-8000-000000000194";
+  const goal = {
+    objective: "Finish Goal controls",
+    status: "active",
+    tokenBudget: 20_000,
+    tokensUsed: 6_000,
+    timeUsedSeconds: 420,
+    createdAt: "2026-08-18T03:00:00.000Z",
+    updatedAt: "2026-08-18T03:07:00.000Z",
+  } as const;
+
+  class GoalStepSession extends TestAgentSession {
+    readonly goalControl: NonNullable<AgentSession["goalControl"]> = {
+      get: async () => goal,
+      set: async () => goal,
+      clear: async () => {},
+    };
+  }
+
+  const session = new GoalStepSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  try {
+    await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "native-goal-step-thread",
+        metadata: { cwd: workdir },
+      },
+      undefined,
+      agentId,
+    );
+    session.pushEvent({
+      type: "turn_started",
+      provider: "codex",
+      turnId: "autonomous-goal-step-turn",
+    });
+    session.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      turnId: "autonomous-goal-step-turn",
+      item: {
+        type: "todo",
+        items: [
+          { id: "inspect", text: "Inspect Goal state", status: "pending", completed: false },
+          {
+            id: "implement",
+            text: "Implement Goal controls",
+            activeForm: "Implementing Goal controls",
+            status: "in_progress",
+            completed: false,
+          },
+        ],
+      },
+    });
+    await manager.flush();
+
+    expect(toAgentPayload(manager.getAgent(agentId)!)).toMatchObject({
+      goalStep: {
+        generation: goal.createdAt,
+        ordinal: 1,
+        text: "Implement Goal controls",
+        status: "in_progress",
+        activeForm: "Implementing Goal controls",
+      },
+    });
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("projects the first unfinished plan item when no Goal step is in progress", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-pending-step-"));
+  const agentId = "00000000-0000-4000-8000-000000000195";
+  const goal = {
+    objective: "Finish Goal controls",
+    status: "active",
+    tokenBudget: null,
+    tokensUsed: 6_500,
+    timeUsedSeconds: 450,
+    createdAt: "2026-08-18T04:00:00.000Z",
+    updatedAt: "2026-08-18T04:07:30.000Z",
+  } as const;
+
+  class PendingGoalStepSession extends TestAgentSession {
+    readonly goalControl: NonNullable<AgentSession["goalControl"]> = {
+      get: async () => goal,
+      set: async () => goal,
+      clear: async () => {},
+    };
+  }
+
+  const session = new PendingGoalStepSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  try {
+    await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "native-goal-pending-step-thread",
+        metadata: { cwd: workdir },
+      },
+      undefined,
+      agentId,
+    );
+    session.pushEvent({
+      type: "turn_started",
+      provider: "codex",
+      turnId: "autonomous-goal-pending-step-turn",
+    });
+    session.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      turnId: "autonomous-goal-pending-step-turn",
+      item: {
+        type: "todo",
+        items: [
+          { id: "done", text: "Inspect Goal state", status: "completed", completed: true },
+          { id: "first", text: "Implement Goal controls", status: "pending", completed: false },
+          { id: "second", text: "Verify Goal controls", status: "pending", completed: false },
+        ],
+      },
+    });
+    await manager.flush();
+
+    expect(toAgentPayload(manager.getAgent(agentId)!)).toMatchObject({
+      goalStep: {
+        generation: goal.createdAt,
+        ordinal: 1,
+        text: "Implement Goal controls",
+        status: "pending",
+      },
+    });
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("does not revive a cleared Goal step from a late plan for the previous generation", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-step-generation-"));
+  const agentId = "00000000-0000-4000-8000-000000000196";
+  const originalGoal = {
+    objective: "Finish original Goal",
+    status: "active",
+    tokenBudget: null,
+    tokensUsed: 7_000,
+    timeUsedSeconds: 500,
+    createdAt: "2026-08-18T05:00:00.000Z",
+    updatedAt: "2026-08-18T05:08:20.000Z",
+  } as const;
+  const replacementGoal = {
+    ...originalGoal,
+    objective: "Finish replacement Goal",
+    tokensUsed: 0,
+    timeUsedSeconds: 0,
+    createdAt: "2026-08-18T06:00:00.000Z",
+    updatedAt: "2026-08-18T06:00:00.000Z",
+  } as const;
+
+  class GoalGenerationSession extends TestAgentSession {
+    readonly goalControl: NonNullable<AgentSession["goalControl"]> = {
+      get: async () => originalGoal,
+      set: async () => replacementGoal,
+      clear: async () => {},
+    };
+  }
+
+  const session = new GoalGenerationSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  try {
+    await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "native-goal-generation-thread",
+        metadata: { cwd: workdir },
+      },
+      undefined,
+      agentId,
+    );
+    const turnId = "old-goal-generation-turn";
+    session.pushEvent({ type: "turn_started", provider: "codex", turnId });
+    session.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      turnId,
+      item: {
+        type: "todo",
+        items: [
+          { id: "original", text: "Implement original Goal", status: "pending", completed: false },
+        ],
+      },
+    });
+    await manager.flush();
+    expect(toAgentPayload(manager.getAgent(agentId)!).goalStep).toMatchObject({
+      generation: originalGoal.createdAt,
+      text: "Implement original Goal",
+    });
+
+    session.pushEvent({ type: "goal_changed", provider: "codex", goal: replacementGoal });
+    await manager.flush();
+    expect(toAgentPayload(manager.getAgent(agentId)!).goalStep).toBeNull();
+
+    session.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      turnId,
+      item: {
+        type: "todo",
+        items: [
+          { id: "late", text: "Late original Goal step", status: "in_progress", completed: false },
+        ],
+      },
+    });
+    await manager.flush();
+    expect(toAgentPayload(manager.getAgent(agentId)!).goalStep).toBeNull();
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("getAgentGoal retries a stale projection against the provider", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-get-stale-"));
+  const agentId = "00000000-0000-4000-8000-000000000197";
+  const bufferedGoal = {
+    objective: "Recover stale Goal state",
+    status: "active",
+    tokenBudget: null,
+    tokensUsed: 8_000,
+    timeUsedSeconds: 540,
+    createdAt: "2026-08-18T07:00:00.000Z",
+    updatedAt: "2026-08-18T07:09:00.000Z",
+  } as const;
+  const refreshedGoal = {
+    ...bufferedGoal,
+    status: "paused",
+    tokensUsed: 8_500,
+    timeUsedSeconds: 600,
+    updatedAt: "2026-08-18T07:10:00.000Z",
+  } as const;
+
+  class StaleRetryGoalSession extends TestAgentSession {
+    getCalls = 0;
+    readonly goalControl: NonNullable<AgentSession["goalControl"]> = {
+      get: async () => {
+        this.getCalls += 1;
+        if (this.getCalls === 1) {
+          throw new Error("temporary Goal read failure");
+        }
+        return refreshedGoal;
+      },
+      set: async () => refreshedGoal,
+      clear: async () => {},
+    };
+
+    flushPreSubscriptionEvents(): void {
+      this.pushEvent({ type: "goal_changed", provider: "codex", goal: bufferedGoal });
+    }
+  }
+
+  const session = new StaleRetryGoalSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  try {
+    await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "native-goal-get-stale-thread",
+        metadata: { cwd: workdir },
+      },
+      undefined,
+      agentId,
+    );
+
+    await expect(manager.getAgentGoal(agentId)).resolves.toEqual({
+      ok: true,
+      goal: refreshedGoal,
+      goalStep: null,
+      goalSync: "synced",
+      error: null,
+    });
+    expect(session.getCalls).toBe(2);
+    expect(toAgentPayload(manager.getAgent(agentId)!)).toMatchObject({
+      goal: refreshedGoal,
+      goalSync: "synced",
+    });
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("getAgentGoal preserves the last projection and returns a retryable provider error", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-get-failure-"));
+  const agentId = "00000000-0000-4000-8000-000000000198";
+  const goal = {
+    objective: "Keep the last Goal projection",
+    status: "active",
+    tokenBudget: null,
+    tokensUsed: 9_000,
+    timeUsedSeconds: 660,
+    createdAt: "2026-08-18T08:00:00.000Z",
+    updatedAt: "2026-08-18T08:11:00.000Z",
+  } as const;
+
+  class FailingGoalReadSession extends TestAgentSession {
+    getCalls = 0;
+    readonly goalControl: NonNullable<AgentSession["goalControl"]> = {
+      get: async () => {
+        this.getCalls += 1;
+        if (this.getCalls > 1) {
+          throw new Error("provider secret details must not cross the RPC boundary");
+        }
+        return goal;
+      },
+      set: async () => goal,
+      clear: async () => {},
+    };
+  }
+
+  const session = new FailingGoalReadSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  try {
+    await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "native-goal-get-failure-thread",
+        metadata: { cwd: workdir },
+      },
+      undefined,
+      agentId,
+    );
+
+    await expect(manager.getAgentGoal(agentId)).resolves.toEqual({
+      ok: false,
+      goal,
+      goalStep: null,
+      goalSync: "stale",
+      error: {
+        code: "provider_error",
+        retryable: true,
+        message: "Failed to refresh the Agent Goal from the provider.",
+      },
+    });
+    expect(JSON.stringify(await manager.getAgentGoal(agentId))).not.toContain("provider secret");
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("getAgentGoal returns a structured not-found result", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-get-not-found-"));
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  try {
+    await expect(manager.getAgentGoal("00000000-0000-4000-8000-000000000199")).resolves.toEqual({
+      ok: false,
+      goal: null,
+      goalStep: null,
+      goalSync: "stale",
+      error: {
+        code: "not_found",
+        retryable: false,
+        message: "Agent not found.",
+      },
+    });
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("getAgentGoal returns a structured unsupported result", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-get-unsupported-"));
+  const agentId = "00000000-0000-4000-8000-000000000200";
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await expect(manager.getAgentGoal(agentId)).resolves.toEqual({
+      ok: false,
+      goal: null,
+      goalStep: null,
+      goalSync: "stale",
+      error: {
+        code: "unsupported",
+        retryable: false,
+        message: "This Agent provider does not support Goal control.",
+      },
+    });
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("updateAgentGoal pauses the current generation through the provider", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-update-pause-"));
+  const agentId = "00000000-0000-4000-8000-000000000201";
+  const activeGoal = {
+    objective: "Pause this Goal",
+    status: "active",
+    tokenBudget: 12_000,
+    tokensUsed: 3_000,
+    timeUsedSeconds: 240,
+    createdAt: "2026-08-18T09:00:00.000Z",
+    updatedAt: "2026-08-18T09:04:00.000Z",
+  } as const;
+  const pausedGoal = {
+    ...activeGoal,
+    status: "paused",
+    updatedAt: "2026-08-18T09:05:00.000Z",
+  } as const;
+
+  class PauseGoalSession extends TestAgentSession {
+    readonly setInputs: Array<{ objective?: string; status?: "active" | "paused" }> = [];
+    readonly goalControl: NonNullable<AgentSession["goalControl"]> = {
+      get: async () => activeGoal,
+      set: async (input) => {
+        this.setInputs.push(input);
+        return pausedGoal;
+      },
+      clear: async () => {},
+    };
+  }
+
+  const session = new PauseGoalSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  try {
+    await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "native-goal-update-pause-thread",
+        metadata: { cwd: workdir },
+      },
+      undefined,
+      agentId,
+    );
+
+    await expect(
+      manager.updateAgentGoal(agentId, { kind: "pause" }, activeGoal.createdAt),
+    ).resolves.toEqual({
+      ok: true,
+      goal: pausedGoal,
+      goalStep: null,
+      goalSync: "synced",
+      error: null,
+    });
+    expect(session.setInputs).toEqual([{ status: "paused" }]);
+    expect(toAgentPayload(manager.getAgent(agentId)!)).toMatchObject({ goal: pausedGoal });
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("updateAgentGoal rejects a stale expected generation without calling the provider", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-update-conflict-"));
+  const agentId = "00000000-0000-4000-8000-000000000202";
+  const goal = {
+    objective: "Keep the current Goal",
+    status: "active",
+    tokenBudget: null,
+    tokensUsed: 3_500,
+    timeUsedSeconds: 300,
+    createdAt: "2026-08-18T10:00:00.000Z",
+    updatedAt: "2026-08-18T10:05:00.000Z",
+  } as const;
+  let setCalls = 0;
+
+  class ConflictingGoalSession extends TestAgentSession {
+    readonly goalControl: NonNullable<AgentSession["goalControl"]> = {
+      get: async () => goal,
+      set: async () => {
+        setCalls += 1;
+        return goal;
+      },
+      clear: async () => {},
+    };
+  }
+
+  const session = new ConflictingGoalSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  try {
+    await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "native-goal-update-conflict-thread",
+        metadata: { cwd: workdir },
+      },
+      undefined,
+      agentId,
+    );
+
+    await expect(
+      manager.updateAgentGoal(agentId, { kind: "pause" }, "older-generation"),
+    ).resolves.toEqual({
+      ok: false,
+      goal,
+      goalStep: null,
+      goalSync: "synced",
+      error: {
+        code: "conflict",
+        retryable: false,
+        message: "The Agent Goal changed. Refresh and retry.",
+      },
+    });
+    expect(setCalls).toBe(0);
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("updateAgentGoal refreshes a stale projection before checking generation", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-update-stale-"));
+  const agentId = "00000000-0000-4000-8000-000000000203";
+  const staleGoal = {
+    objective: "Stale Goal",
+    status: "active",
+    tokenBudget: null,
+    tokensUsed: 4_000,
+    timeUsedSeconds: 360,
+    createdAt: "2026-08-18T11:00:00.000Z",
+    updatedAt: "2026-08-18T11:06:00.000Z",
+  } as const;
+  const currentGoal = {
+    ...staleGoal,
+    objective: "Current Goal",
+    tokensUsed: 0,
+    timeUsedSeconds: 0,
+    createdAt: "2026-08-18T12:00:00.000Z",
+    updatedAt: "2026-08-18T12:00:00.000Z",
+  } as const;
+
+  class StaleMutationGoalSession extends TestAgentSession {
+    getCalls = 0;
+    setCalls = 0;
+    readonly goalControl: NonNullable<AgentSession["goalControl"]> = {
+      get: async () => {
+        this.getCalls += 1;
+        if (this.getCalls === 1) {
+          throw new Error("temporary Goal read failure");
+        }
+        return currentGoal;
+      },
+      set: async () => {
+        this.setCalls += 1;
+        return currentGoal;
+      },
+      clear: async () => {},
+    };
+
+    flushPreSubscriptionEvents(): void {
+      this.pushEvent({ type: "goal_changed", provider: "codex", goal: staleGoal });
+    }
+  }
+
+  const session = new StaleMutationGoalSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  try {
+    await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "native-goal-update-stale-thread",
+        metadata: { cwd: workdir },
+      },
+      undefined,
+      agentId,
+    );
+
+    await expect(
+      manager.updateAgentGoal(agentId, { kind: "pause" }, staleGoal.createdAt),
+    ).resolves.toMatchObject({
+      ok: false,
+      goal: currentGoal,
+      goalSync: "synced",
+      error: { code: "conflict" },
+    });
+    expect({ getCalls: session.getCalls, setCalls: session.setCalls }).toEqual({
+      getCalls: 2,
+      setCalls: 0,
+    });
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("updateAgentGoal resumes a paused Goal through the provider", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-update-resume-"));
+  const agentId = "00000000-0000-4000-8000-000000000204";
+  const pausedGoal = {
+    objective: "Resume this Goal",
+    status: "paused",
+    tokenBudget: null,
+    tokensUsed: 5_000,
+    timeUsedSeconds: 420,
+    createdAt: "2026-08-18T13:00:00.000Z",
+    updatedAt: "2026-08-18T13:07:00.000Z",
+  } as const;
+  const activeGoal = {
+    ...pausedGoal,
+    status: "active",
+    updatedAt: "2026-08-18T13:08:00.000Z",
+  } as const;
+  const setInputs: Array<{ objective?: string; status?: "active" | "paused" }> = [];
+
+  class ResumeGoalSession extends TestAgentSession {
+    readonly goalControl: NonNullable<AgentSession["goalControl"]> = {
+      get: async () => pausedGoal,
+      set: async (input) => {
+        setInputs.push(input);
+        return activeGoal;
+      },
+      clear: async () => {},
+    };
+  }
+
+  const session = new ResumeGoalSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  try {
+    await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "native-goal-update-resume-thread",
+        metadata: { cwd: workdir },
+      },
+      undefined,
+      agentId,
+    );
+
+    await expect(
+      manager.updateAgentGoal(agentId, { kind: "resume" }, pausedGoal.createdAt),
+    ).resolves.toMatchObject({ ok: true, goal: activeGoal, error: null });
+    expect(setInputs).toEqual([{ status: "active" }]);
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("updateAgentGoal rejects an invalid pause transition without calling the provider", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-update-transition-"));
+  const agentId = "00000000-0000-4000-8000-000000000205";
+  const goal = {
+    objective: "Already paused Goal",
+    status: "paused",
+    tokenBudget: null,
+    tokensUsed: 5_000,
+    timeUsedSeconds: 420,
+    createdAt: "2026-08-18T14:00:00.000Z",
+    updatedAt: "2026-08-18T14:07:00.000Z",
+  } as const;
+  let setCalls = 0;
+
+  class InvalidPauseGoalSession extends TestAgentSession {
+    readonly goalControl: NonNullable<AgentSession["goalControl"]> = {
+      get: async () => goal,
+      set: async () => {
+        setCalls += 1;
+        return goal;
+      },
+      clear: async () => {},
+    };
+  }
+
+  const session = new InvalidPauseGoalSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  try {
+    await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "native-goal-update-transition-thread",
+        metadata: { cwd: workdir },
+      },
+      undefined,
+      agentId,
+    );
+
+    await expect(
+      manager.updateAgentGoal(agentId, { kind: "pause" }, goal.createdAt),
+    ).resolves.toEqual({
+      ok: false,
+      goal,
+      goalStep: null,
+      goalSync: "synced",
+      error: {
+        code: "invalid_transition",
+        retryable: false,
+        message: "This Goal cannot be paused from its current state.",
+      },
+    });
+    expect(setCalls).toBe(0);
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("updateAgentGoal enforces the resume transition matrix", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-update-resume-matrix-"));
+  const agentId = "00000000-0000-4000-8000-000000000206";
+  const activeGoal = {
+    objective: "Resume transition Goal",
+    status: "active",
+    tokenBudget: null,
+    tokensUsed: 5_500,
+    timeUsedSeconds: 480,
+    createdAt: "2026-08-18T15:00:00.000Z",
+    updatedAt: "2026-08-18T15:08:00.000Z",
+  } as const;
+  const blockedGoal = {
+    ...activeGoal,
+    status: "blocked",
+    updatedAt: "2026-08-18T15:09:00.000Z",
+  } as const;
+  const resumedGoal = {
+    ...activeGoal,
+    updatedAt: "2026-08-18T15:10:00.000Z",
+  } as const;
+  const setInputs: Array<{ objective?: string; status?: "active" | "paused" }> = [];
+
+  class ResumeMatrixGoalSession extends TestAgentSession {
+    readonly goalControl: NonNullable<AgentSession["goalControl"]> = {
+      get: async () => activeGoal,
+      set: async (input) => {
+        setInputs.push(input);
+        return resumedGoal;
+      },
+      clear: async () => {},
+    };
+  }
+
+  const session = new ResumeMatrixGoalSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  try {
+    await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "native-goal-update-resume-matrix-thread",
+        metadata: { cwd: workdir },
+      },
+      undefined,
+      agentId,
+    );
+
+    await expect(
+      manager.updateAgentGoal(agentId, { kind: "resume" }, activeGoal.createdAt),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: "invalid_transition",
+        message: "This Goal cannot be resumed from its current state.",
+      },
+    });
+    expect(setInputs).toEqual([]);
+
+    session.pushEvent({ type: "goal_changed", provider: "codex", goal: blockedGoal });
+    await manager.flush();
+    await expect(
+      manager.updateAgentGoal(agentId, { kind: "resume" }, blockedGoal.createdAt),
+    ).resolves.toMatchObject({ ok: true, goal: resumedGoal, error: null });
+    expect(setInputs).toEqual([{ status: "active" }]);
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("updateAgentGoal replaces a paused objective with a new provider generation", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-update-objective-"));
+  const agentId = "00000000-0000-4000-8000-000000000207";
+  const pausedGoal = {
+    objective: "Original objective",
+    status: "paused",
+    tokenBudget: 16_000,
+    tokensUsed: 6_000,
+    timeUsedSeconds: 540,
+    createdAt: "2026-08-18T16:00:00.000Z",
+    updatedAt: "2026-08-18T16:09:00.000Z",
+  } as const;
+  const replacementGoal = {
+    objective: "Replacement objective",
+    status: "paused",
+    tokenBudget: 16_000,
+    tokensUsed: 0,
+    timeUsedSeconds: 0,
+    createdAt: "2026-08-18T17:00:00.000Z",
+    updatedAt: "2026-08-18T17:00:00.000Z",
+  } as const;
+  const setInputs: Array<{ objective?: string; status?: "active" | "paused" }> = [];
+
+  class ReplaceObjectiveGoalSession extends TestAgentSession {
+    readonly goalControl: NonNullable<AgentSession["goalControl"]> = {
+      get: async () => pausedGoal,
+      set: async (input) => {
+        setInputs.push(input);
+        return replacementGoal;
+      },
+      clear: async () => {},
+    };
+  }
+
+  const session = new ReplaceObjectiveGoalSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  try {
+    await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "native-goal-update-objective-thread",
+        metadata: { cwd: workdir },
+      },
+      undefined,
+      agentId,
+    );
+
+    await expect(
+      manager.updateAgentGoal(
+        agentId,
+        { kind: "replace_objective", objective: "  Replacement objective  " },
+        pausedGoal.createdAt,
+      ),
+    ).resolves.toEqual({
+      ok: true,
+      goal: replacementGoal,
+      goalStep: null,
+      goalSync: "synced",
+      error: null,
+    });
+    expect(setInputs).toEqual([{ objective: "Replacement objective" }]);
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("updateAgentGoal only allows objective edits while the Goal is paused", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-update-objective-state-"));
+  const agentId = "00000000-0000-4000-8000-000000000208";
+  const goal = {
+    objective: "Active objective",
+    status: "active",
+    tokenBudget: null,
+    tokensUsed: 1_000,
+    timeUsedSeconds: 120,
+    createdAt: "2026-08-18T18:00:00.000Z",
+    updatedAt: "2026-08-18T18:02:00.000Z",
+  } as const;
+  let setCalls = 0;
+
+  class ActiveObjectiveGoalSession extends TestAgentSession {
+    readonly goalControl: NonNullable<AgentSession["goalControl"]> = {
+      get: async () => goal,
+      set: async () => {
+        setCalls += 1;
+        return goal;
+      },
+      clear: async () => {},
+    };
+  }
+
+  const session = new ActiveObjectiveGoalSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  try {
+    await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "native-goal-update-objective-state-thread",
+        metadata: { cwd: workdir },
+      },
+      undefined,
+      agentId,
+    );
+
+    await expect(
+      manager.updateAgentGoal(
+        agentId,
+        { kind: "replace_objective", objective: "Replacement objective" },
+        goal.createdAt,
+      ),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: "invalid_transition",
+        message: "Pause the Goal before editing its objective.",
+      },
+    });
+    expect(setCalls).toBe(0);
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("updateAgentGoal validates edited objectives before calling the provider", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-update-objective-validation-"));
+  const agentId = "00000000-0000-4000-8000-000000000209";
+  const goal = {
+    objective: "Paused objective",
+    status: "paused",
+    tokenBudget: null,
+    tokensUsed: 2_000,
+    timeUsedSeconds: 180,
+    createdAt: "2026-08-18T19:00:00.000Z",
+    updatedAt: "2026-08-18T19:03:00.000Z",
+  } as const;
+  let setCalls = 0;
+
+  class InvalidObjectiveGoalSession extends TestAgentSession {
+    readonly goalControl: NonNullable<AgentSession["goalControl"]> = {
+      get: async () => goal,
+      set: async () => {
+        setCalls += 1;
+        return goal;
+      },
+      clear: async () => {},
+    };
+  }
+
+  const session = new InvalidObjectiveGoalSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  try {
+    await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "native-goal-update-objective-validation-thread",
+        metadata: { cwd: workdir },
+      },
+      undefined,
+      agentId,
+    );
+
+    const cases = [
+      { objective: "   ", message: "Goal objective must not be empty." },
+      {
+        objective: "\u{1F680}".repeat(4_001),
+        message: "Goal objective must not exceed 4000 characters.",
+      },
+    ];
+    for (const invalid of cases) {
+      await expect(
+        manager.updateAgentGoal(
+          agentId,
+          { kind: "replace_objective", objective: invalid.objective },
+          goal.createdAt,
+        ),
+      ).resolves.toMatchObject({
+        ok: false,
+        error: {
+          code: "invalid_objective",
+          retryable: false,
+          message: invalid.message,
+        },
+      });
+    }
+    expect(setCalls).toBe(0);
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("updateAgentGoal returns a retryable provider error when the mutation fails", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-update-failure-"));
+  const agentId = "00000000-0000-4000-8000-000000000210";
+  const goal = {
+    objective: "Mutation failure Goal",
+    status: "active",
+    tokenBudget: null,
+    tokensUsed: 2_500,
+    timeUsedSeconds: 240,
+    createdAt: "2026-08-18T20:00:00.000Z",
+    updatedAt: "2026-08-18T20:04:00.000Z",
+  } as const;
+
+  class FailingGoalMutationSession extends TestAgentSession {
+    readonly goalControl: NonNullable<AgentSession["goalControl"]> = {
+      get: async () => goal,
+      set: async () => {
+        throw new Error("provider secret mutation details");
+      },
+      clear: async () => {},
+    };
+  }
+
+  const session = new FailingGoalMutationSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  try {
+    await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "native-goal-update-failure-thread",
+        metadata: { cwd: workdir },
+      },
+      undefined,
+      agentId,
+    );
+
+    await expect(
+      manager.updateAgentGoal(agentId, { kind: "pause" }, goal.createdAt),
+    ).resolves.toEqual({
+      ok: false,
+      goal,
+      goalStep: null,
+      goalSync: "stale",
+      error: {
+        code: "provider_error",
+        retryable: true,
+        message: "Failed to update the Agent Goal in the provider.",
+      },
+    });
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("updateAgentGoal returns a structured not-found result", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-update-not-found-"));
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  try {
+    await expect(
+      manager.updateAgentGoal(
+        "00000000-0000-4000-8000-000000000211",
+        { kind: "pause" },
+        "missing-generation",
+      ),
+    ).resolves.toEqual({
+      ok: false,
+      goal: null,
+      goalStep: null,
+      goalSync: "stale",
+      error: {
+        code: "not_found",
+        retryable: false,
+        message: "Agent not found.",
+      },
+    });
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("updateAgentGoal returns a structured unsupported result", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-update-unsupported-"));
+  const agentId = "00000000-0000-4000-8000-000000000212";
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await expect(manager.updateAgentGoal(agentId, { kind: "pause" })).resolves.toEqual({
+      ok: false,
+      goal: null,
+      goalStep: null,
+      goalSync: "stale",
+      error: {
+        code: "unsupported",
+        retryable: false,
+        message: "This Agent provider does not support Goal control.",
+      },
+    });
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("updateAgentGoal returns not-found when the provider has no current Goal", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-update-absent-"));
+  const agentId = "00000000-0000-4000-8000-000000000221";
+  let setCalls = 0;
+
+  class NoCurrentGoalSession extends TestAgentSession {
+    readonly goalControl: NonNullable<AgentSession["goalControl"]> = {
+      get: async () => null,
+      set: async () => {
+        setCalls += 1;
+        throw new Error("set should not be called");
+      },
+      clear: async () => {},
+    };
+  }
+
+  const session = new NoCurrentGoalSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  try {
+    await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "native-goal-update-absent-thread",
+        metadata: { cwd: workdir },
+      },
+      undefined,
+      agentId,
+    );
+
+    await expect(manager.updateAgentGoal(agentId, { kind: "pause" })).resolves.toEqual({
+      ok: false,
+      goal: null,
+      goalStep: null,
+      goalSync: "synced",
+      error: {
+        code: "not_found",
+        retryable: false,
+        message: "Agent Goal not found.",
+      },
+    });
+    expect(setCalls).toBe(0);
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("updateAgentGoal serializes mutations per Agent", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-update-lane-"));
+  const agentId = "00000000-0000-4000-8000-000000000213";
+  const activeGoal = {
+    objective: "Serialize Goal mutations",
+    status: "active",
+    tokenBudget: null,
+    tokensUsed: 1_000,
+    timeUsedSeconds: 90,
+    createdAt: "2026-08-18T21:00:00.000Z",
+    updatedAt: "2026-08-18T21:01:30.000Z",
+  } as const;
+  const pausedGoal = {
+    ...activeGoal,
+    status: "paused",
+    updatedAt: "2026-08-18T21:02:00.000Z",
+  } as const;
+  const resumedGoal = { ...activeGoal, updatedAt: "2026-08-18T21:03:00.000Z" } as const;
+  const firstStarted = deferred<void>();
+  const releaseFirst = deferred<void>();
+  const setInputs: Array<{ objective?: string; status?: "active" | "paused" }> = [];
+
+  class SerializedGoalSession extends TestAgentSession {
+    readonly goalControl: NonNullable<AgentSession["goalControl"]> = {
+      get: async () => activeGoal,
+      set: async (input) => {
+        setInputs.push(input);
+        if (setInputs.length === 1) {
+          firstStarted.resolve();
+          await releaseFirst.promise;
+          return pausedGoal;
+        }
+        return resumedGoal;
+      },
+      clear: async () => {},
+    };
+  }
+
+  const session = new SerializedGoalSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  try {
+    await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "native-goal-update-lane-thread",
+        metadata: { cwd: workdir },
+      },
+      undefined,
+      agentId,
+    );
+
+    const first = manager.updateAgentGoal(agentId, { kind: "pause" }, activeGoal.createdAt);
+    await firstStarted.promise;
+    const second = manager.updateAgentGoal(agentId, { kind: "resume" }, activeGoal.createdAt);
+    await Promise.resolve();
+    expect(setInputs).toEqual([{ status: "paused" }]);
+
+    releaseFirst.resolve();
+    await expect(first).resolves.toMatchObject({ ok: true, goal: pausedGoal });
+    await expect(second).resolves.toMatchObject({ ok: true, goal: resumedGoal });
+    expect(setInputs).toEqual([{ status: "paused" }, { status: "active" }]);
+  } finally {
+    releaseFirst.resolve();
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("terminateAgentGoal clears the Goal before interrupting the active turn", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-terminate-success-"));
+  const agentId = "00000000-0000-4000-8000-000000000214";
+  const turnId = "goal-terminate-success-turn";
+  const goal = {
+    objective: "Terminate this Goal",
+    status: "active",
+    tokenBudget: null,
+    tokensUsed: 3_000,
+    timeUsedSeconds: 300,
+    createdAt: "2026-08-18T22:00:00.000Z",
+    updatedAt: "2026-08-18T22:05:00.000Z",
+  } as const;
+  const actions: string[] = [];
+
+  class TerminateGoalSession extends TestAgentSession {
+    readonly goalControl: NonNullable<AgentSession["goalControl"]> = {
+      get: async () => goal,
+      set: async () => goal,
+      clear: async () => {
+        actions.push("clear");
+      },
+    };
+
+    override async interrupt(): Promise<void> {
+      actions.push("interrupt");
+      this.pushEvent({ type: "turn_canceled", provider: "codex", turnId, reason: "interrupted" });
+    }
+  }
+
+  const session = new TerminateGoalSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  try {
+    await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "native-goal-terminate-success-thread",
+        metadata: { cwd: workdir },
+      },
+      undefined,
+      agentId,
+    );
+    session.pushEvent({ type: "turn_started", provider: "codex", turnId });
+    await manager.flush();
+
+    await expect(manager.terminateAgentGoal(agentId, goal.createdAt)).resolves.toEqual({
+      ok: true,
+      goal: null,
+      goalStep: null,
+      clear: "cleared",
+      interrupt: "interrupted",
+      outcome: "stopped",
+      error: null,
+    });
+    expect(actions).toEqual(["clear", "interrupt"]);
+    expect(toAgentPayload(manager.getAgent(agentId)!)).toMatchObject({
+      goal: null,
+      goalStep: null,
+      status: "idle",
+    });
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("terminateAgentGoal is idempotent when the Goal is already absent and no turn is running", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-terminate-absent-"));
+  const agentId = "00000000-0000-4000-8000-000000000215";
+  const actions: string[] = [];
+
+  class AlreadyAbsentGoalSession extends TestAgentSession {
+    readonly goalControl: NonNullable<AgentSession["goalControl"]> = {
+      get: async () => null,
+      set: async () => {
+        throw new Error("set should not be called");
+      },
+      clear: async () => {
+        actions.push("clear");
+      },
+    };
+
+    override async interrupt(): Promise<void> {
+      actions.push("interrupt");
+    }
+  }
+
+  const session = new AlreadyAbsentGoalSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  try {
+    await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "native-goal-terminate-absent-thread",
+        metadata: { cwd: workdir },
+      },
+      undefined,
+      agentId,
+    );
+
+    await expect(manager.terminateAgentGoal(agentId)).resolves.toEqual({
+      ok: true,
+      goal: null,
+      goalStep: null,
+      clear: "already_absent",
+      interrupt: "not_running",
+      outcome: "stopped",
+      error: null,
+    });
+    expect(actions).toEqual([]);
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("terminateAgentGoal skips interrupt when clearing the Goal fails", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-terminate-clear-failed-"));
+  const agentId = "00000000-0000-4000-8000-000000000216";
+  const turnId = "goal-terminate-clear-failed-turn";
+  const goal = {
+    objective: "Keep the Goal when clear fails",
+    status: "active",
+    tokenBudget: null,
+    tokensUsed: 2_000,
+    timeUsedSeconds: 180,
+    createdAt: "2026-08-18T23:00:00.000Z",
+    updatedAt: "2026-08-18T23:03:00.000Z",
+  } as const;
+  const actions: string[] = [];
+
+  class ClearFailedGoalSession extends TestAgentSession {
+    readonly goalControl: NonNullable<AgentSession["goalControl"]> = {
+      get: async () => goal,
+      set: async () => goal,
+      clear: async () => {
+        actions.push("clear");
+        throw new Error("provider refused Goal clear");
+      },
+    };
+
+    override async interrupt(): Promise<void> {
+      actions.push("interrupt");
+    }
+  }
+
+  const session = new ClearFailedGoalSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+    rescueTimeouts: { interruptSessionMs: 10 },
+  });
+
+  try {
+    await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "native-goal-terminate-clear-failed-thread",
+        metadata: { cwd: workdir },
+      },
+      undefined,
+      agentId,
+    );
+    session.pushEvent({ type: "turn_started", provider: "codex", turnId });
+    await manager.flush();
+
+    await expect(manager.terminateAgentGoal(agentId, goal.createdAt)).resolves.toEqual({
+      ok: false,
+      goal,
+      goalStep: null,
+      clear: "failed",
+      interrupt: "skipped",
+      outcome: "failed",
+      error: {
+        code: "clear_failed",
+        retryable: true,
+        message: "The Agent Goal could not be cleared.",
+      },
+    });
+    expect(actions).toEqual(["clear"]);
+    expect(manager.getAgent(agentId)?.goal).toEqual(goal);
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("terminateAgentGoal reports a partial success when the active turn cannot be interrupted", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-terminate-interrupt-failed-"));
+  const agentId = "00000000-0000-4000-8000-000000000217";
+  const turnId = "goal-terminate-interrupt-failed-turn";
+  const goal = {
+    objective: "Report a partial Goal termination",
+    status: "active",
+    tokenBudget: null,
+    tokensUsed: 2_500,
+    timeUsedSeconds: 210,
+    createdAt: "2026-08-18T23:10:00.000Z",
+    updatedAt: "2026-08-18T23:13:30.000Z",
+  } as const;
+  const actions: string[] = [];
+
+  class InterruptFailedGoalSession extends TestAgentSession {
+    readonly goalControl: NonNullable<AgentSession["goalControl"]> = {
+      get: async () => goal,
+      set: async () => goal,
+      clear: async () => {
+        actions.push("clear");
+      },
+    };
+
+    override async interrupt(): Promise<void> {
+      actions.push("interrupt");
+      throw new Error("provider interrupt refused");
+    }
+  }
+
+  const session = new InterruptFailedGoalSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+    rescueTimeouts: { interruptSessionMs: 10 },
+  });
+
+  try {
+    await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "native-goal-terminate-interrupt-failed-thread",
+        metadata: { cwd: workdir },
+      },
+      undefined,
+      agentId,
+    );
+    session.pushEvent({ type: "turn_started", provider: "codex", turnId });
+    await manager.flush();
+
+    await expect(manager.terminateAgentGoal(agentId, goal.createdAt)).resolves.toEqual({
+      ok: false,
+      goal: null,
+      goalStep: null,
+      clear: "cleared",
+      interrupt: "failed",
+      outcome: "goal_cleared_turn_running",
+      error: {
+        code: "interrupt_failed",
+        retryable: true,
+        message: "The Goal was cleared, but its active turn could not be interrupted.",
+      },
+    });
+    expect(actions).toEqual(["clear", "interrupt"]);
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("terminateAgentGoal rejects a stale expected generation without mutating the provider", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-terminate-conflict-"));
+  const agentId = "00000000-0000-4000-8000-000000000218";
+  const goal = {
+    objective: "Protect the current Goal generation",
+    status: "active",
+    tokenBudget: null,
+    tokensUsed: 1_000,
+    timeUsedSeconds: 120,
+    createdAt: "2026-08-18T23:20:00.000Z",
+    updatedAt: "2026-08-18T23:22:00.000Z",
+  } as const;
+  const actions: string[] = [];
+
+  class ConflictGoalSession extends TestAgentSession {
+    readonly goalControl: NonNullable<AgentSession["goalControl"]> = {
+      get: async () => goal,
+      set: async () => goal,
+      clear: async () => {
+        actions.push("clear");
+      },
+    };
+
+    override async interrupt(): Promise<void> {
+      actions.push("interrupt");
+    }
+  }
+
+  const session = new ConflictGoalSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  try {
+    await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "native-goal-terminate-conflict-thread",
+        metadata: { cwd: workdir },
+      },
+      undefined,
+      agentId,
+    );
+
+    await expect(manager.terminateAgentGoal(agentId, "older-goal-generation")).resolves.toEqual({
+      ok: false,
+      goal,
+      goalStep: null,
+      clear: "failed",
+      interrupt: "skipped",
+      outcome: "failed",
+      error: {
+        code: "conflict",
+        retryable: false,
+        message: "The Agent Goal changed. Refresh and retry.",
+      },
+    });
+    expect(actions).toEqual([]);
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("terminateAgentGoal returns a structured not-found result", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-terminate-not-found-"));
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  try {
+    await expect(
+      manager.terminateAgentGoal("00000000-0000-4000-8000-000000000219", "missing-generation"),
+    ).resolves.toEqual({
+      ok: false,
+      goal: null,
+      goalStep: null,
+      clear: "failed",
+      interrupt: "skipped",
+      outcome: "failed",
+      error: {
+        code: "not_found",
+        retryable: false,
+        message: "Agent not found.",
+      },
+    });
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("terminateAgentGoal returns a structured unsupported result", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-terminate-unsupported-"));
+  const agentId = "00000000-0000-4000-8000-000000000220";
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await expect(manager.terminateAgentGoal(agentId)).resolves.toEqual({
+      ok: false,
+      goal: null,
+      goalStep: null,
+      clear: "failed",
+      interrupt: "skipped",
+      outcome: "failed",
+      error: {
+        code: "unsupported",
+        retryable: false,
+        message: "This Agent provider does not support Goal control.",
+      },
+    });
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("terminateAgentGoal shares the per-Agent mutation lane with Goal updates", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-terminate-lane-"));
+  const agentId = "00000000-0000-4000-8000-000000000222";
+  const activeGoal = {
+    objective: "Serialize update and terminate",
+    status: "active",
+    tokenBudget: null,
+    tokensUsed: 1_500,
+    timeUsedSeconds: 150,
+    createdAt: "2026-08-18T23:30:00.000Z",
+    updatedAt: "2026-08-18T23:32:30.000Z",
+  } as const;
+  const pausedGoal = {
+    ...activeGoal,
+    status: "paused",
+    updatedAt: "2026-08-18T23:33:00.000Z",
+  } as const;
+  const updateStarted = deferred<void>();
+  const releaseUpdate = deferred<void>();
+  const actions: string[] = [];
+
+  class SerializedTerminateGoalSession extends TestAgentSession {
+    readonly goalControl: NonNullable<AgentSession["goalControl"]> = {
+      get: async () => activeGoal,
+      set: async () => {
+        actions.push("set");
+        updateStarted.resolve();
+        await releaseUpdate.promise;
+        return pausedGoal;
+      },
+      clear: async () => {
+        actions.push("clear");
+      },
+    };
+  }
+
+  const session = new SerializedTerminateGoalSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  try {
+    await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "native-goal-terminate-lane-thread",
+        metadata: { cwd: workdir },
+      },
+      undefined,
+      agentId,
+    );
+
+    const update = manager.updateAgentGoal(agentId, { kind: "pause" }, activeGoal.createdAt);
+    await updateStarted.promise;
+    const terminate = manager.terminateAgentGoal(agentId, activeGoal.createdAt);
+    await Promise.resolve();
+    expect(actions).toEqual(["set"]);
+
+    releaseUpdate.resolve();
+    await expect(update).resolves.toMatchObject({ ok: true, goal: pausedGoal });
+    await expect(terminate).resolves.toEqual({
+      ok: true,
+      goal: null,
+      goalStep: null,
+      clear: "cleared",
+      interrupt: "not_running",
+      outcome: "stopped",
+      error: null,
+    });
+    expect(actions).toEqual(["set", "clear"]);
+  } finally {
+    releaseUpdate.resolve();
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("resumeAgentFromPersistence does not publish idle when execution status hydrate fails", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-status-hydrate-failure-"));
+  const agentId = "00000000-0000-4000-8000-000000000191";
+
+  class FailedStatusResumeSession extends TestAgentSession {
+    async getExecutionStatus() {
+      throw new Error("temporary thread status read failure");
+    }
+  }
+
+  const session = new FailedStatusResumeSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+  const publishedLifecycles: string[] = [];
+  manager.subscribe(
+    (event) => {
+      if (event.type === "agent_state") {
+        publishedLifecycles.push(event.agent.lifecycle);
+      }
+    },
+    { agentId, replayState: false },
+  );
+
+  try {
+    const resumed = await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "native-unknown-status-thread",
+        metadata: { cwd: workdir },
+      },
+      undefined,
+      agentId,
+    );
+
+    expect(resumed.lifecycle).toBe("initializing");
+    expect(publishedLifecycles).not.toContain("idle");
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("resumeAgentFromPersistence maps native system error status without falling back to idle", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-status-system-error-"));
+  const agentId = "00000000-0000-4000-8000-000000000192";
+
+  class SystemErrorResumeSession extends TestAgentSession {
+    async getExecutionStatus() {
+      return { status: "systemError", message: "Native Goal worker failed" } as const;
+    }
+  }
+
+  const session = new SystemErrorResumeSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  try {
+    const resumed = await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "native-system-error-thread",
+        metadata: { cwd: workdir },
+      },
+      undefined,
+      agentId,
+    );
+
+    expect({ lifecycle: resumed.lifecycle, lastError: resumed.lastError }).toEqual({
+      lifecycle: "error",
+      lastError: "Native Goal worker failed",
+    });
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("resumeAgentFromPersistence drains buffered autonomous completion in order", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-resume-completed-"));
+  const agentId = "00000000-0000-4000-8000-000000000193";
+
+  class CompletedResumeSession extends TestAgentSession {
+    flushPreSubscriptionEvents(): void {
+      this.pushEvent({ type: "turn_started", provider: "codex", turnId: "autonomous-resume" });
+      this.pushEvent({ type: "turn_completed", provider: "codex", turnId: "autonomous-resume" });
+    }
+  }
+
+  const session = new CompletedResumeSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+  const lifecycleEvents: string[] = [];
+  manager.subscribe(
+    (event) => {
+      if (
+        event.type === "agent_stream" &&
+        (event.event.type === "turn_started" || event.event.type === "turn_completed")
+      ) {
+        lifecycleEvents.push(event.event.type);
+      }
+    },
+    { agentId, replayState: false },
+  );
+
+  try {
+    const resumed = await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "native-completed-goal-thread",
+        metadata: { cwd: workdir },
+      },
+      undefined,
+      agentId,
+    );
+
+    expect({
+      lifecycle: resumed.lifecycle,
+      activeTurnId: resumed.activeTurnId,
+      lifecycleEvents,
+    }).toEqual({
+      lifecycle: "idle",
+      activeTurnId: null,
+      lifecycleEvents: ["turn_started", "turn_completed"],
+    });
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("importProviderSession imports the selected session without listing and publishes ready state", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-import-session-"));
   const storagePath = join(workdir, "agents");

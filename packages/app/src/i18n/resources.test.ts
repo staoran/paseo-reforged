@@ -238,6 +238,21 @@ describe("translation resources", () => {
     expect(en.panels.draft.newAgent).toBe("New Agent");
   });
 
+  it("includes the complete Goal control copy contract", () => {
+    expect(en.goals.status.active).toBe("Active");
+    expect(en.goals.status.budgetLimited).toBe("Budget reached");
+    expect(en.goals.actions.terminate).toBe("Terminate Goal");
+    expect(en.goals.usage.withBudget).toBe("{{used}} / {{budget}} tokens · {{time}}");
+    expect(en.goals.editor.resetWarning).toBe(
+      "Saving starts a new Goal generation and resets its usage counters.",
+    );
+    expect(en.goals.editor.validation.tooLong).toBe(
+      "Keep the Goal objective within {{max}} characters.",
+    );
+    expect(en.goals.errors.actionFailed).toBe("Goal action failed: {{message}}");
+    expect(en.goals.accessibility.currentStep).toBe("Current step: {{step}}");
+  });
+
   it("includes Settings expansion keys for the Batch 3A migration", () => {
     expect(en.settings.diagnostics.title).toBe("Diagnostics");
     expect(en.settings.diagnostics.legacyTerminalRenderer.label).toBe(

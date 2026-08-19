@@ -13,7 +13,20 @@ import {
   PARENT_AGENT_ID_LABEL,
 } from "@getpaseo/protocol/agent-labels";
 import type { Logger } from "pino";
-import type { ProviderOptions, ToolPolicy } from "@getpaseo/protocol/agent-types";
+import type {
+  AgentGoalError,
+  AgentGoalSnapshot,
+  AgentGoalStepSnapshot,
+  AgentGoalSyncStatus,
+  ProviderOptions,
+  ToolPolicy,
+} from "@getpaseo/protocol/agent-types";
+import type {
+  AgentGoalGetResponsePayload,
+  AgentGoalTerminateResponsePayload,
+  AgentGoalUpdateMutation,
+  AgentGoalUpdateResponsePayload,
+} from "@getpaseo/protocol/messages";
 import { z } from "zod";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
 
@@ -24,6 +37,7 @@ import {
   type AgentCreateSessionOptions,
   type AgentResumeSessionOptions,
   type AgentFeature,
+  type AgentGoalControl,
   type AgentLaunchContext,
   type AgentSlashCommand,
   type AgentMode,
@@ -39,6 +53,8 @@ import {
   type AgentSession,
   type AgentSessionConfig,
   type AgentStreamEvent,
+  type AgentTaskItem,
+  type AgentThreadStatus,
   type AgentTimelineItem,
   type AgentUsage,
   type AgentRuntimeInfo,
@@ -424,6 +440,14 @@ interface ManagedAgentBase {
   lastMessageAt: Date | null;
   activeTurnId: string | null;
   activeTurnStartedAt: Date | null;
+  /** Goal generation observed when the active turn started. */
+  activeTurnGoalGeneration: string | null;
+  /** Latest provider-authoritative Goal, null when absence is authoritative. */
+  goal?: AgentGoalSnapshot | null;
+  /** Current plan step for the active Goal generation. */
+  goalStep?: AgentGoalStepSnapshot | null;
+  /** Freshness of the in-memory Goal projection. */
+  goalSync?: AgentGoalSyncStatus;
   lastUsage?: AgentUsage;
   lastError?: string;
   attention: AttentionState;
@@ -489,6 +513,13 @@ export interface AgentMetricsSnapshot {
   };
 }
 
+export type AgentGoalGetResult = Omit<AgentGoalGetResponsePayload, "requestId" | "agentId">;
+export type AgentGoalUpdateResult = Omit<AgentGoalUpdateResponsePayload, "requestId" | "agentId">;
+export type AgentGoalTerminateResult = Omit<
+  AgentGoalTerminateResponsePayload,
+  "requestId" | "agentId"
+>;
+
 type ActiveManagedAgent =
   | ManagedAgentInitializing
   | ManagedAgentIdle
@@ -497,6 +528,124 @@ type ActiveManagedAgent =
 
 type LiveManagedAgent = ActiveManagedAgent;
 type AgentLabelPatch = Record<string, string | null>;
+
+/** Provider-neutral payload accepted by the optional Goal control port. */
+type AgentGoalSetInput = Parameters<AgentGoalControl["set"]>[0];
+
+/** Successful or rejected conversion from a public mutation to provider input. */
+type PreparedAgentGoalSetInput =
+  | { ready: true; input: AgentGoalSetInput }
+  | { ready: false; error: AgentGoalError };
+
+/** Goal control and Agent state prepared for one serialized mutation. */
+type PreparedAgentGoalMutation =
+  | { ready: true; agent: ActiveManagedAgent; goalControl: AgentGoalControl }
+  | {
+      ready: false;
+      goal: AgentGoalSnapshot | null;
+      goalStep: AgentGoalStepSnapshot | null;
+      goalSync: AgentGoalSyncStatus;
+      error: AgentGoalError;
+    };
+
+/** Goal statuses from which the native scheduler may be resumed. */
+const RESUMABLE_GOAL_STATUSES = new Set<AgentGoalSnapshot["status"]>([
+  "paused",
+  "blocked",
+  "usageLimited",
+  "budgetLimited",
+]);
+
+/** Converts one validated public Goal mutation into provider-neutral set input. */
+function prepareAgentGoalSetInput(
+  goal: AgentGoalSnapshot,
+  mutation: AgentGoalUpdateMutation,
+): PreparedAgentGoalSetInput {
+  switch (mutation.kind) {
+    case "pause":
+      if (goal.status !== "active") {
+        return {
+          ready: false,
+          error: {
+            code: "invalid_transition",
+            retryable: false,
+            message: "This Goal cannot be paused from its current state.",
+          },
+        };
+      }
+      return { ready: true, input: { status: "paused" } };
+    case "resume":
+      if (!RESUMABLE_GOAL_STATUSES.has(goal.status)) {
+        return {
+          ready: false,
+          error: {
+            code: "invalid_transition",
+            retryable: false,
+            message: "This Goal cannot be resumed from its current state.",
+          },
+        };
+      }
+      return { ready: true, input: { status: "active" } };
+    case "replace_objective": {
+      if (goal.status !== "paused") {
+        return {
+          ready: false,
+          error: {
+            code: "invalid_transition",
+            retryable: false,
+            message: "Pause the Goal before editing its objective.",
+          },
+        };
+      }
+      const objective = mutation.objective.trim();
+      const objectiveLength = Array.from(objective).length;
+      if (objectiveLength === 0 || objectiveLength > 4_000) {
+        return {
+          ready: false,
+          error: {
+            code: "invalid_objective",
+            retryable: false,
+            message:
+              objectiveLength === 0
+                ? "Goal objective must not be empty."
+                : "Goal objective must not exceed 4000 characters.",
+          },
+        };
+      }
+      return { ready: true, input: { objective } };
+    }
+  }
+}
+
+/** Copies the current authoritative Goal fields into an update result. */
+function currentGoalUpdateResult(
+  agent: ActiveManagedAgent,
+  ok: boolean,
+  error: AgentGoalError | null,
+  goalSync: AgentGoalSyncStatus = agent.goalSync ?? "synced",
+): AgentGoalUpdateResult {
+  return {
+    ok,
+    goal: agent.goal ? { ...agent.goal } : null,
+    goalStep: agent.goalStep ? { ...agent.goalStep } : null,
+    goalSync,
+    error,
+  };
+}
+
+/** Maps an Agent run cancellation onto the public Goal interrupt phase. */
+function goalInterruptResult(
+  cancellation: AgentRunCancellationResult,
+): AgentGoalTerminateResult["interrupt"] {
+  switch (cancellation.status) {
+    case "settled":
+      return "interrupted";
+    case "not_running":
+      return "not_running";
+    case "refused":
+      return "failed";
+  }
+}
 
 function attachManagedTurnIdentity(
   agent: ActiveManagedAgent,
@@ -522,6 +671,28 @@ function attachManagedTurnIdentity(
     default:
       return { event, turnId: undefined };
   }
+}
+
+/** Selects the provider plan item that represents the current Goal step. */
+function toCurrentGoalStep(
+  goal: AgentGoalSnapshot,
+  items: AgentTaskItem[],
+): AgentGoalStepSnapshot | null {
+  let ordinal = items.findIndex((item) => !item.completed && item.status === "in_progress");
+  if (ordinal === -1) {
+    ordinal = items.findIndex((item) => !item.completed && item.status !== "completed");
+  }
+  if (ordinal === -1) {
+    return null;
+  }
+  const item = items[ordinal]!;
+  return {
+    generation: goal.createdAt,
+    ordinal,
+    text: item.text,
+    status: item.status === "in_progress" ? "in_progress" : "pending",
+    ...(item.activeForm !== undefined ? { activeForm: item.activeForm } : {}),
+  };
 }
 
 function limitAgentStreamEventContent(event: AgentStreamEvent): AgentStreamEvent {
@@ -1254,6 +1425,308 @@ export class AgentManager {
     return agent ? { ...agent } : null;
   }
 
+  /** Refreshes and returns the provider-authoritative Goal projection. */
+  async getAgentGoal(agentId: string): Promise<AgentGoalGetResult> {
+    const candidate = this.agents.get(agentId);
+    if (!candidate || candidate.session === null) {
+      return {
+        ok: false,
+        goal: null,
+        goalStep: null,
+        goalSync: "stale",
+        error: {
+          code: "not_found",
+          retryable: false,
+          message: "Agent not found.",
+        },
+      };
+    }
+    const agent = this.requireSessionAgent(agentId);
+    if (!agent.session.goalControl) {
+      return {
+        ok: false,
+        goal: null,
+        goalStep: null,
+        goalSync: "stale",
+        error: {
+          code: "unsupported",
+          retryable: false,
+          message: "This Agent provider does not support Goal control.",
+        },
+      };
+    }
+    try {
+      const goal = await agent.session.goalControl.get();
+      this.applyGoalSnapshot(agent, goal);
+      this.touchUpdatedAt(agent);
+      this.emitState(agent, { persist: false });
+      return {
+        ok: true,
+        goal: agent.goal ? { ...agent.goal } : null,
+        goalStep: agent.goalStep ? { ...agent.goalStep } : null,
+        goalSync: agent.goalSync ?? "synced",
+        error: null,
+      };
+    } catch (error) {
+      agent.goalSync = "stale";
+      this.touchUpdatedAt(agent);
+      this.emitState(agent, { persist: false });
+      this.logger.warn(
+        { err: error, agentId, provider: agent.provider },
+        "Failed to refresh provider Goal",
+      );
+      return {
+        ok: false,
+        goal: agent.goal ? { ...agent.goal } : null,
+        goalStep: agent.goalStep ? { ...agent.goalStep } : null,
+        goalSync: "stale",
+        error: {
+          code: "provider_error",
+          retryable: true,
+          message: "Failed to refresh the Agent Goal from the provider.",
+        },
+      };
+    }
+  }
+
+  /** Applies one provider-neutral mutation to the current Agent Goal. */
+  async updateAgentGoal(
+    agentId: string,
+    mutation: AgentGoalUpdateMutation,
+    expectedGeneration?: string,
+  ): Promise<AgentGoalUpdateResult> {
+    return this.runLifecycleMutation(agentId, () =>
+      this.updateAgentGoalUnlocked(agentId, mutation, expectedGeneration),
+    );
+  }
+
+  /** Resolves shared Goal control preconditions before a serialized mutation. */
+  private async prepareGoalMutation(
+    agentId: string,
+    expectedGeneration: string | undefined,
+    requireGoal: boolean,
+  ): Promise<PreparedAgentGoalMutation> {
+    const candidate = this.agents.get(agentId);
+    if (!candidate || candidate.session === null) {
+      return {
+        ready: false,
+        goal: null,
+        goalStep: null,
+        goalSync: "stale",
+        error: {
+          code: "not_found",
+          retryable: false,
+          message: "Agent not found.",
+        },
+      };
+    }
+    const agent = this.requireSessionAgent(agentId);
+    const goalControl = agent.session.goalControl;
+    if (!goalControl) {
+      return {
+        ready: false,
+        goal: null,
+        goalStep: null,
+        goalSync: "stale",
+        error: {
+          code: "unsupported",
+          retryable: false,
+          message: "This Agent provider does not support Goal control.",
+        },
+      };
+    }
+    if (agent.goalSync !== "synced") {
+      const refreshed = await this.getAgentGoal(agentId);
+      if (!refreshed.ok) {
+        return {
+          ready: false,
+          goal: refreshed.goal,
+          goalStep: refreshed.goalStep,
+          goalSync: refreshed.goalSync,
+          error:
+            refreshed.error ??
+            ({
+              code: "provider_error",
+              retryable: true,
+              message: "Failed to refresh the Agent Goal from the provider.",
+            } satisfies AgentGoalError),
+        };
+      }
+    }
+    if (requireGoal && agent.goal == null) {
+      return {
+        ready: false,
+        goal: null,
+        goalStep: null,
+        goalSync: agent.goalSync ?? "synced",
+        error: {
+          code: "not_found",
+          retryable: false,
+          message: "Agent Goal not found.",
+        },
+      };
+    }
+    if (expectedGeneration !== undefined && agent.goal?.createdAt !== expectedGeneration) {
+      return {
+        ready: false,
+        goal: agent.goal ? { ...agent.goal } : null,
+        goalStep: agent.goalStep ? { ...agent.goalStep } : null,
+        goalSync: agent.goalSync ?? "stale",
+        error: {
+          code: "conflict",
+          retryable: false,
+          message: "The Agent Goal changed. Refresh and retry.",
+        },
+      };
+    }
+    return { ready: true, agent, goalControl };
+  }
+
+  private async updateAgentGoalUnlocked(
+    agentId: string,
+    mutation: AgentGoalUpdateMutation,
+    expectedGeneration?: string,
+  ): Promise<AgentGoalUpdateResult> {
+    const prepared = await this.prepareGoalMutation(agentId, expectedGeneration, true);
+    if (!prepared.ready) {
+      return {
+        ok: false,
+        goal: prepared.goal,
+        goalStep: prepared.goalStep,
+        goalSync: prepared.goalSync,
+        error: prepared.error,
+      };
+    }
+    const goal = prepared.agent.goal;
+    if (!goal) {
+      throw new Error("Goal mutation preparation returned no Goal");
+    }
+    const preparedInput = prepareAgentGoalSetInput(goal, mutation);
+    if (!preparedInput.ready) {
+      return currentGoalUpdateResult(prepared.agent, false, preparedInput.error);
+    }
+    try {
+      const nextGoal = await prepared.goalControl.set(preparedInput.input);
+      this.applyGoalSnapshot(prepared.agent, nextGoal);
+      this.touchUpdatedAt(prepared.agent);
+      this.emitState(prepared.agent, { persist: false });
+      return currentGoalUpdateResult(prepared.agent, true, null);
+    } catch (error) {
+      prepared.agent.goalSync = "stale";
+      this.touchUpdatedAt(prepared.agent);
+      this.emitState(prepared.agent, { persist: false });
+      this.logger.warn(
+        { err: error, agentId, provider: prepared.agent.provider },
+        "Failed to update provider Goal",
+      );
+      return currentGoalUpdateResult(
+        prepared.agent,
+        false,
+        {
+          code: "provider_error",
+          retryable: true,
+          message: "Failed to update the Agent Goal in the provider.",
+        },
+        "stale",
+      );
+    }
+  }
+
+  /** Clears the provider Goal, then interrupts any active Agent turn. */
+  async terminateAgentGoal(
+    agentId: string,
+    expectedGeneration?: string,
+  ): Promise<AgentGoalTerminateResult> {
+    return this.runLifecycleMutation(agentId, () =>
+      this.terminateAgentGoalUnlocked(agentId, expectedGeneration),
+    );
+  }
+
+  /** Clears one provider Goal and returns a failure without attempting interrupt. */
+  private async clearGoalForTermination(
+    agent: ActiveManagedAgent,
+    goalControl: AgentGoalControl,
+  ): Promise<AgentGoalTerminateResult | null> {
+    if (agent.goal == null) {
+      return null;
+    }
+    try {
+      await goalControl.clear();
+      this.applyGoalSnapshot(agent, null);
+      this.touchUpdatedAt(agent);
+      this.emitState(agent, { persist: false });
+      return null;
+    } catch (error) {
+      agent.goalSync = "stale";
+      this.touchUpdatedAt(agent);
+      this.emitState(agent, { persist: false });
+      this.logger.warn(
+        { err: error, agentId: agent.id, provider: agent.provider },
+        "Failed to clear provider Goal",
+      );
+      return {
+        ok: false,
+        goal: agent.goal ?? null,
+        goalStep: agent.goalStep ?? null,
+        clear: "failed",
+        interrupt: "skipped",
+        outcome: "failed",
+        error: {
+          code: "clear_failed",
+          retryable: true,
+          message: "The Agent Goal could not be cleared.",
+        },
+      };
+    }
+  }
+
+  /** Executes the serialized Goal clear and turn-interrupt phases. */
+  private async terminateAgentGoalUnlocked(
+    agentId: string,
+    expectedGeneration?: string,
+  ): Promise<AgentGoalTerminateResult> {
+    const prepared = await this.prepareGoalMutation(agentId, expectedGeneration, false);
+    if (!prepared.ready) {
+      return {
+        ok: false,
+        goal: prepared.goal,
+        goalStep: prepared.goalStep,
+        clear: "failed",
+        interrupt: "skipped",
+        outcome: "failed",
+        error: prepared.error,
+      };
+    }
+    const { agent, goalControl } = prepared;
+    const hadGoal = agent.goal !== null && agent.goal !== undefined;
+    const clearFailure = await this.clearGoalForTermination(agent, goalControl);
+    if (clearFailure) {
+      return clearFailure;
+    }
+
+    let cancellation: AgentRunCancellationResult = { status: "not_running" };
+    if (this.hasInFlightRun(agentId)) {
+      cancellation = await this.cancelAgentRun(agentId);
+    }
+    const interrupt = goalInterruptResult(cancellation);
+    const interrupted = interrupt !== "failed";
+    return {
+      ok: interrupted,
+      goal: null,
+      goalStep: null,
+      clear: hadGoal ? "cleared" : "already_absent",
+      interrupt,
+      outcome: interrupted ? "stopped" : "goal_cleared_turn_running",
+      error: interrupted
+        ? null
+        : {
+            code: "interrupt_failed",
+            retryable: true,
+            message: "The Goal was cleared, but its active turn could not be interrupted.",
+          },
+    };
+  }
+
   async waitForAgentClose(agentId: string): Promise<void> {
     await this.inFlightAgentCloses?.get(agentId)?.catch(() => undefined);
   }
@@ -1977,6 +2450,7 @@ export class AgentManager {
         activeForegroundTurnId: null,
         activeTurnId: null,
         activeTurnStartedAt: null,
+        activeTurnGoalGeneration: null,
         foregroundTurnWaiters: new Set(),
         finalizedForegroundTurnIds: new Set(),
         unsubscribeSession: null,
@@ -2651,6 +3125,7 @@ export class AgentManager {
   private openActiveTurn(agent: ActiveManagedAgent, turnId: string, startedAt: Date): void {
     agent.activeTurnId = turnId;
     agent.activeTurnStartedAt = startedAt;
+    agent.activeTurnGoalGeneration = agent.goal?.createdAt ?? null;
   }
 
   private applyActiveTurnTerminal(
@@ -2663,6 +3138,7 @@ export class AgentManager {
     if (turnId && agent.activeTurnId !== turnId) return "stale";
     agent.activeTurnId = null;
     agent.activeTurnStartedAt = null;
+    agent.activeTurnGoalGeneration = null;
     return "closed_current";
   }
 
@@ -3668,14 +4144,21 @@ export class AgentManager {
         this.emitState(managed, { persist: false });
       }
 
+      this.subscribeToSession(managed);
+      managed.session.flushPreSubscriptionEvents?.();
+      await this.drainSessionEvents(managed.id);
       await this.refreshSessionState(managed, { emit: false });
       this.assertAgentRegistrationActive(managed);
-      managed.lifecycle = "idle";
+      const executionStatusHydrated = await this.hydrateExecutionStatus(managed);
+      await this.hydrateGoal(managed);
+      await this.drainSessionEvents(managed.id);
+      if (managed.lifecycle === "initializing" && executionStatusHydrated) {
+        this.applyExecutionStatus(managed, { status: "idle" });
+      }
       this.touchUpdatedAt(managed);
       await this.persistSnapshot(managed);
       this.assertAgentRegistrationActive(managed);
       this.emitState(managed, { persist: false });
-      this.subscribeToSession(managed);
       return { ...managed };
     } catch (error) {
       if (!registered) {
@@ -3833,6 +4316,10 @@ export class AgentManager {
       activeForegroundTurnId: null,
       activeTurnId: null,
       activeTurnStartedAt: null,
+      activeTurnGoalGeneration: null,
+      goal: undefined,
+      goalStep: undefined,
+      goalSync: session.goalControl ? "hydrating" : undefined,
       foregroundTurnWaiters: new Set<ForegroundTurnWaiter>(),
       finalizedForegroundTurnIds: new Set<string>(),
       unsubscribeSession: null,
@@ -3879,6 +4366,7 @@ export class AgentManager {
       activeForegroundTurnId: null,
       activeTurnId: null,
       activeTurnStartedAt: null,
+      activeTurnGoalGeneration: null,
       pendingPermissions: new Map(),
       bufferedPermissionResolutions: new Map(),
       inFlightPermissionResponses: new Set(),
@@ -4099,6 +4587,111 @@ export class AgentManager {
 
     this.syncFeaturesFromSession(agent);
     await this.refreshRuntimeInfo(agent, options);
+  }
+
+  /** Pulls provider-owned execution state without manufacturing a turn identity. */
+  private async hydrateExecutionStatus(agent: ActiveManagedAgent): Promise<boolean> {
+    if (!agent.session.getExecutionStatus) {
+      return true;
+    }
+    try {
+      const status = await agent.session.getExecutionStatus();
+      this.applyExecutionStatus(agent, status);
+      return true;
+    } catch (error) {
+      this.logger.warn(
+        { err: error, agentId: agent.id, provider: agent.provider },
+        "Failed to hydrate provider execution status",
+      );
+      return false;
+    }
+  }
+
+  /** Hydrates the provider-owned Goal without persisting a competing scheduler state. */
+  private async hydrateGoal(agent: ActiveManagedAgent): Promise<void> {
+    if (!agent.session.goalControl) {
+      return;
+    }
+    agent.goalSync = "hydrating";
+    try {
+      const goal = await agent.session.goalControl.get();
+      this.applyGoalSnapshot(agent, goal);
+    } catch (error) {
+      agent.goalSync = "stale";
+      this.logger.warn(
+        { err: error, agentId: agent.id, provider: agent.provider },
+        "Failed to hydrate provider Goal",
+      );
+    }
+  }
+
+  /** Replaces the in-memory Goal projection and invalidates steps from older generations. */
+  private applyGoalSnapshot(agent: ActiveManagedAgent, goal: AgentGoalSnapshot | null): void {
+    const previousGoal = agent.goal;
+    const previousGeneration = agent.goal?.createdAt;
+    agent.goal = goal ? { ...goal } : null;
+    if (
+      previousGoal === undefined &&
+      goal !== null &&
+      agent.activeTurnId !== null &&
+      agent.activeTurnGoalGeneration === null
+    ) {
+      agent.activeTurnGoalGeneration = goal.createdAt;
+    }
+    if (
+      goal === null ||
+      previousGeneration !== goal.createdAt ||
+      agent.goalStep?.generation !== goal.createdAt
+    ) {
+      agent.goalStep = null;
+    }
+    agent.goalSync = "synced";
+  }
+
+  /** Applies provider execution state without synthesizing turn lifecycle events. */
+  private applyExecutionStatus(agent: ActiveManagedAgent, status: AgentThreadStatus): boolean {
+    if (status.status === "active") {
+      if (agent.lifecycle === "running" && agent.lastError === undefined) {
+        return false;
+      }
+      agent.lifecycle = "running";
+      agent.lastError = undefined;
+      return true;
+    }
+    if (status.status === "systemError" && agent.activeForegroundTurnId === null) {
+      const message = status.message ?? "Provider thread entered system error";
+      const changed =
+        agent.lifecycle !== "error" ||
+        agent.lastError !== message ||
+        agent.activeTurnId !== null ||
+        agent.activeTurnStartedAt !== null;
+      agent.lifecycle = "error";
+      agent.lastError = message;
+      agent.activeTurnId = null;
+      agent.activeTurnStartedAt = null;
+      agent.activeTurnGoalGeneration = null;
+      this.runs.clearAgentRun(agent.id);
+      return changed;
+    }
+    if (
+      status.status !== "idle" ||
+      agent.activeForegroundTurnId !== null ||
+      agent.pendingReplacement
+    ) {
+      return false;
+    }
+    const changed =
+      agent.lifecycle !== "idle" ||
+      agent.lastError !== undefined ||
+      agent.activeTurnId !== null ||
+      agent.activeTurnStartedAt !== null;
+    agent.lifecycle = "idle";
+    agent.lastError = undefined;
+    agent.activeTurnId = null;
+    agent.activeTurnStartedAt = null;
+    agent.activeTurnGoalGeneration = null;
+    this.runs.clearAgentRun(agent.id);
+    return changed;
   }
 
   private async refreshRuntimeInfo(
@@ -4629,6 +5222,9 @@ export class AgentManager {
   }): Promise<void> | undefined {
     const { agent, event, options, isForegroundEvent, eventTurnId, terminalDisposition, flags } =
       params;
+    if (this.dispatchGoalStateEvent(agent, event, flags)) {
+      return undefined;
+    }
     switch (event.type) {
       case "thread_started":
         this.onStreamThreadStarted(agent);
@@ -4717,6 +5313,30 @@ export class AgentManager {
     }
   }
 
+  /** Consumes provider Goal and thread-status events before generic dispatch. */
+  private dispatchGoalStateEvent(
+    agent: ActiveManagedAgent,
+    event: AgentStreamEvent,
+    flags: StreamEventFlags,
+  ): boolean {
+    if (event.type === "goal_changed") {
+      this.applyGoalSnapshot(agent, event.goal);
+      flags.shouldDispatchEvent = false;
+      flags.shouldNotifyWaiters = false;
+      this.emitState(agent);
+      return true;
+    }
+    if (event.type === "thread_status_changed") {
+      if (this.applyExecutionStatus(agent, event.status)) {
+        this.emitState(agent);
+      }
+      flags.shouldDispatchEvent = false;
+      flags.shouldNotifyWaiters = false;
+      return true;
+    }
+    return false;
+  }
+
   private onStreamThreadStarted(agent: ActiveManagedAgent): void {
     const previousSessionId = agent.persistence?.sessionId ?? null;
     const handle = agent.session.describePersistence();
@@ -4766,6 +5386,17 @@ export class AgentManager {
       flags.shouldDispatchEvent = false;
       flags.shouldNotifyWaiters = false;
       return;
+    }
+
+    if (
+      event.item.type === "todo" &&
+      agent.goal &&
+      event.turnId !== undefined &&
+      event.turnId === agent.activeTurnId &&
+      agent.activeTurnGoalGeneration === agent.goal.createdAt
+    ) {
+      agent.goalStep = toCurrentGoalStep(agent.goal, event.item.items);
+      this.emitState(agent);
     }
 
     this.recordAndDispatchTimelineItem(agent.id, event.item, event.provider, event.turnId);

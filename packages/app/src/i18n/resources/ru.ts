@@ -250,6 +250,45 @@ export const ru: TranslationResources = {
       unarchive: "Разархивировать",
     },
   },
+  goals: {
+    status: {
+      active: "Активна",
+      paused: "Приостановлена",
+      blocked: "Заблокирована",
+      usageLimited: "Лимит использования",
+      budgetLimited: "Бюджет исчерпан",
+      complete: "Завершена",
+    },
+    actions: {
+      pause: "Приостановить цель",
+      resume: "Возобновить цель",
+      edit: "Изменить цель",
+      terminate: "Завершить цель",
+      retry: "Повторить синхронизацию цели",
+    },
+    usage: {
+      withBudget: "{{used}} / {{budget}} токенов · {{time}}",
+      withoutBudget: "{{used}} токенов · {{time}}",
+    },
+    editor: {
+      title: "Изменить цель",
+      objectiveLabel: "Описание цели",
+      resetWarning:
+        "После сохранения начнется новое поколение цели, а счетчики использования будут сброшены.",
+      save: "Сохранить цель",
+      validation: {
+        empty: "Введите цель.",
+        tooLong: "Описание цели не должно превышать {{max}} символов.",
+      },
+    },
+    errors: {
+      actionFailed: "Не удалось выполнить действие с целью: {{message}}",
+    },
+    accessibility: {
+      track: "Состояние и элементы управления целью",
+      currentStep: "Текущий шаг: {{step}}",
+    },
+  },
   sessions: {
     title: "История",
     empty: "Сеансов пока нет",

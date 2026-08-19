@@ -68,6 +68,27 @@ export interface FakeCodexAppServer {
   warns(params: { threadId?: string | null; message: string }): void;
   compactsThread(params: { threadId: string; turnId: string }): void;
   startsCompaction(params: { threadId: string; itemId: string }): void;
+  updatesGoal(params: {
+    threadId: string;
+    objective: string;
+    status: "active" | "paused" | "blocked" | "usageLimited" | "budgetLimited" | "complete";
+    tokenBudget: number | null;
+    tokensUsed: number;
+    timeUsedSeconds: number;
+    createdAt: number;
+    updatedAt: number;
+  }): void;
+  changesThreadStatus(params: {
+    threadId: string;
+    status:
+      | { type: "notLoaded" }
+      | { type: "idle" }
+      | { type: "systemError"; message?: string }
+      | {
+          type: "active";
+          activeFlags: Array<"waitingOnApproval" | "waitingOnUserInput">;
+        };
+  }): void;
   updatesPlan(params: { threadId: string; steps: string[] }): void;
   startsSubAgent(params: {
     callId: string;
@@ -350,6 +371,15 @@ export function createFakeCodexAppServer(
         threadId: params.threadId,
         item: { type: "contextCompaction", id: params.itemId },
       });
+    },
+    updatesGoal(params) {
+      writeNotification("thread/goal/updated", {
+        threadId: params.threadId,
+        goal: { ...params },
+      });
+    },
+    changesThreadStatus(params) {
+      writeNotification("thread/status/changed", params);
     },
     updatesPlan(params) {
       child.stdout.write(

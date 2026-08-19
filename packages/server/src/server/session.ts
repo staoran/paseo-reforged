@@ -65,6 +65,7 @@ import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-regist
 import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-utils";
 import { getAgentStatusPriority } from "@getpaseo/protocol/agent-state-bucket";
 import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
+import type { AgentGoalError } from "@getpaseo/protocol/agent-types";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
 import type { ProjectUpdate } from "./workspace-reconciliation-service.js";
 import {
@@ -1929,6 +1930,7 @@ export class Session {
     const promise =
       this.dispatchVoiceAndControlMessage(msg) ??
       this.dispatchAgentRewindMessage(msg) ??
+      this.dispatchAgentGoalMessage(msg) ??
       this.dispatchAgentRelationshipMessage(msg) ??
       this.dispatchAgentTimelineMessage(msg, source) ??
       this.dispatchHubExecutionMessage(msg) ??
@@ -2001,6 +2003,20 @@ export class Session {
         return this.handleAgentRewindRequest(msg);
       case "agent.edit_last_user_message.request":
         return this.handleAgentEditLastUserMessageRequest(msg);
+      default:
+        return undefined;
+    }
+  }
+
+  /** Routes provider-neutral Agent Goal requests to their correlated handlers. */
+  private dispatchAgentGoalMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
+      case "agent.goal.get.request":
+        return this.handleAgentGoalGetRequest(msg);
+      case "agent.goal.update.request":
+        return this.handleAgentGoalUpdateRequest(msg);
+      case "agent.goal.terminate.request":
+        return this.handleAgentGoalTerminateRequest(msg);
       default:
         return undefined;
     }
@@ -3850,6 +3866,200 @@ export class Session {
         },
       });
     }
+  }
+
+  /** Returns the daemon's provider-authoritative Goal projection. */
+  private async handleAgentGoalGetRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.goal.get.request" }>,
+  ): Promise<void> {
+    const loadError = await this.ensureAgentGoalControlReady(msg.agentId);
+    let result;
+    if (loadError) {
+      result = {
+        ok: false,
+        goal: null,
+        goalStep: null,
+        goalSync: "stale" as const,
+        error: loadError,
+      };
+    } else {
+      try {
+        result = await this.agentManager.getAgentGoal(msg.agentId);
+      } catch (error) {
+        result = {
+          ok: false,
+          goal: null,
+          goalStep: null,
+          goalSync: "stale" as const,
+          error: this.goalOperationError(msg.agentId, "read", error),
+        };
+      }
+    }
+    this.emit({
+      type: "agent.goal.get.response",
+      payload: {
+        requestId: msg.requestId,
+        agentId: msg.agentId,
+        ...result,
+      },
+    });
+  }
+
+  /** Loads a persisted Agent before Goal control and classifies recovery failures. */
+  private async ensureAgentGoalControlReady(agentId: string): Promise<AgentGoalError | null> {
+    if (this.agentManager.getAgent(agentId)) {
+      return null;
+    }
+
+    let record: StoredAgentRecord | null;
+    try {
+      record = await this.agentStorage.get(agentId);
+    } catch (error) {
+      this.sessionLogger.warn({ err: error, agentId }, "Failed to read Agent for Goal control");
+      return {
+        code: "provider_error",
+        retryable: true,
+        message: "Failed to read the Agent before Goal control.",
+      };
+    }
+    if (!record || record.archivedAt) {
+      return {
+        code: "not_found",
+        retryable: false,
+        message: "Agent not found.",
+      };
+    }
+    if (!isStoredAgentProviderAvailable(record, this.agentManager.getRegisteredProviderIds())) {
+      return {
+        code: "provider_unavailable",
+        retryable: false,
+        message: "The Agent provider is unavailable.",
+      };
+    }
+
+    try {
+      await ensureUnarchivedAgentLoaded(agentId, {
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        logger: this.sessionLogger,
+      });
+      return null;
+    } catch (error) {
+      this.sessionLogger.warn({ err: error, agentId }, "Failed to load Agent for Goal control");
+      return {
+        code: "provider_unavailable",
+        retryable: true,
+        message: "The Agent provider could not be loaded.",
+      };
+    }
+  }
+
+  /** Logs an unexpected Goal failure while returning only a non-sensitive summary. */
+  private goalOperationError(
+    agentId: string,
+    operation: "read" | "update" | "terminate",
+    error: unknown,
+  ): AgentGoalError {
+    this.sessionLogger.warn({ err: error, agentId, operation }, "Agent Goal operation failed");
+    let message: string;
+    switch (operation) {
+      case "read":
+        message = "Failed to read the Agent Goal.";
+        break;
+      case "update":
+        message = "Failed to update the Agent Goal.";
+        break;
+      case "terminate":
+        message = "Failed to terminate the Agent Goal.";
+        break;
+    }
+    return {
+      code: "provider_error",
+      retryable: true,
+      message,
+    };
+  }
+
+  /** Applies one correlated provider-neutral Goal mutation. */
+  private async handleAgentGoalUpdateRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.goal.update.request" }>,
+  ): Promise<void> {
+    const loadError = await this.ensureAgentGoalControlReady(msg.agentId);
+    let result;
+    if (loadError) {
+      result = {
+        ok: false,
+        goal: null,
+        goalStep: null,
+        goalSync: "stale" as const,
+        error: loadError,
+      };
+    } else {
+      try {
+        result = await this.agentManager.updateAgentGoal(
+          msg.agentId,
+          msg.mutation,
+          msg.expectedGeneration,
+        );
+      } catch (error) {
+        result = {
+          ok: false,
+          goal: null,
+          goalStep: null,
+          goalSync: "stale" as const,
+          error: this.goalOperationError(msg.agentId, "update", error),
+        };
+      }
+    }
+    this.emit({
+      type: "agent.goal.update.response",
+      payload: {
+        requestId: msg.requestId,
+        agentId: msg.agentId,
+        ...result,
+      },
+    });
+  }
+
+  /** Clears a Goal and reports the subsequent turn-interrupt phase. */
+  private async handleAgentGoalTerminateRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.goal.terminate.request" }>,
+  ): Promise<void> {
+    const loadError = await this.ensureAgentGoalControlReady(msg.agentId);
+    let result;
+    if (loadError) {
+      result = {
+        ok: false,
+        goal: null,
+        goalStep: null,
+        clear: "failed" as const,
+        interrupt: "skipped" as const,
+        outcome: "failed" as const,
+        error: loadError,
+      };
+    } else {
+      try {
+        result = await this.agentManager.terminateAgentGoal(msg.agentId, msg.expectedGeneration);
+      } catch (error) {
+        result = {
+          ok: false,
+          goal: null,
+          goalStep: null,
+          clear: "failed" as const,
+          interrupt: "skipped" as const,
+          outcome: "failed" as const,
+          error: this.goalOperationError(msg.agentId, "terminate", error),
+        };
+      }
+    }
+    this.emit({
+      type: "agent.goal.terminate.response",
+      payload: {
+        requestId: msg.requestId,
+        agentId: msg.agentId,
+        ...result,
+      },
+    });
   }
 
   private async handleAgentEditLastUserMessageRequest(

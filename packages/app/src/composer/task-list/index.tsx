@@ -3,9 +3,11 @@ import { View } from "react-native";
 import { ChevronDown, ChevronRight } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
+import { useShallow } from "zustand/shallow";
 import { Button } from "@/components/ui/button";
 import { TaskListRow } from "@/components/task-list-row";
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
+import { shouldShowAgentGoalTrack } from "@/goals/presentation";
 import { useSessionStore } from "@/stores/session-store";
 import type { TodoEntry } from "@/types/stream";
 
@@ -16,9 +18,21 @@ export const AgentTaskList = memo(function AgentTaskList({
   serverId: string;
   agentId: string;
 }) {
-  const tasks = useSessionStore((state) => state.sessions[serverId]?.agentTasks.get(agentId));
-  if (!tasks?.length) return null;
-  return <TaskListCard tasks={tasks} />;
+  const state = useSessionStore(
+    useShallow((store) => {
+      const session = store.sessions[serverId];
+      const agent = session?.agents.get(agentId) ?? session?.agentDetails.get(agentId);
+      return {
+        tasks: session?.agentTasks.get(agentId),
+        hasGoalTrack: shouldShowAgentGoalTrack({
+          supported: session?.serverInfo?.features?.agentGoalControl === true,
+          goal: agent?.goal,
+        }),
+      };
+    }),
+  );
+  if (state.hasGoalTrack || !state.tasks?.length) return null;
+  return <TaskListCard tasks={state.tasks} />;
 });
 
 const TaskListCard = memo(function TaskListCard({ tasks }: { tasks: TodoEntry[] }) {

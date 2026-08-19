@@ -75,6 +75,30 @@ Implement the `AgentClient` and `AgentSession` interfaces from `agent-sdk-types.
 
 Existing direct providers: `claude` (in `providers/claude/agent.ts`), `codex` (`codex-app-server-agent.ts`), `opencode` (`opencode-agent.ts`), `pi` (`providers/pi/agent.ts`), and `omp` (`providers/omp/agent.ts`). The dev-only `mock` provider (`mock-load-test-agent.ts`) is also direct.
 
+### Provider-owned Goal contract
+
+A provider with a native autonomous Goal may expose the optional `AgentSession.goalControl` port:
+`get()` returns the current authoritative Goal or `null`, `set({ objective?, status? })` updates it,
+and `clear()` removes it without implying that the current turn was interrupted. The provider emits
+`goal_changed` and `thread_status_changed` events for native changes. Resumable implementations may
+also expose `getExecutionStatus()` and `flushPreSubscriptionEvents()`; wrappers around a session must
+forward all three optional members. The pre-subscription flush is FIFO, idempotent, and runs only
+after the first subscriber is installed. AgentManager owns lifecycle reconciliation, generation
+guards, current-step filtering, public snapshots, and serialized mutations.
+
+Codex maps this port directly to App Server `thread/goal/get`, `thread/goal/set`, and
+`thread/goal/clear`. It maps `thread/goal/updated` and `thread/goal/cleared` notifications back to
+`goal_changed`, reads resumed execution state with `thread/read` and `includeTurns: false`, and maps
+`thread/status/changed` to the provider-neutral thread status. Notifications that arrive while the
+App Server connection is established but before AgentManager subscribes are buffered and flushed in
+their original order. Only notifications for the active thread are accepted.
+
+Codex current-step projection comes from `turn/plan/updated` and remains read-only: the App Server
+Goal API has no native step-write RPC. `thread/goal/clear` does not stop a turn, so public Goal
+termination always composes clear with the ordinary provider `interrupt()` path and preserves partial
+success. See the Goal wire, compatibility, and resume ordering contract in
+[architecture.md](architecture.md#websocket-protocol).
+
 Claude first-party model metadata lives in `packages/server/src/server/agent/providers/claude/model-manifest.ts`. When adding or updating a Claude model, update that manifest only; the model picker thinking options and Claude-specific feature gates are derived from the manifest. Do not add model-specific Claude capability lists in feature code.
 
 Paseo tools are not implemented as MCP tools internally. They live in a shared tool catalog under `packages/server/src/server/agent/tools/`; MCP is only the fallback adapter. A provider that can register runtime tools directly should set `supportsNativePaseoTools: true` and consume `launchContext.paseoTools` in `createSession`/`resumeSession`. When native tools are present, `AgentManager` strips the internal Paseo MCP server from the provider launch config so the provider does not receive the same tools twice. Providers that only know MCP should keep `supportsMcpServers: true` and let the daemon inject `/mcp/agents`.
@@ -442,6 +466,9 @@ interface AgentSession {
   readonly id: string | null;
   readonly capabilities: AgentCapabilityFlags;
   readonly features?: AgentFeature[];
+  readonly goalControl?: AgentGoalControl;
+  getExecutionStatus?(): Promise<AgentThreadStatus>;
+  flushPreSubscriptionEvents?(): void;
   run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult>;
   startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<{ turnId: string }>;
   subscribe(callback: (event: AgentStreamEvent) => void): () => void;

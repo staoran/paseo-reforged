@@ -63,6 +63,8 @@ function parseSentSessionMessage(data: string | ArrayBuffer | Uint8Array | undef
   filter?: unknown;
   page?: unknown;
   text?: string;
+  expectedGeneration?: string;
+  mutation?: unknown;
 } {
   if (typeof data !== "string") {
     throw new Error("Expected string WebSocket frame");
@@ -639,6 +641,104 @@ test("agent handles delegate create, send, timeline refetch, archive, and local 
   expect(agent.current()?.archivedAt).toBe("2026-05-16T01:00:00.000Z");
 
   unsubscribe();
+  await client.close();
+});
+
+test("agent Goal handles delegate get, update, and partial termination results", async () => {
+  const { client, ws } = await connectClient({
+    providersSnapshotCwd: true,
+    agentGoalControl: true,
+  });
+  const agent = client.agents.ref(createAgent());
+
+  const getPromise = agent.goal.get({ requestId: "sdk-goal-get" });
+  expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+    type: "agent.goal.get.request",
+    requestId: "sdk-goal-get",
+    agentId: "agent_sdk",
+  });
+  ws.message(
+    sessionMessage({
+      type: "agent.goal.get.response",
+      payload: {
+        requestId: "sdk-goal-get",
+        agentId: "agent_sdk",
+        ok: true,
+        goal: null,
+        goalStep: null,
+        goalSync: "synced",
+        error: null,
+      },
+    }),
+  );
+  await expect(getPromise).resolves.toMatchObject({ ok: true, goal: null });
+
+  const updatePromise = agent.goal.update(
+    { kind: "pause" },
+    {
+      expectedGeneration: "2026-08-18T01:00:00.000Z",
+      requestId: "sdk-goal-update",
+    },
+  );
+  expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+    type: "agent.goal.update.request",
+    requestId: "sdk-goal-update",
+    agentId: "agent_sdk",
+    expectedGeneration: "2026-08-18T01:00:00.000Z",
+    mutation: { kind: "pause" },
+  });
+  ws.message(
+    sessionMessage({
+      type: "agent.goal.update.response",
+      payload: {
+        requestId: "sdk-goal-update",
+        agentId: "agent_sdk",
+        ok: true,
+        goal: null,
+        goalStep: null,
+        goalSync: "synced",
+        error: null,
+      },
+    }),
+  );
+  await expect(updatePromise).resolves.toMatchObject({ ok: true });
+
+  const terminatePromise = agent.goal.terminate({
+    expectedGeneration: "2026-08-18T01:00:00.000Z",
+    requestId: "sdk-goal-terminate",
+  });
+  expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+    type: "agent.goal.terminate.request",
+    requestId: "sdk-goal-terminate",
+    agentId: "agent_sdk",
+    expectedGeneration: "2026-08-18T01:00:00.000Z",
+  });
+  ws.message(
+    sessionMessage({
+      type: "agent.goal.terminate.response",
+      payload: {
+        requestId: "sdk-goal-terminate",
+        agentId: "agent_sdk",
+        ok: false,
+        goal: null,
+        goalStep: null,
+        clear: "cleared",
+        interrupt: "failed",
+        outcome: "goal_cleared_turn_running",
+        error: {
+          code: "interrupt_failed",
+          retryable: true,
+          message: "Goal cleared, but the active turn could not be interrupted",
+        },
+      },
+    }),
+  );
+  await expect(terminatePromise).resolves.toMatchObject({
+    clear: "cleared",
+    interrupt: "failed",
+    outcome: "goal_cleared_turn_running",
+  });
+
   await client.close();
 });
 

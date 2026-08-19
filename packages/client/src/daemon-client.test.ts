@@ -6394,6 +6394,186 @@ test("sends agent.runtime.close.request and preserves an authoritative false out
   });
 });
 
+test("gates Agent Goal reads and preserves the correlated authoritative response", async () => {
+  const logger = createMockLogger();
+  const unsupportedTransport = createMockTransport();
+  const unsupportedClient = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_goal_unsupported",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => unsupportedTransport.transport,
+  });
+  clients.push(unsupportedClient);
+
+  const unsupportedConnect = unsupportedClient.connect();
+  unsupportedTransport.triggerOpen();
+  await unsupportedConnect;
+  const unsupportedSentCount = unsupportedTransport.sent.length;
+
+  await expect(unsupportedClient.getAgentGoal("agent-1", "req-goal-unsupported")).rejects.toThrow(
+    "Update the host to control Agent Goals.",
+  );
+  expect(unsupportedTransport.sent).toHaveLength(unsupportedSentCount);
+
+  const supportedTransport = createMockTransport();
+  const supportedClient = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_goal_supported",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => supportedTransport.transport,
+  });
+  clients.push(supportedClient);
+
+  const supportedConnect = supportedClient.connect();
+  supportedTransport.triggerOpen({ features: { agentGoalControl: true } });
+  await supportedConnect;
+
+  const responsePromise = supportedClient.getAgentGoal("agent-1", "req-goal-get");
+  expect(parseSentFrame(supportedTransport.sent[0])).toEqual({
+    type: "agent.goal.get.request",
+    agentId: "agent-1",
+    requestId: "req-goal-get",
+  });
+
+  supportedTransport.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.goal.get.response",
+      payload: {
+        requestId: "req-goal-get",
+        agentId: "agent-1",
+        ok: true,
+        goal: null,
+        goalStep: null,
+        goalSync: "synced",
+        error: null,
+      },
+    }),
+  );
+
+  await expect(responsePromise).resolves.toEqual({
+    requestId: "req-goal-get",
+    agentId: "agent-1",
+    ok: true,
+    goal: null,
+    goalStep: null,
+    goalSync: "synced",
+    error: null,
+  });
+});
+
+test("sends a correlated Agent Goal update mutation", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_goal_update",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: { agentGoalControl: true } });
+  await connectPromise;
+
+  const responsePromise = client.updateAgentGoal(
+    "agent-1",
+    { kind: "replace_objective", objective: "Ship the complete Goal flow" },
+    {
+      expectedGeneration: "2026-08-18T01:00:00.000Z",
+      requestId: "req-goal-update",
+    },
+  );
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "agent.goal.update.request",
+    agentId: "agent-1",
+    expectedGeneration: "2026-08-18T01:00:00.000Z",
+    mutation: { kind: "replace_objective", objective: "Ship the complete Goal flow" },
+    requestId: "req-goal-update",
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.goal.update.response",
+      payload: {
+        requestId: "req-goal-update",
+        agentId: "agent-1",
+        ok: true,
+        goal: null,
+        goalStep: null,
+        goalSync: "synced",
+        error: null,
+      },
+    }),
+  );
+
+  await expect(responsePromise).resolves.toMatchObject({
+    requestId: "req-goal-update",
+    ok: true,
+    error: null,
+  });
+});
+
+test("preserves partial success from a correlated Agent Goal termination", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_goal_terminate",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: { agentGoalControl: true } });
+  await connectPromise;
+
+  const responsePromise = client.terminateAgentGoal("agent-1", {
+    expectedGeneration: "2026-08-18T01:00:00.000Z",
+    requestId: "req-goal-terminate",
+  });
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "agent.goal.terminate.request",
+    agentId: "agent-1",
+    expectedGeneration: "2026-08-18T01:00:00.000Z",
+    requestId: "req-goal-terminate",
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.goal.terminate.response",
+      payload: {
+        requestId: "req-goal-terminate",
+        agentId: "agent-1",
+        ok: false,
+        goal: null,
+        goalStep: null,
+        clear: "cleared",
+        interrupt: "failed",
+        outcome: "goal_cleared_turn_running",
+        error: {
+          code: "interrupt_failed",
+          retryable: true,
+          message: "Goal cleared, but the active turn could not be interrupted",
+        },
+      },
+    }),
+  );
+
+  await expect(responsePromise).resolves.toMatchObject({
+    ok: false,
+    clear: "cleared",
+    interrupt: "failed",
+    outcome: "goal_cleared_turn_running",
+    error: { code: "interrupt_failed" },
+  });
+});
+
 test("waitForFinish with timeout=0 omits timeoutMs and has no client deadline", async () => {
   useHeartbeatClock();
   try {

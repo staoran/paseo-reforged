@@ -36,6 +36,19 @@ interface RecentProviderSessionProjectionOptions {
   providerLabel: string;
 }
 
+/** Adds optional Goal projection fields without changing their wire tri-state. */
+function projectGoalFields(payload: AgentSnapshotPayload, agent: ManagedAgent): void {
+  if (agent.goal !== undefined) {
+    payload.goal = agent.goal ? { ...agent.goal } : null;
+  }
+  if (agent.goalStep !== undefined) {
+    payload.goalStep = agent.goalStep ? { ...agent.goalStep } : null;
+  }
+  if (agent.goalSync !== undefined) {
+    payload.goalSync = agent.goalSync;
+  }
+}
+
 function normalizeThinkingOptionId(value: string | null | undefined): string | null {
   if (typeof value !== "string") return null;
   const normalized = value.trim();
@@ -160,6 +173,8 @@ export function toAgentPayload(
   if (agent.lastError !== undefined) {
     payload.lastError = agent.lastError;
   }
+
+  projectGoalFields(payload, agent);
 
   // Handle attention state
   payload.requiresAttention = agent.attention.requiresAttention;

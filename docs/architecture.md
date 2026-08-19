@@ -229,6 +229,28 @@ authoritative outcome. `closed: true` means the daemon reread an unarchived dura
 client view and carries an error. Clients connected to an older daemon do not emulate this operation
 with archive or local tab removal.
 
+`server_info.features.agentGoalControl` gates provider-owned Goal projection and control. Goal fields
+on an Agent snapshot are deliberately three-state: an omitted `goal` means an old daemon, an
+unsupported provider, or a projection that has not hydrated; `goal: null` authoritatively means no
+Goal; an object is the current provider Goal. `goalSync` is `hydrating`, `synced`, or `stale`.
+`goalStep` is optional and belongs only to the generation named by `goal.createdAt`; the daemon drops
+steps from any other generation. Current-step text is a read-only provider projection because the
+provider contract has no step-write operation.
+
+Goal reads and mutations use the dotted `agent.goal.get`, `agent.goal.update`, and
+`agent.goal.terminate` request/response pairs. Mutations carry `expectedGeneration` so an old App
+projection cannot update a replacement Goal. Pausing and resuming preserve the generation. Replacing
+an objective is allowed only while paused, trims and validates at most 4000 Unicode characters, and
+returns a new generation with reset usage counters. A stale projection disables mutations and exposes
+an authoritative get/retry path.
+
+Terminate is an ordered compound operation: clear the provider Goal, then interrupt an active turn.
+Its response reports `clear`, `interrupt`, and `outcome` separately. A cleared Goal remains an
+authoritative success even when interrupt fails, so clients must apply `goal: null` while also showing
+the retryable failure. The App renders the Goal track above the composer only when the capability is
+advertised and `goal` is an object; while it owns that progress surface, it hides the duplicate task
+list row.
+
 **Notable session message types:**
 
 - `agent_update` — Agent state changed (status, title, labels)
@@ -313,6 +335,15 @@ provider session, preserves `archivedAt: null`, and persists `closed`; the app r
 after authoritative success. Provider-owned child timeline tabs have no independent `AgentSession`
 and remain layout-only. `ensureAgentLoaded()` resumes a closed durable session under the same Paseo
 agent ID when it is opened or prompted again.
+
+Resumed provider sessions install the AgentManager subscriber before observing provider-owned
+runtime state. Registration then calls `flushPreSubscriptionEvents()`, drains those events, refreshes
+ordinary session state, pulls `getExecutionStatus()` and `goalControl.get()`, drains once more, and
+only then persists and broadcasts the reconciled Agent snapshot. This ordering preserves autonomous
+events emitted while a provider reconnects and restores both the lifecycle (`running` for an active
+native thread) and Goal projection after daemon or App restart. Execution-status hydration never
+manufactures a turn id. A failed Goal pull marks the retained projection `stale` instead of treating
+the failure as an authoritative absence.
 
 Each workspace registry record also carries nullable `defaultAgentId`. Creation and import register
 the first eligible root agent without overwriting an existing default; startup migration repairs

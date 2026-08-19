@@ -249,6 +249,44 @@ export const ko: TranslationResources = {
       unarchive: "보관 해제",
     },
   },
+  goals: {
+    status: {
+      active: "진행 중",
+      paused: "일시 중지됨",
+      blocked: "차단됨",
+      usageLimited: "사용량 제한",
+      budgetLimited: "예산 한도 도달",
+      complete: "완료",
+    },
+    actions: {
+      pause: "Goal 일시 중지",
+      resume: "Goal 재개",
+      edit: "Goal 편집",
+      terminate: "Goal 종료",
+      retry: "Goal 동기화 다시 시도",
+    },
+    usage: {
+      withBudget: "{{used}} / {{budget}} 토큰 · {{time}}",
+      withoutBudget: "{{used}} 토큰 · {{time}}",
+    },
+    editor: {
+      title: "Goal 편집",
+      objectiveLabel: "Goal 목표",
+      resetWarning: "저장하면 새 Goal 세대가 시작되고 사용량 카운터가 초기화됩니다.",
+      save: "Goal 저장",
+      validation: {
+        empty: "Goal 목표를 입력하세요.",
+        tooLong: "Goal 목표는 {{max}}자 이내로 입력하세요.",
+      },
+    },
+    errors: {
+      actionFailed: "Goal 작업 실패: {{message}}",
+    },
+    accessibility: {
+      track: "Goal 상태 및 컨트롤",
+      currentStep: "현재 단계: {{step}}",
+    },
+  },
   sessions: {
     title: "기록",
     empty: "아직 세션이 없습니다",

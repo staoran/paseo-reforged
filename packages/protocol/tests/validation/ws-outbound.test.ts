@@ -295,6 +295,43 @@ const SourceSchema = z.object({
     });
   });
 
+  it("preserves an authoritative Agent Goal projection in generated validation", () => {
+    // Generated validation is the inbound hot path used by Paseo clients.
+    const envelope = {
+      type: "session",
+      message: {
+        type: "agent.goal.get.response",
+        payload: {
+          requestId: "goal-get-aot",
+          agentId: "agent-1",
+          ok: true,
+          goal: {
+            objective: "Validate generated Goal schemas",
+            status: "active",
+            tokenBudget: 10_000,
+            tokensUsed: 2_000,
+            timeUsedSeconds: 120,
+            createdAt: "2026-08-18T01:00:00.000Z",
+            updatedAt: "2026-08-18T01:02:00.000Z",
+          },
+          goalStep: {
+            generation: "2026-08-18T01:00:00.000Z",
+            ordinal: 0,
+            text: "Generate the validator",
+            status: "in_progress",
+          },
+          goalSync: "synced",
+          error: null,
+        },
+      },
+    };
+
+    expect(GeneratedWSOutboundMessageSchema.safeParse(envelope)).toEqual({
+      success: true,
+      data: envelope,
+    });
+  });
+
   it("emits runtime imports with .js extensions", async () => {
     const generated = await readFile(generatedWSOutboundPath, "utf8");
     expect(generated).toContain('from "../../validation/ws-outbound-schema-metadata.js"');

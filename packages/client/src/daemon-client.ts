@@ -92,6 +92,10 @@ import type {
   SubscribeTerminalResponse,
   SubscribeTerminalRequest,
   AgentRuntimeClosePayload,
+  AgentGoalGetResponsePayload,
+  AgentGoalUpdateMutation,
+  AgentGoalUpdateResponsePayload,
+  AgentGoalTerminateResponsePayload,
   CloseItemsResponse,
   KillTerminalResponse,
   CaptureTerminalResponse,
@@ -2500,6 +2504,52 @@ export class DaemonClient {
       message: {
         type: "agent.runtime.close.request",
         agentId,
+      },
+    });
+  }
+
+  /** Reads the daemon's authoritative provider-owned Goal projection. */
+  async getAgentGoal(agentId: string, requestId?: string): Promise<AgentGoalGetResponsePayload> {
+    this.requireAgentGoalControlSupport();
+    return this.sendNamespacedCorrelatedSessionRequest<"agent.goal.get.response">({
+      requestId,
+      message: {
+        type: "agent.goal.get.request",
+        agentId,
+      },
+    });
+  }
+
+  /** Applies one provider-neutral mutation to an existing Agent Goal. */
+  async updateAgentGoal(
+    agentId: string,
+    mutation: AgentGoalUpdateMutation,
+    options?: { expectedGeneration?: string; requestId?: string },
+  ): Promise<AgentGoalUpdateResponsePayload> {
+    this.requireAgentGoalControlSupport();
+    return this.sendNamespacedCorrelatedSessionRequest<"agent.goal.update.response">({
+      requestId: options?.requestId,
+      message: {
+        type: "agent.goal.update.request",
+        agentId,
+        expectedGeneration: options?.expectedGeneration,
+        mutation,
+      },
+    });
+  }
+
+  /** Clears an Agent Goal and requests interruption of its active turn. */
+  async terminateAgentGoal(
+    agentId: string,
+    options?: { expectedGeneration?: string; requestId?: string },
+  ): Promise<AgentGoalTerminateResponsePayload> {
+    this.requireAgentGoalControlSupport();
+    return this.sendNamespacedCorrelatedSessionRequest<"agent.goal.terminate.response">({
+      requestId: options?.requestId,
+      message: {
+        type: "agent.goal.terminate.request",
+        agentId,
+        expectedGeneration: options?.expectedGeneration,
       },
     });
   }
@@ -5348,6 +5398,14 @@ export class DaemonClient {
 
   getLastServerInfoMessage(): ServerInfoStatusPayload | null {
     return this.lastServerInfoMessage;
+  }
+
+  /** Rejects Agent Goal RPCs before send when the daemon lacks the public gate. */
+  private requireAgentGoalControlSupport(): void {
+    // COMPAT(agentGoalControl): added in v0.4.0-beta.4, remove after 2027-08-18.
+    if (this.lastServerInfoMessage?.features?.agentGoalControl !== true) {
+      throw new Error("Update the host to control Agent Goals.");
+    }
   }
 
   private requireHubRelationshipSupport(): void {

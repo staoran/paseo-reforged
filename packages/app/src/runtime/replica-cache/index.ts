@@ -1,7 +1,12 @@
 import { Buffer } from "buffer";
 import equal from "fast-deep-equal/es6";
 import { z } from "zod";
-import { AgentStatusSchema } from "@getpaseo/protocol/messages";
+import {
+  AgentGoalSnapshotSchema,
+  AgentGoalStepSnapshotSchema,
+  AgentGoalSyncStatusSchema,
+  AgentStatusSchema,
+} from "@getpaseo/protocol/messages";
 import { AgentProviderSchema } from "@getpaseo/protocol/provider-manifest";
 import {
   normalizeProjectDescriptor,
@@ -136,6 +141,9 @@ const StoredAgentSnapshotSchema = z.strictObject({
   pendingPermissions: z.array(z.never()).max(0),
   persistence: z.null(),
   lastError: z.string().optional(),
+  goal: AgentGoalSnapshotSchema.nullable().optional(),
+  goalStep: AgentGoalStepSnapshotSchema.nullable().optional(),
+  goalSync: AgentGoalSyncStatusSchema.optional(),
   title: z.string().nullable(),
   labels: z.record(z.string(), z.string()),
   requiresAttention: z.boolean().optional(),
@@ -442,6 +450,9 @@ function serializeAgent(agent: Agent): StoredAgent {
     pendingPermissions: [],
     persistence: null,
     ...(agent.lastError ? { lastError: agent.lastError } : {}),
+    ...(agent.goal !== undefined ? { goal: agent.goal } : {}),
+    ...(agent.goalStep !== undefined ? { goalStep: agent.goalStep } : {}),
+    ...(agent.goalSync !== undefined ? { goalSync: agent.goalSync } : {}),
     title: agent.title,
     labels: agent.labels,
     requiresAttention: agent.requiresAttention ?? false,
@@ -457,8 +468,11 @@ function serializeAgent(agent: Agent): StoredAgent {
 }
 
 function deserializeAgent(serverId: string, stored: StoredAgent): Agent {
+  const agent = normalizeAgentSnapshot(stored.snapshot, serverId);
   return {
-    ...normalizeAgentSnapshot(stored.snapshot, serverId),
+    ...agent,
+    // A disk replica can paint immediately, but only a live daemon can assert freshness.
+    ...(agent.goal ? { goalSync: "stale" as const } : {}),
     lastActivityAt: new Date(stored.lastActivityAt),
     projectPlacement: stored.projectPlacement,
   };

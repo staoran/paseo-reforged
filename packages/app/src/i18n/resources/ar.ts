@@ -248,6 +248,44 @@ export const ar: TranslationResources = {
       unarchive: "إلغاء الأرشفة",
     },
   },
+  goals: {
+    status: {
+      active: "نشط",
+      paused: "متوقف مؤقتًا",
+      blocked: "محظور",
+      usageLimited: "الاستخدام محدود",
+      budgetLimited: "تم بلوغ حد الميزانية",
+      complete: "مكتمل",
+    },
+    actions: {
+      pause: "إيقاف الهدف مؤقتًا",
+      resume: "استئناف الهدف",
+      edit: "تعديل الهدف",
+      terminate: "إنهاء الهدف",
+      retry: "إعادة محاولة مزامنة الهدف",
+    },
+    usage: {
+      withBudget: "{{used}} / {{budget}} رمز · {{time}}",
+      withoutBudget: "{{used}} رمز · {{time}}",
+    },
+    editor: {
+      title: "تعديل الهدف",
+      objectiveLabel: "نص الهدف",
+      resetWarning: "يؤدي الحفظ إلى بدء جيل جديد من الهدف وإعادة تعيين عدادات الاستخدام.",
+      save: "حفظ الهدف",
+      validation: {
+        empty: "أدخل هدفًا.",
+        tooLong: "اجعل الهدف ضمن {{max}} حرفًا.",
+      },
+    },
+    errors: {
+      actionFailed: "فشل إجراء الهدف: {{message}}",
+    },
+    accessibility: {
+      track: "حالة الهدف وعناصر التحكم",
+      currentStep: "الخطوة الحالية: {{step}}",
+    },
+  },
   sessions: {
     title: "السجل",
     empty: "لا توجد جلسات بعد",

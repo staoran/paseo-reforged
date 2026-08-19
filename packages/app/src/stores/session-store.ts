@@ -30,6 +30,9 @@ import type {
   AgentProvider,
   AgentMode,
   AgentCapabilityFlags,
+  AgentGoalSnapshot,
+  AgentGoalStepSnapshot,
+  AgentGoalSyncStatus,
   AgentUsage,
   AgentPersistenceHandle,
 } from "@getpaseo/protocol/agent-types";
@@ -103,6 +106,12 @@ export interface Agent {
   lastUsage?: AgentUsage;
   lastError?: string | null;
   providerRetryMessage: string | null;
+  /** Provider-owned Goal projection; undefined means unsupported or not yet hydrated. */
+  goal?: AgentGoalSnapshot | null;
+  /** Current provider-owned plan step for the Goal generation. */
+  goalStep?: AgentGoalStepSnapshot | null;
+  /** Freshness of the Goal projection. */
+  goalSync?: AgentGoalSyncStatus;
   title: string | null;
   cwd: string;
   workspaceId?: string;
