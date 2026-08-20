@@ -45,6 +45,13 @@ export interface GoalPresentation {
   actions: GoalActionPresentation[];
 }
 
+/** Goal states that may request a native scheduler resume. */
+const RESUMABLE_GOAL_STATUSES = new Set<AgentGoalStatus>([
+  "blocked",
+  "usageLimited",
+  "budgetLimited",
+]);
+
 /** Returns true only when a supported daemon has reported an existing Goal. */
 export function shouldShowAgentGoalTrack(input: GoalTrackVisibilityInput): boolean {
   return input.supported && input.goal != null;
@@ -67,7 +74,7 @@ function buildSyncedActions(status: AgentGoalStatus): GoalActionPresentation[] {
     ];
   }
 
-  if (status === "blocked" || status === "usageLimited" || status === "budgetLimited") {
+  if (RESUMABLE_GOAL_STATUSES.has(status)) {
     return [
       { id: "resume", enabled: true },
       { id: "terminate", enabled: true },
@@ -122,9 +129,11 @@ export function buildGoalPresentation(input: GoalPresentationInput): GoalPresent
   const statusActions = buildSyncedActions(input.goal.status);
   const syncActions = buildSynchronizedActions(statusActions, input.goalSync);
   // A single per-control mutation lane prevents duplicate or conflicting Goal RPCs.
-  const actions = input.pendingAction
-    ? syncActions.map((action) => disableGoalActionForPending(action, input.pendingAction!))
-    : syncActions;
+  const pendingAction = input.pendingAction;
+  let actions = syncActions;
+  if (pendingAction) {
+    actions = syncActions.map((action) => disableGoalActionForPending(action, pendingAction));
+  }
 
   return {
     goal: input.goal,

@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   INITIAL_GOAL_INTERACTION_STATE,
   applyGoalProjection,
+  goalActionFailureMessage,
+  goalInteractionScopeKey,
   goalProjectionFromTerminateResponse,
   reduceGoalInteraction,
   validateGoalObjective,
@@ -64,6 +66,62 @@ describe("applyGoalProjection", () => {
   });
 });
 
+describe("goalActionFailureMessage", () => {
+  const goal = {
+    objective: "Ship Goal controls",
+    status: "active",
+    tokenBudget: null,
+    tokensUsed: 100,
+    timeUsedSeconds: 30,
+    createdAt: "2026-08-19T02:10:00.000Z",
+    updatedAt: "2026-08-19T02:10:30.000Z",
+  } as const;
+
+  it("keeps an action failure for the same Agent Goal generation across projection refreshes", () => {
+    const failure = {
+      serverId: "host-a",
+      agentId: "agent-a",
+      generation: goal.createdAt,
+      message: "Pause failed.",
+    };
+
+    expect(
+      goalActionFailureMessage({
+        failure,
+        serverId: "host-a",
+        agentId: "agent-a",
+        goal: { ...goal, status: "paused", updatedAt: "2026-08-19T02:11:00.000Z" },
+      }),
+    ).toBe("Pause failed.");
+  });
+
+  it("hides a failure after the Agent or Goal generation changes", () => {
+    const failure = {
+      serverId: "host-a",
+      agentId: "agent-a",
+      generation: goal.createdAt,
+      message: "Pause failed.",
+    };
+
+    expect(
+      goalActionFailureMessage({
+        failure,
+        serverId: "host-b",
+        agentId: "agent-a",
+        goal,
+      }),
+    ).toBeNull();
+    expect(
+      goalActionFailureMessage({
+        failure,
+        serverId: "host-a",
+        agentId: "agent-a",
+        goal: { ...goal, createdAt: "2026-08-19T02:20:00.000Z" },
+      }),
+    ).toBeNull();
+  });
+});
+
 describe("goalProjectionFromTerminateResponse", () => {
   it("preserves authoritative freshness and treats old-daemon responses as stale", () => {
     expect(
@@ -111,19 +169,14 @@ describe("reduceGoalInteraction", () => {
     const failed = reduceGoalInteraction(pending, {
       type: "action_finished",
       ok: false,
-      error: "Provider rejected the edit.",
     });
 
-    expect(failed).toEqual({
-      phase: "editing",
-      editorGoal: pausedGoal,
-      error: "Provider rejected the edit.",
-    });
+    expect(failed).toEqual({ phase: "editing", editorGoal: pausedGoal });
 
     const retrying = reduceGoalInteraction(failed, { type: "action_started", action: "edit" });
-    expect(
-      reduceGoalInteraction(retrying, { type: "action_finished", ok: true, error: null }),
-    ).toEqual(INITIAL_GOAL_INTERACTION_STATE);
+    expect(reduceGoalInteraction(retrying, { type: "action_finished", ok: true })).toEqual(
+      INITIAL_GOAL_INTERACTION_STATE,
+    );
   });
 
   it("tracks non-editor failures without retaining an editor snapshot", () => {
@@ -136,32 +189,52 @@ describe("reduceGoalInteraction", () => {
       reduceGoalInteraction(pending, {
         type: "action_finished",
         ok: false,
-        error: "Pause failed.",
       }),
-    ).toEqual({ phase: "idle", editorGoal: null, error: "Pause failed." });
+    ).toEqual({ phase: "idle", editorGoal: null });
   });
+});
 
-  it("closes an editor when the authoritative Goal resumes or changes generation", () => {
-    const editing = reduceGoalInteraction(INITIAL_GOAL_INTERACTION_STATE, {
-      type: "open_editor",
-      goal: pausedGoal,
-    });
+describe("goalInteractionScopeKey", () => {
+  const pausedGoal = {
+    objective: "Edit the paused Goal",
+    status: "paused",
+    tokenBudget: null,
+    tokensUsed: 100,
+    timeUsedSeconds: 30,
+    createdAt: "2026-08-19T02:10:00.000Z",
+    updatedAt: "2026-08-19T02:10:30.000Z",
+  } as const;
+
+  it("separates interaction lifetimes by Goal status and generation, but not usage", () => {
+    const pausedScope = goalInteractionScopeKey({ goal: pausedGoal, goalSync: "synced" });
 
     expect(
-      reduceGoalInteraction(editing, {
-        type: "projection_changed",
+      goalInteractionScopeKey({
         goal: { ...pausedGoal, status: "active" },
+        goalSync: "synced",
       }),
-    ).toEqual(INITIAL_GOAL_INTERACTION_STATE);
+    ).not.toBe(pausedScope);
     expect(
-      reduceGoalInteraction(editing, {
-        type: "projection_changed",
+      goalInteractionScopeKey({
         goal: {
           ...pausedGoal,
           objective: "Replacement Goal",
           createdAt: "2026-08-19T02:20:00.000Z",
         },
+        goalSync: "synced",
       }),
-    ).toEqual(INITIAL_GOAL_INTERACTION_STATE);
+    ).not.toBe(pausedScope);
+    expect(
+      goalInteractionScopeKey({
+        goal: {
+          ...pausedGoal,
+          tokensUsed: 200,
+          timeUsedSeconds: 60,
+          updatedAt: "2026-08-19T02:11:00.000Z",
+        },
+        goalSync: "synced",
+      }),
+    ).toBe(pausedScope);
+    expect(goalInteractionScopeKey({ goal: pausedGoal, goalSync: "stale" })).not.toBe(pausedScope);
   });
 });

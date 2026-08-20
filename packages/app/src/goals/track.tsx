@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useReducer, type ReactElement } from "react";
+import React, { useCallback, useMemo, useReducer, useState, type ReactElement } from "react";
 import { Pause, Pencil, Play, RotateCw, Square, Target } from "lucide-react-native";
 import { Pressable, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
@@ -25,9 +25,11 @@ import { formatDurationWithSeconds } from "@/utils/time";
 import {
   INITIAL_GOAL_INTERACTION_STATE,
   applyGoalProjection,
+  goalActionFailureMessage,
+  goalInteractionScopeKey,
   goalProjectionFromTerminateResponse,
-  reconcileGoalInteraction,
   reduceGoalInteraction,
+  type GoalActionFailure,
   type GoalProjection,
 } from "./model";
 import { useGoalObjectiveFormModel, useGoalObjectiveFormState } from "./use-objective-form-model";
@@ -70,6 +72,30 @@ export interface GoalTrackViewProps {
   onAction: (action: GoalActionId) => void;
 }
 
+/** Identity of the Agent Goal control connected to one composer. */
+export interface AgentGoalTrackProps {
+  /** Host that owns the Agent. */
+  serverId: string;
+  /** Agent whose provider-owned Goal is controlled. */
+  agentId: string;
+}
+
+/** Authoritative connection fields consumed within one Goal interaction lifetime. */
+interface AgentGoalTrackControlProps extends AgentGoalTrackProps {
+  /** Client used for provider-neutral Goal RPCs. */
+  client: DaemonClient | null;
+  /** Current provider-owned Goal projection. */
+  goal: AgentGoalSnapshot;
+  /** Current provider-owned step projection. */
+  goalStep: Agent["goalStep"];
+  /** Freshness of the Goal projection. */
+  goalSync: Agent["goalSync"];
+  /** Failure feedback retained by the host Agent Goal lifetime. */
+  actionFailureMessage: string | null;
+  /** Stores the latest non-sensitive action failure for the current Agent. */
+  onActionFailure: (failure: GoalActionFailure | null) => void;
+}
+
 /** Translation function shape used by Goal presentation helpers. */
 type GoalTranslate = (key: string, values?: Record<string, string>) => string;
 
@@ -79,6 +105,14 @@ interface GoalActionResponse extends GoalProjection {
   ok: boolean;
   /** Structured daemon failure, including partial terminate failures. */
   error: AgentGoalError | null;
+}
+
+/** Values used to retain one non-sensitive Goal action failure. */
+interface GoalActionFailureInput extends AgentGoalTrackProps {
+  /** Goal generation associated with the failed operation. */
+  generation: string;
+  /** Non-sensitive daemon or transport error. */
+  message: string | null;
 }
 
 /** Theme-aware leaf wrappers keep Goal controls off the global Unistyles hook. */
@@ -98,6 +132,17 @@ const GOAL_ACTION_ICONS: Record<GoalActionId, typeof ThemedPause> = {
   terminate: ThemedSquare,
   retry: ThemedRotateCw,
 };
+
+/** Builds retained feedback only when an operation returned an error message. */
+function goalActionFailure(input: GoalActionFailureInput): GoalActionFailure | null {
+  if (!input.message) return null;
+  return {
+    serverId: input.serverId,
+    agentId: input.agentId,
+    generation: input.generation,
+    message: input.message,
+  };
+}
 
 /** Theme mapping for ordinary Goal controls. */
 function mutedColorMapping(theme: Theme): { color: string } {
@@ -211,17 +256,8 @@ function objectiveValidationError(
 }
 
 /** Connected Goal control for one Agent composer. */
-export function AgentGoalTrack({
-  serverId,
-  agentId,
-}: {
-  /** Host that owns the Agent. */
-  serverId: string;
-  /** Agent whose provider-owned Goal is controlled. */
-  agentId: string;
-}): ReactElement | null {
-  const { t } = useTranslation();
-  const toast = useToast();
+export function AgentGoalTrack({ serverId, agentId }: AgentGoalTrackProps): ReactElement | null {
+  const [actionFailure, setActionFailure] = useState<GoalActionFailure | null>(null);
   const state = useSessionStore(
     useShallow((store) => {
       const session = store.sessions[serverId];
@@ -235,37 +271,76 @@ export function AgentGoalTrack({
       };
     }),
   );
+  const actionFailureMessage = goalActionFailureMessage({
+    failure: actionFailure,
+    serverId,
+    agentId,
+    goal: state.goal,
+  });
+
+  const isGoalTrackVisible = shouldShowAgentGoalTrack({
+    supported: state.supported,
+    goal: state.goal,
+  });
+  if (!isGoalTrackVisible) return null;
+  if (!state.goal) return null;
+
+  return (
+    <AgentGoalTrackControl
+      key={goalInteractionScopeKey({ goal: state.goal, goalSync: state.goalSync })}
+      serverId={serverId}
+      agentId={agentId}
+      client={state.client}
+      goal={state.goal}
+      goalStep={state.goalStep}
+      goalSync={state.goalSync}
+      actionFailureMessage={actionFailureMessage}
+      onActionFailure={setActionFailure}
+    />
+  );
+}
+
+/** Owns transient Goal controls for one authoritative generation, status, and sync state. */
+function AgentGoalTrackControl({
+  serverId,
+  agentId,
+  client,
+  goal,
+  goalStep,
+  goalSync,
+  actionFailureMessage,
+  onActionFailure,
+}: AgentGoalTrackControlProps): ReactElement | null {
+  const { t } = useTranslation();
+  const toast = useToast();
   const [interaction, dispatchInteraction] = useReducer(
     reduceGoalInteraction,
     INITIAL_GOAL_INTERACTION_STATE,
   );
-  const currentInteraction = reconcileGoalInteraction(interaction, state.goal);
-  const pendingAction = currentInteraction.phase === "pending" ? currentInteraction.action : null;
-  const editorGoal = currentInteraction.editorGoal;
-  const error = currentInteraction.error;
-
-  useEffect(() => {
-    dispatchInteraction({ type: "projection_changed", goal: state.goal });
-  }, [state.goal]);
+  const pendingAction = interaction.phase === "pending" ? interaction.action : null;
+  const editorGoal = interaction.editorGoal;
+  const error = actionFailureMessage;
   const presentation = useMemo(
     () =>
       buildGoalPresentation({
-        goal: state.goal,
-        goalSync: state.goalSync,
+        goal,
+        goalSync,
         pendingAction,
       }),
-    [pendingAction, state.goal, state.goalSync],
+    [goal, goalSync, pendingAction],
   );
 
   const handleAction = useCallback(
     (action: GoalActionId) => {
-      if (!state.client || !state.goal || pendingAction) return;
+      const isActionUnavailable = !client || pendingAction !== null;
+      if (isActionUnavailable) return;
+      onActionFailure(null);
       if (action === "edit") {
-        if (state.goal.status !== "paused") return;
-        dispatchInteraction({ type: "open_editor", goal: state.goal });
+        if (goal.status !== "paused") return;
+        dispatchInteraction({ type: "open_editor", goal });
         return;
       }
-      const request = requestGoalAction(state.client, agentId, state.goal, action);
+      const request = requestGoalAction(client, agentId, goal, action);
       if (!request) return;
       dispatchInteraction({ type: "action_started", action });
       void request
@@ -276,17 +351,30 @@ export function AgentGoalTrack({
             goalSync: response.goalSync,
           });
           const message = response.error?.message ?? null;
-          dispatchInteraction({ type: "action_finished", ok: response.ok, error: message });
+          const actionSucceeded = response.ok && message === null;
+          const failureGeneration = response.goal?.createdAt ?? goal.createdAt;
+          onActionFailure(
+            goalActionFailure({
+              serverId,
+              agentId,
+              generation: failureGeneration,
+              message,
+            }),
+          );
+          dispatchInteraction({ type: "action_finished", ok: actionSucceeded });
           if (message) toast.error(message);
           return undefined;
         })
         .catch((cause: unknown) => {
           const message = t("goals.errors.actionFailed", { message: toErrorMessage(cause) });
-          dispatchInteraction({ type: "action_finished", ok: false, error: message });
+          onActionFailure(
+            goalActionFailure({ serverId, agentId, generation: goal.createdAt, message }),
+          );
+          dispatchInteraction({ type: "action_finished", ok: false });
           toast.error(message);
         });
     },
-    [agentId, pendingAction, serverId, state.client, state.goal, t, toast],
+    [agentId, client, goal, onActionFailure, pendingAction, serverId, t, toast],
   );
 
   const handleEditorClose = useCallback(() => {
@@ -296,9 +384,11 @@ export function AgentGoalTrack({
 
   const handleObjectiveSubmit = useCallback(
     (objective: string) => {
-      if (!state.client || !editorGoal || pendingAction) return;
+      const isSubmitUnavailable = !client || !editorGoal || pendingAction !== null;
+      if (isSubmitUnavailable) return;
+      onActionFailure(null);
       dispatchInteraction({ type: "action_started", action: "edit" });
-      void state.client
+      void client
         .updateAgentGoal(
           agentId,
           { kind: "replace_objective", objective },
@@ -311,28 +401,47 @@ export function AgentGoalTrack({
             goalSync: response.goalSync,
           });
           const message = response.error?.message ?? null;
-          dispatchInteraction({ type: "action_finished", ok: response.ok, error: message });
-          if (message) {
-            toast.error(message);
-            return undefined;
-          }
+          const actionSucceeded = response.ok && message === null;
+          const failureGeneration = response.goal?.createdAt ?? editorGoal.createdAt;
+          onActionFailure(
+            goalActionFailure({
+              serverId,
+              agentId,
+              generation: failureGeneration,
+              message,
+            }),
+          );
+          dispatchInteraction({ type: "action_finished", ok: actionSucceeded });
+          if (message) toast.error(message);
           return undefined;
         })
         .catch((cause: unknown) => {
           const message = t("goals.errors.actionFailed", { message: toErrorMessage(cause) });
-          dispatchInteraction({ type: "action_finished", ok: false, error: message });
+          onActionFailure(
+            goalActionFailure({
+              serverId,
+              agentId,
+              generation: editorGoal.createdAt,
+              message,
+            }),
+          );
+          dispatchInteraction({ type: "action_finished", ok: false });
           toast.error(message);
         });
     },
-    [agentId, editorGoal, pendingAction, serverId, state.client, t, toast],
+    [agentId, client, editorGoal, onActionFailure, pendingAction, serverId, t, toast],
   );
 
-  const currentStep = currentStepText({ goalStep: state.goalStep });
+  const currentStep = currentStepText({ goalStep });
   const labels = useMemo<GoalTrackLabels | null>(() => {
     if (!presentation) return null;
+    let currentStepLabel: string | null = null;
+    if (currentStep) {
+      currentStepLabel = t("goals.accessibility.currentStep", { step: currentStep });
+    }
     return {
       track: t("goals.accessibility.track"),
-      currentStep: currentStep ? t("goals.accessibility.currentStep", { step: currentStep }) : null,
+      currentStep: currentStepLabel,
       status: t(GOAL_STATUS_KEYS[presentation.goal.status]),
       usage: formatGoalUsage(presentation.goal, t),
       pause: t("goals.actions.pause"),
@@ -343,13 +452,8 @@ export function AgentGoalTrack({
     };
   }, [currentStep, presentation, t]);
 
-  if (
-    !shouldShowAgentGoalTrack({ supported: state.supported, goal: state.goal }) ||
-    !presentation ||
-    !labels
-  ) {
-    return null;
-  }
+  if (!presentation) return null;
+  if (!labels) return null;
 
   return (
     <>
@@ -526,18 +630,7 @@ export function GoalTrackView({
 }
 
 /** Renders one icon-only Goal command with a desktop tooltip. */
-function GoalActionButton({
-  action,
-  label,
-  onAction,
-}: {
-  /** Derived command visibility and availability. */
-  action: GoalActionPresentation;
-  /** Localized tooltip and accessibility copy. */
-  label: string;
-  /** Parent Goal command dispatcher. */
-  onAction: (action: GoalActionId) => void;
-}): ReactElement {
+function GoalActionButton({ action, label, onAction }: GoalActionButtonProps): ReactElement {
   const Icon = GOAL_ACTION_ICONS[action.id];
   const colorMapping = action.id === "terminate" ? destructiveColorMapping : mutedColorMapping;
   const handlePress = useCallback(() => onAction(action.id), [action.id, onAction]);
@@ -566,6 +659,16 @@ function GoalActionButton({
       </TooltipContent>
     </Tooltip>
   );
+}
+
+/** Inputs for one icon-only Goal command. */
+interface GoalActionButtonProps {
+  /** Derived command visibility and availability. */
+  action: GoalActionPresentation;
+  /** Localized tooltip and accessibility copy. */
+  label: string;
+  /** Parent Goal command dispatcher. */
+  onAction: (action: GoalActionId) => void;
 }
 
 const styles = StyleSheet.create((theme) => ({

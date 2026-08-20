@@ -57,14 +57,44 @@ export interface GoalTerminateProjectionResponse {
   goalSync?: AgentGoalSyncStatus;
 }
 
+/** Authoritative fields that delimit one local Goal interaction lifetime. */
+export interface GoalInteractionScopeInput {
+  /** Current provider-owned Goal generation and status. */
+  goal: AgentGoalSnapshot;
+  /** Freshness required before mutations may continue. */
+  goalSync: AgentGoalSyncStatus | undefined;
+}
+
+/** Failure feedback retained for one host, Agent, and Goal generation. */
+export interface GoalActionFailure {
+  /** Host that owns the failed Goal operation. */
+  serverId: string;
+  /** Agent that owns the failed Goal operation. */
+  agentId: string;
+  /** Goal generation associated with the failed operation. */
+  generation: string;
+  /** Non-sensitive message rendered in the Goal track. */
+  message: string;
+}
+
+/** Inputs used to decide whether one retained Goal failure is still relevant. */
+export interface GoalActionFailureVisibilityInput {
+  /** Retained failure, when the last Goal operation failed. */
+  failure: GoalActionFailure | null;
+  /** Current host. */
+  serverId: string;
+  /** Current Agent. */
+  agentId: string;
+  /** Current provider-owned Goal projection. */
+  goal: AgentGoalSnapshot | null | undefined;
+}
+
 /** Idle Goal interaction state with no objective editor mounted. */
 interface GoalInteractionIdleState {
   /** Stable interaction discriminator. */
   phase: "idle";
   /** No editor generation is retained while idle. */
   editorGoal: null;
-  /** Latest non-sensitive action failure. */
-  error: string | null;
 }
 
 /** Goal interaction state while the paused objective editor is open. */
@@ -73,41 +103,46 @@ interface GoalInteractionEditingState {
   phase: "editing";
   /** Goal generation captured when the editor opened. */
   editorGoal: AgentGoalSnapshot;
-  /** Latest non-sensitive edit failure. */
-  error: string | null;
 }
 
-/** Goal interaction state while an RPC is in flight. */
-interface GoalInteractionPendingState {
+/** Goal interaction state while an objective edit RPC is in flight. */
+interface GoalInteractionEditPendingState {
   /** Stable interaction discriminator. */
   phase: "pending";
-  /** Command whose result must settle this state. */
-  action: GoalActionId;
-  /** Editor generation retained only for an edit request. */
-  editorGoal: AgentGoalSnapshot | null;
-  /** Starting an action clears the previous error. */
-  error: null;
+  /** Objective edit command whose result must settle this state. */
+  action: "edit";
+  /** Editor generation retained for a failed edit retry. */
+  editorGoal: AgentGoalSnapshot;
+}
+
+/** Goal interaction state while a non-editor RPC is in flight. */
+interface GoalInteractionCommandPendingState {
+  /** Stable interaction discriminator. */
+  phase: "pending";
+  /** Non-editor command whose result must settle this state. */
+  action: Exclude<GoalActionId, "edit">;
+  /** Non-editor commands never retain an editor generation. */
+  editorGoal: null;
 }
 
 /** Complete interactive state for the Goal track and objective editor. */
 export type GoalInteractionState =
   | GoalInteractionIdleState
   | GoalInteractionEditingState
-  | GoalInteractionPendingState;
+  | GoalInteractionEditPendingState
+  | GoalInteractionCommandPendingState;
 
 /** User and RPC events accepted by the Goal interaction reducer. */
 export type GoalInteractionEvent =
   | { type: "open_editor"; goal: AgentGoalSnapshot }
   | { type: "close_editor" }
   | { type: "action_started"; action: GoalActionId }
-  | { type: "action_finished"; ok: boolean; error: string | null }
-  | { type: "projection_changed"; goal: AgentGoalSnapshot | null | undefined };
+  | { type: "action_finished"; ok: boolean };
 
 /** Fresh idle state used for the first render and successful editor completion. */
 export const INITIAL_GOAL_INTERACTION_STATE: GoalInteractionState = {
   phase: "idle",
   editorGoal: null,
-  error: null,
 };
 
 /** Normalizes a Goal objective and enforces the provider-neutral input contract. */
@@ -133,14 +168,19 @@ export function goalProjectionFromTerminateResponse(
   };
 }
 
-/** Invalidates an editor snapshot that no longer describes the current paused Goal generation. */
-export function reconcileGoalInteraction(
-  state: GoalInteractionState,
-  goal: AgentGoalSnapshot | null | undefined,
-): GoalInteractionState {
-  if (state.editorGoal === null) return state;
-  if (goal?.status === "paused" && goal.createdAt === state.editorGoal.createdAt) return state;
-  return INITIAL_GOAL_INTERACTION_STATE;
+/** Identifies the React interaction lifetime for one authoritative Goal state. */
+export function goalInteractionScopeKey(input: GoalInteractionScopeInput): string {
+  return `${input.goal.createdAt}:${input.goal.status}:${input.goalSync ?? "unknown"}`;
+}
+
+/** Returns retained Goal failure feedback only while its Agent generation remains current. */
+export function goalActionFailureMessage(input: GoalActionFailureVisibilityInput): string | null {
+  if (!input.failure) return null;
+  if (!input.goal) return null;
+  if (input.failure.serverId !== input.serverId) return null;
+  if (input.failure.agentId !== input.agentId) return null;
+  if (input.failure.generation !== input.goal.createdAt) return null;
+  return input.failure.message;
 }
 
 /** Applies one user or RPC event to the Goal track's discriminated interaction state. */
@@ -150,23 +190,20 @@ export function reduceGoalInteraction(
 ): GoalInteractionState {
   switch (event.type) {
     case "open_editor":
-      return { phase: "editing", editorGoal: event.goal, error: null };
+      return { phase: "editing", editorGoal: event.goal };
     case "close_editor":
       return state.phase === "pending" ? state : INITIAL_GOAL_INTERACTION_STATE;
     case "action_started":
       if (event.action === "edit") {
         if (state.phase !== "editing") return state;
-        return { phase: "pending", action: "edit", editorGoal: state.editorGoal, error: null };
+        return { phase: "pending", action: "edit", editorGoal: state.editorGoal };
       }
-      return { phase: "pending", action: event.action, editorGoal: null, error: null };
+      return { phase: "pending", action: event.action, editorGoal: null };
     case "action_finished":
       if (state.phase !== "pending") return state;
-      if (state.action === "edit" && state.editorGoal && (!event.ok || event.error)) {
-        return { phase: "editing", editorGoal: state.editorGoal, error: event.error };
-      }
-      return { phase: "idle", editorGoal: null, error: event.error };
-    case "projection_changed":
-      return reconcileGoalInteraction(state, event.goal);
+      if (event.ok) return INITIAL_GOAL_INTERACTION_STATE;
+      if (state.action !== "edit") return INITIAL_GOAL_INTERACTION_STATE;
+      return { phase: "editing", editorGoal: state.editorGoal };
   }
 }
 
