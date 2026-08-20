@@ -216,6 +216,7 @@ import {
 import type { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import type { Resolvable } from "./speech/provider-resolver.js";
 import type { SpeechReadinessSnapshot } from "./speech/speech-runtime.js";
+import type { RelayTrafficHint } from "./relay-frame-compression.js";
 import type pino from "pino";
 import { ScheduleService } from "./schedule/service.js";
 import {
@@ -481,8 +482,12 @@ export interface SessionOptions {
   clientCapabilities?: Record<string, unknown> | null;
   onMessage: (msg: SessionOutboundMessage) => void;
   onMessageToSource?: (source: object, msg: SessionOutboundMessage) => void;
-  onBinaryMessage?: (frame: Uint8Array) => void;
-  onBinaryMessageToSource?: (source: object, frame: Uint8Array) => Promise<void>;
+  onBinaryMessage?: (frame: Uint8Array, hint: RelayTrafficHint) => void;
+  onBinaryMessageToSource?: (
+    source: object,
+    frame: Uint8Array,
+    hint: RelayTrafficHint,
+  ) => Promise<void>;
   getTransportBufferedAmount?: () => number | null;
   onLifecycleIntent?: (intent: SessionLifecycleIntent) => void;
   onWorkspaceRecovered?: (workspace: PersistedWorkspaceRecord) => Promise<void>;
@@ -675,9 +680,11 @@ export class Session {
   private readonly onMessageToSource:
     | ((source: object, msg: SessionOutboundMessage) => void)
     | null;
-  private readonly onBinaryMessage: ((frame: Uint8Array) => void) | null;
+  /** Broadcast binary callback retaining sender-side relay semantics. */
+  private readonly onBinaryMessage: ((frame: Uint8Array, hint: RelayTrafficHint) => void) | null;
+  /** Source-scoped binary callback retaining sender-side relay semantics. */
   private readonly onBinaryMessageToSource:
-    | ((source: object, frame: Uint8Array) => Promise<void>)
+    | ((source: object, frame: Uint8Array, hint: RelayTrafficHint) => Promise<void>)
     | null;
   private readonly getTransportBufferedAmount: () => number | null;
   private readonly onLifecycleIntent: ((intent: SessionLifecycleIntent) => void) | null;
@@ -831,7 +838,7 @@ export class Session {
     this.workspaceFilesSession = new WorkspaceFilesSession({
       host: {
         emit: (msg, source) => this.emitForSource(msg, source),
-        emitBinary: (frame, source) => this.emitBinaryForFileTransfer(frame, source),
+        emitBinary: (frame, hint, source) => this.emitBinaryForFileTransfer(frame, hint, source),
         hasBinaryChannel: () => this.onBinaryMessage !== null,
       },
       downloadTokenStore,
@@ -986,7 +993,7 @@ export class Session {
     this.terminalController = new TerminalSessionController({
       terminalManager,
       emit: (msg) => this.emit(msg),
-      emitBinary: (frame) => this.emitBinary(frame),
+      emitBinary: (frame, hint) => this.emitBinary(frame, hint),
       hasBinaryChannel: () => this.onBinaryMessage !== null,
       isPathWithinRoot: (rootPath, candidatePath) => this.isPathWithinRoot(rootPath, candidatePath),
       sessionLogger: this.sessionLogger,
@@ -7807,23 +7814,29 @@ export class Session {
     this.onMessage(msg);
   }
 
-  private emitBinary(frame: Uint8Array): void {
+  /** Emits one broadcast binary frame with its local relay traffic classification. */
+  private emitBinary(frame: Uint8Array, hint: RelayTrafficHint): void {
     if (!this.onBinaryMessage) {
       return;
     }
     try {
-      this.onBinaryMessage(frame);
+      this.onBinaryMessage(frame, hint);
     } catch (error) {
       this.sessionLogger.error({ err: error }, "Failed to emit binary frame");
     }
   }
 
-  private async emitBinaryForFileTransfer(frame: Uint8Array, source?: object): Promise<void> {
+  /** Emits one file frame to its request source while retaining compression eligibility. */
+  private async emitBinaryForFileTransfer(
+    frame: Uint8Array,
+    hint: RelayTrafficHint,
+    source?: object,
+  ): Promise<void> {
     if (source && this.onBinaryMessageToSource) {
-      await this.onBinaryMessageToSource(source, frame);
+      await this.onBinaryMessageToSource(source, frame, hint);
       return;
     }
-    this.emitBinary(frame);
+    this.emitBinary(frame, hint);
   }
 
   private emitForSource(msg: SessionOutboundMessage, source?: object): void {

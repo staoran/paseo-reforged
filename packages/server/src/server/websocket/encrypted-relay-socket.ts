@@ -5,6 +5,12 @@ import {
   type PreparedEncryptedFrame,
 } from "@getpaseo/relay/e2ee";
 import { MAX_PHYSICAL_SOCKET_BUFFERED_BYTES } from "./physical-socket.js";
+import type { RelayTrafficHint } from "../relay-frame-compression.js";
+
+/** Default classification retained for every existing WebSocket-compatible caller. */
+const DEFAULT_RELAY_TRAFFIC_HINT = Object.freeze({
+  trafficClass: "realtime",
+} satisfies RelayTrafficHint);
 
 export interface EncryptedRelayChannel {
   /** Marks the attached relay channel open for application traffic. */
@@ -30,6 +36,11 @@ export interface EncryptedRelaySocket {
   readonly bufferedAmount: number;
   /** Sends one application payload through the negotiated encrypted transport. */
   send: (data: string | Uint8Array | ArrayBuffer) => void | Promise<void>;
+  /** Sends one application payload with sender-side semantics retained for framed preparation. */
+  sendClassified: (
+    data: string | Uint8Array | ArrayBuffer,
+    hint: RelayTrafficHint,
+  ) => void | Promise<void>;
   /** Closes the encrypted channel gracefully. */
   close: (code?: number, reason?: string) => void;
   /** Terminates the underlying relay WebSocket immediately. */
@@ -53,6 +64,7 @@ export function createEncryptedRelaySocket(params: {
   /** Optional asynchronous framed preparation supplied by the daemon compression policy. */
   prepareOutboundFrame?: (
     data: string | ArrayBuffer,
+    hint: RelayTrafficHint,
   ) => PreparedEncryptedFrame | Promise<PreparedEncryptedFrame>;
 }): EncryptedRelaySocket {
   const { channel, emitter, getTransportBufferedAmount, terminateTransport, prepareOutboundFrame } =
@@ -126,14 +138,16 @@ export function createEncryptedRelaySocket(params: {
     releaseAllReservations();
   });
 
-  return {
+  /** Public socket delegates legacy callers and classified callers into one ordered send path. */
+  const socket: EncryptedRelaySocket = {
     get readyState() {
       return readyState;
     },
     get bufferedAmount() {
       return getTransportBufferedAmount() ?? 0;
     },
-    send: (data) => {
+    send: (data) => socket.sendClassified(data, DEFAULT_RELAY_TRAFFIC_HINT),
+    sendClassified: (data, hint) => {
       if (readyState !== 1) {
         return Promise.reject(new Error("Encrypted relay socket is not open"));
       }
@@ -175,7 +189,7 @@ export function createEncryptedRelaySocket(params: {
       let prepared: PreparedEncryptedFrame | Promise<PreparedEncryptedFrame>;
       try {
         prepared = prepareOutboundFrame
-          ? prepareOutboundFrame(outbound)
+          ? prepareOutboundFrame(outbound, hint)
           : channel.prepareOutboundFrame(outbound);
       } catch (error) {
         return Promise.reject(failSend(error));
@@ -232,6 +246,7 @@ export function createEncryptedRelaySocket(params: {
       emitter.once(event, listener);
     },
   };
+  return socket;
 }
 
 function normalizeRelaySendPayload(data: string | Uint8Array | ArrayBuffer): string | ArrayBuffer {

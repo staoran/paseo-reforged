@@ -6,6 +6,7 @@ import {
   sendBoundedPhysicalFrame,
   sendBoundedPhysicalFrameAndWait,
 } from "./physical-socket.js";
+import type { RelayTrafficHint } from "../relay-frame-compression.js";
 
 test("sockets remain exempt until they send an application ping", () => {
   let now = 0;
@@ -119,4 +120,48 @@ test("the awaitable physical send rejects callback errors", async () => {
       onHighWater: () => undefined,
     }),
   ).rejects.toThrow("send failed");
+});
+
+test("physical sends use relay classification when supported and ignore it on direct sockets", () => {
+  /** Traffic hints observed by the relay-only classified send seam. */
+  const relayHints: RelayTrafficHint[] = [];
+  /** Ordinary send calls prove the relay path does not accidentally double-send. */
+  const relayFallbackFrames: Array<string | Uint8Array | ArrayBuffer> = [];
+  /** Relay-like socket exposes both WebSocket compatibility and classified sending. */
+  const relaySocket = {
+    readyState: 1,
+    bufferedAmount: 0,
+    send: (frame: string | Uint8Array | ArrayBuffer) => relayFallbackFrames.push(frame),
+    sendClassified: (_frame: string | Uint8Array | ArrayBuffer, hint: RelayTrafficHint) =>
+      relayHints.push(hint),
+  };
+  /** Frames observed by a direct WebSocket without the relay extension. */
+  const directFrames: Array<string | Uint8Array | ArrayBuffer> = [];
+  /** Direct socket deliberately omits the classified extension. */
+  const directSocket = {
+    readyState: 1,
+    bufferedAmount: 0,
+    send: (frame: string | Uint8Array | ArrayBuffer) => directFrames.push(frame),
+  };
+
+  expect(
+    sendBoundedPhysicalFrame({
+      socket: relaySocket,
+      frame: "catch-up",
+      trafficHint: { trafficClass: "state-sync" },
+      onHighWater: () => undefined,
+    }),
+  ).toBe(true);
+  expect(
+    sendBoundedPhysicalFrame({
+      socket: directSocket,
+      frame: "catch-up",
+      trafficHint: { trafficClass: "state-sync" },
+      onHighWater: () => undefined,
+    }),
+  ).toBe(true);
+
+  expect(relayHints).toEqual([{ trafficClass: "state-sync" }]);
+  expect(relayFallbackFrames).toEqual([]);
+  expect(directFrames).toEqual(["catch-up"]);
 });

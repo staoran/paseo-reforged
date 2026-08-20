@@ -17,6 +17,7 @@ import {
   TerminalStreamOpcode,
 } from "@getpaseo/protocol/terminal-stream-protocol";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
+import { FileTransferOpcode } from "@getpaseo/protocol/binary-frames/index";
 
 type SocketListener = (...args: unknown[]) => void;
 
@@ -98,6 +99,7 @@ import { z } from "zod";
 import { VoiceAssistantWebSocketServer } from "./websocket-server";
 import { parseServerInfoStatusPayload } from "./messages.js";
 import type { SpeechReadinessSnapshot } from "./speech/speech-runtime.js";
+import type { RelayTrafficHint } from "./relay-frame-compression.js";
 
 interface WebSocketServerInternals {
   attachSocket(ws: unknown, req: unknown): Promise<void>;
@@ -521,6 +523,82 @@ describe("relay external socket reconnect behavior", () => {
       [CLIENT_CAPS.reasoningMergeEnum]: true,
     });
 
+    await server.close();
+  });
+
+  test("routes structured catch-up messages through the relay-aware classified send seam", async () => {
+    /** Server under test owns the authenticated session-to-socket routing boundary. */
+    const server = createServer();
+    /** Relay socket records semantic hints without changing the observable wire payload. */
+    const socket = new MockSocket() as MockSocket & {
+      sendClassified: (data: unknown, hint: RelayTrafficHint) => void;
+    };
+    /** Classified sends observed after authentication. */
+    const classifiedSends: Array<{ data: unknown; hint: RelayTrafficHint }> = [];
+    socket.sendClassified = (data, hint) => {
+      classifiedSends.push({ data, hint });
+      socket.send(data);
+    };
+    await attachRelayAndHello({ server, socket, clientId: "cid-relay-traffic-hint" });
+    classifiedSends.length = 0;
+
+    /** Public session callback used by producers to emit one structured response. */
+    const onMessage = sessionMock.instances[0]?.args.onMessage;
+    expect(onMessage).toBeTypeOf("function");
+    if (typeof onMessage === "function") {
+      onMessage({
+        type: "fetch_agents_response",
+        payload: {
+          requestId: "req-catch-up",
+          subscriptionId: null,
+          entries: [],
+          pageInfo: { nextCursor: null, prevCursor: null, hasMore: false },
+        },
+      });
+    }
+
+    expect(classifiedSends).toHaveLength(1);
+    expect(classifiedSends[0]?.hint).toEqual({ trafficClass: "state-sync" });
+    await server.close();
+  });
+
+  test("preserves terminal and file traffic hints through binary relay sends", async () => {
+    /** Server under test owns both broadcast and source-scoped binary routes. */
+    const server = createServer();
+    /** Relay socket records the traffic semantics presented at its classified send seam. */
+    const socket = new MockSocket() as MockSocket & {
+      sendClassified: (data: unknown, hint: RelayTrafficHint) => void;
+    };
+    /** Classified binary sends observed after the authenticated session is attached. */
+    const classifiedSends: Array<{ data: unknown; hint: RelayTrafficHint }> = [];
+    socket.sendClassified = (data, hint) => {
+      classifiedSends.push({ data, hint });
+      socket.send(data);
+    };
+    await attachRelayAndHello({ server, socket, clientId: "cid-relay-binary-hints" });
+    classifiedSends.length = 0;
+
+    /** Public callbacks supplied to the session for broadcast and source-scoped frames. */
+    const onBinaryMessage = sessionMock.instances[0]?.args.onBinaryMessage;
+    const onBinaryMessageToSource = sessionMock.instances[0]?.args.onBinaryMessageToSource;
+    expect(onBinaryMessage).toBeTypeOf("function");
+    expect(onBinaryMessageToSource).toBeTypeOf("function");
+    if (typeof onBinaryMessage === "function") {
+      onBinaryMessage(new Uint8Array([TerminalStreamOpcode.Snapshot, 0]), {
+        trafficClass: "state-sync",
+      });
+    }
+    if (typeof onBinaryMessageToSource === "function") {
+      await onBinaryMessageToSource(socket, new Uint8Array([FileTransferOpcode.FileChunk, 1, 65]), {
+        trafficClass: "bulk",
+        compressible: true,
+      });
+    }
+
+    expect(classifiedSends.map(({ hint }) => hint)).toEqual([
+      { trafficClass: "state-sync" },
+      { trafficClass: "bulk", compressible: true },
+    ]);
     await server.close();
   });
 

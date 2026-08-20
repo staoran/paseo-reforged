@@ -6,10 +6,10 @@
 | ------------------ | ------------------------------------------------------------- |
 | task_id            | `0092`                                                        |
 | spec layer         | `Feature Spec`                                                |
-| task status        | `已批准`                                                      |
-| document status    | `Active`                                                      |
+| task status        | `已收口`                                                      |
+| document status    | `Completed`                                                   |
 | depth              | `standard`                                                    |
-| phase              | `Plan`                                                        |
+| phase              | `Review`                                                      |
 | Execution Approval | `Approved`                                                    |
 | Approval Source    | `User / 2026-08-19；按依赖顺序逐票实施并本地提交`             |
 | file path          | `mydocs/micro_specs/0092_业务流量分类与terminal_file_hint.md` |
@@ -54,9 +54,9 @@
 ## 4. 执行前检查点
 
 - 当前目标：只产生语义 hint，不在业务层压缩或修改协议 schema。
-- 当前进度：hint 类型在父 Spec 中定义，生产入口尚未接入。
+- 当前进度：结构化分类、relay-aware send、terminal/file producer 和 Session 透传均已完成 RED→GREEN。
 - 当前动作是否仍服务核心目标：是；实时不压缩和 bulk-live 门禁依赖分类准确性。
-- 下一步：0091 policy types 稳定后执行。
+- 下一步：`N/A；0092 已完成，按依赖进入 0094 Desktop 配置。`
 - 风险与回退：无法识别时默认 realtime；direct WebSocket 必须保持既有字节发送。
 - 验证方式：outbound classifier、websocket-server、terminal/file 定向测试和静态检查。
 - TDD 判定、测试 seam 与验收行为：`TDD；结构化消息边界、session callback、业务现有测试 seam`。
@@ -65,33 +65,36 @@
 
 ## 5. 执行与变更记录
 
-- 实际改动：本轮未修改生产代码。
-- 偏差与用户决策：无。
+- 实际改动：新增纯 `classifyOutboundMessage`，将六类追平响应映射为 `state-sync`、仅 completed live `tool_call` 映射为 `bulk-live + compressible`，其余及未知消息固定 `realtime`。encrypted relay socket 新增可选 `sendClassified`，共享物理发送边界只在该扩展存在时传 hint，direct socket 仍调用原 `send`。terminal `Snapshot/Restore` 标记 `state-sync`、`Output` 标记 `realtime`；文件 Begin/End 标记 realtime，chunk 只按已知 `encoding` 标记 bulk compressible。Session 广播与 source-scoped callback 原样透传 hint。
+- 偏差与用户决策：无需修改业务 schema 或 E2EE envelope；Input/Resize 是 client→daemon 路径，v1 继续 identity，daemon producer 只需标记 Output/Snapshot/Restore。
 - Change Log：`2026-08-19` 从父 Spec 执行清单 8/9 拆出。
+- Change Log：`2026-08-20` 完成四类 traffic hint、terminal/file 语义和 relay/direct 路由，进入 Review/已收口。
 
 ## 6. 验证与完成判断
 
-| 验收项               | 命令或步骤                          | 结果   | 证据                   |
-| -------------------- | ----------------------------------- | ------ | ---------------------- |
-| classifier           | message matrix and unknown fallback | 待执行 | Spec 附录 A            |
-| binary hints         | terminal/file frame matrix          | 待执行 | existing session tests |
-| direct compatibility | direct socket ignores hint          | 待执行 | websocket tests        |
+| 验收项               | 命令或步骤                                           | 结果 | 证据                                                                  |
+| -------------------- | ---------------------------------------------------- | ---- | --------------------------------------------------------------------- |
+| classifier           | message matrix and unknown fallback                  | PASS | 3/3；六类 state-sync、completed-only bulk-live、unknown realtime      |
+| relay route          | classified prepare and real framed compression       | PASS | relay transport 8/8、encrypted socket 11/11、physical socket 7/7      |
+| binary hints         | terminal/file frame matrix and Session passthrough   | PASS | terminal 11/11、file 17/17、WebSocket routing 24/24                   |
+| direct compatibility | direct socket ignores hint and existing session wire | PASS | physical direct assertion、Session 160 passed/1 skipped、file E2E 1/1 |
+| static               | server typecheck、target lint/format                 | PASS | typecheck 通过；15 files lint 0/0；独占文件 format 通过               |
 
-- 未验证项与原因：尚未授权实现。
-- 剩余风险：序列化大小/收益由 0089，端到端 p95 由 0095/0097。
-- Done Contract 是否由证据满足：`No；待 Execute`。
+- 未验证项与原因：未运行完整本地套件；真实弱网、Hermes 和外部 relay 留给 0097。
+- 剩余风险：序列化大小/收益仍由 0089 prepare 决定，指标与端到端 p95 由 0095/0097 验证。
+- Done Contract 是否由证据满足：`是；0092 scoped contract 已满足，父 Spec 仍在 Execute。`
 
 ## 7. 恢复与同步
 
-- 状态说明：ticket 已登记，依赖 0091。
-- 当前卡点：无设计卡点，仅缺执行授权。
-- 下一步唯一动作：接入四类 traffic hint 和 terminal/file 语义。
-- Resume / Handoff：从父 Spec 附录 A、session binary callbacks 和 terminal/file tests 接续。
+- 状态说明：`Review / 已收口 / Completed`；业务语义可供 0095 metrics 消费。
+- 当前卡点：`N/A`。
+- 下一步唯一动作：实现 capability-gated Desktop transport settings。
+- Resume / Handoff：先读本文件第 5、6 节；0094 从现有 pair-device relay config seam 接续。
 - Project Sync Candidates：分类与实时门禁回写 `docs/terminal-performance.md`。
 - 长期文档同步：待 0097。
 
 ### 提交记录
 
-| 提交信息（Commit Message） | 提交脚注（Commit Footer） | 关联改动或阶段 | 文档同步状态 | 备注     |
-| -------------------------- | ------------------------- | -------------- | ------------ | -------- |
-| `<待提交>`                 | `N/A`                     | `paseo / 0092` | `待填写`     | 未获授权 |
+| 提交信息（Commit Message）                      | 提交脚注（Commit Footer） | 关联改动或阶段 | 文档同步状态 | 备注                   |
+| ----------------------------------------------- | ------------------------- | -------------- | ------------ | ---------------------- |
+| `feat(relay): classify daemon outbound traffic` | `N/A`                     | `paseo / 0092` | `待 0097`    | 用户已授权逐票本地提交 |

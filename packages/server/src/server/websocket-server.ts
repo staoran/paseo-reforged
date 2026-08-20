@@ -101,6 +101,8 @@ import {
   sendBoundedPhysicalFrame,
   sendBoundedPhysicalFrameAndWait,
 } from "./websocket/physical-socket.js";
+import { classifyOutboundMessage } from "./websocket/outbound-traffic.js";
+import type { RelayTrafficHint } from "./relay-frame-compression.js";
 
 const WS_CLOSE_DAEMON_AUTH_FAILED = 4401;
 
@@ -412,6 +414,12 @@ export interface WebSocketLike {
     data: string | Uint8Array | ArrayBuffer,
     callback?: (error?: Error) => void,
   ) => void | Promise<void>;
+  /** Relay-only extension retaining sender semantics through framed preparation. */
+  sendClassified?: (
+    data: string | Uint8Array | ArrayBuffer,
+    hint: RelayTrafficHint,
+    callback?: (error?: Error) => void,
+  ) => void | Promise<void>;
   close: (code?: number, reason?: string) => void;
   terminate?: () => void;
   on: (event: "message" | "close" | "error", listener: (...args: unknown[]) => void) => void;
@@ -462,8 +470,12 @@ interface SocketSessionOptions {
   connectionLogger: pino.Logger;
   onMessage: (message: SessionOutboundMessage) => void;
   onMessageToSource?: (source: object, message: SessionOutboundMessage) => void;
-  onBinaryMessage?: (frame: Uint8Array) => void;
-  onBinaryMessageToSource?: (source: object, frame: Uint8Array) => Promise<void>;
+  onBinaryMessage?: (frame: Uint8Array, hint: RelayTrafficHint) => void;
+  onBinaryMessageToSource?: (
+    source: object,
+    frame: Uint8Array,
+    hint: RelayTrafficHint,
+  ) => Promise<void>;
   getTransportBufferedAmount?: () => number | null;
   onLifecycleIntent?: (intent: SessionLifecycleIntent) => void;
   hubExecutionAgents?: HubExecutionAgents;
@@ -1078,24 +1090,43 @@ export class VoiceAssistantWebSocketServer {
     }
 
     const payloadBytes = outboundFrameByteLength(payload);
+    /** Sender-side semantics resolved while the structured message is still available. */
+    const trafficHint = classifyOutboundMessage(message);
     for (const ws of writableSockets) {
-      this.sendFrameToClient(ws, payload, payloadBytes, () => {
-        this.runtimeMetrics.recordOutboundMessage(message, ws.bufferedAmount);
-      });
+      this.sendFrameToClient(
+        ws,
+        payload,
+        payloadBytes,
+        () => {
+          this.runtimeMetrics.recordOutboundMessage(message, ws.bufferedAmount);
+        },
+        trafficHint,
+      );
     }
   }
 
-  private sendBinaryToClient(ws: WebSocketLike, frame: Uint8Array): void {
-    this.sendFrameToClient(ws, frame, outboundFrameByteLength(frame), () => {
-      this.runtimeMetrics.recordOutboundBinaryFrame(ws.bufferedAmount);
-    });
+  private sendBinaryToClient(ws: WebSocketLike, frame: Uint8Array, hint: RelayTrafficHint): void {
+    this.sendFrameToClient(
+      ws,
+      frame,
+      outboundFrameByteLength(frame),
+      () => {
+        this.runtimeMetrics.recordOutboundBinaryFrame(ws.bufferedAmount);
+      },
+      hint,
+    );
   }
 
-  private async sendBinaryToClientAndWait(ws: WebSocketLike, frame: Uint8Array): Promise<void> {
+  private async sendBinaryToClientAndWait(
+    ws: WebSocketLike,
+    frame: Uint8Array,
+    hint: RelayTrafficHint,
+  ): Promise<void> {
     try {
       const sent = await sendBoundedPhysicalFrameAndWait({
         socket: ws,
         frame,
+        trafficHint: hint,
         onHighWater: () => this.closeAtOutboundHighWater(ws),
       });
       if (!sent) {
@@ -1113,12 +1144,14 @@ export class VoiceAssistantWebSocketServer {
     frame: string | Uint8Array,
     frameBytes: number,
     recordSent: () => void,
+    trafficHint?: RelayTrafficHint,
   ): void {
     try {
       const sent = sendBoundedPhysicalFrame({
         socket: ws,
         frame,
         frameBytes,
+        trafficHint,
         onHighWater: () => this.closeAtOutboundHighWater(ws),
       });
       if (sent) recordSent();
@@ -1181,12 +1214,16 @@ export class VoiceAssistantWebSocketServer {
     this.sendMessageToSockets(sockets, message);
   }
 
-  private sendBinaryToConnection(connection: SessionConnection, frame: Uint8Array): void {
+  private sendBinaryToConnection(
+    connection: SessionConnection,
+    frame: Uint8Array,
+    hint: RelayTrafficHint,
+  ): void {
     if (connection.kind !== "trusted") {
       return;
     }
     for (const ws of connection.sockets) {
-      this.sendBinaryToClient(ws, frame);
+      this.sendBinaryToClient(ws, frame, hint);
     }
   }
 
@@ -1274,17 +1311,17 @@ export class VoiceAssistantWebSocketServer {
         }
         this.sendToClient(source as WebSocketLike, wrapSessionMessage(msg));
       },
-      onBinaryMessage: (frame) => {
+      onBinaryMessage: (frame, hint) => {
         if (!connection) {
           return;
         }
-        this.sendBinaryToConnection(connection, frame);
+        this.sendBinaryToConnection(connection, frame, hint);
       },
-      onBinaryMessageToSource: async (source, frame) => {
+      onBinaryMessageToSource: async (source, frame, hint) => {
         if (!connection || !connection.sockets.has(source as WebSocketLike)) {
           throw new Error("File transfer source socket is no longer attached");
         }
-        await this.sendBinaryToClientAndWait(source as WebSocketLike, frame);
+        await this.sendBinaryToClientAndWait(source as WebSocketLike, frame, hint);
       },
       getTransportBufferedAmount: () => {
         if (!connection) {

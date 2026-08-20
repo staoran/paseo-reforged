@@ -6,6 +6,7 @@ import {
   createEncryptedRelaySocket,
   type EncryptedRelayChannel,
 } from "./encrypted-relay-socket.js";
+import type { RelayTrafficHint } from "../relay-frame-compression.js";
 
 class BlockingChannel implements EncryptedRelayChannel {
   /** Final transport writes observed through the public channel seam. */
@@ -312,6 +313,39 @@ test("asynchronous preparation cannot reorder physical encrypted writes", async 
     [11],
     [22],
   ]);
+});
+
+test("classified relay sends preserve explicit hints while ordinary sends default to realtime", async () => {
+  /** Framed channel records the final writes after both classified preparations. */
+  const channel = new BlockingChannel(true);
+  /** Traffic hints observed at the asynchronous framed preparation boundary. */
+  const observedHints: RelayTrafficHint[] = [];
+  /** Socket under test exposes the WebSocket-compatible and classified send seams together. */
+  const socket = createEncryptedRelaySocket({
+    channel,
+    emitter: new EventEmitter(),
+    getTransportBufferedAmount: () => 0,
+    terminateTransport: () => undefined,
+    prepareOutboundFrame: (...args) => {
+      observedHints.push(args[1] as RelayTrafficHint);
+      return channel.prepareOutboundFrame(args[0]);
+    },
+  });
+  /** Public shape expected by relay-aware daemon senders. */
+  const classifiedSocket = socket as typeof socket & {
+    sendClassified: (
+      data: string | Uint8Array | ArrayBuffer,
+      hint: RelayTrafficHint,
+    ) => void | Promise<void>;
+  };
+
+  channel.drain();
+  await Promise.all([
+    classifiedSocket.sendClassified("catch-up", { trafficClass: "state-sync" }),
+    socket.send("live"),
+  ]);
+
+  expect(observedHints).toEqual([{ trafficClass: "state-sync" }, { trafficClass: "realtime" }]);
 });
 
 test("rejects a prepared framed wire at the exclusive 32 MiB limit", async () => {

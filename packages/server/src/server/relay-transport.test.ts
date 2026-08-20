@@ -4,6 +4,7 @@ import { createClientChannel, type Transport } from "@getpaseo/relay/e2ee";
 import { exportPublicKey, generateKeyPair } from "@getpaseo/relay";
 import { startRelayTransport } from "./relay-transport";
 import { resolveConfiguredRelayTransportPolicy } from "./relay-transport-policy.js";
+import { createNodeRawDeflateCodec, type RelayTrafficHint } from "./relay-frame-compression.js";
 
 function createMockLogger() {
   const messages: { level: "debug" | "info" | "warn" | "error"; args: unknown[] }[] = [];
@@ -385,6 +386,77 @@ describe("relay-transport control lifecycle", () => {
     dataSocket.completeNextSend();
     await sending;
     expect(completed).toBe(true);
+  });
+
+  test("classified state-sync payloads reach the negotiated framed compressor", async () => {
+    /** Stable daemon key used by the real authenticated framed handshake. */
+    const daemonKeyPair = generateKeyPair();
+    /** Resolver that exposes the attached encrypted socket after exact mode confirmation. */
+    let resolveAttached: ((socket: unknown) => void) | undefined;
+    /** Attached socket is the public daemon send seam under test. */
+    const attached = new Promise<unknown>((resolve) => {
+      resolveAttached = resolve;
+    });
+    /** Long-lived relay controller owning the control and data sockets. */
+    const controller = startRelayTransport({
+      logger: createMockLogger() as unknown as pino.Logger,
+      attachSocket: async (socket) => resolveAttached?.(socket),
+      relayEndpoint: "relay.paseo.sh:443",
+      relayUseTls: true,
+      serverId: "srv_classified_compression",
+      daemonKeyPair,
+      createWebSocket: relay.createWebSocket,
+    });
+    controllers.push(controller);
+
+    /** Control connection that announces one client data connection. */
+    const control = relay.sockets[0];
+    control.open();
+    control.message(JSON.stringify({ type: "sync", connectionIds: [] }), false);
+    control.message(JSON.stringify({ type: "connected", connectionId: "clt_compression" }), false);
+
+    /** Physical data socket bridged bidirectionally to a real client channel. */
+    const dataSocket = relay.sockets[1];
+    dataSocket.open();
+    /** Client transport feeds its encrypted output back into the daemon data socket. */
+    let clientTransport: Transport;
+    clientTransport = {
+      send: (data) => dataSocket.message(data, data instanceof ArrayBuffer),
+      close: () => undefined,
+      onmessage: null,
+      onclose: null,
+      onerror: null,
+    };
+    dataSocket.onSend = (data) => {
+      clientTransport.onmessage?.({
+        data: data instanceof Uint8Array ? data.slice().buffer : data,
+        isBinary: data instanceof ArrayBuffer || data instanceof Uint8Array,
+      });
+    };
+    await createClientChannel(
+      clientTransport,
+      exportPublicKey(daemonKeyPair.publicKey),
+      {},
+      { compressionAdapter: createNodeRawDeflateCodec() },
+    );
+    /** Relay-aware socket shape that retains sender-side traffic semantics. */
+    const encryptedSocket = (await attached) as {
+      sendClassified: (data: string, hint: RelayTrafficHint) => void | Promise<void>;
+    };
+    /** Repeated catch-up payload whose level-1 raw DEFLATE result is unambiguously smaller. */
+    const payload = "state-sync-payload:".repeat(512);
+    /** Number of handshake wires already emitted before application traffic. */
+    const sentBeforeApplication = dataSocket.sent.length;
+
+    await encryptedSocket.sendClassified(payload, { trafficClass: "state-sync" });
+
+    expect(dataSocket.sent).toHaveLength(sentBeforeApplication + 1);
+    /** Final opaque application wire produced after compression and encryption. */
+    const applicationWire = dataSocket.sent.at(-1);
+    expect(applicationWire).toBeInstanceOf(ArrayBuffer);
+    expect((applicationWire as ArrayBuffer).byteLength).toBeLessThan(
+      new TextEncoder().encode(payload).byteLength / 2,
+    );
   });
 
   test("uses relayUseTls for control and data socket URLs", () => {

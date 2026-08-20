@@ -34,6 +34,7 @@ import {
 } from "../../file-explorer/service.js";
 import { workspaceFileObserver, type FileObserver } from "../../file-explorer/observer.js";
 import { getProjectIcon } from "../../../utils/project-icon.js";
+import type { RelayTrafficHint } from "../../relay-frame-compression.js";
 
 /**
  * What a workspace file-access request reaches outside its own domain: the
@@ -43,7 +44,7 @@ import { getProjectIcon } from "../../../utils/project-icon.js";
  */
 export interface WorkspaceFilesSessionHost {
   emit(msg: SessionOutboundMessage, source?: object): void;
-  emitBinary(frame: Uint8Array, source?: object): Promise<void>;
+  emitBinary(frame: Uint8Array, hint: RelayTrafficHint, source?: object): Promise<void>;
   hasBinaryChannel(): boolean;
 }
 
@@ -277,6 +278,7 @@ export class WorkspaceFilesSession {
                   revision: file.revision,
                 },
               }),
+              { trafficClass: "realtime", compressible: false },
               source,
             );
             for await (const chunk of file.chunks) {
@@ -286,6 +288,7 @@ export class WorkspaceFilesSession {
                   requestId,
                   payload: chunk,
                 }),
+                { trafficClass: "bulk", compressible: file.encoding === "utf-8" },
                 source,
               );
             }
@@ -294,6 +297,7 @@ export class WorkspaceFilesSession {
                 opcode: FileTransferOpcode.FileEnd,
                 requestId,
               }),
+              { trafficClass: "realtime", compressible: false },
               source,
             );
           });

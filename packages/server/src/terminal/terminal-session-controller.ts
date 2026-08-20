@@ -36,6 +36,7 @@ import type { TerminalManager, TerminalsChangedEvent } from "./terminal-manager.
 import { applyTerminalSize } from "./terminal-size-ownership.js";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import { terminalSubscriptionKey } from "@getpaseo/protocol/terminal-subscription-key";
+import type { RelayTrafficHint } from "../server/relay-frame-compression.js";
 
 const MAX_TERMINAL_STREAM_SLOTS = 256;
 
@@ -65,7 +66,7 @@ interface SnapshotSendResult {
 export interface TerminalSessionControllerOptions {
   terminalManager: TerminalManager | null;
   emit: (msg: SessionOutboundMessage) => void;
-  emitBinary: (frame: Uint8Array) => void;
+  emitBinary: (frame: Uint8Array, hint: RelayTrafficHint) => void;
   hasBinaryChannel: () => boolean;
   isPathWithinRoot: (rootPath: string, candidatePath: string) => boolean;
   sessionLogger: pino.Logger;
@@ -123,7 +124,8 @@ const TERMINAL_MESSAGE_TYPES: ReadonlySet<TerminalDispatchableMessage["type"]> =
 export class TerminalSessionController {
   private readonly terminalManager: TerminalManager | null;
   private readonly emit: (msg: SessionOutboundMessage) => void;
-  private readonly emitBinary: (frame: Uint8Array) => void;
+  /** Emits encoded terminal frames with sender-side transport semantics. */
+  private readonly emitBinary: (frame: Uint8Array, hint: RelayTrafficHint) => void;
   private readonly hasBinaryChannel: () => boolean;
   private readonly isPathWithinRoot: (rootPath: string, candidatePath: string) => boolean;
   private readonly sessionLogger: pino.Logger;
@@ -873,6 +875,7 @@ export class TerminalSessionController {
               slot,
               payload,
             }),
+            { trafficClass: "realtime" },
           );
         },
       }),
@@ -980,6 +983,7 @@ export class TerminalSessionController {
         slot: activeStream.slot,
         snapshot,
       }),
+      { trafficClass: "state-sync" },
     );
     // The snapshot frame went out-of-band; keep the replay that follows on the
     // coalescer's trailing path so it doesn't flush back-to-back with it.
@@ -1014,6 +1018,7 @@ export class TerminalSessionController {
         slot: activeStream.slot,
         snapshot,
       }),
+      { trafficClass: "state-sync" },
     );
     // The restore frame went out-of-band; keep the replay that follows on the
     // coalescer's trailing path so it doesn't flush back-to-back with it.

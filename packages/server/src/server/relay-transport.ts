@@ -486,7 +486,7 @@ async function attachEncryptedSocket(
       terminateTransport: () => socket.terminate(),
       ...(channel.usesFramedCiphertextV1() && frameCompression
         ? {
-            prepareOutboundFrame: async (data: string | ArrayBuffer) => {
+            prepareOutboundFrame: async (data: string | ArrayBuffer, hint) => {
               // Compression setting is re-read only when a new frame begins preparation.
               const negotiated = channel.getNegotiatedTransport();
               /** Configured snapshot fixed when this frame begins preparation. */
@@ -497,15 +497,11 @@ async function attachEncryptedSocket(
                 throw new Error("Framed preparation requires a framed relay connection");
               }
               /** Authenticated payload prepared once before channel encryption and representation. */
-              const prepared = await frameCompression.prepare(
-                data,
-                { trafficClass: "realtime" },
-                {
-                  compressionEnabled: configuredForFrame.compressionEnabled,
-                  negotiatedCompressionAlgorithms: negotiated.compressionAlgorithms,
-                  ciphertextEncoding: negotiated.ciphertextEncoding,
-                },
-              );
+              const prepared = await frameCompression.prepare(data, hint, {
+                compressionEnabled: configuredForFrame.compressionEnabled,
+                negotiatedCompressionAlgorithms: negotiated.compressionAlgorithms,
+                ciphertextEncoding: negotiated.ciphertextEncoding,
+              });
               return channel.prepareOutboundFrame(prepared);
             },
           }

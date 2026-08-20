@@ -1,3 +1,5 @@
+import type { RelayTrafficHint } from "../relay-frame-compression.js";
+
 // OOM backstop for a socket whose client stopped draining. A daemon normally has
 // 1-10 physical sockets (tens at the outside), so 64 MiB bounds abandoned queues
 // without treating ordinary large frames as a protocol or frame-size violation.
@@ -55,15 +57,61 @@ interface BoundedPhysicalSocket {
     data: string | Uint8Array | ArrayBuffer,
     callback?: (error?: Error) => void,
   ) => void | Promise<void>;
+  /** Relay-only extension that retains sender semantics through framed preparation. */
+  sendClassified?: (
+    data: string | Uint8Array | ArrayBuffer,
+    hint: RelayTrafficHint,
+    callback?: (error?: Error) => void,
+  ) => void | Promise<void>;
+}
+
+interface PhysicalSendDispatch {
+  /** Immediate or awaitable result returned by the selected socket send method. */
+  result: void | Promise<void>;
+  /** Whether the selected method declares a completion callback parameter. */
+  expectsCallback: boolean;
+}
+
+/** Selects the relay-aware send extension when both a hint and extension are available. */
+function dispatchPhysicalFrame(params: {
+  /** Physical direct or encrypted relay socket. */
+  socket: BoundedPhysicalSocket;
+  /** Application frame passed unchanged to the selected send method. */
+  frame: string | Uint8Array | ArrayBuffer;
+  /** Optional relay-only semantic classification. */
+  trafficHint?: RelayTrafficHint;
+  /** Optional physical completion callback. */
+  callback?: (error?: Error) => void;
+}): PhysicalSendDispatch {
+  const { socket, frame, trafficHint, callback } = params;
+  if (trafficHint && socket.sendClassified) {
+    return {
+      result: callback
+        ? socket.sendClassified(frame, trafficHint, callback)
+        : socket.sendClassified(frame, trafficHint),
+      expectsCallback: socket.sendClassified.length >= 3,
+    };
+  }
+  return {
+    result: callback ? socket.send(frame, callback) : socket.send(frame),
+    expectsCallback: socket.send.length >= 2,
+  };
 }
 
 export async function sendBoundedPhysicalFrameAndWait(params: {
   socket: BoundedPhysicalSocket;
   frame: string | Uint8Array | ArrayBuffer;
   frameBytes?: number;
+  trafficHint?: RelayTrafficHint;
   onHighWater: () => void;
 }): Promise<boolean> {
-  const { socket, frame, frameBytes = outboundFrameByteLength(frame), onHighWater } = params;
+  const {
+    socket,
+    frame,
+    frameBytes = outboundFrameByteLength(frame),
+    trafficHint,
+    onHighWater,
+  } = params;
   if (socket.readyState !== 1) return false;
   if (!physicalSocketHasCapacity(socket, frameBytes)) {
     onHighWater();
@@ -72,14 +120,20 @@ export async function sendBoundedPhysicalFrameAndWait(params: {
 
   await new Promise<void>((resolve, reject) => {
     let callbackUsed = false;
-    const result = socket.send(frame, (error) => {
-      callbackUsed = true;
-      if (error) reject(error);
-      else resolve();
+    /** Selected physical send and its declared completion convention. */
+    const dispatch = dispatchPhysicalFrame({
+      socket,
+      frame,
+      trafficHint,
+      callback: (error) => {
+        callbackUsed = true;
+        if (error) reject(error);
+        else resolve();
+      },
     });
-    if (result && typeof result.then === "function") {
-      result.then(resolve, reject);
-    } else if (socket.send.length < 2 && !callbackUsed) {
+    if (dispatch.result && typeof dispatch.result.then === "function") {
+      dispatch.result.then(resolve, reject);
+    } else if (!dispatch.expectsCallback && !callbackUsed) {
       resolve();
     }
   });
@@ -98,17 +152,25 @@ export function sendBoundedPhysicalFrame(params: {
   socket: BoundedPhysicalSocket;
   frame: string | Uint8Array | ArrayBuffer;
   frameBytes?: number;
+  trafficHint?: RelayTrafficHint;
   onHighWater: () => void;
 }): boolean {
-  const { socket, frame, frameBytes = outboundFrameByteLength(frame), onHighWater } = params;
+  const {
+    socket,
+    frame,
+    frameBytes = outboundFrameByteLength(frame),
+    trafficHint,
+    onHighWater,
+  } = params;
   if (socket.readyState !== 1) return false;
   if (!physicalSocketHasCapacity(socket, frameBytes)) {
     onHighWater();
     return false;
   }
-  const result = socket.send(frame);
-  if (result && typeof result.then === "function") {
-    void result.catch(() => undefined);
+  /** Selected direct or relay-aware send result. */
+  const dispatch = dispatchPhysicalFrame({ socket, frame, trafficHint });
+  if (dispatch.result && typeof dispatch.result.then === "function") {
+    void dispatch.result.catch(() => undefined);
   }
   return true;
 }

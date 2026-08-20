@@ -12,6 +12,7 @@ import type { ServerMessage, TerminalSession, TerminalStateSnapshot } from "./te
 import { TerminalSessionController } from "./terminal-session-controller.js";
 import type { TerminalManager, TerminalsChangedEvent } from "./terminal-manager.js";
 import { isSameOrDescendantPath } from "../server/path-utils.js";
+import type { RelayTrafficHint } from "../server/relay-frame-compression.js";
 
 function deferred<T>(): {
   promise: Promise<T>;
@@ -55,6 +56,8 @@ describe("terminal-session-controller restore", () => {
     let terminalListener: ((message: ServerMessage) => void) | null = null;
     const snapshot = deferred<TerminalStateSnapshot | null>();
     const binaryFrames: TerminalStreamFrame[] = [];
+    /** Sender-side traffic hints observed beside each decoded terminal frame. */
+    const binaryHints: RelayTrafficHint[] = [];
     const outboundMessages: SessionOutboundMessage[] = [];
     const terminal: TerminalSession = {
       id: "term-1",
@@ -104,7 +107,8 @@ describe("terminal-session-controller restore", () => {
     const controller = new TerminalSessionController({
       terminalManager,
       emit: (message) => outboundMessages.push(message),
-      emitBinary: (bytes) => {
+      emitBinary: (bytes, ...args) => {
+        binaryHints.push(args[0] as RelayTrafficHint);
         const frame = decodeTerminalStreamFrame(bytes);
         if (frame) {
           binaryFrames.push(frame);
@@ -145,6 +149,7 @@ describe("terminal-session-controller restore", () => {
       TerminalStreamOpcode.Restore,
       TerminalStreamOpcode.Output,
     ]);
+    expect(binaryHints).toEqual([{ trafficClass: "state-sync" }, { trafficClass: "realtime" }]);
     expect(new TextDecoder().decode(binaryFrames[0]?.payload)).toContain("restore-before");
     expect(new TextDecoder().decode(binaryFrames[1]?.payload)).toBe(
       "\x1b[?1h\x1b[?2004hrestore-after\n",

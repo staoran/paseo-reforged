@@ -22,6 +22,7 @@ import {
 } from "./workspace-files-session.js";
 import { DownloadTokenStore } from "../../file-download/token-store.js";
 import type { SessionOutboundMessage } from "../../messages.js";
+import type { RelayTrafficHint } from "../../relay-frame-compression.js";
 
 const tempDirs: string[] = [];
 
@@ -40,17 +41,22 @@ function makeDir(prefix: string): string {
 function makeSubsystem(
   options: {
     hasBinaryChannel?: boolean;
-    emitBinary?: (frame: Uint8Array) => Promise<void> | void;
+    emitBinary?: (frame: Uint8Array, hint: RelayTrafficHint | undefined) => Promise<void> | void;
   } = {},
 ) {
   const emitted: SessionOutboundMessage[] = [];
   const binary: Uint8Array[] = [];
+  /** Sender-side traffic semantics observed beside binary file frames. */
+  const binaryHints: Array<RelayTrafficHint | undefined> = [];
   let hasBinary = options.hasBinaryChannel ?? false;
   const host: WorkspaceFilesSessionHost = {
     emit: (msg) => emitted.push(msg),
-    emitBinary: async (frame) => {
+    emitBinary: async (frame, ...args) => {
       binary.push(frame);
-      await options.emitBinary?.(frame);
+      /** Current second callback argument, undefined until the hint contract is implemented. */
+      const hint = args[0] as RelayTrafficHint | undefined;
+      binaryHints.push(hint);
+      await options.emitBinary?.(frame, hint);
     },
     hasBinaryChannel: () => hasBinary,
   };
@@ -65,6 +71,7 @@ function makeSubsystem(
     subsystem,
     emitted,
     binary,
+    binaryHints,
     paseoHome,
     setHasBinary: (value: boolean) => {
       hasBinary = value;
@@ -351,7 +358,7 @@ describe("WorkspaceFilesSession", () => {
   test("streams binary frames when the client accepts binary and has a channel", async () => {
     const cwd = makeDir("workspace-files-binary-");
     writeFileSync(join(cwd, "notes.txt"), "hello world");
-    const { subsystem, emitted, binary } = makeSubsystem({ hasBinaryChannel: true });
+    const { subsystem, emitted, binary, binaryHints } = makeSubsystem({ hasBinaryChannel: true });
 
     await subsystem.handleFileExplorerRequest({
       type: "file_explorer_request",
@@ -370,6 +377,11 @@ describe("WorkspaceFilesSession", () => {
       FileTransferOpcode.FileChunk,
       FileTransferOpcode.FileEnd,
     ]);
+    expect(binaryHints).toEqual([
+      { trafficClass: "realtime", compressible: false },
+      { trafficClass: "bulk", compressible: true },
+      { trafficClass: "realtime", compressible: false },
+    ]);
   });
 
   test("streams a real file larger than the socket limit as paced ordered chunks", async () => {
@@ -385,7 +397,7 @@ describe("WorkspaceFilesSession", () => {
       releaseFirstChunk = resolve;
     });
     let chunkSends = 0;
-    const { subsystem, emitted, binary } = makeSubsystem({
+    const { subsystem, emitted, binary, binaryHints } = makeSubsystem({
       hasBinaryChannel: true,
       emitBinary: async (frame) => {
         if (decodeFileTransferFrame(frame)?.opcode !== FileTransferOpcode.FileChunk) return;
@@ -437,6 +449,14 @@ describe("WorkspaceFilesSession", () => {
     ).toBe(0);
     expect(frames.at(0)?.opcode).toBe(FileTransferOpcode.FileBegin);
     expect(frames.at(-1)?.opcode).toBe(FileTransferOpcode.FileEnd);
+    expect(binaryHints).toEqual([
+      { trafficClass: "realtime", compressible: false },
+      ...Array.from({ length: chunks.length }, () => ({
+        trafficClass: "bulk" as const,
+        compressible: false,
+      })),
+      { trafficClass: "realtime", compressible: false },
+    ]);
     expect(emitted).toHaveLength(1);
   }, 30_000);
 
