@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { applyGoalProjection, validateGoalObjective } from "./model";
+import {
+  INITIAL_GOAL_INTERACTION_STATE,
+  applyGoalProjection,
+  goalProjectionFromTerminateResponse,
+  reduceGoalInteraction,
+  validateGoalObjective,
+} from "./model";
 
 describe("validateGoalObjective", () => {
   it("trims a non-empty objective and enforces the 4000 Unicode-character limit", () => {
@@ -55,5 +61,83 @@ describe("applyGoalProjection", () => {
       goalStep: null,
       goalSync: "synced",
     });
+  });
+});
+
+describe("goalProjectionFromTerminateResponse", () => {
+  it("preserves authoritative freshness and treats old-daemon responses as stale", () => {
+    expect(
+      goalProjectionFromTerminateResponse({
+        goal: null,
+        goalStep: null,
+        goalSync: "synced",
+      }),
+    ).toEqual({ goal: null, goalStep: null, goalSync: "synced" });
+
+    expect(
+      goalProjectionFromTerminateResponse({
+        goal: {
+          objective: "Keep the Goal after a failed clear",
+          status: "active",
+          tokenBudget: null,
+          tokensUsed: 10,
+          timeUsedSeconds: 2,
+          createdAt: "2026-08-19T02:00:00.000Z",
+          updatedAt: "2026-08-19T02:00:02.000Z",
+        },
+        goalStep: null,
+      }),
+    ).toMatchObject({ goalSync: "stale" });
+  });
+});
+
+describe("reduceGoalInteraction", () => {
+  const pausedGoal = {
+    objective: "Edit the paused Goal",
+    status: "paused",
+    tokenBudget: null,
+    tokensUsed: 100,
+    timeUsedSeconds: 30,
+    createdAt: "2026-08-19T02:10:00.000Z",
+    updatedAt: "2026-08-19T02:10:30.000Z",
+  } as const;
+
+  it("keeps one discriminated interaction state across edit failures and success", () => {
+    const editing = reduceGoalInteraction(INITIAL_GOAL_INTERACTION_STATE, {
+      type: "open_editor",
+      goal: pausedGoal,
+    });
+    const pending = reduceGoalInteraction(editing, { type: "action_started", action: "edit" });
+    const failed = reduceGoalInteraction(pending, {
+      type: "action_finished",
+      ok: false,
+      error: "Provider rejected the edit.",
+    });
+
+    expect(failed).toEqual({
+      phase: "editing",
+      editorGoal: pausedGoal,
+      error: "Provider rejected the edit.",
+    });
+
+    const retrying = reduceGoalInteraction(failed, { type: "action_started", action: "edit" });
+    expect(
+      reduceGoalInteraction(retrying, { type: "action_finished", ok: true, error: null }),
+    ).toEqual(INITIAL_GOAL_INTERACTION_STATE);
+  });
+
+  it("tracks non-editor failures without retaining an editor snapshot", () => {
+    const pending = reduceGoalInteraction(INITIAL_GOAL_INTERACTION_STATE, {
+      type: "action_started",
+      action: "pause",
+    });
+
+    expect(
+      reduceGoalInteraction(pending, {
+        type: "action_finished",
+        ok: false,
+        error: "Pause failed.",
+      }),
+    ).toEqual({ phase: "idle", editorGoal: null, error: "Pause failed." });
   });
 });

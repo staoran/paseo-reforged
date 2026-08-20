@@ -875,9 +875,11 @@ export const AgentSnapshotPayloadSchema = z.object({
   providerUnavailable: z.boolean().optional(),
   // COMPAT(agentGoalControl): added in v0.4.0-beta.4, remove optional parsing after 2027-08-18.
   goal: AgentGoalSnapshotSchema.nullable().optional(),
-  // COMPAT(agentGoalControl): current step belongs to the Goal generation in `goal.createdAt`.
+  // COMPAT(agentGoalControl): added in v0.4.0-beta.4; remove optional parsing after 2027-08-18.
+  // The current step belongs to the Goal generation in `goal.createdAt`.
   goalStep: AgentGoalStepSnapshotSchema.nullable().optional(),
-  // COMPAT(agentGoalControl): omitted means an old daemon, unsupported provider, or no hydrate yet.
+  // COMPAT(agentGoalControl): added in v0.4.0-beta.4; remove optional parsing after 2027-08-18.
+  // Omission means an old daemon, unsupported provider, or no hydrate yet.
   goalSync: AgentGoalSyncStatusSchema.optional(),
 });
 
@@ -4596,6 +4598,8 @@ export const AgentGoalTerminateResponseMessageSchema = z.object({
     ok: z.boolean(),
     goal: AgentGoalSnapshotSchema.nullable(),
     goalStep: AgentGoalStepSnapshotSchema.nullable(),
+    // COMPAT(agentGoalTerminateSync): added in v0.4.0-beta.4; remove optional parsing after 2027-08-18.
+    goalSync: AgentGoalSyncStatusSchema.optional(),
     clear: AgentGoalClearResultSchema,
     interrupt: AgentGoalInterruptResultSchema,
     outcome: AgentGoalTerminateOutcomeSchema,

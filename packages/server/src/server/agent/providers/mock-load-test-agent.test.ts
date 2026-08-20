@@ -68,6 +68,50 @@ describe("MockLoadTestAgentClient", () => {
     await session.interrupt();
   });
 
+  test("exposes opt-in Goal control with deterministic failures for daemon E2E", async () => {
+    const client = new MockLoadTestAgentClient();
+    const session = await client.createSession({
+      provider: "mock",
+      cwd: process.cwd(),
+      model: "ten-second-stream",
+      featureValues: {
+        mockGoalObjective: "Ship Goal controls through the daemon",
+        mockGoalStepText: "Exercise the real RPC path",
+        mockGoalSetFailures: 1,
+        mockInterruptFailures: 1,
+      },
+    });
+    const control = session.goalControl;
+    expect(control).toBeDefined();
+    if (!control) throw new Error("Expected opt-in mock Goal control");
+
+    const initial = await control.get();
+    expect(initial).toMatchObject({
+      objective: "Ship Goal controls through the daemon",
+      status: "active",
+      tokensUsed: 2_500,
+      timeUsedSeconds: 90,
+    });
+    await expect(control.set({ status: "paused" })).rejects.toThrow(
+      "Requested mock Goal update failure",
+    );
+    await expect(control.set({ status: "paused" })).resolves.toMatchObject({ status: "paused" });
+    await expect(
+      control.set({ objective: "Edited Goal objective", status: "paused" }),
+    ).resolves.toMatchObject({
+      objective: "Edited Goal objective",
+      status: "paused",
+      tokensUsed: 0,
+      timeUsedSeconds: 0,
+    });
+
+    await session.startTurn("Keep this mock turn running.");
+    await expect(session.interrupt()).rejects.toThrow("Requested mock interrupt failure");
+    await expect(session.interrupt()).resolves.toBeUndefined();
+    await control.clear();
+    await expect(control.get()).resolves.toBeNull();
+  });
+
   test("streams a configured assistant response through the normal timeline", async () => {
     vi.useFakeTimers();
     const response = [

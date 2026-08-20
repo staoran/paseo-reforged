@@ -33,9 +33,38 @@ interface PendingRequest {
   timer: NodeJS.Timeout;
 }
 
+/** Native Goal statuses safe to retain in diagnostics. */
+const CODEX_GOAL_LOG_STATUSES = new Set([
+  "active",
+  "paused",
+  "blocked",
+  "usageLimited",
+  "budgetLimited",
+  "complete",
+]);
+
 type RequestHandler = (params: unknown, requestId: number) => unknown;
 type NotificationHandler = (method: string, params: unknown) => void;
 type UnexpectedTerminationHandler = (error: Error) => void;
+
+type CodexStdoutErrorCode = "handler_failed" | "invalid_json" | "not_object";
+
+interface CodexStdoutErrorLogFields {
+  /** Stable category for a rejected stdout line. */
+  stdoutErrorCode: CodexStdoutErrorCode;
+  /** Unicode character count of the rejected line. */
+  stdoutLength: number;
+}
+
+/** Non-sensitive fields retained for a native Goal notification. */
+interface CodexGoalNotificationLogFields {
+  /** Valid native status, or null for missing and invalid payloads. */
+  goalStatus: string | null;
+  /** Normalized native Goal generation. */
+  goalGeneration: string | null;
+  /** Unicode character count without the user-authored objective. */
+  objectiveLength: number;
+}
 
 export interface CodexThreadForkParams {
   threadId: string;
@@ -155,6 +184,36 @@ function readProviderTurnId(params: unknown): string | undefined {
   return isRecord(turn) && typeof turn.id === "string" ? turn.id : undefined;
 }
 
+/** Normalizes a native Goal generation for non-sensitive trace metadata. */
+function readGoalGeneration(value: unknown): string | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return null;
+  const timestamp = new Date(value * 1_000);
+  return Number.isNaN(timestamp.getTime()) ? null : timestamp.toISOString();
+}
+
+/** Extracts bounded Goal metadata without retaining the native payload. */
+function readGoalNotificationLogFields(params: unknown): CodexGoalNotificationLogFields {
+  const payload = isRecord(params) ? params : null;
+  const goal = payload && isRecord(payload.goal) ? payload.goal : null;
+  const status = goal?.status;
+  return {
+    goalStatus: typeof status === "string" && CODEX_GOAL_LOG_STATUSES.has(status) ? status : null,
+    goalGeneration: readGoalGeneration(goal?.createdAt),
+    objectiveLength: typeof goal?.objective === "string" ? Array.from(goal.objective).length : 0,
+  };
+}
+
+/** Produces bounded diagnostics for a rejected stdout line without retaining its content. */
+function codexStdoutErrorLogFields(
+  line: string,
+  stdoutErrorCode: CodexStdoutErrorCode,
+): CodexStdoutErrorLogFields {
+  return {
+    stdoutErrorCode,
+    stdoutLength: Array.from(line).length,
+  };
+}
+
 export class CodexAppServerClient {
   private readonly rl: readline.Interface;
   private readonly pending = new Map<number, PendingRequest>();
@@ -172,8 +231,11 @@ export class CodexAppServerClient {
   ) {
     this.rl = readline.createInterface({ input: child.stdout });
     this.rl.on("line", (line) => {
-      void this.handleLine(line).catch((error) => {
-        this.logger.warn({ error, line }, "Failed to handle Codex app-server stdout line");
+      void this.handleLine(line).catch(() => {
+        this.logger.warn(
+          codexStdoutErrorLogFields(line, "handler_failed"),
+          "Failed to handle Codex app-server stdout line",
+        );
       });
     });
 
@@ -311,13 +373,19 @@ export class CodexAppServerClient {
     let raw: unknown;
     try {
       raw = JSON.parse(line);
-    } catch (error) {
-      this.logger.warn({ error, line }, "Ignoring non-JSON Codex app-server stdout line");
+    } catch {
+      this.logger.warn(
+        codexStdoutErrorLogFields(line, "invalid_json"),
+        "Ignoring non-JSON Codex app-server stdout line",
+      );
       return;
     }
 
     if (!isRecord(raw)) {
-      this.logger.warn({ line }, "Parsed JSON is not an object");
+      this.logger.warn(
+        codexStdoutErrorLogFields(line, "not_object"),
+        "Parsed JSON is not an object",
+      );
       return;
     }
 
@@ -361,6 +429,9 @@ export class CodexAppServerClient {
 
   private traceRawEvent(raw: JsonRpcRequest | JsonRpcNotification): void {
     const traceContext = this.getTraceContext();
+    const payloadFields = raw.method.startsWith("thread/goal/")
+      ? readGoalNotificationLogFields(raw.params)
+      : { params: raw.params, rawEvent: raw };
     this.logger.trace(
       {
         provider: "codex",
@@ -368,8 +439,7 @@ export class CodexAppServerClient {
         sessionId: traceContext.sessionId ?? readProviderSessionId(raw.params),
         turnId: traceContext.turnId ?? readProviderTurnId(raw.params),
         method: raw.method,
-        params: raw.params,
-        rawEvent: raw,
+        ...payloadFields,
       },
       "provider.codex.raw_event",
     );

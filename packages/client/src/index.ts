@@ -32,8 +32,11 @@ import type {
   FetchAgentTimelineDirection,
   FetchAgentTimelinePayload,
   FetchAgentTimelineProjection,
+  PaseoAgentGoalMutationOptions,
   WaitForFinishResult,
 } from "./daemon-client.js";
+
+export type { PaseoAgentGoalMutationOptions } from "./daemon-client.js";
 
 /**
  * Coding turns routinely run for minutes, so the handle waits far longer than
@@ -247,14 +250,6 @@ export interface PaseoAgentTimelineHandle {
    * retain timeline entries or own application cache state.
    */
   subscribe(handler: (event: PaseoAgentStream) => void): () => void;
-}
-
-/** Optional correlation values accepted by Agent Goal mutations. */
-export interface PaseoAgentGoalMutationOptions {
-  /** Goal generation the caller expects to mutate. */
-  expectedGeneration?: string;
-  /** Caller-supplied correlation id. */
-  requestId?: string;
 }
 
 /** Provider-neutral Goal controls scoped to one Agent handle. */

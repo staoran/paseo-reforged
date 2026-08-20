@@ -245,11 +245,12 @@ returns a new generation with reset usage counters. A stale projection disables 
 an authoritative get/retry path.
 
 Terminate is an ordered compound operation: clear the provider Goal, then interrupt an active turn.
-Its response reports `clear`, `interrupt`, and `outcome` separately. A cleared Goal remains an
-authoritative success even when interrupt fails, so clients must apply `goal: null` while also showing
-the retryable failure. The App renders the Goal track above the composer only when the capability is
-advertised and `goal` is an object; while it owns that progress surface, it hides the duplicate task
-list row.
+Its response reports `clear`, `interrupt`, and `outcome` separately and carries the authoritative
+`goalSync` when the daemon supports terminate freshness. New clients conservatively treat an omitted
+terminate `goalSync` from an older daemon as `stale`. A cleared Goal remains an authoritative success
+even when interrupt fails, so clients must apply `goal: null` while also showing the retryable failure.
+The App renders the Goal track above the composer only when the capability is advertised and `goal` is
+an object; while it owns that progress surface, it hides the duplicate task list row.
 
 **Notable session message types:**
 

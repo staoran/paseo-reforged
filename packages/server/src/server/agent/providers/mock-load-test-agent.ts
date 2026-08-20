@@ -4,6 +4,9 @@ import type {
   AgentCapabilityFlags,
   AgentClient,
   AgentFeature,
+  AgentGoalControlInput,
+  AgentGoalControl,
+  AgentGoalSnapshot,
   AgentLaunchContext,
   AgentMode,
   AgentModelDefinition,
@@ -300,6 +303,55 @@ function shouldWithholdUserMessageUntilInterrupt(prompt: AgentPromptInput): bool
 /** Reads an opt-in boolean behavior from the mock provider configuration. */
 function mockFeatureEnabled(config: AgentSessionConfig, feature: string): boolean {
   return config.featureValues?.[feature] === true;
+}
+
+/** Reads an opt-in string behavior from the mock provider configuration. */
+function mockStringFeature(config: AgentSessionConfig, feature: string): string | null {
+  const value = config.featureValues?.[feature];
+  return typeof value === "string" ? value : null;
+}
+
+/** Reads a positive integer failure count from the mock provider configuration. */
+function mockFailureCount(config: AgentSessionConfig, feature: string): number {
+  const value = config.featureValues?.[feature];
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : 0;
+}
+
+/** Parsed opt-in Goal state used only by real-daemon mock-provider tests. */
+interface MockGoalFixtureConfig {
+  /** Initial provider-owned Goal, or null when the adapter is disabled. */
+  goal: AgentGoalSnapshot | null;
+  /** Optional plan step emitted during the configured Goal turn. */
+  stepText: string | null;
+  /** Optional active wording for the configured plan step. */
+  stepActiveForm: string | null;
+  /** Deterministic Goal update failures consumed before success. */
+  setFailures: number;
+  /** Deterministic interrupt failures consumed before success. */
+  interruptFailures: number;
+}
+
+/** Parses the opt-in Goal fixture without adding branches to session construction. */
+function readMockGoalFixture(config: AgentSessionConfig): MockGoalFixtureConfig {
+  const objective = mockStringFeature(config, "mockGoalObjective");
+  return {
+    goal:
+      objective === null
+        ? null
+        : {
+            objective,
+            status: "active",
+            tokenBudget: 10_000,
+            tokensUsed: 2_500,
+            timeUsedSeconds: 90,
+            createdAt: "2026-08-18T08:00:00.000Z",
+            updatedAt: "2026-08-18T08:01:30.000Z",
+          },
+    stepText: mockStringFeature(config, "mockGoalStepText"),
+    stepActiveForm: mockStringFeature(config, "mockGoalStepActiveForm"),
+    setFailures: mockFailureCount(config, "mockGoalSetFailures"),
+    interruptFailures: mockFailureCount(config, "mockInterruptFailures"),
+  };
 }
 
 function shouldEmitUserMessageBeforeTurnAcceptance(prompt: AgentPromptInput): boolean {
@@ -674,6 +726,8 @@ export class MockLoadTestAgentSession implements AgentSession {
   readonly capabilities = CAPABILITIES;
   readonly features: AgentFeature[] = [];
   readonly id: string;
+  /** Opt-in provider-owned Goal adapter used by real-daemon tests. */
+  readonly goalControl: AgentGoalControl | undefined;
   private readonly listeners = new Set<(event: AgentStreamEvent) => void>();
   /** Provider-native history returned by streamHistory. */
   private readonly history: AgentStreamEvent[];
@@ -689,6 +743,18 @@ export class MockLoadTestAgentSession implements AgentSession {
   private readonly editLastUserMessageDelayMs: number;
   /** Whether cancellation rewrites the provider-history identity of the latest user item. */
   private readonly rewriteUserMessageIdOnInterrupt: boolean;
+  /** Optional plan step emitted for the configured test Goal. */
+  private readonly goalStepText: string | null;
+  /** Optional active wording emitted for the configured test Goal step. */
+  private readonly goalStepActiveForm: string | null;
+  /** Current provider-owned test Goal. */
+  private goal: AgentGoalSnapshot | null;
+  /** Monotonic timestamp increment used by deterministic Goal mutations. */
+  private goalMutationSequence = 0;
+  /** Number of remaining deterministic Goal update failures. */
+  private remainingGoalSetFailures: number;
+  /** Number of remaining deterministic interrupt failures. */
+  private remainingInterruptFailures: number;
   private remainingPromptRejections: number;
 
   constructor(options: {
@@ -731,13 +797,14 @@ export class MockLoadTestAgentSession implements AgentSession {
       options.config,
       "mockRewriteUserMessageIdOnInterrupt",
     );
-    const requestedPromptRejections = options.config.featureValues?.mockPromptRejections;
-    this.remainingPromptRejections =
-      typeof requestedPromptRejections === "number" &&
-      Number.isSafeInteger(requestedPromptRejections) &&
-      requestedPromptRejections > 0
-        ? requestedPromptRejections
-        : 0;
+    const goalFixture = readMockGoalFixture(options.config);
+    this.goal = goalFixture.goal;
+    this.goalStepText = goalFixture.stepText;
+    this.goalStepActiveForm = goalFixture.stepActiveForm;
+    this.remainingGoalSetFailures = goalFixture.setFailures;
+    this.remainingInterruptFailures = goalFixture.interruptFailures;
+    this.goalControl = this.goal ? this.createGoalControl() : undefined;
+    this.remainingPromptRejections = mockFailureCount(options.config, "mockPromptRejections");
   }
 
   async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
@@ -818,6 +885,7 @@ export class MockLoadTestAgentSession implements AgentSession {
         return;
       }
       this.emitTurnStarted(turn);
+      this.emitConfiguredGoalStep(turnId);
       this.emit({
         type: "timeline",
         provider: this.provider,
@@ -965,10 +1033,78 @@ export class MockLoadTestAgentSession implements AgentSession {
     };
   }
 
+  /** Creates the opt-in Goal adapter without exposing test state outside the session. */
+  private createGoalControl(): AgentGoalControl {
+    return {
+      get: this.readMockGoal.bind(this),
+      set: this.updateMockGoal.bind(this),
+      clear: this.clearMockGoal.bind(this),
+    };
+  }
+
+  /** Returns a defensive copy of the provider-owned test Goal. */
+  private async readMockGoal(): Promise<AgentGoalSnapshot | null> {
+    return this.goal ? { ...this.goal } : null;
+  }
+
+  /** Applies one deterministic provider-owned Goal mutation. */
+  private async updateMockGoal(input: AgentGoalControlInput): Promise<AgentGoalSnapshot> {
+    if (this.remainingGoalSetFailures > 0) {
+      this.remainingGoalSetFailures -= 1;
+      throw new Error("Requested mock Goal update failure");
+    }
+    if (!this.goal) throw new Error("Mock Goal not found");
+
+    this.goalMutationSequence += 1;
+    const updatedAt = new Date(
+      Date.parse(this.goal.updatedAt) + this.goalMutationSequence * 1_000,
+    ).toISOString();
+    const replacesObjective = input.objective !== undefined;
+    this.goal = {
+      ...this.goal,
+      ...(replacesObjective ? { objective: input.objective, createdAt: updatedAt } : {}),
+      ...(input.status !== undefined ? { status: input.status } : {}),
+      ...(replacesObjective ? { tokensUsed: 0, timeUsedSeconds: 0 } : {}),
+      updatedAt,
+    };
+    return { ...this.goal };
+  }
+
+  /** Clears the provider-owned test Goal. */
+  private async clearMockGoal(): Promise<void> {
+    this.goal = null;
+  }
+
+  /** Emits the configured current step through the normal provider timeline. */
+  private emitConfiguredGoalStep(turnId: string): void {
+    if (!this.goal || !this.goalStepText) return;
+    this.emit({
+      type: "timeline",
+      provider: this.provider,
+      turnId,
+      item: {
+        type: "todo",
+        items: [
+          {
+            id: "mock-goal-step",
+            text: this.goalStepText,
+            ...(this.goalStepActiveForm ? { activeForm: this.goalStepActiveForm } : {}),
+            status: "in_progress",
+            completed: false,
+          },
+        ],
+      },
+    });
+  }
+
   async interrupt(): Promise<void> {
     const turn = this.activeTurn;
     if (!turn) {
       return;
+    }
+    if (this.remainingInterruptFailures > 0) {
+      this.remainingInterruptFailures -= 1;
+      throw new Error("Requested mock interrupt failure");
     }
     this.clearTurnTimer(turn);
     this.activeTurn = null;

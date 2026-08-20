@@ -4,6 +4,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { PassThrough } from "node:stream";
+import pino from "pino";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import {
@@ -2940,6 +2942,15 @@ test("resumeAgentFromPersistence drains autonomous start events before publishin
     registry: new AgentStorage(join(workdir, "agents"), logger),
     logger,
   });
+  const publishedLifecycles: string[] = [];
+  const unsubscribe = manager.subscribe(
+    (event) => {
+      if (event.type === "agent_state") {
+        publishedLifecycles.push(event.agent.lifecycle);
+      }
+    },
+    { agentId, replayState: false },
+  );
 
   try {
     const resumed = await manager.resumeAgentFromPersistence(
@@ -2956,8 +2967,11 @@ test("resumeAgentFromPersistence drains autonomous start events before publishin
       flushCalls: 1,
       lifecycle: "running",
     });
+    unsubscribe();
+    expect(publishedLifecycles).toEqual(["running"]);
     expect(manager.getAgent(agentId)?.lifecycle).toBe("running");
   } finally {
+    unsubscribe();
     await manager.closeAgent(agentId);
     rmSync(workdir, { recursive: true, force: true });
   }
@@ -3061,13 +3075,13 @@ test("resumeAgentFromPersistence applies buffered active thread status without i
   }
 });
 
-test("resumeAgentFromPersistence lets authoritative idle supersede an earlier buffered start", async () => {
+test("resumeAgentFromPersistence lets a buffered start supersede a stale hydrated idle status", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-resume-idle-"));
   const agentId = "00000000-0000-4000-8000-000000000188";
 
   class IdleAfterStartSession extends TestAgentSession {
     flushPreSubscriptionEvents(): void {
-      this.pushEvent({ type: "turn_started", provider: "codex" });
+      this.pushEvent({ type: "turn_started", provider: "codex", turnId: "buffered-start" });
     }
 
     async getExecutionStatus() {
@@ -3108,8 +3122,8 @@ test("resumeAgentFromPersistence lets authoritative idle supersede an earlier bu
     );
 
     expect({ lifecycle: resumed.lifecycle, activeTurnId: resumed.activeTurnId }).toEqual({
-      lifecycle: "idle",
-      activeTurnId: null,
+      lifecycle: "running",
+      activeTurnId: "buffered-start",
     });
     expect(streamEvents.some((event) => event.type === "turn_completed")).toBe(false);
   } finally {
@@ -3172,6 +3186,147 @@ test("resumeAgentFromPersistence hydrates the authoritative Goal into the public
       goalStep: null,
       goalSync: "synced",
     });
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("resumeAgentFromPersistence applies Goal events captured during hydrate after the pull result", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-hydrate-race-"));
+  const agentId = "00000000-0000-4000-8000-00000000019a";
+  const pulledGoal = {
+    objective: "Pulled Goal state",
+    status: "active",
+    tokenBudget: 12_000,
+    tokensUsed: 3_000,
+    timeUsedSeconds: 240,
+    createdAt: "2026-08-18T01:00:00.000Z",
+    updatedAt: "2026-08-18T01:04:00.000Z",
+  } as const;
+  const newerGoal = {
+    ...pulledGoal,
+    objective: "Newer Goal notification",
+    status: "paused",
+    tokensUsed: 3_100,
+    updatedAt: "2026-08-18T01:05:00.000Z",
+  } as const;
+
+  class GoalHydrateRaceSession extends TestAgentSession {
+    readonly goalControl: NonNullable<AgentSession["goalControl"]> = {
+      get: async () => pulledGoal,
+      set: async () => newerGoal,
+      clear: async () => {},
+    };
+
+    flushPreSubscriptionEvents(): void {
+      this.pushEvent({ type: "goal_changed", provider: "codex", goal: newerGoal });
+    }
+  }
+
+  const session = new GoalHydrateRaceSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+  const publishedGoals: Array<string | null | undefined> = [];
+  const unsubscribe = manager.subscribe(
+    (event) => {
+      if (event.type === "agent_state") {
+        publishedGoals.push(event.agent.goal?.objective);
+      }
+    },
+    { agentId, replayState: false },
+  );
+
+  try {
+    const resumed = await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "native-goal-hydrate-race-thread",
+        metadata: { cwd: workdir },
+      },
+      undefined,
+      agentId,
+    );
+
+    expect(toAgentPayload(resumed)).toMatchObject({
+      goal: newerGoal,
+      goalStep: null,
+      goalSync: "synced",
+    });
+    unsubscribe();
+    expect(publishedGoals).toEqual([newerGoal.objective]);
+  } finally {
+    unsubscribe();
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("resumeAgentFromPersistence keeps Goal objectives out of manager event logs", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-log-privacy-"));
+  const agentId = "00000000-0000-4000-8000-00000000019b";
+  const sentinel = "MANAGER_GOAL_OBJECTIVE_MUST_NOT_REACH_LOGS";
+  const goal = {
+    objective: sentinel,
+    status: "active",
+    tokenBudget: null,
+    tokensUsed: 10,
+    timeUsedSeconds: 2,
+    createdAt: "2026-08-18T01:00:00.000Z",
+    updatedAt: "2026-08-18T01:00:02.000Z",
+  } as const;
+  const logChunks: string[] = [];
+  const logStream = new PassThrough();
+  logStream.on("data", (chunk) => logChunks.push(String(chunk)));
+  const privacyLogger = pino({ level: "trace" }, logStream);
+
+  class GoalLoggingSession extends TestAgentSession {
+    readonly goalControl: NonNullable<AgentSession["goalControl"]> = {
+      get: async () => goal,
+      set: async () => goal,
+      clear: async () => {},
+    };
+
+    flushPreSubscriptionEvents(): void {
+      this.pushEvent({ type: "goal_changed", provider: "codex", goal });
+    }
+  }
+
+  const session = new GoalLoggingSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), privacyLogger),
+    logger: privacyLogger,
+  });
+
+  try {
+    await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "native-goal-log-privacy-thread",
+        metadata: { cwd: workdir },
+      },
+      undefined,
+      agentId,
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    const output = logChunks.join("");
+    expect(output).not.toContain(sentinel);
+    expect(output).toContain(`"objectiveLength":${sentinel.length}`);
   } finally {
     await manager.closeAgent(agentId);
     rmSync(workdir, { recursive: true, force: true });
@@ -4675,6 +4830,7 @@ test("terminateAgentGoal clears the Goal before interrupting the active turn", a
       ok: true,
       goal: null,
       goalStep: null,
+      goalSync: "synced",
       clear: "cleared",
       interrupt: "interrupted",
       outcome: "stopped",
@@ -4740,6 +4896,7 @@ test("terminateAgentGoal is idempotent when the Goal is already absent and no tu
       ok: true,
       goal: null,
       goalStep: null,
+      goalSync: "synced",
       clear: "already_absent",
       interrupt: "not_running",
       outcome: "stopped",
@@ -4766,6 +4923,11 @@ test("terminateAgentGoal skips interrupt when clearing the Goal fails", async ()
     updatedAt: "2026-08-18T23:03:00.000Z",
   } as const;
   const actions: string[] = [];
+  const sentinel = "GOAL_CLEAR_ERROR_MUST_NOT_REACH_LOGS";
+  const logChunks: string[] = [];
+  const logStream = new PassThrough();
+  logStream.on("data", (chunk) => logChunks.push(String(chunk)));
+  const privacyLogger = pino({ level: "warn" }, logStream);
 
   class ClearFailedGoalSession extends TestAgentSession {
     readonly goalControl: NonNullable<AgentSession["goalControl"]> = {
@@ -4773,7 +4935,7 @@ test("terminateAgentGoal skips interrupt when clearing the Goal fails", async ()
       set: async () => goal,
       clear: async () => {
         actions.push("clear");
-        throw new Error("provider refused Goal clear");
+        throw new Error(sentinel);
       },
     };
 
@@ -4790,8 +4952,8 @@ test("terminateAgentGoal skips interrupt when clearing the Goal fails", async ()
   })();
   const manager = new AgentManager({
     clients: { codex: client },
-    registry: new AgentStorage(join(workdir, "agents"), logger),
-    logger,
+    registry: new AgentStorage(join(workdir, "agents"), privacyLogger),
+    logger: privacyLogger,
     rescueTimeouts: { interruptSessionMs: 10 },
   });
 
@@ -4812,6 +4974,7 @@ test("terminateAgentGoal skips interrupt when clearing the Goal fails", async ()
       ok: false,
       goal,
       goalStep: null,
+      goalSync: "stale",
       clear: "failed",
       interrupt: "skipped",
       outcome: "failed",
@@ -4823,6 +4986,9 @@ test("terminateAgentGoal skips interrupt when clearing the Goal fails", async ()
     });
     expect(actions).toEqual(["clear"]);
     expect(manager.getAgent(agentId)?.goal).toEqual(goal);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(logChunks.join("")).not.toContain(sentinel);
+    expect(logChunks.join("")).toContain('"goalErrorCode":"clear_failed"');
   } finally {
     await manager.closeAgent(agentId);
     rmSync(workdir, { recursive: true, force: true });
@@ -4889,6 +5055,7 @@ test("terminateAgentGoal reports a partial success when the active turn cannot b
       ok: false,
       goal: null,
       goalStep: null,
+      goalSync: "synced",
       clear: "cleared",
       interrupt: "failed",
       outcome: "goal_cleared_turn_running",
@@ -4960,6 +5127,7 @@ test("terminateAgentGoal rejects a stale expected generation without mutating th
       ok: false,
       goal,
       goalStep: null,
+      goalSync: "synced",
       clear: "failed",
       interrupt: "skipped",
       outcome: "failed",
@@ -4991,6 +5159,7 @@ test("terminateAgentGoal returns a structured not-found result", async () => {
       ok: false,
       goal: null,
       goalStep: null,
+      goalSync: "stale",
       clear: "failed",
       interrupt: "skipped",
       outcome: "failed",
@@ -5023,6 +5192,7 @@ test("terminateAgentGoal returns a structured unsupported result", async () => {
       ok: false,
       goal: null,
       goalStep: null,
+      goalSync: "stale",
       clear: "failed",
       interrupt: "skipped",
       outcome: "failed",
@@ -5109,6 +5279,7 @@ test("terminateAgentGoal shares the per-Agent mutation lane with Goal updates", 
       ok: true,
       goal: null,
       goalStep: null,
+      goalSync: "synced",
       clear: "cleared",
       interrupt: "not_running",
       outcome: "stopped",

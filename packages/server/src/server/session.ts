@@ -3958,9 +3958,12 @@ export class Session {
   private goalOperationError(
     agentId: string,
     operation: "read" | "update" | "terminate",
-    error: unknown,
+    _error: unknown,
   ): AgentGoalError {
-    this.sessionLogger.warn({ err: error, agentId, operation }, "Agent Goal operation failed");
+    this.sessionLogger.warn(
+      { agentId, operation, goalErrorCode: "provider_error" },
+      "Agent Goal operation failed",
+    );
     let message: string;
     switch (operation) {
       case "read":
@@ -4032,6 +4035,7 @@ export class Session {
         ok: false,
         goal: null,
         goalStep: null,
+        goalSync: "stale" as const,
         clear: "failed" as const,
         interrupt: "skipped" as const,
         outcome: "failed" as const,
@@ -4045,6 +4049,7 @@ export class Session {
           ok: false,
           goal: null,
           goalStep: null,
+          goalSync: "stale" as const,
           clear: "failed" as const,
           interrupt: "skipped" as const,
           outcome: "failed" as const,

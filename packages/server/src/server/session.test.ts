@@ -2,7 +2,8 @@ import { execSync } from "child_process";
 import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join, resolve as resolvePath } from "path";
-import pino from "pino";
+import { PassThrough } from "stream";
+import pino, { type Logger } from "pino";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import {
@@ -285,6 +286,7 @@ vi.mock("./worktree-bootstrap.js", async (importOriginal) => {
 });
 
 interface SessionForTestOptions {
+  logger?: Logger;
   scopes?: readonly string[];
   agentManager?: { [K in keyof SessionOptions["agentManager"]]?: unknown };
   agentStorage?: { [K in keyof SessionOptions["agentStorage"]]?: unknown };
@@ -328,7 +330,7 @@ interface SessionForTestOptions {
 }
 
 function createSessionForTest(options: SessionForTestOptions = {}): Session {
-  const logger = pino({ level: "silent" });
+  const logger = options.logger ?? pino({ level: "silent" });
   const github = options.github ?? {
     invalidate: vi.fn(),
     searchIssuesAndPrs: vi.fn(),
@@ -658,6 +660,7 @@ describe("Agent Goal RPCs", () => {
       ok: false,
       goal: null,
       goalStep: null,
+      goalSync: "synced",
       clear: "cleared",
       interrupt: "failed",
       outcome: "goal_cleared_turn_running",
@@ -693,6 +696,7 @@ describe("Agent Goal RPCs", () => {
           ok: false,
           goal: null,
           goalStep: null,
+          goalSync: "synced",
           clear: "cleared",
           interrupt: "failed",
           outcome: "goal_cleared_turn_running",
@@ -702,6 +706,39 @@ describe("Agent Goal RPCs", () => {
             message: "The Goal was cleared, but its active turn could not be interrupted.",
           },
         },
+      },
+    ]);
+  });
+
+  test("does not log provider error details from a failed Goal termination", async () => {
+    const agentId = "00000000-0000-4000-8000-000000000231";
+    const sentinel = "SESSION_GOAL_ERROR_MUST_NOT_REACH_LOGS";
+    const chunks: string[] = [];
+    const stream = new PassThrough();
+    stream.on("data", (chunk) => chunks.push(String(chunk)));
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({
+      logger: pino({ level: "warn" }, stream),
+      messages,
+      agentManager: {
+        getAgent: vi.fn(() => ({ id: agentId, provider: "codex", lifecycle: "idle" })),
+        terminateAgentGoal: vi.fn().mockRejectedValue(new Error(sentinel)),
+      },
+    });
+
+    await session.handleMessage({
+      type: "agent.goal.terminate.request",
+      requestId: "goal-terminate-provider-error",
+      agentId,
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(chunks.join("")).not.toContain(sentinel);
+    expect(chunks.join("")).toContain('"goalErrorCode":"provider_error"');
+    expect(messages).toMatchObject([
+      {
+        type: "agent.goal.terminate.response",
+        payload: { goalSync: "stale", error: { code: "provider_error" } },
       },
     ]);
   });
@@ -869,6 +906,7 @@ describe("Agent Goal RPCs", () => {
           ok: false,
           goal: null,
           goalStep: null,
+          goalSync: "stale",
           clear: "failed",
           interrupt: "skipped",
           outcome: "failed",

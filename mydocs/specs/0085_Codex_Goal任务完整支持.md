@@ -1,29 +1,29 @@
 # Codex Goal 任务完整支持 Spec
 
-本 Spec 覆盖 Codex Goal 的协议、daemon、Codex provider、App 和恢复验证；自动化实施已完成，当前进入 Review 与真实环境手工验收。
+本 Spec 覆盖 Codex Goal 的协议、daemon、Codex provider、App 和恢复验证；自动化实施、提交后审查修复和本轮复验已完成，当前等待真实环境手工验收。
 
 ## 0. 状态与索引
 
-| 字段              | 值                                               |
-| ----------------- | ------------------------------------------------ |
-| task_id           | `0085`                                           |
-| spec layer        | `Feature Spec`                                   |
-| task status       | `待手工验收`                                     |
-| mode              | `single_project`                                 |
-| phase             | `Review`                                         |
-| approval status   | `Plan Approved`                                  |
-| approval source   | `User / Plan Approved / 2026-08-18`              |
-| spec path         | `mydocs/specs/0085_Codex_Goal任务完整支持.md`    |
-| parent spec       | `N/A`                                            |
-| supersedes        | `N/A`                                            |
-| current task unit | `自动验证完成；等待真实 Codex kill/restart 验收` |
-| created / updated | `2026-08-18 / 2026-08-19 11:30 +08:00`           |
+| 字段              | 值                                                                       |
+| ----------------- | ------------------------------------------------------------------------ |
+| task_id           | `0085`                                                                   |
+| spec layer        | `Feature Spec`                                                           |
+| task status       | `待手工验收`                                                             |
+| mode              | `single_project`                                                         |
+| phase             | `Review`                                                                 |
+| approval status   | `Plan Approved`                                                          |
+| approval source   | `User / Plan Approved / 2026-08-18`                                      |
+| spec path         | `mydocs/specs/0085_Codex_Goal任务完整支持.md`                            |
+| parent spec       | `N/A`                                                                    |
+| supersedes        | `N/A`                                                                    |
+| current task unit | `审查修复、目标自动验证和静态复核完成；等待真实 Codex kill/restart 验收` |
+| created / updated | `2026-08-18 / 2026-08-20 01:42 +08:00`                                   |
 
 ## 1. 目标、范围与完成契约
 
 - 背景/问题：Paseo 目前只把 `/goal` 当作 provider 的 out-of-band 文本命令转发。Goal 没有一等标识、持久状态和用量投影，App 也没有暂停、恢复、编辑或终止控件。Agent 进程被杀、Paseo 关闭或 daemon 重启后，Codex 可能在 `thread/resume` 期间自动继续 Goal；由于 AgentManager 尚未订阅 provider 事件且随后无条件写入 `idle`，Paseo 会丢掉 `turn_started`/`thread/status/changed`，界面既不显示 Goal，也不会进入 Working。
 - 最终目标：把 Goal 作为 provider-owned、provider-neutral 的可选一等投影贯穿 protocol、daemon、Codex provider、client 和 App；在 composer 上方显示目标、状态、用量和当前步骤，提供暂停、恢复、暂停态编辑 Goal objective、终止；在异常恢复和重连时以 provider 权威状态追平，且不以本地投影替代 Codex 的 Goal scheduler 或 Agent lifecycle。
-- 当前任务单元：协议、daemon、Codex provider、App、恢复链路和自动验证已经完成；保留真实 Codex kill/restart 与实际 App 交互作为手工验收。
+- 当前任务单元：协议、daemon、Codex provider、App、恢复链路和自动验证已经完成；唯一保留的手工验收项是真实 Codex 进程 kill/restart。
 - 范围内：
   - provider-neutral Goal 类型、状态、同步状态、当前步骤投影、错误码和 capability gate。
   - `agent.goal.get/update/terminate` 点分 RPC、client 相关方法、旧新 wire 双向兼容和 zod-aot 验证。
@@ -255,7 +255,7 @@ agent.goal.terminate.request;
 
 agent.goal.terminate.response;
 // { type, payload: {
-//   requestId, agentId, ok, goal, goalStep,
+//   requestId, agentId, ok, goal, goalStep, goalSync?,
 //   clear: "cleared" | "already_absent" | "failed",
 //   interrupt: "interrupted" | "not_running" | "failed" | "skipped",
 //   outcome: "stopped" | "goal_cleared_turn_running" | "failed",
@@ -286,12 +286,13 @@ agent.goal.terminate.response;
 - [x] 6. Manager projection/control：实现 generation/current-step 过滤、per-Agent mutation lane、pause/resume/edit、clear→interrupt terminate 组合和部分成功响应；确保旧 turn plan 不复活。
 - [x] 7. Public RPC/client：接入 websocket/session handler、capability gate、correlation、权限和错误翻译；补旧 App/旧 daemon兼容测试。
 - [x] 8. App model/UI：先完成纯 presentation/action matrix，再接 SessionStore/ReplicaCache；在 composer 上方实现 Goal track、current step、usage、draft/pending/stale/error、i18n 和跨平台 editor。
-- [x] 9. Browser E2E：用最小 fake daemon 验证 Goal 显示、pause、resume、paused objective edit、usage reset 提示、terminate partial result、reconnect recovery、旧 gate 隐藏；不启动受保护的 `6767` daemon。
+- [x] 9. Browser E2E：用隔离真实 daemon 和 opt-in mock provider 验证 Goal 显示、pause、resume、paused objective edit、usage reset 提示、terminate partial result、reload 后 stale/retry 和不支持 provider 隐藏；不启动受保护的 `6767` daemon。
 - [x] 10. 文档和最终验证：更新 providers/architecture，运行受影响 Vitest、browser slice、`npm run typecheck`、`npm run lint`、目标格式检查，审阅 schema/wire diff 和进程/端口回收。
+- [x] 11. 提交后审查修复：脱敏 raw/parsed/provider/manager Goal 日志和异常日志；在 terminate response 透传权威 `goalSync`，旧 daemon 缺字段时由 App 保守降为 `stale`；将 Goal 交互收敛为 reducer、objective editor 收敛为纯 TypeScript form model；以 opt-in mock provider 替换 Browser WebSocket 合成 fixture。
 
 ### 3.5 执行前检查点
 
-- 当前目标与任务单元：自动化实现和文档已完成，等待真实 Codex kill/restart 与实际 App 交互验收。
+- 当前目标与任务单元：自动化实现和文档已完成，唯一等待项是真实 Codex 进程 kill/restart 验收。
 - 当前 phase：`Review`
 - approval status / source：`Plan Approved / User / 2026-08-18`
 - 下一步：在不触碰受保护 `6767` 的隔离环境完成真实 Codex kill/restart 手工验收；若需操作现有 daemon，先取得用户明确许可。
@@ -306,41 +307,43 @@ agent.goal.terminate.response;
 
 ## 5. 执行记录
 
-| 步骤/子项  | 实际变化或子 Spec 锚点 | 状态   | 偏差与处理                                                                                                                    |
-| ---------- | ---------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------- |
-| Plan       | 本文档 0-3.5           | 已批准 | `User / Plan Approved / 2026-08-18`                                                                                           |
-| Baseline   | 3.4 第 1 项            | 已完成 | PR #3179/#2333 仍 OPEN；mergeability 本次查询为 UNKNOWN；保留 dirty worktree，不拉取或合并                                    |
-| Protocol   | 3.4 第 2 项            | 已完成 | wire/AOT 13/13、client 127/127、SDK 11/11；protocol/client typecheck 通过                                                     |
-| Provider   | 3.4 第 3-4 项          | 已完成 | native Goal get/set/clear、Goal/status notification、status pull、resume 前 FIFO event drain 与 wrapper forwarding 均已 GREEN |
-| Manager    | 3.4 第 5-6 项          | 已完成 | Goal slice 31/31；恢复、current-step、mutation lane 与 terminate 部分成功均 GREEN；server workspace typecheck PASS            |
-| Public RPC | 3.4 第 7 项            | 已完成 | Session Goal 9/9、capability handshake 1/1、server workspace typecheck PASS；client correlation 先前已 GREEN                  |
-| App        | 3.4 第 8 项            | 已完成 | model/presentation 14/14、snapshot projection 7/7、i18n 与 client build GREEN；Goal track 已接入 composer                     |
-| Browser    | 3.4 第 9 项            | 已完成 | 2/2；覆盖失败重试、pause/edit/resume、generation、断线 stale/retry、terminate partial 和旧 capability gate                    |
-| Docs/Final | 3.4 第 10 项           | 已完成 | `docs/architecture.md`/`docs/providers.md` 已同步；目标 lint、server typecheck、格式与 whitespace 检查通过                    |
+| 步骤/子项  | 实际变化或子 Spec 锚点 | 状态   | 偏差与处理                                                                                                                                                                                   |
+| ---------- | ---------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Plan       | 本文档 0-3.5           | 已批准 | `User / Plan Approved / 2026-08-18`                                                                                                                                                          |
+| Baseline   | 3.4 第 1 项            | 已完成 | PR #3179/#2333 仍 OPEN；mergeability 本次查询为 UNKNOWN；保留 dirty worktree，不拉取或合并                                                                                                   |
+| Protocol   | 3.4 第 2 项            | 已完成 | 本轮 protocol 定向 26/26；terminate `goalSync` 保持 additive optional，新旧响应兼容均 GREEN                                                                                                  |
+| Provider   | 3.4 第 3-4 项          | 已完成 | Codex Goal slice 6/6、App Server transport 9/9、opt-in mock provider 19/19；native Goal/status、resume FIFO 与 wrapper forwarding 均 GREEN；完整 provider 文件保留范围外 fake-server timeout |
+| Manager    | 3.4 第 5-6 项          | 已完成 | `agent-manager.test.ts` 全文件 209/209；Session Goal slice 10/10；恢复、current-step、mutation lane、日志脱敏与 terminate freshness 均 GREEN                                                 |
+| Public RPC | 3.4 第 7 项            | 已完成 | Session Goal slice 10/10（此前 server Goal 合集 49/49）；capability handshake、terminate freshness、correlation 与结构化错误均 GREEN                                                         |
+| App        | 3.4 第 8 项            | 已完成 | 本轮 Goal model/presentation/objective form 18/18；交互 reducer、旧 daemon freshness 和 client build GREEN；Goal track 已接入 composer                                                       |
+| Browser    | 3.4 第 9、11 项        | 已完成 | 最终 2/2；已删除 Goal `routeWebSocket` 合成 fixture，真实浏览器经隔离 daemon、mock provider、manager 与 RPC 覆盖 stale/retry、pause/edit/resume 和 terminate partial                         |
+| Review Fix | 3.4 第 11 项           | 已完成 | Goal 日志 sentinel、terminate freshness、App reducer/form model、opt-in mock Goal adapter、公共 named input types 和注册恢复 helper 均按 RED→GREEN 修复                                      |
+| Docs/Final | 3.4 第 10-11 项        | 已完成 | `docs/architecture.md` 已同步 terminate freshness 兼容规则；目标 lint、server/client/protocol typecheck、build、格式与 whitespace 检查重新执行                                               |
 
 ## 6. 验证
 
-| 项目/验收项      | 命令或步骤                                                                                                                            | 结果    | 证据                                                                                                                                            | 未验证原因                                                                                              |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| Spec 模板与结构  | `npm run format:check:files -- mydocs/todolist.md mydocs/specs/0085_Codex_Goal任务完整支持.md docs/architecture.md docs/providers.md` | PASS    | 2026-08-19；任务文档和长期文档通过目标 formatter                                                                                                | N/A                                                                                                     |
-| Protocol wire    | 受影响 `vitest` + AOT validation                                                                                                      | PASS    | wire 13/13、AOT 13/13、client 127/127、SDK 11/11；protocol/client typecheck PASS                                                                | N/A                                                                                                     |
-| Resume/lifecycle | `agent-manager.test.ts --bail=1` 的 Goal slice                                                                                        | PASS    | Goal 31/31；恢复、generation、mutation lane、terminate 部分成功均通过；全文件仅一个非 Goal 历史回放用例触发 5 秒环境 timeout，单独重跑 2/2 PASS | N/A                                                                                                     |
-| Codex provider   | `codex-app-server-agent.test.ts --bail=1`                                                                                             | PASS    | 142/142；fake JSON-RPC 覆盖 Goal/status/turn/plan resume FIFO                                                                                   | N/A                                                                                                     |
-| Public RPC       | `session.test.ts` Goal slice                                                                                                          | PASS    | 9/9；覆盖 get/update/terminate、恢复加载、correlation 与错误响应                                                                                | N/A                                                                                                     |
-| App model/state  | Goal model/presentation 与 snapshot 定向 Vitest                                                                                       | PASS    | model/presentation 14/14、snapshot 7/7；i18n 与 `build:client` GREEN                                                                            | N/A                                                                                                     |
-| App Browser E2E  | `goal-control.spec.ts`                                                                                                                | PASS    | 2/2；真实浏览器与隔离 daemon 网络覆盖完整控制、reconnect 和旧 gate                                                                              | N/A                                                                                                     |
-| 真实 Codex smoke | `codex-goal-mid-turn.real.e2e.test.ts --maxWorkers=1 --bail=1`                                                                        | SKIP    | `codex-cli 0.147.0` 已确认；1 个测试文件加载成功，3 项因该套件所需外部测试凭据不可用而条件跳过                                                  | 凭据条件不满足，且未执行真实 kill/restart                                                               |
-| 静态门禁         | `npm run typecheck`、`npm run lint`、目标 oxlint                                                                                      | PARTIAL | server workspace typecheck 与 0085 目标文件 lint PASS；根命令已执行                                                                             | 根命令仅被并行 0086 的 `sidebar-workspace-activity-time.test.tsx` 类型错误和两项 lint 阻断，不属于 0085 |
+| 项目/验收项      | 命令或步骤                                                                                                            | 结果 | 证据                                                                                                                                                                                                                        | 未验证原因                                                                                                                            |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Spec 模板与结构  | `npm run format:check:files -- <0085 目标文件>`                                                                       | PASS | 2026-08-20；26 个 0085 目标代码/Spec/docs 文件通过 formatter；`git diff --check` PASS；并行改动的总表未纳入本轮目标格式检查                                                                                                 | N/A                                                                                                                                   |
+| Protocol wire    | `messages.wire-compat.test.ts` + AOT validation                                                                       | PASS | wire compatibility 13/13、AOT validation 13/13（合计 26/26）；terminate `goalSync` 为 additive optional，覆盖新响应保真和旧响应缺字段                                                                                       | N/A                                                                                                                                   |
+| Resume/lifecycle | `agent-manager.test.ts --bail=1`                                                                                      | PASS | 全文件 209/209；恢复、generation、mutation lane、terminate 部分成功均通过；范围外 fake App Server compaction 用例仍有历史 `turn/start` 重复消费 timeout                                                                     | 已登记候选待办，未混入 0085                                                                                                           |
+| Codex provider   | `codex-app-server-agent.test.ts -t "[Gg]oal" --bail=1`                                                                | PASS | Goal slice 6/6；App Server transport 9/9；完整 provider 文件的一个 compaction/retry 用例受范围外 fake wait bug 影响，未将该修复混入 0085                                                                                    | 范围外 fake-server 问题                                                                                                               |
+| Mock provider    | `mock-load-test-agent.test.ts --bail=1`                                                                               | PASS | 19/19；覆盖 opt-in Goal get/set/clear、确定性 update/interrupt failure 和真实 daemon E2E adapter                                                                                                                            | N/A                                                                                                                                   |
+| Public RPC       | `session.test.ts -t "Goal" --bail=1`                                                                                  | PASS | Goal slice 10/10；覆盖 terminate freshness、异常脱敏、恢复加载、correlation 与错误响应                                                                                                                                      | N/A                                                                                                                                   |
+| App model/state  | Goal model/presentation 与 objective form model 定向 Vitest                                                           | PASS | 本轮 18/18；交互 reducer、旧 daemon terminate 保守 stale、draft/validation 纯模型均 GREEN                                                                                                                                   | N/A                                                                                                                                   |
+| App Browser E2E  | `npx playwright test --project=browser e2e/browser/goal-control.spec.ts`                                              | PASS | `.last-run.json` 为 `passed`，2/2；不再拦截 Goal WebSocket，真实隔离 daemon 链路覆盖失败、reload stale/retry、编辑和 terminate partial；两次用例前 Metro 冷 warmup 超时后，同入口 bundle 探针成功并在缓存建立后完成最终执行 | N/A                                                                                                                                   |
+| 真实 Codex smoke | `codex-goal-mid-turn.real.e2e.test.ts --maxWorkers=1 --bail=1`                                                        | SKIP | `codex-cli 0.147.0` 已确认；1 个测试文件加载成功，3 项因该套件所需外部测试凭据不可用而条件跳过                                                                                                                              | 凭据条件不满足，且未执行真实 kill/restart                                                                                             |
+| 静态门禁         | `npm run typecheck:server`、client/protocol typecheck、`npm run lint`、`npm run build:client`、`npm run build:server` | PASS | server/client/protocol typecheck、根 lint（0 warnings/errors）、client build、server build 均通过                                                                                                                           | 根 `npm run typecheck` 仍被并行任务改动的 `packages/app/src/tool-calls/detail-level/projection.test.ts` 3 个既有类型错误阻断；非 0085 |
 
-- 集成验证：自动化已覆盖旧 App/新 daemon 的可选 wire、新 App/旧 daemon capability 隐藏、Goal 不支持、断线 reconnect、无 active turn terminate、clear→interrupt 部分成功和恢复 hydrate/FIFO 顺序。
+- 集成验证：自动化已覆盖旧 App/新 daemon 的可选 wire、新 App/旧 daemon 的 terminate freshness 缺字段、Goal 不支持、浏览器 reload reconnect、无 active turn terminate、clear→interrupt 部分成功和恢复 hydrate/FIFO 顺序；Browser Goal 行为经真实隔离 daemon 而非合成 transport。
 - 剩余风险：真实 Codex 进程 kill/restart 尚未验收；不同 Codex 版本对 `blocked/usageLimited/budgetLimited` resume 的 native 行为仍由结构化 provider 错误兜底；#3179/#2333 后续合并可能造成重叠冲突。current step 写入不是未完成项，而是因 0.147.0 无 native RPC 而明确保持只读。
-- Done Contract 是否由证据满足：`自动化部分已满足；真实 Codex kill/restart 和实际 App 交互仍待手工验收。`
+- Done Contract 是否由证据满足：`自动化部分已满足；唯一未验收项是真实 Codex 进程 kill/restart。`
 
 ## 7. 评审（Review）
 
 | 评审轴             | 结论      | 证据或阻塞问题                                                                |
 | ------------------ | --------- | ----------------------------------------------------------------------------- |
-| 目标与 Spec 完成度 | `PARTIAL` | 全范围实现和自动化完成；只剩真实 Codex kill/restart 与实际 App 手工验收       |
+| 目标与 Spec 完成度 | `PARTIAL` | 全范围实现和自动化完成；只剩真实 Codex 进程 kill/restart 手工验收             |
 | Spec 与执行一致性  | `PASS`    | RPC、generation、恢复顺序、只读 step、编辑和 terminate 语义均按批准 Plan 落地 |
 | 实现质量与风险     | `PASS`    | 分层公共 seam、provider adapter、权威投影和真实浏览器测试均有 GREEN 证据      |
 
@@ -362,11 +365,11 @@ agent.goal.terminate.response;
 | ---------- | ------------- | ------------------------------------------- |
 | `N/A`      | `N/A`         | 单项目任务按模板不登记 touched-project 子表 |
 
-- Orphan changes：`None attributable to 0085；工作区存在 0084、0086、0079 等并行任务改动，均未纳入或回退。根 typecheck/lint 的 sidebar 阻塞属于 0086。`
+- Orphan changes：`None attributable to 0085；工作区存在 0084、0086、0092、0100 等并行任务改动，均未纳入或回退。0085 的 26 个目标代码/Spec/docs 文件格式检查已通过；任务总表因共享并行改动单独保留。`
 
 ## 8. 偏差、变更与反向同步
 
-- Plan-Execution Diff：`无产品契约偏差。App 组件行为以纯 model/presentation Vitest 和真实 Playwright 覆盖，没有保留依赖 JSDOM/vi.mock 的实现耦合组件测试；真实 Codex smoke 已尝试但因所需外部测试凭据不可用而跳过，kill/restart 保留为手工验收；根静态门禁只受 0086 并行改动阻断。`
+- Plan-Execution Diff：`无产品契约偏差。App 组件行为以纯 model/presentation/form Vitest 和真实 Playwright 覆盖，没有保留依赖 JSDOM/vi.mock 的实现耦合组件测试；Browser fixture 从合成 WebSocket 升级为隔离真实 daemon + opt-in mock provider；真实 Codex smoke 已尝试但因所需外部测试凭据不可用而跳过，kill/restart 保留为手工验收；lint、server/client/protocol typecheck 和 build 均通过，根 typecheck 仅受范围外 App 类型错误阻断。`
 - Change Log：
   - `2026-08-18`：按用户要求忽略远端停止门禁，创建完整范围 `0085` Heavy Spec。
   - `2026-08-18`：将 #3179/#2333/#3083 记录为重叠/风险输入，不把任何远端 PR 设为前置依赖。
@@ -374,6 +377,8 @@ agent.goal.terminate.response;
   - `2026-08-18`：用户明确回复 `Plan Approved`，按 Protocol→provider→manager→RPC→App→Browser 的 RED→GREEN 清单实施。
   - `2026-08-19`：完成 App、Browser、长期文档和最终自动化检查；真实 Codex smoke 因凭据条件跳过，任务进入待手工验收。
   - `2026-08-19`：用户授权为 0085 创建独立本地 commit，明确不 push；提交后以该 commit 为固定基线执行 Standards/Spec 静态审查。
+  - `2026-08-19`：修复提交后审查发现的 Goal objective 日志泄露、terminate freshness 丢失、App 多状态/表单模型违规、箭头函数规则和 mocked Browser transport；重新通过定向测试与真实隔离 daemon Browser E2E。
+  - `2026-08-20`：修复复核发现的 mock Goal 匿名 mutation input 和恢复注册方法复杂度/类型收窄问题；重新通过 manager 209/209、mock 19/19、Goal provider 6/6、transport 9/9、Browser 2/2、lint、目标格式、server/client/protocol typecheck 与双 workspace build。
 - 用户决策：
   - 已明确继续创建 Spec，不因远端 PR 停止。
   - `Plan Approved` 已于 `2026-08-18` 给出。
@@ -382,7 +387,7 @@ agent.goal.terminate.response;
 
 ## 9. 恢复、长期知识与提交关联
 
-- 状态说明：`待手工验收 / Review / Plan Approved`；完整实现与自动验证已完成，本次创建独立本地 commit，不 push 或执行其他远端写入。
+- 状态说明：`待手工验收 / Review / Plan Approved`；完整实现、提交后审查修复、目标验证与静态复核已完成；本轮修复尚未创建新 commit，也未 push 或执行其他远端写入。
 - 当前卡点：真实 Codex 测试套件所需外部凭据不可用，3 项条件跳过；实际 kill/restart 恢复尚无真实 provider 证据。
 - 下一步唯一动作：在隔离 daemon 上启动真实 Codex Goal，分别杀死 Agent 进程和重启 Paseo，确认 Goal track、current step 与 Agent `running` 自动恢复；未经明确许可不操作受保护的 `6767`。
 - Resume / Handoff 锚点：实现无需继续；若手工验收失败，从 `subscribe → flush/drain → execution/Goal hydrate → drain → persist/broadcast` 顺序和 `codex-app-server-agent.ts` 的 pre-subscription FIFO 开始诊断，保留所有并行 dirty diff。
@@ -396,3 +401,4 @@ agent.goal.terminate.response;
 | 提交信息（Commit Message）                    | 提交脚注（Commit Footer） | 关联项目 / 改动或阶段   | 文档同步状态 | 备注                         |
 | --------------------------------------------- | ------------------------- | ----------------------- | ------------ | ---------------------------- |
 | `feat: support Codex Goal lifecycle controls` | `N/A`                     | `paseo / 0085 完整实现` | `已同步`     | 用户授权本地 commit；不 push |
+| `fix: address Codex Goal review findings`     | `N/A`                     | `paseo / 0085 审查修复` | `已同步`     | 用户授权本地 commit；不 push |

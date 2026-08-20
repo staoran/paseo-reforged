@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState, type ReactElement } from "react";
+import React, { useCallback, useMemo, useReducer, type ReactElement } from "react";
 import { Pause, Pencil, Play, RotateCw, Square, Target } from "lucide-react-native";
 import { Pressable, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
@@ -22,7 +22,14 @@ import { useSessionStore, type Agent } from "@/stores/session-store";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { toErrorMessage } from "@/utils/error-messages";
 import { formatDurationWithSeconds } from "@/utils/time";
-import { applyGoalProjection, validateGoalObjective, type GoalProjection } from "./model";
+import {
+  INITIAL_GOAL_INTERACTION_STATE,
+  applyGoalProjection,
+  goalProjectionFromTerminateResponse,
+  reduceGoalInteraction,
+  type GoalProjection,
+} from "./model";
+import { useGoalObjectiveFormModel, useGoalObjectiveFormState } from "./use-objective-form-model";
 import { buildGoalPresentation, shouldShowAgentGoalTrack } from "./presentation";
 import type { GoalActionId, GoalActionPresentation, GoalPresentation } from "./presentation";
 
@@ -92,13 +99,19 @@ const GOAL_ACTION_ICONS: Record<GoalActionId, typeof ThemedPause> = {
 };
 
 /** Theme mapping for ordinary Goal controls. */
-const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+function mutedColorMapping(theme: Theme): { color: string } {
+  return { color: theme.colors.foregroundMuted };
+}
 
 /** Theme mapping for the destructive Goal command. */
-const destructiveColorMapping = (theme: Theme) => ({ color: theme.colors.destructive });
+function destructiveColorMapping(theme: Theme): { color: string } {
+  return { color: theme.colors.destructive };
+}
 
 /** Theme mapping for the active Goal marker. */
-const runningColorMapping = (theme: Theme) => ({ color: theme.colors.statusDotRunning });
+function runningColorMapping(theme: Theme): { color: string } {
+  return { color: theme.colors.statusDotRunning };
+}
 
 /** Translation key for each provider-neutral Goal state. */
 const GOAL_STATUS_KEYS: Record<AgentGoalStatus, string> = {
@@ -117,13 +130,14 @@ function applyGoalProjectionToStore(
   projection: GoalProjection,
 ): void {
   const store = useSessionStore.getState();
-  const updateAgent = (agents: Map<string, Agent>): Map<string, Agent> => {
+  /** Applies the projection to one Agent replica map when present. */
+  function updateAgent(agents: Map<string, Agent>): Map<string, Agent> {
     const current = agents.get(agentId);
     if (!current) return agents;
     const next = new Map(agents);
     next.set(agentId, applyGoalProjection(current, projection));
     return next;
-  };
+  }
   store.setAgents(serverId, updateAgent);
   store.setAgentDetails(serverId, updateAgent);
 }
@@ -173,9 +187,7 @@ function requestGoalAction(
         .terminateAgentGoal(agentId, { expectedGeneration: goal.createdAt })
         .then((response) => ({
           ok: response.ok,
-          goal: response.goal,
-          goalStep: response.goalStep,
-          goalSync: "synced" as const,
+          ...goalProjectionFromTerminateResponse(response),
           error: response.error,
         }));
     case "edit":
@@ -222,9 +234,13 @@ export function AgentGoalTrack({
       };
     }),
   );
-  const [pendingAction, setPendingAction] = useState<GoalActionId | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [editorGoal, setEditorGoal] = useState<AgentGoalSnapshot | null>(null);
+  const [interaction, dispatchInteraction] = useReducer(
+    reduceGoalInteraction,
+    INITIAL_GOAL_INTERACTION_STATE,
+  );
+  const pendingAction = interaction.phase === "pending" ? interaction.action : null;
+  const editorGoal = interaction.editorGoal;
+  const error = interaction.error;
   const presentation = useMemo(
     () =>
       buildGoalPresentation({
@@ -240,14 +256,12 @@ export function AgentGoalTrack({
       if (!state.client || !state.goal || pendingAction) return;
       if (action === "edit") {
         if (state.goal.status !== "paused") return;
-        setError(null);
-        setEditorGoal(state.goal);
+        dispatchInteraction({ type: "open_editor", goal: state.goal });
         return;
       }
       const request = requestGoalAction(state.client, agentId, state.goal, action);
       if (!request) return;
-      setPendingAction(action);
-      setError(null);
+      dispatchInteraction({ type: "action_started", action });
       void request
         .then((response) => {
           applyGoalProjectionToStore(serverId, agentId, {
@@ -256,30 +270,28 @@ export function AgentGoalTrack({
             goalSync: response.goalSync,
           });
           const message = response.error?.message ?? null;
-          setError(message);
+          dispatchInteraction({ type: "action_finished", ok: response.ok, error: message });
           if (message) toast.error(message);
           return undefined;
         })
         .catch((cause: unknown) => {
           const message = t("goals.errors.actionFailed", { message: toErrorMessage(cause) });
-          setError(message);
+          dispatchInteraction({ type: "action_finished", ok: false, error: message });
           toast.error(message);
-        })
-        .finally(() => setPendingAction(null));
+        });
     },
     [agentId, pendingAction, serverId, state.client, state.goal, t, toast],
   );
 
   const handleEditorClose = useCallback(() => {
     if (pendingAction) return;
-    setEditorGoal(null);
+    dispatchInteraction({ type: "close_editor" });
   }, [pendingAction]);
 
   const handleObjectiveSubmit = useCallback(
     (objective: string) => {
       if (!state.client || !editorGoal || pendingAction) return;
-      setPendingAction("edit");
-      setError(null);
+      dispatchInteraction({ type: "action_started", action: "edit" });
       void state.client
         .updateAgentGoal(
           agentId,
@@ -293,20 +305,18 @@ export function AgentGoalTrack({
             goalSync: response.goalSync,
           });
           const message = response.error?.message ?? null;
-          setError(message);
+          dispatchInteraction({ type: "action_finished", ok: response.ok, error: message });
           if (message) {
             toast.error(message);
             return undefined;
           }
-          if (response.ok) setEditorGoal(null);
           return undefined;
         })
         .catch((cause: unknown) => {
           const message = t("goals.errors.actionFailed", { message: toErrorMessage(cause) });
-          setError(message);
+          dispatchInteraction({ type: "action_finished", ok: false, error: message });
           toast.error(message);
-        })
-        .finally(() => setPendingAction(null));
+        });
     },
     [agentId, editorGoal, pendingAction, serverId, state.client, t, toast],
   );
@@ -382,25 +392,17 @@ function GoalObjectiveEditor({
 }: GoalObjectiveEditorProps): ReactElement {
   const { t } = useTranslation();
   const size = useIsCompactFormFactor() ? "md" : "sm";
-  const [draft, setDraft] = useState(goal.objective);
-  const [validationReason, setValidationReason] = useState<"empty" | "too_long" | null>(null);
+  const model = useGoalObjectiveFormModel({ objective: goal.objective });
+  const form = useGoalObjectiveFormState(model);
   const header = useMemo<SheetHeader>(() => ({ title: t("goals.editor.title") }), [t]);
-  const validationError = objectiveValidationError(validationReason, t);
+  const validationError = objectiveValidationError(form.validationReason, t);
 
-  const handleChange = useCallback((value: string) => {
-    setDraft(value);
-    setValidationReason(null);
-  }, []);
+  const handleChange = useCallback((value: string) => model.setDraft(value), [model]);
 
   const handleSubmit = useCallback(() => {
-    const validation = validateGoalObjective(draft);
-    if (!validation.ok) {
-      setValidationReason(validation.reason);
-      return;
-    }
-    setValidationReason(null);
-    onSubmit(validation.objective);
-  }, [draft, onSubmit]);
+    const objective = model.submit();
+    if (objective !== null) onSubmit(objective);
+  }, [model, onSubmit]);
 
   const footer = useMemo(
     () => (

@@ -347,6 +347,14 @@ export interface SendMessageOptions {
   attachments?: SendAgentMessageRequest["attachments"];
 }
 
+/** Optional correlation values accepted by Agent Goal mutations. */
+export interface PaseoAgentGoalMutationOptions {
+  /** Goal generation the caller expects to mutate. */
+  expectedGeneration?: string;
+  /** Caller-supplied correlation id. */
+  requestId?: string;
+}
+
 export interface AgentAttentionRequiredNotification {
   agentId: string;
   reason: "finished" | "error" | "permission";
@@ -2524,7 +2532,7 @@ export class DaemonClient {
   async updateAgentGoal(
     agentId: string,
     mutation: AgentGoalUpdateMutation,
-    options?: { expectedGeneration?: string; requestId?: string },
+    options?: PaseoAgentGoalMutationOptions,
   ): Promise<AgentGoalUpdateResponsePayload> {
     this.requireAgentGoalControlSupport();
     return this.sendNamespacedCorrelatedSessionRequest<"agent.goal.update.response">({
@@ -2541,7 +2549,7 @@ export class DaemonClient {
   /** Clears an Agent Goal and requests interruption of its active turn. */
   async terminateAgentGoal(
     agentId: string,
-    options?: { expectedGeneration?: string; requestId?: string },
+    options?: PaseoAgentGoalMutationOptions,
   ): Promise<AgentGoalTerminateResponsePayload> {
     this.requireAgentGoalControlSupport();
     return this.sendNamespacedCorrelatedSessionRequest<"agent.goal.terminate.response">({

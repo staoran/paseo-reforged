@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
+import pino, { type Logger } from "pino";
 
 import type {
   AgentLaunchContext,
@@ -112,12 +113,12 @@ function createConfig(overrides: Partial<AgentSessionConfig> = {}): AgentSession
 
 function createSession(
   configOverrides: Partial<AgentSessionConfig> = {},
-  options: { goalsEnabled?: boolean; autoReviewEnabled?: boolean } = {},
+  options: { goalsEnabled?: boolean; autoReviewEnabled?: boolean; logger?: Logger } = {},
 ): CodexTestSession {
   const session = new CodexAppServerAgentSession(
     createConfig(configOverrides),
     null,
-    createTestLogger(),
+    options.logger ?? createTestLogger(),
     () => {
       throw new Error("Test session cannot spawn Codex app-server");
     },
@@ -4697,6 +4698,44 @@ describe("Codex app-server provider", () => {
     ]);
   });
 
+  test("logs only Goal metadata for valid and invalid native notifications", async () => {
+    const sentinel = "PARSED_GOAL_OBJECTIVE_MUST_NOT_REACH_LOGS";
+    const chunks: string[] = [];
+    const stream = new PassThrough();
+    stream.on("data", (chunk) => chunks.push(String(chunk)));
+    const session = createSession(
+      {},
+      { goalsEnabled: true, logger: pino({ level: "trace" }, stream) },
+    );
+    session.subscribe(() => undefined);
+    const internals = castInternals<CodexSessionTestAccess>(session);
+
+    internals.handleNotification("thread/goal/updated", {
+      threadId: "test-thread",
+      goal: {
+        threadId: "test-thread",
+        objective: sentinel,
+        status: "active",
+        tokenBudget: null,
+        tokensUsed: 0,
+        timeUsedSeconds: 0,
+        createdAt: 0,
+        updatedAt: 60,
+      },
+    });
+    internals.handleNotification("thread/goal/updated", {
+      objective: sentinel,
+      invalid: true,
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    const output = chunks.join("");
+    expect(output).not.toContain(sentinel);
+    expect(output).toContain(`"objectiveLength":${sentinel.length}`);
+    expect(output).toContain('"goalStatus":"active"');
+    expect(output).toContain('"goalGeneration":"1970-01-01T00:00:00.000Z"');
+  });
+
   test("ignores invalid and foreign-thread Goal notifications", () => {
     const session = createSession({}, { goalsEnabled: true });
     const events: AgentStreamEvent[] = [];
@@ -4783,7 +4822,7 @@ describe("Codex app-server provider", () => {
     ]);
   });
 
-  test("appends blank-line spacing to /goal status messages", async () => {
+  test("acknowledges /goal set without repeating the sensitive objective", async () => {
     const requests: Array<{ method: string; params: unknown }> = [];
     const session = createSession({}, { goalsEnabled: true });
     session.client = {
@@ -4830,7 +4869,7 @@ describe("Codex app-server provider", () => {
         provider: "codex",
         item: {
           type: "assistant_message",
-          text: "Goal set: ship feature\n\n",
+          text: "Goal set.\n\n",
         },
       },
     ]);

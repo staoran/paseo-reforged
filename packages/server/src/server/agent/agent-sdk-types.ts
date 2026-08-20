@@ -661,17 +661,20 @@ export type AgentThreadStatus =
       activeFlags: Array<"waitingOnApproval" | "waitingOnUserInput">;
     };
 
+/** Provider-neutral input accepted by a provider-owned Goal mutation. */
+export interface AgentGoalControlInput {
+  /** Replacement objective, when requested. */
+  objective?: string;
+  /** Supported interactive Goal state transition. */
+  status?: "active" | "paused";
+}
+
 /** Optional provider-owned Goal control exposed by an Agent session. */
 export interface AgentGoalControl {
   /** Reads the current authoritative Goal without mutating it. */
   get(): Promise<AgentGoalSnapshot | null>;
   /** Creates or updates the current Goal using provider-neutral fields. */
-  set(input: {
-    /** Replacement objective, when requested. */
-    objective?: string;
-    /** Supported interactive Goal state transition. */
-    status?: "active" | "paused";
-  }): Promise<AgentGoalSnapshot>;
+  set(input: AgentGoalControlInput): Promise<AgentGoalSnapshot>;
   /** Clears the current Goal without interrupting an active turn. */
   clear(): Promise<void>;
 }

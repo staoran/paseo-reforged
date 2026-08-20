@@ -488,7 +488,7 @@ describe("wire schema compatibility", () => {
     ]);
   });
 
-  test("Agent Goal terminate exposes a cleared Goal with a still-running turn", () => {
+  test("Agent Goal terminate exposes freshness while accepting legacy responses", () => {
     // Termination optionally protects against operating on a replaced Goal generation.
     const request = SessionInboundMessageSchema.parse({
       type: "agent.goal.terminate.request",
@@ -505,6 +505,26 @@ describe("wire schema compatibility", () => {
         ok: false,
         goal: null,
         goalStep: null,
+        goalSync: "synced",
+        clear: "cleared",
+        interrupt: "failed",
+        outcome: "goal_cleared_turn_running",
+        error: {
+          code: "interrupt_failed",
+          retryable: true,
+          message: "Goal cleared, but the active turn could not be interrupted",
+        },
+      },
+    });
+    // Older daemons omit the additive freshness field and must remain parseable.
+    const legacyResponse = SessionOutboundMessageSchema.parse({
+      type: "agent.goal.terminate.response",
+      payload: {
+        requestId: "goal-terminate-legacy",
+        agentId: "agent-1",
+        ok: false,
+        goal: null,
+        goalStep: null,
         clear: "cleared",
         interrupt: "failed",
         outcome: "goal_cleared_turn_running",
@@ -516,7 +536,7 @@ describe("wire schema compatibility", () => {
       },
     });
 
-    expect([request, response]).toEqual([
+    expect([request, response, legacyResponse]).toEqual([
       {
         type: "agent.goal.terminate.request",
         requestId: "goal-terminate-1",
@@ -527,6 +547,25 @@ describe("wire schema compatibility", () => {
         type: "agent.goal.terminate.response",
         payload: {
           requestId: "goal-terminate-1",
+          agentId: "agent-1",
+          ok: false,
+          goal: null,
+          goalStep: null,
+          goalSync: "synced",
+          clear: "cleared",
+          interrupt: "failed",
+          outcome: "goal_cleared_turn_running",
+          error: {
+            code: "interrupt_failed",
+            retryable: true,
+            message: "Goal cleared, but the active turn could not be interrupted",
+          },
+        },
+      },
+      {
+        type: "agent.goal.terminate.response",
+        payload: {
+          requestId: "goal-terminate-legacy",
           agentId: "agent-1",
           ok: false,
           goal: null,

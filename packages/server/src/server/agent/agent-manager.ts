@@ -62,6 +62,7 @@ import {
   type ImportableProviderSession,
   type ListImportableSessionsOptions,
 } from "./agent-sdk-types.js";
+import { agentStreamEventLogFields } from "./agent-event-log.js";
 import { buildArchivedAgentRecord, type ArchivedStoredAgentRecord } from "./agent-archive.js";
 import type { StoredAgentRecord, AgentStorage, PreparedAgentRecord } from "./agent-storage.js";
 import { toStoredAgentRecord } from "./agent-projections.js";
@@ -517,8 +518,8 @@ export type AgentGoalGetResult = Omit<AgentGoalGetResponsePayload, "requestId" |
 export type AgentGoalUpdateResult = Omit<AgentGoalUpdateResponsePayload, "requestId" | "agentId">;
 export type AgentGoalTerminateResult = Omit<
   AgentGoalTerminateResponsePayload,
-  "requestId" | "agentId"
->;
+  "requestId" | "agentId" | "goalSync"
+> & { goalSync: AgentGoalSyncStatus };
 
 type ActiveManagedAgent =
   | ManagedAgentInitializing
@@ -1467,12 +1468,12 @@ export class AgentManager {
         goalSync: agent.goalSync ?? "synced",
         error: null,
       };
-    } catch (error) {
+    } catch {
       agent.goalSync = "stale";
       this.touchUpdatedAt(agent);
       this.emitState(agent, { persist: false });
       this.logger.warn(
-        { err: error, agentId, provider: agent.provider },
+        { agentId, provider: agent.provider, goalErrorCode: "provider_error" },
         "Failed to refresh provider Goal",
       );
       return {
@@ -1611,12 +1612,12 @@ export class AgentManager {
       this.touchUpdatedAt(prepared.agent);
       this.emitState(prepared.agent, { persist: false });
       return currentGoalUpdateResult(prepared.agent, true, null);
-    } catch (error) {
+    } catch {
       prepared.agent.goalSync = "stale";
       this.touchUpdatedAt(prepared.agent);
       this.emitState(prepared.agent, { persist: false });
       this.logger.warn(
-        { err: error, agentId, provider: prepared.agent.provider },
+        { agentId, provider: prepared.agent.provider, goalErrorCode: "provider_error" },
         "Failed to update provider Goal",
       );
       return currentGoalUpdateResult(
@@ -1656,18 +1657,19 @@ export class AgentManager {
       this.touchUpdatedAt(agent);
       this.emitState(agent, { persist: false });
       return null;
-    } catch (error) {
+    } catch {
       agent.goalSync = "stale";
       this.touchUpdatedAt(agent);
       this.emitState(agent, { persist: false });
       this.logger.warn(
-        { err: error, agentId: agent.id, provider: agent.provider },
+        { agentId: agent.id, provider: agent.provider, goalErrorCode: "clear_failed" },
         "Failed to clear provider Goal",
       );
       return {
         ok: false,
         goal: agent.goal ?? null,
         goalStep: agent.goalStep ?? null,
+        goalSync: "stale",
         clear: "failed",
         interrupt: "skipped",
         outcome: "failed",
@@ -1691,6 +1693,7 @@ export class AgentManager {
         ok: false,
         goal: prepared.goal,
         goalStep: prepared.goalStep,
+        goalSync: prepared.goalSync,
         clear: "failed",
         interrupt: "skipped",
         outcome: "failed",
@@ -1714,6 +1717,7 @@ export class AgentManager {
       ok: interrupted,
       goal: null,
       goalStep: null,
+      goalSync: agent.goalSync ?? "synced",
       clear: hadGoal ? "cleared" : "already_absent",
       interrupt,
       outcome: interrupted ? "stopped" : "goal_cleared_turn_running",
@@ -1932,6 +1936,7 @@ export class AgentManager {
       ...options,
       lastReplayableUserMessageId,
       persistence: handle,
+      publishWhenReady: true,
     });
   }
 
@@ -2145,6 +2150,7 @@ export class AgentManager {
         lastUsage: preservedLastUsage,
         lastError: preservedLastError,
         attention: preservedAttention,
+        publishWhenReady: true,
       });
     } finally {
       if (!handedToRegistration) {
@@ -4086,6 +4092,7 @@ export class AgentManager {
     await this.closeUnregisteredSession(agent.session);
   }
 
+  /** Registers one provider session and publishes it after its initial state is coherent. */
   private async registerSession(
     session: AgentSession,
     config: AgentSessionConfig,
@@ -4129,42 +4136,77 @@ export class AgentManager {
       this.assertAcceptingAgentRegistrations();
       this.agents.set(resolvedAgentId, managed);
       registered = true;
+      const publishWhenReady = options?.publishWhenReady === true;
+      if (publishWhenReady) {
+        this.unpublishedAgentIds.add(resolvedAgentId);
+      }
       // Initialize previousStatus to track transitions
       this.previousStatuses.set(resolvedAgentId, managed.lifecycle);
       await this.refreshRuntimeInfo(managed, { emit: false });
       this.assertAgentRegistrationActive(managed);
-      await this.persistSnapshot(managed, {
-        title: initialPersistedTitle,
-      });
-      this.assertAgentRegistrationActive(managed);
+      if (!publishWhenReady) {
+        await this.persistSnapshot(managed, {
+          title: initialPersistedTitle,
+        });
+        this.assertAgentRegistrationActive(managed);
+      }
       if (options?.timelineRows) {
         await this.persistExplicitTimelineSeed(managed.id);
       }
-      if (!options?.publishWhenReady) {
+      if (!publishWhenReady) {
         this.emitState(managed, { persist: false });
       }
 
-      this.subscribeToSession(managed);
-      managed.session.flushPreSubscriptionEvents?.();
-      await this.drainSessionEvents(managed.id);
-      await this.refreshSessionState(managed, { emit: false });
-      this.assertAgentRegistrationActive(managed);
-      const executionStatusHydrated = await this.hydrateExecutionStatus(managed);
-      await this.hydrateGoal(managed);
-      await this.drainSessionEvents(managed.id);
-      if (managed.lifecycle === "initializing" && executionStatusHydrated) {
-        this.applyExecutionStatus(managed, { status: "idle" });
-      }
+      await this.hydrateSessionForRegistration(managed);
       this.touchUpdatedAt(managed);
-      await this.persistSnapshot(managed);
+      await this.persistSnapshot(
+        managed,
+        publishWhenReady ? { title: initialPersistedTitle } : undefined,
+      );
       this.assertAgentRegistrationActive(managed);
+      if (publishWhenReady) {
+        this.unpublishedAgentIds.delete(managed.id);
+      }
       this.emitState(managed, { persist: false });
       return { ...managed };
     } catch (error) {
+      if (registered) {
+        this.unpublishedAgentIds.delete(agentId);
+      }
       if (!registered) {
         await this.closeUnregisteredSession(session);
       }
       throw error;
+    }
+  }
+
+  /** Captures provider events while hydration runs, then applies them in FIFO order. */
+  private async hydrateSessionForRegistration(managed: ActiveManagedAgent): Promise<void> {
+    const registrationEvents: AgentStreamEvent[] = [];
+    let capturingRegistrationEvents = true;
+    this.subscribeToSession(managed, (event) => {
+      if (capturingRegistrationEvents) {
+        registrationEvents.push(event);
+        return;
+      }
+      this.enqueueSessionEvent(managed.id, event);
+    });
+    managed.session.flushPreSubscriptionEvents?.();
+    await this.refreshSessionState(managed, { emit: false });
+    this.assertAgentRegistrationActive(managed);
+    const executionStatusHydrated = await this.hydrateExecutionStatus(managed);
+    const goalHydrated = await this.hydrateGoal(managed);
+    for (const event of registrationEvents) {
+      this.enqueueSessionEvent(managed.id, event);
+    }
+    registrationEvents.length = 0;
+    capturingRegistrationEvents = false;
+    await this.drainSessionEvents(managed.id);
+    if (!goalHydrated) {
+      managed.goalSync = "stale";
+    }
+    if (managed.lifecycle === "initializing" && executionStatusHydrated) {
+      this.applyExecutionStatus(managed, { status: "idle" });
     }
   }
 
@@ -4389,14 +4431,17 @@ export class AgentManager {
   private emitClosedAgent(agent: ManagedAgentClosed, options?: { persist?: boolean }): void {
     this.emitState(agent, options);
   }
-  private subscribeToSession(agent: ActiveManagedAgent): void {
+  private subscribeToSession(
+    agent: ActiveManagedAgent,
+    onEvent?: (event: AgentStreamEvent) => void,
+  ): void {
     if (agent.unsubscribeSession) {
       return;
     }
     const agentId = agent.id;
-    const unsubscribe = agent.session.subscribe((event: AgentStreamEvent) => {
-      this.enqueueSessionEvent(agentId, event);
-    });
+    const unsubscribe = agent.session.subscribe(
+      onEvent ?? ((event: AgentStreamEvent) => this.enqueueSessionEvent(agentId, event)),
+    );
     agent.unsubscribeSession = unsubscribe;
   }
 
@@ -4407,7 +4452,7 @@ export class AgentManager {
         provider: event.provider,
         sessionId: this.agents.get(agentId)?.persistence?.sessionId ?? undefined,
         turnId: getAgentStreamEventTurnId(event),
-        event,
+        ...agentStreamEventLogFields(event),
       },
       "agent.manager.enqueue",
     );
@@ -4433,7 +4478,7 @@ export class AgentManager {
             provider: event.provider,
             sessionId: current.persistence?.sessionId ?? undefined,
             turnId: getAgentStreamEventTurnId(event),
-            event,
+            ...agentStreamEventLogFields(event),
           },
           "agent.manager.dequeue",
         );
@@ -4492,7 +4537,7 @@ export class AgentManager {
         sessionId: agent.persistence?.sessionId ?? undefined,
         turnId,
         matchingWaiterCount: matchingWaiters.length,
-        event,
+        ...agentStreamEventLogFields(event),
       },
       "agent.manager.dispatch_session_event",
     );
@@ -4514,7 +4559,7 @@ export class AgentManager {
         turnId,
         notifiedWaiterCount: matchingWaiters.length,
         terminal: isTurnTerminalEvent(event),
-        event,
+        ...agentStreamEventLogFields(event),
       },
       "agent.manager.notify_waiters",
     );
@@ -4607,21 +4652,23 @@ export class AgentManager {
     }
   }
 
-  /** Hydrates the provider-owned Goal without persisting a competing scheduler state. */
-  private async hydrateGoal(agent: ActiveManagedAgent): Promise<void> {
+  /** Hydrates the provider-owned Goal and reports whether the authoritative pull succeeded. */
+  private async hydrateGoal(agent: ActiveManagedAgent): Promise<boolean> {
     if (!agent.session.goalControl) {
-      return;
+      return true;
     }
     agent.goalSync = "hydrating";
     try {
       const goal = await agent.session.goalControl.get();
       this.applyGoalSnapshot(agent, goal);
-    } catch (error) {
+      return true;
+    } catch {
       agent.goalSync = "stale";
       this.logger.warn(
-        { err: error, agentId: agent.id, provider: agent.provider },
+        { agentId: agent.id, provider: agent.provider, goalErrorCode: "provider_error" },
         "Failed to hydrate provider Goal",
       );
+      return false;
     }
   }
 
@@ -5034,7 +5081,7 @@ export class AgentManager {
         provider: event.provider,
         sessionId: agent.persistence?.sessionId ?? undefined,
         turnId,
-        event,
+        ...agentStreamEventLogFields(event),
       },
       "agent.manager.notify_waiters.coalesced",
     );
@@ -5166,7 +5213,7 @@ export class AgentManager {
         lifecycle: agent.lifecycle,
         activeForegroundTurnId: agent.activeForegroundTurnId,
         isForegroundEvent,
-        event,
+        ...agentStreamEventLogFields(event),
       },
       "agent.manager.handle_stream_event.start",
     );
@@ -5183,7 +5230,7 @@ export class AgentManager {
         provider: event.provider,
         sessionId: agent.persistence?.sessionId ?? undefined,
         turnId,
-        event,
+        ...agentStreamEventLogFields(event),
       },
       "agent.manager.coalescer.buffer",
     );
@@ -5205,7 +5252,7 @@ export class AgentManager {
         activeForegroundTurnId: agent.activeForegroundTurnId,
         shouldDispatchEvent: flags.shouldDispatchEvent,
         shouldNotifyWaiters: flags.shouldNotifyWaiters,
-        event,
+        ...agentStreamEventLogFields(event),
       },
       "agent.manager.handle_stream_event.end",
     );
@@ -6143,7 +6190,7 @@ export class AgentManager {
         sessionId: agent?.persistence?.sessionId ?? undefined,
         turnId: getAgentStreamEventTurnId(event),
         metadata,
-        event,
+        ...agentStreamEventLogFields(event),
       },
       "agent.manager.dispatch_stream",
     );

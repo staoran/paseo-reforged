@@ -40,6 +40,7 @@ import {
   type ProviderRefreshContext,
   type ResolveAgentDefaultModeInput,
 } from "../agent-sdk-types.js";
+import { agentGoalLogFields, agentStreamEventLogFields } from "../agent-event-log.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
 import { runProviderRefreshActivity } from "../provider-refresh-deadline.js";
 import type { Logger } from "pino";
@@ -5050,7 +5051,7 @@ export class CodexAppServerAgentSession implements AgentSession {
             objective: subcommand.objective,
             status: "active",
           });
-          return `Goal set: ${subcommand.objective}`;
+          return "Goal set.";
         }
         case "pause": {
           await this.goalControl.set({ status: "paused" });
@@ -5235,7 +5236,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         provider: CODEX_PROVIDER,
         sessionId: this.currentThreadId,
         turnId: getAgentStreamEventTurnId(tagged),
-        event: tagged,
+        ...agentStreamEventLogFields(tagged),
       },
       "provider.codex.event_emit",
     );
@@ -5554,6 +5555,12 @@ export class CodexAppServerAgentSession implements AgentSession {
     params: unknown,
     parsed: z.infer<typeof CodexNotificationSchema>,
   ): void {
+    const notificationFields = method.startsWith("thread/goal/")
+      ? {
+          notificationKind: parsed.kind,
+          ...(parsed.kind === "goal_changed" ? agentGoalLogFields(parsed.goal) : {}),
+        }
+      : { params, parsed };
     this.logger.trace(
       {
         agentId: this.agentId,
@@ -5561,8 +5568,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         sessionId: this.currentThreadId,
         turnId: this.activeForegroundTurnId ?? undefined,
         method,
-        params,
-        parsed,
+        ...notificationFields,
       },
       "provider.codex.parsed_event",
     );
@@ -6775,7 +6781,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         sessionId: this.currentThreadId,
         turnId: this.activeForegroundTurnId ?? undefined,
         method,
-        params,
+        ...(method.startsWith("thread/goal/") ? {} : { params }),
       },
       "provider.codex.event_unhandled",
     );
@@ -6787,7 +6793,10 @@ export class CodexAppServerAgentSession implements AgentSession {
       return;
     }
     this.warnedInvalidNotificationPayloads.add(key);
-    this.logger.warn({ method, params }, "Invalid Codex app-server notification payload");
+    this.logger.warn(
+      { method, ...(method.startsWith("thread/goal/") ? {} : { params }) },
+      "Invalid Codex app-server notification payload",
+    );
   }
 
   private appendOutputDeltaChunk(
