@@ -22,11 +22,21 @@ The relay is designed to be untrusted. All traffic between your phone and daemon
 1. The daemon generates a persistent Curve25519 keypair on first run and stores it at `$PASEO_HOME/daemon-keypair.json` with mode `0600`
 2. The pairing URL (rendered as a QR code or opened directly) carries the daemon's public key in its URL fragment (`https://app.paseo.sh/#offer=...`). Fragments are not sent to the web server, so `app.paseo.sh` never sees the key.
 3. When the phone connects via the relay, it generates a fresh ephemeral Curve25519 keypair and sends an `e2ee_hello` message containing its public key. The daemon will not process any application messages until this handshake completes.
-4. Both sides perform a Curve25519 ECDH key exchange to derive a shared key. All subsequent messages are encrypted with XSalsa20-Poly1305 (NaCl `box`). The encrypted bundle is `[24-byte nonce][ciphertext]`. Peers optionally negotiate `binaryCiphertext` in `e2ee_hello` / `e2ee_ready`: negotiated application text is carried as a base64 WebSocket text frame, while application binary is carried as a raw WebSocket binary frame. A peer that does not negotiate the capability uses base64 text frames for both kinds.
+4. Both sides perform a Curve25519 ECDH key exchange to derive a shared key. All subsequent messages are encrypted with XSalsa20-Poly1305 (NaCl `box`). The encrypted bundle is `[24-byte nonce][ciphertext]`.
+5. New peers negotiate `framedCiphertextV1` in `e2ee_hello` / `e2ee_ready`. The daemon selects Base64 text or raw binary ciphertext plus the common compression codecs, and the client must return an exact authenticated `e2ee_mode_confirm` before the daemon attaches the application session. A missing or mismatched confirmation closes the connection. Peers without the capability stay on the existing Base64/hybrid wire automatically.
+6. Framed plaintext starts with an authenticated version, original payload kind, codec, and original-length header. The selected Base64/binary representation is independent of whether the application payload was text or binary; the authenticated payload-kind flag restores the original type after decryption and bounded decoding.
 
-The WebSocket opcode is preserved end to end after negotiation; the receiver never guesses whether authenticated plaintext is text or binary from its byte contents. The plaintext handshake remains WebSocket text and contains only public keys and capability declarations.
+The WebSocket representation selected by the handshake is fixed for that data connection. The receiver never guesses the mode or the authenticated plaintext type from byte contents. The plaintext handshake remains WebSocket text and contains only public keys and capability declarations; the mode confirmation is encrypted.
 
 The relay sees only: IP addresses, timing, message sizes, session IDs, and the plaintext `e2ee_hello` / `e2ee_ready` handshake frames (which contain only public keys). It cannot read message contents, forge messages, or derive encryption keys from observing the handshake.
+
+### Compression and resource limits
+
+Compression, when enabled, happens before encryption and only on daemon-to-client frames classified as state synchronization, eligible completed tool output, or UTF-8 file chunks. Realtime terminal and agent-stream deltas, unknown messages, and client-to-daemon traffic remain identity-coded. The v1 encoder uses raw DEFLATE level 1 internally and adopts a candidate only when bounded size, minimum gain, and compression-ratio checks pass; codec and level are not user-selectable wire inputs.
+
+Compression does not hide traffic analysis. The relay already observes ciphertext sizes and timing, and compressed sizes can reveal repetition or relative content size. Paseo does not add padding in v1, so deployments that require resistance to size correlation should disable compression with `daemon.relay.transport.compression.enabled: false`.
+
+Framed ciphertext is rejected at the exclusive 32 MiB raw-wire boundary before Base64 decode or decryption. Queued receive wire and daemon prepared-send reservations are bounded to 64 MiB, compressed source payloads are limited to 4 MiB, and inflate output must exactly match the authenticated original length without exceeding ratio limits. Invalid opcode, Base64, header, codec, length, UTF-8, or MAC data closes the affected physical connection. Relay metrics retain only bounded labels, byte counts, and timings, never payloads or filesystem paths.
 
 ### Why the relay can't attack you
 

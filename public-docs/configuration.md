@@ -205,6 +205,30 @@ Set the persisted value in `config.json`:
 
 `PASEO_RELAY_ENABLED=true|false` overrides the persisted value for that daemon launch. The matching `paseo daemon start --relay` and `--no-relay` flags have the same authority. Remove the launch override before changing relay from Paseo Desktop or `paseo daemon pair --relay`.
 
+### Relay transport
+
+New peers can carry authenticated framed ciphertext as Base64 text or raw binary WebSocket frames. The default `auto` policy prefers binary when the peer supports it and falls back automatically for older peers. Eligible daemon-to-client state synchronization and UTF-8 bulk data use bounded compression before encryption by default; realtime terminal and agent-stream deltas are never compressed.
+
+```json
+{
+  "daemon": {
+    "relay": {
+      "enabled": true,
+      "transport": {
+        "ciphertextEncoding": "auto",
+        "compression": { "enabled": true }
+      }
+    }
+  }
+}
+```
+
+`ciphertextEncoding` accepts `auto`, `base64`, or `binary`. `compression.enabled` is the only compression setting: the v1 codec and level are internal and there are no `algorithm`, `strategy`, or `level` fields.
+
+Changing compression takes effect for eligible frames on active framed connections. Changing `ciphertextEncoding` does not interrupt an active data connection; the new representation is selected on the next relay data connection. Both settings persist across daemon restarts, and neither requires restarting the relay control connection.
+
+The transport fields require a daemon that advertises the relay transport policy capability. If you later run an older daemon binary whose persisted relay schema does not recognize `transport`, remove `daemon.relay.transport` from `config.json` before starting that binary. Wire compatibility itself is automatic: either mixed-version direction uses the legacy representation.
+
 ## Common env vars
 
 - `PASEO_HOME`, set Paseo home directory

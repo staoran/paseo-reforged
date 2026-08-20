@@ -14,6 +14,53 @@ import {
 const relayEndpoint = process.env.PASEO_LIVE_RELAY_ENDPOINT ?? "paseo-relay-next.fly.dev:443";
 const liveTest = process.env.RUN_LIVE_RELAY_E2E === "1" ? test : test.skip;
 
+/** Hosted relay representations covered by the live transparency matrix. */
+const liveCiphertextScenarios = [
+  { ciphertextEncoding: "base64", negotiatedMode: "framed-v1-base64" },
+  { ciphertextEncoding: "binary", negotiatedMode: "framed-v1-binary" },
+] as const;
+
+interface RuntimeMetricsProbe {
+  /** Client logger that receives content-free runtime metric records. */
+  logger: pino.Logger;
+  /** Negotiated relay modes observed after the live handshake. */
+  negotiatedModes: string[];
+  /** Inbound codecs observed on non-empty authenticated relay frames. */
+  inboundCodecs: string[];
+}
+
+/** Captures only negotiated mode labels from the client's public metrics log. */
+function createRuntimeMetricsProbe(): RuntimeMetricsProbe {
+  const negotiatedModes: string[] = [];
+  const inboundCodecs: string[] = [];
+  const logger = pino(
+    { level: "info" },
+    {
+      write(serialized: string): void {
+        const record = JSON.parse(serialized) as {
+          msg?: string;
+          relayTransport?: {
+            negotiatedModeCount?: Record<string, number>;
+            inboundFrames?: Array<{ codec?: string; frameCount?: number }>;
+          };
+        };
+        if (record.msg !== "ws_runtime_metrics_client") return;
+        for (const [mode, count] of Object.entries(
+          record.relayTransport?.negotiatedModeCount ?? {},
+        )) {
+          if (count > 0) negotiatedModes.push(mode);
+        }
+        for (const frame of record.relayTransport?.inboundFrames ?? []) {
+          if (typeof frame.codec === "string" && (frame.frameCount ?? 0) > 0) {
+            inboundCodecs.push(frame.codec);
+          }
+        }
+      },
+    },
+  );
+  return { logger, negotiatedModes, inboundCodecs };
+}
+
 function requireOffer(url: string): ConnectionOffer {
   const offer = parseConnectionOfferFromUrl(url);
   if (!offer) {
@@ -38,7 +85,8 @@ async function pairingOfferFor(daemon: TestPaseoDaemon): Promise<ConnectionOffer
   return requireOffer(pairing.url);
 }
 
-function clientFor(offer: ConnectionOffer): DaemonClient {
+/** Creates a relay client and optionally enables fast content-free metrics flushing. */
+function clientFor(offer: ConnectionOffer, metricsLogger?: pino.Logger): DaemonClient {
   return new DaemonClient({
     url: buildRelayWebSocketUrl({
       endpoint: offer.relay.endpoint,
@@ -51,7 +99,33 @@ function clientFor(offer: ConnectionOffer): DaemonClient {
     connectTimeoutMs: 30_000,
     e2ee: { enabled: true, daemonPublicKeyB64: offer.daemonPublicKeyB64 },
     reconnect: { enabled: false },
+    ...(metricsLogger
+      ? { logger: metricsLogger, runtimeMetricsIntervalMs: 60_000, runtimeMetricsWindowMs: 60_000 }
+      : {}),
   });
+}
+
+/** Creates enough fake agent state to cross the state-sync compression threshold. */
+async function seedStateSyncAgents(daemon: TestPaseoDaemon): Promise<void> {
+  const seedClient = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    clientId: "clid_live_relay_seed",
+    clientType: "cli",
+    reconnect: { enabled: false },
+  });
+  try {
+    await seedClient.connect();
+    for (let index = 0; index < 40; index += 1) {
+      await seedClient.createAgent({
+        provider: "codex",
+        cwd: daemon.staticDir,
+        title: `Live relay state seed ${index}`,
+        modeId: "full-access",
+      });
+    }
+  } finally {
+    await seedClient.close();
+  }
 }
 
 describe("live hosted relay", () => {
@@ -62,6 +136,35 @@ describe("live hosted relay", () => {
     await client?.close().catch(() => undefined);
     await daemon?.close();
   });
+
+  for (const scenario of liveCiphertextScenarios) {
+    liveTest(
+      `transparently carries authenticated framed ${scenario.ciphertextEncoding} traffic`,
+      async () => {
+        const metricsProbe = createRuntimeMetricsProbe();
+        const logger = pino({ level: "silent" });
+        daemon = await createTestPaseoDaemon({
+          listen: "127.0.0.1",
+          relayEnabled: true,
+          relayEndpoint,
+          relayUseTls: true,
+          relayTransport: { ciphertextEncoding: scenario.ciphertextEncoding },
+          logger,
+        });
+        await seedStateSyncAgents(daemon);
+        const offer = await pairingOfferFor(daemon);
+        client = clientFor(offer, metricsProbe.logger);
+
+        await client.connect();
+        expect((await client.fetchAgents()).entries).toHaveLength(40);
+        await client.close();
+        client = null;
+        expect(metricsProbe.negotiatedModes).toContain(scenario.negotiatedMode);
+        expect(metricsProbe.inboundCodecs).toContain("deflate-raw");
+      },
+      60_000,
+    );
+  }
 
   liveTest(
     "carries a complete DaemonClient agent workflow through the hosted relay",
