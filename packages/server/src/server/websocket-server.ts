@@ -944,6 +944,11 @@ export class VoiceAssistantWebSocketServer {
     await this.attachSocket(ws, undefined, metadata);
   }
 
+  /** Returns the content-free relay recorder embedded in WebSocket diagnostics. */
+  public getRelayTransportRuntimeMetrics(): WebSocketRuntimeMetricsWindow["relayTransport"] {
+    return this.runtimeMetrics.relayTransport;
+  }
+
   public async attachHubSocket(
     ws: WebSocketLike,
     options: {
@@ -1609,10 +1614,10 @@ export class VoiceAssistantWebSocketServer {
         agentTimelinePromptIndex: true,
         // COMPAT(agentTimelineSummaryDetail): added in v0.3.0, remove after 2027-02-09.
         agentTimelineSummaryDetail: true,
-        // COMPAT(agentHistorySearch): added in v0.3.0, remove gate after 2027-02-07.
-        agentHistorySearch: true,
         // COMPAT(agentGoalControl): added in v0.4.0-beta.4, remove after 2027-08-18.
         agentGoalControl: true,
+        // COMPAT(agentHistorySearch): added in v0.3.0, remove gate after 2027-02-07.
+        agentHistorySearch: true,
         // COMPAT(checkoutRefresh): added in v0.1.86, remove gate after 2026-11-29.
         checkoutRefresh: true,
         // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
@@ -2365,6 +2370,7 @@ export class VoiceAssistantWebSocketServer {
     const loggedMetrics = {
       windowMs: runtimeMetrics.windowMs,
       final: Boolean(options?.final),
+      relayTransport: runtimeMetrics.relayTransport,
       sessions: {
         activeConnections,
         externalSessionKeys: this.externalSessionsByKey.size,

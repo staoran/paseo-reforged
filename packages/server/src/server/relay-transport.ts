@@ -21,6 +21,7 @@ import {
   type ConfiguredRelayTransportPolicy,
 } from "./relay-transport-policy.js";
 import { createEncryptedRelaySocket } from "./websocket/encrypted-relay-socket.js";
+import type { RelayTransportRuntimeMetricsWindow } from "./websocket/runtime-metrics.js";
 
 export interface RelayTransportOptions {
   logger: pino.Logger;
@@ -32,6 +33,8 @@ export interface RelayTransportOptions {
   createWebSocket?: RelayWebSocketFactory;
   /** Reads the latest configured policy when a data connection needs it. */
   getConfiguredTransportPolicy?: () => ConfiguredRelayTransportPolicy;
+  /** Optional content-free runtime metrics recorder owned by WebSocket diagnostics. */
+  runtimeMetrics?: RelayTransportRuntimeMetricsWindow;
 }
 
 export interface RelayTransportController {
@@ -128,12 +131,15 @@ export function startRelayTransport({
   daemonKeyPair,
   createWebSocket = createDefaultRelayWebSocket,
   getConfiguredTransportPolicy = () => resolveConfiguredRelayTransportPolicy(undefined),
+  runtimeMetrics,
 }: RelayTransportOptions): RelayTransportController {
   const relayLogger = logger.child({ module: "relay-transport" });
   /** Shared daemon codec coordinator used by every framed data connection. */
   const frameCompression = daemonKeyPair
     ? createDaemonFrameCompression({ codec: createNodeRawDeflateCodec() })
     : null;
+  /** Initial configured gauge published without retaining relay identifiers. */
+  runtimeMetrics?.setConfiguredPolicy(getConfiguredTransportPolicy());
 
   let stopped = false;
   let controlWs: RelayWebSocketLike | null = null;
@@ -405,6 +411,7 @@ export function startRelayTransport({
           attachSocket,
           getConfiguredTransportPolicy,
           frameCompression,
+          runtimeMetrics,
           externalMetadata,
         );
       } else {
@@ -440,6 +447,7 @@ async function attachEncryptedSocket(
   attachSocket: (ws: RelaySocketLike, metadata?: ExternalSocketMetadata) => Promise<void>,
   getConfiguredTransportPolicy: () => ConfiguredRelayTransportPolicy,
   frameCompression: DaemonFrameCompression | null,
+  runtimeMetrics?: RelayTransportRuntimeMetricsWindow,
   metadata?: ExternalSocketMetadata,
 ): Promise<void> {
   try {
@@ -476,14 +484,30 @@ async function attachEncryptedSocket(
       {
         ciphertextEncoding: configuredAtConnectionStart.ciphertextEncoding,
         compressionAlgorithms: [RELAY_TRANSPORT_COMPRESSION_ALGORITHM],
+        ...(runtimeMetrics
+          ? {
+              runtimeObserver: {
+                onInboundFrame: (metric) => runtimeMetrics.recordInboundFrame(metric),
+                onFramedProtocolError: (reason) => runtimeMetrics.recordFramedProtocolError(reason),
+                onPendingReceiveWireBytes: (bytes) =>
+                  runtimeMetrics.recordPendingReceiveWireBytes(bytes),
+              },
+            }
+          : {}),
       },
     );
+    /** Idempotent active-connection cleanup retained until physical close. */
+    const closeMetricsConnection = runtimeMetrics?.recordConnectionOpened(
+      channel.getNegotiatedTransport(),
+    );
+    if (closeMetricsConnection) socket.once("close", closeMetricsConnection);
     /** WebSocket-compatible encrypted adapter attached to the daemon session. */
     const encryptedSocket = createEncryptedRelaySocket({
       channel,
       emitter,
       getTransportBufferedAmount: () => socket.bufferedAmount,
       terminateTransport: () => socket.terminate(),
+      ...(runtimeMetrics ? { runtimeMetrics } : {}),
       ...(channel.usesFramedCiphertextV1() && frameCompression
         ? {
             prepareOutboundFrame: async (data: string | ArrayBuffer, hint) => {
@@ -493,6 +517,7 @@ async function attachEncryptedSocket(
               const configuredForFrame = getConfiguredTransportPolicy();
               /** Per-frame policy combining current compression config with locked negotiation. */
               const effective = resolveRelayTransportPolicy(configuredForFrame, negotiated);
+              runtimeMetrics?.setConfiguredPolicy(configuredForFrame);
               if (effective.mode !== "framed-v1" || negotiated.mode !== "framed-v1") {
                 throw new Error("Framed preparation requires a framed relay connection");
               }
@@ -501,6 +526,20 @@ async function attachEncryptedSocket(
                 compressionEnabled: configuredForFrame.compressionEnabled,
                 negotiatedCompressionAlgorithms: negotiated.compressionAlgorithms,
                 ciphertextEncoding: negotiated.ciphertextEncoding,
+              });
+              if (prepared.compressionAttempted) {
+                runtimeMetrics?.recordCompressionAttempt(hint.trafficClass);
+              }
+              runtimeMetrics?.recordPreparedFrame({
+                ciphertextEncoding: prepared.ciphertextEncoding,
+                trafficClass: prepared.trafficClass,
+                codec: prepared.codec,
+                originalByteLength: prepared.originalByteLength,
+                encodedByteLength: prepared.encodedByteLength,
+                wireByteLength: prepared.wireByteLength,
+                skipReason: prepared.skipReason,
+                prepareMs: prepared.prepareMs,
+                codecMs: prepared.codecMs,
               });
               return channel.prepareOutboundFrame(prepared);
             },

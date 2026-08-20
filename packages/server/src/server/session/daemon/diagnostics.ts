@@ -305,6 +305,67 @@ function collectWebSocketRuntimeEntries(options: DaemonDiagnosticsOptions): Diag
         snapshot.bufferedAmount.max,
       )}`,
     },
+    {
+      label: "Relay configured",
+      value: `encoding=${snapshot.relayTransport.configuredPolicy.ciphertextEncoding}, compression=${snapshot.relayTransport.configuredPolicy.compressionEnabled}`,
+    },
+    {
+      label: "Relay negotiated modes",
+      value: formatNonZeroNumberRecord(snapshot.relayTransport.negotiatedModeCount),
+    },
+    {
+      label: "Relay active connections",
+      value: formatRelayActiveConnections(snapshot.relayTransport.activeConnectionCount),
+    },
+    {
+      label: "Relay effective compression",
+      value: formatRelayEffectiveCompression(snapshot.relayTransport.effectiveCompressionCount),
+    },
+    {
+      label: "Relay compression attempts",
+      value: formatNonZeroNumberRecord(snapshot.relayTransport.compressionAttemptCount),
+    },
+    {
+      label: "Relay outbound frames",
+      value: formatRelayOutboundFrames(snapshot.relayTransport.outboundFrames),
+    },
+    {
+      label: "Relay compression skips",
+      value: formatNonZeroNumberRecord(snapshot.relayTransport.compressionSkipCount),
+    },
+    {
+      label: "Relay prepare timing",
+      value: formatRelayAlgorithmTiming(snapshot.relayTransport.compressionPrepareMs),
+    },
+    {
+      label: "Relay queue timing",
+      value: formatRelayTrafficTiming(snapshot.relayTransport.compressionQueueMs),
+    },
+    {
+      label: "Relay codec timing",
+      value: formatRelayAlgorithmTiming(snapshot.relayTransport.compressionCodecMs),
+    },
+    {
+      label: "Relay inbound frames",
+      value: formatRelayInboundFrames(snapshot.relayTransport.inboundFrames),
+    },
+    {
+      label: "Relay inbound decode",
+      value: formatRelayInboundTiming(snapshot.relayTransport.inboundDecodeMs),
+    },
+    {
+      label: "Relay protocol errors",
+      value: formatNonZeroNumberRecord(snapshot.relayTransport.framedProtocolErrorCount),
+    },
+    {
+      label: "Relay pending bytes",
+      value: [
+        `preparedP95=${formatBytes(snapshot.relayTransport.pendingPreparedBytes.p95)}`,
+        `preparedMax=${formatBytes(snapshot.relayTransport.pendingPreparedBytes.max)}`,
+        `receiveP95=${formatBytes(snapshot.relayTransport.pendingReceiveWireBytes.p95)}`,
+        `receiveMax=${formatBytes(snapshot.relayTransport.pendingReceiveWireBytes.max)}`,
+      ].join(", "),
+    },
     { label: "Event loop delay", value: formatEventLoopDelay(snapshot.eventLoopDelay) },
     { label: "Latency", value: formatLatencyStats(snapshot.latency) },
     { label: "Inbound messages", value: formatTopCounts(snapshot.inboundMessageTypesTop) },
@@ -337,6 +398,99 @@ function collectWebSocketRuntimeEntries(options: DaemonDiagnosticsOptions): Diag
       ].join(", "),
     },
   ];
+}
+
+/** Formats active relay connection aggregates without exposing connection identifiers. */
+function formatRelayActiveConnections(
+  rows: DaemonWebSocketRuntimeDiagnosticSnapshot["relayTransport"]["activeConnectionCount"],
+): string {
+  if (rows.length === 0) return "none";
+  return rows
+    .map(
+      (row) =>
+        `mode=${row.mode} encoding=${row.ciphertextEncoding} codec=${row.codec} reason=${row.effectiveReason ?? "enabled"} count=${row.count}`,
+    )
+    .join("; ");
+}
+
+/** Formats effective compression resolutions using only bounded policy fields. */
+function formatRelayEffectiveCompression(
+  rows: DaemonWebSocketRuntimeDiagnosticSnapshot["relayTransport"]["effectiveCompressionCount"],
+): string {
+  if (rows.length === 0) return "none";
+  return rows
+    .map(
+      (row) =>
+        `enabled=${row.enabled} algorithm=${row.algorithm ?? "identity"} reason=${row.reason ?? "enabled"} count=${row.count}`,
+    )
+    .join("; ");
+}
+
+/** Formats outbound relay byte aggregates by encoding, traffic class, and codec. */
+function formatRelayOutboundFrames(
+  rows: DaemonWebSocketRuntimeDiagnosticSnapshot["relayTransport"]["outboundFrames"],
+): string {
+  if (rows.length === 0) return "none";
+  return rows
+    .map(
+      (row) =>
+        `encoding=${row.ciphertextEncoding} class=${row.trafficClass} codec=${row.codec} frames=${row.frameCount} original=${formatBytes(row.originalBytes)} encoded=${formatBytes(row.encodedBytes)} wire=${formatBytes(row.wireBytes)}`,
+    )
+    .join("; ");
+}
+
+/** Formats algorithm-labelled relay duration summaries. */
+function formatRelayAlgorithmTiming(
+  rows:
+    | DaemonWebSocketRuntimeDiagnosticSnapshot["relayTransport"]["compressionPrepareMs"]
+    | DaemonWebSocketRuntimeDiagnosticSnapshot["relayTransport"]["compressionCodecMs"],
+): string {
+  if (rows.length === 0) return "none";
+  return rows
+    .map(
+      (row) =>
+        `algorithm=${row.algorithm} p50=${formatMilliseconds(row.p50)} p95=${formatMilliseconds(row.p95)} max=${formatMilliseconds(row.max)}`,
+    )
+    .join("; ");
+}
+
+/** Formats traffic-class-labelled relay FIFO duration summaries. */
+function formatRelayTrafficTiming(
+  rows: DaemonWebSocketRuntimeDiagnosticSnapshot["relayTransport"]["compressionQueueMs"],
+): string {
+  if (rows.length === 0) return "none";
+  return rows
+    .map(
+      (row) =>
+        `class=${row.trafficClass} p50=${formatMilliseconds(row.p50)} p95=${formatMilliseconds(row.p95)} max=${formatMilliseconds(row.max)}`,
+    )
+    .join("; ");
+}
+
+/** Formats inbound relay byte aggregates by encoding and authenticated codec. */
+function formatRelayInboundFrames(
+  rows: DaemonWebSocketRuntimeDiagnosticSnapshot["relayTransport"]["inboundFrames"],
+): string {
+  if (rows.length === 0) return "none";
+  return rows
+    .map(
+      (row) =>
+        `encoding=${row.ciphertextEncoding} codec=${row.codec} frames=${row.frameCount} original=${formatBytes(row.originalBytes)} encoded=${formatBytes(row.encodedBytes)} wire=${formatBytes(row.wireBytes)}`,
+    )
+    .join("; ");
+}
+
+/** Formats inbound relay decode duration summaries. */
+function formatRelayInboundTiming(
+  rows: DaemonWebSocketRuntimeDiagnosticSnapshot["relayTransport"]["inboundDecodeMs"],
+): string {
+  if (rows.length === 0) return "none";
+  return rows
+    .map(
+      (row) =>
+        `encoding=${row.ciphertextEncoding} codec=${row.codec} p50=${formatMilliseconds(row.p50)} p95=${formatMilliseconds(row.p95)} max=${formatMilliseconds(row.max)}`,
+    )
+    .join("; ");
 }
 
 function formatTopCounts(counts: Array<[string, number]>): string {

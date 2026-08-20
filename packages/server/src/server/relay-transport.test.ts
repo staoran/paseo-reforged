@@ -5,6 +5,7 @@ import { exportPublicKey, generateKeyPair } from "@getpaseo/relay";
 import { startRelayTransport } from "./relay-transport";
 import { resolveConfiguredRelayTransportPolicy } from "./relay-transport-policy.js";
 import { createNodeRawDeflateCodec, type RelayTrafficHint } from "./relay-frame-compression.js";
+import { RelayTransportRuntimeMetricsWindow } from "./websocket/runtime-metrics.js";
 
 function createMockLogger() {
   const messages: { level: "debug" | "info" | "warn" | "error"; args: unknown[] }[] = [];
@@ -388,7 +389,7 @@ describe("relay-transport control lifecycle", () => {
     expect(completed).toBe(true);
   });
 
-  test("classified state-sync payloads reach the negotiated framed compressor", async () => {
+  test("keeps actual realtime sends out of the compressor while compressing state sync", async () => {
     /** Stable daemon key used by the real authenticated framed handshake. */
     const daemonKeyPair = generateKeyPair();
     /** Resolver that exposes the attached encrypted socket after exact mode confirmation. */
@@ -397,6 +398,8 @@ describe("relay-transport control lifecycle", () => {
     const attached = new Promise<unknown>((resolve) => {
       resolveAttached = resolve;
     });
+    /** Content-free metrics recorder observed through its public snapshot. */
+    const runtimeMetrics = new RelayTransportRuntimeMetricsWindow();
     /** Long-lived relay controller owning the control and data sockets. */
     const controller = startRelayTransport({
       logger: createMockLogger() as unknown as pino.Logger,
@@ -406,6 +409,7 @@ describe("relay-transport control lifecycle", () => {
       serverId: "srv_classified_compression",
       daemonKeyPair,
       createWebSocket: relay.createWebSocket,
+      runtimeMetrics,
     });
     controllers.push(controller);
 
@@ -433,7 +437,7 @@ describe("relay-transport control lifecycle", () => {
         isBinary: data instanceof ArrayBuffer || data instanceof Uint8Array,
       });
     };
-    await createClientChannel(
+    const clientChannel = await createClientChannel(
       clientTransport,
       exportPublicKey(daemonKeyPair.publicKey),
       {},
@@ -442,21 +446,130 @@ describe("relay-transport control lifecycle", () => {
     /** Relay-aware socket shape that retains sender-side traffic semantics. */
     const encryptedSocket = (await attached) as {
       sendClassified: (data: string, hint: RelayTrafficHint) => void | Promise<void>;
+      on: (event: "message", listener: (data: string | ArrayBuffer) => void) => void;
     };
+    /** Client-to-daemon framed identity payload observed at the attached socket seam. */
+    const inboundPayload = "client-framed-identity";
+    /** Delivery signal for the daemon-side framed decoder. */
+    const inboundDelivered = new Promise<string | ArrayBuffer>((resolve) => {
+      encryptedSocket.on("message", resolve);
+    });
+    await clientChannel.send(inboundPayload);
+    await expect(inboundDelivered).resolves.toBe(inboundPayload);
+    /** Large realtime payload that remains ineligible regardless of potential compression gain. */
+    const realtimePayload = "realtime-payload:".repeat(512);
     /** Repeated catch-up payload whose level-1 raw DEFLATE result is unambiguously smaller. */
-    const payload = "state-sync-payload:".repeat(512);
+    const stateSyncPayload = "state-sync-payload:".repeat(512);
     /** Number of handshake wires already emitted before application traffic. */
     const sentBeforeApplication = dataSocket.sent.length;
 
-    await encryptedSocket.sendClassified(payload, { trafficClass: "state-sync" });
+    await encryptedSocket.sendClassified(realtimePayload, { trafficClass: "realtime" });
+    await encryptedSocket.sendClassified(stateSyncPayload, { trafficClass: "state-sync" });
 
-    expect(dataSocket.sent).toHaveLength(sentBeforeApplication + 1);
-    /** Final opaque application wire produced after compression and encryption. */
-    const applicationWire = dataSocket.sent.at(-1);
-    expect(applicationWire).toBeInstanceOf(ArrayBuffer);
-    expect((applicationWire as ArrayBuffer).byteLength).toBeLessThan(
-      new TextEncoder().encode(payload).byteLength / 2,
+    expect(dataSocket.sent).toHaveLength(sentBeforeApplication + 2);
+    /** Opaque realtime wire produced through framed identity. */
+    const realtimeWire = dataSocket.sent.at(-2);
+    /** Opaque state-sync wire produced after compression and encryption. */
+    const stateSyncWire = dataSocket.sent.at(-1);
+    expect(realtimeWire).toBeInstanceOf(ArrayBuffer);
+    expect(stateSyncWire).toBeInstanceOf(ArrayBuffer);
+    expect((realtimeWire as ArrayBuffer).byteLength).toBe(
+      new TextEncoder().encode(realtimePayload).byteLength + 48,
     );
+    expect((stateSyncWire as ArrayBuffer).byteLength).toBeLessThan(
+      new TextEncoder().encode(stateSyncPayload).byteLength / 2,
+    );
+    /** Relay transport aggregates produced by the actual handshake and send path. */
+    const snapshot = runtimeMetrics.snapshotAndReset();
+    expect(snapshot.negotiatedModeCount["framed-v1-binary"]).toBe(1);
+    expect(snapshot.effectiveCompressionCount).toEqual([
+      {
+        enabled: true,
+        algorithm: "deflate-raw",
+        reason: null,
+        count: 1,
+      },
+    ]);
+    expect(snapshot.compressionAttemptCount).toEqual({
+      realtime: 0,
+      "state-sync": 1,
+      bulk: 0,
+      "bulk-live": 0,
+    });
+    expect(snapshot.outboundFrames).toEqual([
+      {
+        ciphertextEncoding: "binary",
+        trafficClass: "realtime",
+        codec: "identity",
+        frameCount: 1,
+        originalBytes: new TextEncoder().encode(realtimePayload).byteLength,
+        encodedBytes: new TextEncoder().encode(realtimePayload).byteLength,
+        wireBytes: (realtimeWire as ArrayBuffer).byteLength,
+      },
+      {
+        ciphertextEncoding: "binary",
+        trafficClass: "state-sync",
+        codec: "deflate-raw",
+        frameCount: 1,
+        originalBytes: new TextEncoder().encode(stateSyncPayload).byteLength,
+        encodedBytes: expect.any(Number),
+        wireBytes: (stateSyncWire as ArrayBuffer).byteLength,
+      },
+    ]);
+    expect(snapshot.outboundFrames[1]?.encodedBytes).toBeLessThan(
+      snapshot.outboundFrames[1]?.originalBytes ?? 0,
+    );
+    expect(snapshot.compressionSkipCount["traffic-ineligible"]).toBe(1);
+    expect(snapshot.compressionPrepareMs).toEqual([
+      {
+        algorithm: "deflate-raw",
+        p50: expect.any(Number),
+        p95: expect.any(Number),
+        max: expect.any(Number),
+      },
+    ]);
+    expect(snapshot.compressionCodecMs).toHaveLength(1);
+    expect(snapshot.compressionQueueMs).toEqual([
+      {
+        trafficClass: "realtime",
+        p50: expect.any(Number),
+        p95: expect.any(Number),
+        max: expect.any(Number),
+      },
+      {
+        trafficClass: "state-sync",
+        p50: expect.any(Number),
+        p95: expect.any(Number),
+        max: expect.any(Number),
+      },
+    ]);
+    expect(snapshot.pendingPreparedBytes).toEqual({
+      p95: (realtimeWire as ArrayBuffer).byteLength,
+      max: (realtimeWire as ArrayBuffer).byteLength,
+    });
+    expect(snapshot.inboundFrames).toEqual([
+      {
+        ciphertextEncoding: "binary",
+        codec: "identity",
+        frameCount: 1,
+        originalBytes: new TextEncoder().encode(inboundPayload).byteLength,
+        encodedBytes: new TextEncoder().encode(inboundPayload).byteLength,
+        wireBytes: new TextEncoder().encode(inboundPayload).byteLength + 48,
+      },
+    ]);
+    expect(snapshot.inboundDecodeMs).toEqual([
+      {
+        ciphertextEncoding: "binary",
+        codec: "identity",
+        p50: expect.any(Number),
+        p95: expect.any(Number),
+        max: expect.any(Number),
+      },
+    ]);
+    expect(snapshot.pendingReceiveWireBytes).toEqual({
+      p95: new TextEncoder().encode(inboundPayload).byteLength + 48,
+      max: new TextEncoder().encode(inboundPayload).byteLength + 48,
+    });
   });
 
   test("uses relayUseTls for control and data socket URLs", () => {

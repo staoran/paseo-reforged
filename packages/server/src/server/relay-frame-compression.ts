@@ -74,6 +74,12 @@ export interface PreparedDaemonFramedPayload extends PreparedFramedPayload {
   trafficClass: RelayTrafficClass;
   /** Null when compression was adopted; otherwise the identity fallback reason. */
   skipReason: CompressionSkipReason | null;
+  /** Whether this frame entered the raw DEFLATE adapter after all pre-codec gates. */
+  compressionAttempted: boolean;
+  /** Total preparation wall time including gates, codec, and envelope construction. */
+  prepareMs: number;
+  /** Raw DEFLATE callback wall time, or null when the adapter was not entered. */
+  codecMs: number | null;
 }
 
 /** Daemon compression coordinator sharing one process-wide non-waiting job gate. */
@@ -164,6 +170,13 @@ function prepareIdentityFallback(
   hint: RelayTrafficHint,
   policy: DaemonFrameCompressionPolicy,
   skipReason: CompressionSkipReason,
+  timing: {
+    /** Monotonic start of the full preparation operation. */
+    prepareStartedAt: number;
+    /** Raw codec callback wall time when the adapter was entered. */
+    codecMs: number | null;
+  },
+  clock: () => number,
 ): PreparedDaemonFramedPayload {
   // Authenticated identity envelope used for every safe compression fallback.
   const prepared = prepareIdentityFramedPayload(data);
@@ -176,6 +189,9 @@ function prepareIdentityFallback(
     ciphertextEncoding: policy.ciphertextEncoding,
     trafficClass: hint.trafficClass,
     skipReason,
+    compressionAttempted: timing.codecMs !== null,
+    prepareMs: elapsedMs(timing.prepareStartedAt, clock()),
+    codecMs: timing.codecMs,
   };
 }
 
@@ -183,31 +199,73 @@ function prepareIdentityFallback(
 export function createDaemonFrameCompression(options: {
   /** Runtime-specific raw DEFLATE codec. */
   codec: DaemonFrameCompressionCodec;
+  /** Optional monotonic clock used by runtime metrics and deterministic tests. */
+  clock?: () => number;
 }): DaemonFrameCompression {
+  /** Monotonic clock shared by every preparation owned by this coordinator. */
+  const clock = options.clock ?? defaultMonotonicClock;
   return {
     prepare: async (data, hint, policy) => {
+      /** Monotonic start retained only for content-free wall-time metrics. */
+      const prepareStartedAt = clock();
       // Logical application bytes passed unchanged to the codec boundary.
       const originalBytes = typeof data === "string" ? new TextEncoder().encode(data).buffer : data;
       // Eligibility result computed before consuming a daemon compression slot.
       const skipReason = resolvePreCompressionSkipReason(originalBytes.byteLength, hint, policy);
-      if (skipReason) return prepareIdentityFallback(data, hint, policy, skipReason);
+      if (skipReason) {
+        return prepareIdentityFallback(
+          data,
+          hint,
+          policy,
+          skipReason,
+          { prepareStartedAt, codecMs: null },
+          clock,
+        );
+      }
       if (activeDaemonCompressionJobs >= MAX_CONCURRENT_DAEMON_COMPRESSION_JOBS) {
-        return prepareIdentityFallback(data, hint, policy, "busy");
+        return prepareIdentityFallback(
+          data,
+          hint,
+          policy,
+          "busy",
+          { prepareStartedAt, codecMs: null },
+          clock,
+        );
       }
       activeDaemonCompressionJobs += 1;
       try {
         // Raw DEFLATE output produced at the fixed private encoder level.
         let compressed: ArrayBuffer;
+        /** Monotonic start around the asynchronous native codec callback. */
+        const codecStartedAt = clock();
+        /** Codec callback wall time including any libuv worker-pool wait. */
+        let codecMs: number;
         try {
           compressed = await options.codec.deflateRaw(originalBytes, FIXED_DEFLATE_LEVEL);
+          codecMs = elapsedMs(codecStartedAt, clock());
         } catch {
-          return prepareIdentityFallback(data, hint, policy, "error");
+          codecMs = elapsedMs(codecStartedAt, clock());
+          return prepareIdentityFallback(
+            data,
+            hint,
+            policy,
+            "error",
+            { prepareStartedAt, codecMs },
+            clock,
+          );
         }
         if (
           compressed.byteLength === 0 ||
           originalBytes.byteLength > compressed.byteLength * MAX_COMPRESSION_RATIO
         ) {
-          return prepareIdentityFallback(data, hint, policy, "ratio");
+          return prepareIdentityFallback(
+            data,
+            hint,
+            policy,
+            "ratio",
+            { prepareStartedAt, codecMs },
+            clock,
+          );
         }
         // Required reduction combining the fixed and proportional policy gates.
         const requiredSavings = Math.max(
@@ -215,14 +273,28 @@ export function createDaemonFrameCompression(options: {
           Math.ceil(originalBytes.byteLength * MIN_COMPRESSION_SAVINGS_RATIO),
         );
         if (compressed.byteLength > originalBytes.byteLength - requiredSavings) {
-          return prepareIdentityFallback(data, hint, policy, "no-gain");
+          return prepareIdentityFallback(
+            data,
+            hint,
+            policy,
+            "no-gain",
+            { prepareStartedAt, codecMs },
+            clock,
+          );
         }
         // Authenticated envelope prepared exactly once before the later encryption stage.
         let prepared: PreparedFramedPayload;
         try {
           prepared = prepareDeflateFramedPayload(data, compressed);
         } catch {
-          return prepareIdentityFallback(data, hint, policy, "error");
+          return prepareIdentityFallback(
+            data,
+            hint,
+            policy,
+            "error",
+            { prepareStartedAt, codecMs },
+            clock,
+          );
         }
         return {
           ...prepared,
@@ -233,10 +305,25 @@ export function createDaemonFrameCompression(options: {
           ciphertextEncoding: policy.ciphertextEncoding,
           trafficClass: hint.trafficClass,
           skipReason: null,
+          compressionAttempted: true,
+          prepareMs: elapsedMs(prepareStartedAt, clock()),
+          codecMs,
         };
       } finally {
         activeDaemonCompressionJobs -= 1;
       }
     },
   };
+}
+
+/** Returns the cross-runtime monotonic clock used by production preparation metrics. */
+function defaultMonotonicClock(): number {
+  return globalThis.performance.now();
+}
+
+/** Normalizes one monotonic duration to a finite non-negative metric. */
+function elapsedMs(startedAt: number, endedAt: number): number {
+  const duration = endedAt - startedAt;
+  if (!Number.isFinite(duration) || duration < 0) return 0;
+  return duration;
 }

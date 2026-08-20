@@ -1228,6 +1228,7 @@ export class DaemonClient {
           baseFactory: baseTransportFactory,
           daemonPublicKeyB64,
           logger: this.logger,
+          ...(this.runtimeMetrics ? { runtimeMetrics: this.runtimeMetrics } : {}),
         });
       }
       const transportUrl = this.resolveTransportUrlForAttempt();

@@ -7,6 +7,7 @@ import {
   type RelayTransportController,
 } from "./relay-transport.js";
 import type { ConfiguredRelayTransportPolicy } from "./relay-transport-policy.js";
+import type { RelayTransportRuntimeMetricsWindow } from "./websocket/runtime-metrics.js";
 
 export interface RelayRuntimeConfig {
   /** Whether the daemon currently maintains its relay control transport. */
@@ -36,6 +37,8 @@ interface RelayRuntimeOptions {
   daemonKeyPair: KeyPair;
   /** Optional transport factory used by focused lifecycle tests. */
   startTransport?: typeof startRelayTransport;
+  /** Content-free recorder shared with the daemon WebSocket diagnostics window. */
+  runtimeMetrics?: RelayTransportRuntimeMetricsWindow;
 }
 
 export interface RelayRuntime {
@@ -71,7 +74,9 @@ export function createRelayRuntime(options: RelayRuntimeOptions): RelayRuntime {
       serverId: options.serverId,
       daemonKeyPair: options.daemonKeyPair,
       getConfiguredTransportPolicy: () => transportPolicy,
+      ...(options.runtimeMetrics ? { runtimeMetrics: options.runtimeMetrics } : {}),
     });
+    options.runtimeMetrics?.setConfiguredPolicy(transportPolicy);
   }
 
   /** Applies an enabled-state transition without changing transport policy. */
@@ -93,6 +98,7 @@ export function createRelayRuntime(options: RelayRuntimeOptions): RelayRuntime {
   /** Replaces transport policy without restarting or re-handshaking existing connections. */
   function setTransportPolicy(policy: ConfiguredRelayTransportPolicy): void {
     transportPolicy = policy;
+    options.runtimeMetrics?.setConfiguredPolicy(policy);
   }
 
   /** Stops the current relay transport and waits for its teardown. */

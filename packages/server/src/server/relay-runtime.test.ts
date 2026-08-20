@@ -4,6 +4,7 @@ import { generateKeyPair } from "@getpaseo/relay";
 import { createRelayRuntime } from "./relay-runtime.js";
 import { startRelayTransport, type RelayTransportController } from "./relay-transport.js";
 import { resolveConfiguredRelayTransportPolicy } from "./relay-transport-policy.js";
+import { RelayTransportRuntimeMetricsWindow } from "./websocket/runtime-metrics.js";
 
 describe("RelayRuntime", () => {
   test("starts and stops transport as enabled state changes", async () => {
@@ -68,6 +69,8 @@ describe("RelayRuntime", () => {
   test("updates transport policy in place for subsequent data-connection reads", () => {
     // Transport starts captured through the runtime's production adapter seam.
     const starts: Parameters<typeof startRelayTransport>[0][] = [];
+    /** Recorder shared with WebSocket diagnostics across transport updates. */
+    const runtimeMetrics = new RelayTransportRuntimeMetricsWindow();
     // Runtime under test owns one transport while policy is updated in place.
     const runtime = createRelayRuntime({
       config: {
@@ -82,6 +85,7 @@ describe("RelayRuntime", () => {
       attachSocket: async () => undefined,
       serverId: "relay-runtime-policy-test",
       daemonKeyPair: generateKeyPair(),
+      runtimeMetrics,
       startTransport: (options) => {
         starts.push(options);
         return { stop: async () => undefined };
@@ -92,6 +96,7 @@ describe("RelayRuntime", () => {
       ciphertextEncoding: "auto",
       compressionEnabled: true,
     });
+    expect(starts[0]?.runtimeMetrics).toBe(runtimeMetrics);
 
     runtime.setTransportPolicy(
       resolveConfiguredRelayTransportPolicy({
@@ -102,6 +107,10 @@ describe("RelayRuntime", () => {
 
     expect(starts).toHaveLength(1);
     expect(starts[0]?.getConfiguredTransportPolicy?.()).toEqual({
+      ciphertextEncoding: "base64",
+      compressionEnabled: false,
+    });
+    expect(runtimeMetrics.snapshotAndReset().configuredPolicy).toEqual({
       ciphertextEncoding: "base64",
       compressionEnabled: false,
     });

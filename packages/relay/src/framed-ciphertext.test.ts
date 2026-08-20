@@ -6,6 +6,7 @@ import {
   type CiphertextEncoding,
   type ConfiguredCiphertextEncoding,
   type EncryptedChannelEvents,
+  type EncryptedChannelRuntimeObserver,
   type Transport,
 } from "./encrypted-channel.js";
 import {
@@ -264,6 +265,8 @@ async function openClientFramedChannel(args: {
   compressionAdapter?: FrameCompressionAdapter;
   /** Compression algorithms selected by the synthetic daemon. */
   compressionAlgorithms?: readonly string[];
+  /** Optional content-free observer supplied at the public channel boundary. */
+  runtimeObserver?: EncryptedChannelRuntimeObserver;
 }): Promise<ClientFramedChannelFixture> {
   // Daemon identity used to derive the same channel key as the client.
   const daemonKeyPair = generateKeyPair();
@@ -296,7 +299,10 @@ async function openClientFramedChannel(args: {
         resolveOpened?.();
       },
     },
-    { compressionAdapter: args.compressionAdapter },
+    {
+      compressionAdapter: args.compressionAdapter,
+      runtimeObserver: args.runtimeObserver,
+    },
   );
   // Client hello carrying the ephemeral key for independent key derivation.
   const hello = JSON.parse(sent[0] as string) as { key: string };
@@ -328,6 +334,39 @@ async function openClientFramedChannel(args: {
 }
 
 describe("framed ciphertext v1 contract", () => {
+  it("delivers framed traffic when every runtime observer callback throws", async () => {
+    /** Application messages received after observer failures are isolated. */
+    const received: Array<string | ArrayBuffer> = [];
+    /** Observer whose public callbacks deliberately fail at every valid-frame stage. */
+    const runtimeObserver: EncryptedChannelRuntimeObserver = {
+      onNegotiatedTransport: () => {
+        throw new Error("negotiated observer failed");
+      },
+      onInboundFrame: () => {
+        throw new Error("inbound observer failed");
+      },
+      onPendingReceiveWireBytes: () => {
+        throw new Error("pending observer failed");
+      },
+    };
+    /** Open framed channel observed only through public transport and events. */
+    const fixture = await openClientFramedChannel({
+      ciphertextEncoding: "binary",
+      runtimeObserver,
+      events: { onmessage: (data) => received.push(data) },
+    });
+    /** Independently prepared and encrypted application frame. */
+    const prepared = prepareIdentityFramedPayload("observer-independent");
+
+    fixture.transport.onmessage?.({
+      data: encrypt(fixture.sharedKey, prepared.plaintext),
+      isBinary: true,
+    });
+    await vi.waitFor(() => expect(received).toEqual(["observer-independent"]));
+
+    expect(fixture.channel.isOpen()).toBe(true);
+  });
+
   it("encodes and decodes the exact authenticated identity envelope", async () => {
     const prepared = prepareIdentityFramedPayload("ok");
     expect(new Uint8Array(prepared.plaintext)).toEqual(

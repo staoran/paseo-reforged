@@ -10,7 +10,10 @@ export type {
   ClientChannelOptions,
   ConfiguredCiphertextEncoding,
   DaemonChannelOptions,
+  EncryptedChannelInboundFrameMetric,
   EncryptedChannelEvents,
+  EncryptedChannelProtocolErrorReason,
+  EncryptedChannelRuntimeObserver,
   NegotiatedEncryptedTransport,
   PreparedEncryptedFrame,
   Transport,
@@ -43,6 +46,7 @@ export {
 export type {
   FrameCompressionAdapter,
   FrameCompressionEncoder,
+  FramedCiphertextCodec,
   FramedCiphertextEncoding,
   PreparedFramedPayload,
 } from "./framed-ciphertext.js";

@@ -2,6 +2,9 @@ import {
   createClientChannel,
   createFflateFrameCompressionAdapter,
   type EncryptedChannel,
+  type EncryptedChannelInboundFrameMetric,
+  type EncryptedChannelProtocolErrorReason,
+  type NegotiatedEncryptedTransport,
   type Transport as RelayTransport,
 } from "@getpaseo/relay/e2ee";
 import type {
@@ -16,6 +19,18 @@ type CloseHandler = (event?: unknown) => void;
 type ErrorHandler = (event?: unknown) => void;
 type MessageHandler = (data: unknown, isBinary: boolean) => void;
 
+/** Content-free metrics port implemented by the owning daemon client. */
+interface RelayE2eeRuntimeMetrics {
+  /** Records the authenticated connection-level transport selection. */
+  recordRelayNegotiated(negotiated: NegotiatedEncryptedTransport): void;
+  /** Records one successfully decoded framed payload without its content. */
+  recordRelayInboundFrame(metric: EncryptedChannelInboundFrameMetric): void;
+  /** Records one bounded framed protocol failure. */
+  recordRelayFramedProtocolError(reason: EncryptedChannelProtocolErrorReason): void;
+  /** Samples aggregate raw wire bytes retained by the receive FIFO. */
+  recordRelayPendingReceiveWireBytes(bytes: number): void;
+}
+
 /** Stateless browser/Hermes decoder shared by client relay connections. */
 const relayCompressionAdapter = createFflateFrameCompressionAdapter();
 
@@ -23,10 +38,16 @@ export function createRelayE2eeTransportFactory(args: {
   baseFactory: DaemonTransportFactory;
   daemonPublicKeyB64: string;
   logger: TransportLogger;
+  runtimeMetrics?: RelayE2eeRuntimeMetrics;
 }): DaemonTransportFactory {
   return ({ url, headers }) => {
     const base = args.baseFactory({ url, headers });
-    return createEncryptedTransport(base, args.daemonPublicKeyB64, args.logger);
+    return createEncryptedTransport(
+      base,
+      args.daemonPublicKeyB64,
+      args.logger,
+      args.runtimeMetrics,
+    );
   };
 }
 
@@ -34,6 +55,7 @@ export function createEncryptedTransport(
   base: DaemonTransport,
   daemonPublicKeyB64: string,
   logger: TransportLogger,
+  runtimeMetrics?: RelayE2eeRuntimeMetrics,
 ): DaemonTransport {
   let channel: EncryptedChannel | null = null;
   let opened = false;
@@ -107,7 +129,22 @@ export function createEncryptedTransport(
           onclose: (code, reason) => emitClose({ code, reason }),
           onerror: (error) => emitError(error),
         },
-        { compressionAdapter: relayCompressionAdapter },
+        {
+          compressionAdapter: relayCompressionAdapter,
+          ...(runtimeMetrics
+            ? {
+                runtimeObserver: {
+                  onNegotiatedTransport: (negotiated) =>
+                    runtimeMetrics.recordRelayNegotiated(negotiated),
+                  onInboundFrame: (metric) => runtimeMetrics.recordRelayInboundFrame(metric),
+                  onFramedProtocolError: (reason) =>
+                    runtimeMetrics.recordRelayFramedProtocolError(reason),
+                  onPendingReceiveWireBytes: (bytes) =>
+                    runtimeMetrics.recordRelayPendingReceiveWireBytes(bytes),
+                },
+              }
+            : {}),
+        },
       );
     } catch (error) {
       logger.warn({ err: normalizeTransportError(error) }, "relay_e2ee_handshake_failed");

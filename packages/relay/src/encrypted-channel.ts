@@ -23,7 +23,9 @@ import {
   framedCiphertextWireByteLength,
   MAX_FRAMED_WIRE_BYTES,
   prepareIdentityFramedPayload,
+  type DecodedFramedPayload,
   type FrameCompressionAdapter,
+  type FramedCiphertextCodec,
   type PreparedFramedPayload,
 } from "./framed-ciphertext.js";
 
@@ -61,6 +63,8 @@ export interface DaemonChannelOptions {
   ciphertextEncoding?: ConfiguredCiphertextEncoding;
   /** Compression codecs implemented by the daemon runtime for this data connection. */
   compressionAlgorithms?: readonly string[];
+  /** Optional content-free observer for negotiated and inbound framed metrics. */
+  runtimeObserver?: EncryptedChannelRuntimeObserver;
 }
 
 /** Immutable encrypted transport result exposed after one connection handshakes. */
@@ -86,7 +90,45 @@ export type NegotiatedEncryptedTransport =
 export interface ClientChannelOptions {
   /** Enables safe decoding and advertisement of framed raw DEFLATE payloads. */
   compressionAdapter?: FrameCompressionAdapter;
+  /** Optional content-free observer for negotiated and inbound framed metrics. */
+  runtimeObserver?: EncryptedChannelRuntimeObserver;
 }
+
+/** Content-free metadata emitted after one framed application payload is decoded. */
+export interface EncryptedChannelInboundFrameMetric {
+  /** Connection-locked ciphertext representation. */
+  ciphertextEncoding: CiphertextEncoding;
+  /** Authenticated payload codec. */
+  codec: FramedCiphertextCodec;
+  /** Authenticated original application byte count. */
+  originalByteLength: number;
+  /** Encoded payload byte count inside the authenticated envelope. */
+  encodedByteLength: number;
+  /** Raw WebSocket application bytes received before any decoding. */
+  wireByteLength: number;
+  /** Full framed receive wall time through representation decode, decrypt, and payload decode. */
+  decodeMs: number;
+}
+
+/** Optional runtime observer whose failures never affect encrypted traffic. */
+export interface EncryptedChannelRuntimeObserver {
+  /** Reports the immutable result after authenticated mode confirmation. */
+  onNegotiatedTransport?(negotiated: NegotiatedEncryptedTransport): void;
+  /** Reports one successfully decoded framed payload without its content. */
+  onInboundFrame?(metric: EncryptedChannelInboundFrameMetric): void;
+  /** Reports one bounded framed protocol failure without remote error text. */
+  onFramedProtocolError?(reason: EncryptedChannelProtocolErrorReason): void;
+  /** Samples aggregate raw WebSocket bytes retained by the receive FIFO. */
+  onPendingReceiveWireBytes?(bytes: number): void;
+}
+
+/** Bounded framed receive failure stages exposed to runtime metrics. */
+export type EncryptedChannelProtocolErrorReason =
+  | "invalid-wire"
+  | "decrypt-failed"
+  | "invalid-envelope"
+  | "decode-failed"
+  | "receive-high-water";
 
 /** Fully encrypted and representation-encoded application frame ready for one transport write. */
 export interface PreparedEncryptedFrame {
@@ -127,6 +169,8 @@ interface EncryptedChannelOptions {
   receiveWireBudget?: ReceiveWireBudget;
   /** Reserves ready-adjacent client traffic until the offered framed mode is accepted or declined. */
   framedCiphertextV1Offered?: boolean;
+  /** Optional content-free runtime observer supplied by the host adapter. */
+  runtimeObserver?: EncryptedChannelRuntimeObserver;
 }
 
 interface FramedCiphertextV1Offer {
@@ -433,6 +477,7 @@ export async function createClientChannel(
     offeredCompressionAlgorithms: compressionAlgorithms,
     compressionAdapter: options.compressionAdapter,
     framedCiphertextV1Offered: true,
+    runtimeObserver: options.runtimeObserver,
   });
 
   // Send e2ee_hello with our public key
@@ -647,8 +692,12 @@ export async function createDaemonChannel(
         ...(framedSelection ? { framedCiphertextV1: framedSelection } : {}),
         daemonReadyText: savedReadyText,
         receiveWireBudget,
+        runtimeObserver: options.runtimeObserver,
       });
       attachedChannel.setState("open");
+      notifyRuntimeObserver(options.runtimeObserver, "onNegotiatedTransport", () =>
+        attachedChannel.getNegotiatedTransport(),
+      );
       channel = attachedChannel;
       phase = "open";
       events.onopen?.();
@@ -919,16 +968,19 @@ export class EncryptedChannel {
     if (this.state === "closed") return null;
     const bytes = transportMessageWireByteLength(message);
     if (this.options.framedCiphertextV1 && bytes >= MAX_FRAMED_WIRE_BYTES) {
+      this.notifyProtocolError("invalid-wire");
       this.failReceive(new Error("Framed ciphertext exceeds the wire byte limit"), 1009);
       return null;
     }
     if (this.receiveWireBudget.pendingBytes + bytes > MAX_PENDING_RECEIVE_WIRE_BYTES) {
+      this.notifyProtocolError("receive-high-water");
       this.failReceive(new Error("Encrypted channel exceeded its inbound high-water mark"), 1009);
       return null;
     }
     const reservation: ReceiveWireReservation = { bytes, released: false };
     this.receiveWireBudget.pendingBytes += bytes;
     this.receiveReservations.add(reservation);
+    this.samplePendingReceiveWireBytes();
     return reservation;
   }
 
@@ -939,6 +991,7 @@ export class EncryptedChannel {
     this.receiveReservations.delete(reservation);
     this.receiveWireBudget.pendingBytes -= reservation.bytes;
     if (this.receiveWireBudget.pendingBytes < 0) this.receiveWireBudget.pendingBytes = 0;
+    this.samplePendingReceiveWireBytes();
   }
 
   /** Releases all active and queued ingress reservations during connection teardown. */
@@ -959,6 +1012,18 @@ export class EncryptedChannel {
     }
   }
 
+  /** Emits one bounded protocol reason without retaining the source exception. */
+  private notifyProtocolError(reason: EncryptedChannelProtocolErrorReason): void {
+    notifyRuntimeObserver(this.options.runtimeObserver, "onFramedProtocolError", () => reason);
+  }
+
+  /** Samples the current receive reservation gauge without affecting traffic. */
+  private samplePendingReceiveWireBytes(): void {
+    notifyRuntimeObserver(this.options.runtimeObserver, "onPendingReceiveWireBytes", () =>
+      Math.max(0, this.receiveWireBudget.pendingBytes),
+    );
+  }
+
   setState(state: ChannelState): void {
     this.state = state;
   }
@@ -971,7 +1036,13 @@ export class EncryptedChannel {
 
     if (this.state !== "open") return;
 
+    /** Bounded stage retained if framed processing fails before application delivery. */
+    let framedFailureReason: EncryptedChannelProtocolErrorReason = "invalid-wire";
     try {
+      /** Monotonic start of the complete framed receive path. */
+      const framedDecodeStartedAt = this.options.framedCiphertextV1
+        ? defaultMonotonicClock()
+        : null;
       const ciphertext = await (async () => {
         // Handle (or ignore) any stray plaintext handshake traffic.
         try {
@@ -1011,6 +1082,7 @@ export class EncryptedChannel {
             message.isBinary,
             this.options.framedCiphertextV1.ciphertextEncoding,
           );
+          framedFailureReason = "decrypt-failed";
           return { data: framedWire, isBinary: null };
         }
 
@@ -1040,9 +1112,40 @@ export class EncryptedChannel {
 
       if (ciphertext) {
         const plaintextBytes = decrypt(this.sharedKey, ciphertext.data);
+        if (this.options.framedCiphertextV1) framedFailureReason = "invalid-envelope";
+        /** Authenticated framed result retained only long enough to emit content-free metrics. */
+        let decodedFramed: DecodedFramedPayload | null = null;
+        /** Adapter wrapper marks failures that occurred after bounded inflate began. */
+        const observedCompressionAdapter = this.options.compressionAdapter
+          ? {
+              inflateRaw: (input: ArrayBuffer, expectedLength: number, maxOutputLength: number) => {
+                framedFailureReason = "decode-failed";
+                return this.options.compressionAdapter!.inflateRaw(
+                  input,
+                  expectedLength,
+                  maxOutputLength,
+                );
+              },
+            }
+          : undefined;
         const plaintext = this.options.framedCiphertextV1
-          ? (await decodeFramedPayload(plaintextBytes, this.options.compressionAdapter)).data
+          ? ((decodedFramed = await decodeFramedPayload(
+              plaintextBytes,
+              observedCompressionAdapter,
+            )),
+            decodedFramed.data)
           : decodePlaintext(plaintextBytes, ciphertext.isBinary);
+        if (decodedFramed && framedDecodeStartedAt !== null && this.options.framedCiphertextV1) {
+          const selection = this.options.framedCiphertextV1;
+          notifyRuntimeObserver(this.options.runtimeObserver, "onInboundFrame", () => ({
+            ciphertextEncoding: selection.ciphertextEncoding,
+            codec: decodedFramed.codec,
+            originalByteLength: decodedFramed.originalByteLength,
+            encodedByteLength: decodedFramed.encodedByteLength,
+            wireByteLength: transportMessageWireByteLength(message),
+            decodeMs: elapsedMs(framedDecodeStartedAt, defaultMonotonicClock()),
+          }));
+        }
         if (this.state !== "open") return;
         if (typeof plaintext === "string" && isReservedModeConfirmText(plaintext)) {
           throw new Error("Received reserved e2ee_mode_confirm outside a pending selection");
@@ -1053,6 +1156,10 @@ export class EncryptedChannel {
       const err = error instanceof Error ? error : new Error(String(error));
 
       if (this.isClosed()) return;
+
+      if (this.options.framedCiphertextV1) {
+        this.notifyProtocolError(framedFailureReason);
+      }
 
       // Treat decryption/protocol errors as fatal so the peer can reconnect and
       // re-handshake. Emitting an error event here can cause higher-level code
@@ -1120,6 +1227,9 @@ export class EncryptedChannel {
     }
     if (this.state !== "opening") return;
     this.state = "open";
+    notifyRuntimeObserver(this.options.runtimeObserver, "onNegotiatedTransport", () =>
+      this.getNegotiatedTransport(),
+    );
     this.events.onopen?.();
     for (const cb of this.onOpenCallbacks) cb();
   }
@@ -1369,6 +1479,35 @@ export class EncryptedChannel {
   onClose(cb: () => void): void {
     this.onCloseCallbacks.push(cb);
   }
+}
+
+/** Calls one runtime observer method without allowing observability to affect traffic. */
+function notifyRuntimeObserver<
+  TMethod extends keyof EncryptedChannelRuntimeObserver,
+  TArgument extends Parameters<NonNullable<EncryptedChannelRuntimeObserver[TMethod]>>[0],
+>(
+  observer: EncryptedChannelRuntimeObserver | undefined,
+  method: TMethod,
+  createArgument: () => TArgument,
+): void {
+  try {
+    const callback = observer?.[method] as ((argument: TArgument) => void) | undefined;
+    callback?.(createArgument());
+  } catch {
+    // Runtime observers are intentionally isolated from protocol behavior.
+  }
+}
+
+/** Returns the cross-runtime monotonic clock used by receive metrics. */
+function defaultMonotonicClock(): number {
+  return globalThis.performance.now();
+}
+
+/** Normalizes one monotonic duration to a finite non-negative metric. */
+function elapsedMs(startedAt: number, endedAt: number): number {
+  const duration = endedAt - startedAt;
+  if (!Number.isFinite(duration) || duration < 0) return 0;
+  return duration;
 }
 
 function decodeTransportText(data: string | ArrayBuffer): string {

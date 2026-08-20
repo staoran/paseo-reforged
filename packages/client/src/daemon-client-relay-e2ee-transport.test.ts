@@ -9,6 +9,7 @@ import {
 import { prepareDeflateFramedPayload } from "@getpaseo/relay/e2ee";
 import { describe, expect, test, vi } from "vitest";
 import { createEncryptedTransport } from "./daemon-client-relay-e2ee-transport.js";
+import { DaemonClientRuntimeMetrics } from "./daemon-client-runtime-metrics.js";
 import type { DaemonTransport } from "./daemon-client-transport-types.js";
 
 describe("daemon client relay E2EE transport", () => {
@@ -84,10 +85,26 @@ describe("daemon client relay E2EE transport", () => {
         };
       },
     };
+    /** Client runtime log payloads emitted after the real decode completes. */
+    const runtimeEntries: object[] = [];
+    /** Content-free metrics recorder passed through the encrypted transport adapter. */
+    const runtimeMetrics = new DaemonClientRuntimeMetrics(
+      { info: (entry) => runtimeEntries.push(entry) },
+      {
+        connectionPath: "relay",
+        serverId: null,
+        getConnectionStatus: () => "connected",
+      },
+    );
     /** Public encrypted transport under test. */
-    const encrypted = createEncryptedTransport(base, exportPublicKey(daemonKeyPair.publicKey), {
-      warn: vi.fn(),
-    });
+    const encrypted = createEncryptedTransport(
+      base,
+      exportPublicKey(daemonKeyPair.publicKey),
+      {
+        warn: vi.fn(),
+      },
+      runtimeMetrics,
+    );
     /** First public application or close result after the compressed frame arrives. */
     let resolveOutcome:
       | ((outcome: { kind: string; data?: unknown; isBinary?: boolean }) => void)
@@ -95,6 +112,12 @@ describe("daemon client relay E2EE transport", () => {
     /** Outcome promise preventing a protocol close from hanging the test. */
     const outcome = new Promise<{ kind: string; data?: unknown; isBinary?: boolean }>((resolve) => {
       resolveOutcome = resolve;
+    });
+    /** Physical close signal for a later malformed compressed frame. */
+    let resolveClosed: (() => void) | null = null;
+    /** Close promise proves the malformed frame is rejected before application delivery. */
+    const closed = new Promise<void>((resolve) => {
+      resolveClosed = resolve;
     });
     /** Completion signal emitted only after the authenticated mode confirm settles. */
     let resolveOpened: (() => void) | null = null;
@@ -106,7 +129,10 @@ describe("daemon client relay E2EE transport", () => {
     encrypted.onMessage((data, isBinary) =>
       resolveOutcome?.({ kind: "application", data, isBinary }),
     );
-    encrypted.onClose(() => resolveOutcome?.({ kind: "closed" }));
+    encrypted.onClose(() => {
+      resolveOutcome?.({ kind: "closed" });
+      resolveClosed?.();
+    });
 
     openHandler?.();
     await vi.waitFor(() => expect(sent).toHaveLength(1));
@@ -143,8 +169,45 @@ describe("daemon client relay E2EE transport", () => {
 
     messageHandler?.(encrypt(sharedKey, prepared.plaintext), true);
     const firstOutcome = await outcome;
+    /** Independent invalid raw bytes that still satisfy authenticated envelope size gates. */
+    const invalidCompressed = new Uint8Array(64).fill(0xff).buffer;
+    /** Authenticated envelope whose codec fails only when the real fflate decoder runs. */
+    const invalidPrepared = prepareDeflateFramedPayload("x".repeat(4_096), invalidCompressed);
+    messageHandler?.(encrypt(sharedKey, invalidPrepared.plaintext), true);
+    await closed;
+    runtimeMetrics.flush({ final: true });
     encrypted.close();
 
     expect(firstOutcome).toEqual({ kind: "application", data: original, isBinary: false });
+    const relayTransport = (runtimeEntries[0] as { relayTransport: unknown }).relayTransport;
+    expect(relayTransport).toMatchObject({
+      negotiatedModeCount: { "framed-v1-binary": 1 },
+      inboundFrames: [
+        {
+          ciphertextEncoding: "binary",
+          codec: "deflate-raw",
+          frameCount: 1,
+          originalBytes: new TextEncoder().encode(original).byteLength,
+          encodedBytes: compressed.byteLength,
+          wireBytes:
+            prepared.plaintext.byteLength -
+            prepared.encodedByteLength +
+            prepared.encodedByteLength +
+            40,
+        },
+      ],
+      inboundDecodeMs: [
+        {
+          ciphertextEncoding: "binary",
+          codec: "deflate-raw",
+          p50: expect.any(Number),
+          p95: expect.any(Number),
+          max: expect.any(Number),
+        },
+      ],
+      framedProtocolErrorCount: { "decode-failed": 1 },
+      pendingReceiveWireBytes: { p95: 256, max: 256 },
+    });
+    expect(JSON.stringify(relayTransport)).not.toContain("fflate");
   });
 });

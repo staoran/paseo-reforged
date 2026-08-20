@@ -51,6 +51,14 @@ export interface EncryptedRelaySocket {
   once: (event: "close" | "error", listener: (...args: unknown[]) => void) => void;
 }
 
+/** Content-free metrics port observed at the encrypted socket queue boundary. */
+export interface EncryptedRelaySocketMetrics {
+  /** Records time from send invocation until its ordered FIFO operation starts. */
+  recordQueueMs(trafficClass: RelayTrafficHint["trafficClass"], durationMs: number): void;
+  /** Samples aggregate final wire bytes retained behind the send FIFO. */
+  recordPendingPreparedBytes(bytes: number): void;
+}
+
 /** Wraps one encrypted channel as the WebSocket-like socket consumed by daemon sessions. */
 export function createEncryptedRelaySocket(params: {
   /** Negotiated encrypted application channel. */
@@ -66,9 +74,20 @@ export function createEncryptedRelaySocket(params: {
     data: string | ArrayBuffer,
     hint: RelayTrafficHint,
   ) => PreparedEncryptedFrame | Promise<PreparedEncryptedFrame>;
+  /** Optional content-free recorder for FIFO wait and reservation gauges. */
+  runtimeMetrics?: EncryptedRelaySocketMetrics;
+  /** Optional monotonic clock used by queue metrics and deterministic tests. */
+  clock?: () => number;
 }): EncryptedRelaySocket {
-  const { channel, emitter, getTransportBufferedAmount, terminateTransport, prepareOutboundFrame } =
-    params;
+  const {
+    channel,
+    emitter,
+    getTransportBufferedAmount,
+    terminateTransport,
+    prepareOutboundFrame,
+    runtimeMetrics,
+    clock = defaultMonotonicClock,
+  } = params;
   let readyState = 1;
   /** Raw bytes retained while asynchronous frame preparation is incomplete. */
   let pendingPreparationBytes = 0;
@@ -90,6 +109,15 @@ export function createEncryptedRelaySocket(params: {
   /** Active reservations released together when the physical socket closes. */
   const reservations = new Set<SendReservation>();
 
+  /** Samples the current prepared-wire gauge without affecting send behavior. */
+  const samplePendingPreparedBytes = (): void => {
+    try {
+      runtimeMetrics?.recordPendingPreparedBytes(pendingPreparedWireBytes);
+    } catch {
+      // Metrics are observational and cannot fail application traffic.
+    }
+  };
+
   /** Releases one framed send reservation exactly once. */
   const releaseReservation = (reservation: SendReservation): void => {
     if (reservation.released) return;
@@ -98,6 +126,7 @@ export function createEncryptedRelaySocket(params: {
     pendingPreparedWireBytes -= reservation.wireBytes;
     if (pendingPreparationBytes < 0) pendingPreparationBytes = 0;
     if (pendingPreparedWireBytes < 0) pendingPreparedWireBytes = 0;
+    if (reservation.wireBytes > 0) samplePendingPreparedBytes();
     reservations.delete(reservation);
   };
 
@@ -167,6 +196,8 @@ export function createEncryptedRelaySocket(params: {
         });
       }
       const inputBytes = outboundByteLength(outbound);
+      /** Monotonic enqueue time used only for the ordered FIFO wait metric. */
+      const queuedAt = clock();
       const physicalBytes = getTransportBufferedAmount() ?? 0;
       if (
         physicalBytes + pendingPreparationBytes + pendingPreparedWireBytes + inputBytes >
@@ -206,12 +237,18 @@ export function createEncryptedRelaySocket(params: {
         reservation.inputBytes = 0;
         reservation.wireBytes = frame.wireByteLength;
         pendingPreparedWireBytes += frame.wireByteLength;
+        samplePendingPreparedBytes();
         return frame;
       });
       // A later queue failure may stop awaiting this preparation; retain a rejection handler.
       void preparedPromise.catch(() => undefined);
 
       const sendOperation = sendTail.then(async () => {
+        try {
+          runtimeMetrics?.recordQueueMs(hint.trafficClass, elapsedMs(queuedAt, clock()));
+        } catch {
+          // Metrics are observational and cannot fail application traffic.
+        }
         if (readyState !== 1) throw new Error("Encrypted relay socket is not open");
         const frame = await preparedPromise;
         const queuedBytes = getTransportBufferedAmount() ?? 0;
@@ -228,6 +265,7 @@ export function createEncryptedRelaySocket(params: {
         pendingPreparedWireBytes -= frame.wireByteLength;
         if (pendingPreparedWireBytes < 0) pendingPreparedWireBytes = 0;
         reservation.wireBytes = 0;
+        samplePendingPreparedBytes();
         return channel.sendPreparedFrame(frame);
       });
       sendTail = sendOperation.catch(() => undefined);
@@ -261,4 +299,16 @@ function normalizeRelaySendPayload(data: string | Uint8Array | ArrayBuffer): str
 /** Returns the exact application byte count charged while a frame is prepared. */
 function outboundByteLength(data: string | ArrayBuffer): number {
   return typeof data === "string" ? Buffer.byteLength(data, "utf8") : data.byteLength;
+}
+
+/** Returns the cross-runtime monotonic clock used by production queue metrics. */
+function defaultMonotonicClock(): number {
+  return globalThis.performance.now();
+}
+
+/** Normalizes one monotonic duration to a finite non-negative metric. */
+function elapsedMs(startedAt: number, endedAt: number): number {
+  const duration = endedAt - startedAt;
+  if (!Number.isFinite(duration) || duration < 0) return 0;
+  return duration;
 }
