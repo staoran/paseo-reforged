@@ -8,14 +8,10 @@ import {
   type GroupedToolCalls,
   type ToolCallGroupLookup,
 } from "./grouping";
-import {
-  buildOverviewGroup,
-  getToolCallGroupKind,
-  type OverviewToolCallGroup,
-} from "./overview/model";
+import { buildOverviewSequence, type OverviewToolCallSequence } from "./overview/model";
 
 export type { ToolCallDetailLevel } from "@/hooks/use-settings/storage";
-export type ToolCallDetailGroup = OverviewToolCallGroup;
+export type ToolCallDetailGroup = OverviewToolCallSequence;
 
 export interface PreparedToolCallHistory {
   mode: ToolCallDetailLevel;
@@ -36,7 +32,12 @@ const combinedLookupCache = new WeakMap<
 
 /** Creates a group builder that preserves the selected detail mode. */
 function buildGroupForLevel(level: ToolCallDetailLevel) {
-  return (run: Parameters<typeof buildOverviewGroup>[0]) => buildOverviewGroup(run, level);
+  return (run: Parameters<typeof buildOverviewSequence>[0]) => buildOverviewSequence(run, level);
+}
+
+/** Keeps every adjacent groupable call in the same outer sequence. */
+function getToolCallSequenceKey(): string {
+  return "tool-call-sequence";
 }
 
 /** Combines top-level and Activity group lookups while preserving stable identities. */
@@ -87,7 +88,7 @@ function prepareActivityFolds(
     const grouped = prepareGroupedHistory({
       tail: fold.members,
       buildGroup,
-      getGroupKey: getToolCallGroupKind,
+      getGroupKey: getToolCallSequenceKey,
     });
     if (grouped.groupsByHostId.size === 0) return fold;
     changed = true;
@@ -113,7 +114,7 @@ export function prepareToolCallHistory(
   const preparedActivity = prepareActivityFolds(level, activityFolds);
   return {
     mode: level,
-    grouped: prepareGroupedHistory({ tail, buildGroup, getGroupKey: getToolCallGroupKind }),
+    grouped: prepareGroupedHistory({ tail, buildGroup, getGroupKey: getToolCallSequenceKey }),
     activityFolds: preparedActivity.activityFolds,
     activityGroupsByHostId: preparedActivity.groupsByHostId,
   };
@@ -135,7 +136,7 @@ export function projectToolCallDetailLevel(input: {
     head: input.head,
     isTurnActive: input.isTurnActive,
     buildGroup: buildGroupForLevel(input.level),
-    getGroupKey: getToolCallGroupKind,
+    getGroupKey: getToolCallSequenceKey,
   });
   return {
     ...projected,

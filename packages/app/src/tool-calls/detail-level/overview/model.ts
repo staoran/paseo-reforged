@@ -28,6 +28,14 @@ export interface OverviewToolCallGroup {
   isLoading: boolean;
 }
 
+export interface OverviewToolCallSequence {
+  mode: ToolCallDetailLevel;
+  run: ToolCallRun;
+  groups: readonly OverviewToolCallGroup[];
+  summary: OverviewSummary;
+  isLoading: boolean;
+}
+
 function isPaseoCall(name: string, normalizedName: string): boolean {
   return isPaseoToolName(name) || normalizedName.startsWith(DIRECT_PASEO_TOOL_PREFIX);
 }
@@ -158,5 +166,60 @@ export function buildOverviewGroup(
     run,
     isLoading,
     summary,
+  };
+}
+
+/** Creates a category run while keeping only the live trailing category open for updates. */
+function createCategoryRun(
+  calls: readonly ToolCallRun["calls"][number][],
+  isSealed: boolean,
+): ToolCallRun {
+  const first = calls[0];
+  const latest = calls.at(-1);
+  if (!first || !latest) {
+    throw new Error("Cannot build an empty tool call category group");
+  }
+  return { id: first.id, calls, latest, isSealed };
+}
+
+/** Splits a continuous tool sequence into adjacent semantic category groups. */
+function buildCategoryGroups(run: ToolCallRun, mode: ToolCallDetailLevel): OverviewToolCallGroup[] {
+  const categoryRuns: Array<Array<ToolCallRun["calls"][number]>> = [];
+  let pendingCalls: Array<ToolCallRun["calls"][number]> = [];
+  let pendingKind: ToolCallGroupKind | null = null;
+
+  for (const call of run.calls) {
+    const kind = getToolCallGroupKind(call);
+    if (pendingCalls.length > 0 && pendingKind !== kind) {
+      categoryRuns.push(pendingCalls);
+      pendingCalls = [];
+    }
+    pendingKind = kind;
+    pendingCalls.push(call);
+  }
+  if (pendingCalls.length > 0) {
+    categoryRuns.push(pendingCalls);
+  }
+
+  return categoryRuns.map((calls, index) =>
+    buildOverviewGroup(
+      createCategoryRun(calls, run.isSealed || index < categoryRuns.length - 1),
+      mode,
+    ),
+  );
+}
+
+/** Builds one top-level sequence while retaining its ordered category groups. */
+export function buildOverviewSequence(
+  run: ToolCallRun,
+  mode: ToolCallDetailLevel = "overview",
+): OverviewToolCallSequence {
+  const aggregate = buildOverviewGroup(run, mode);
+  return {
+    mode,
+    run,
+    groups: buildCategoryGroups(run, mode),
+    summary: aggregate.summary,
+    isLoading: aggregate.isLoading,
   };
 }

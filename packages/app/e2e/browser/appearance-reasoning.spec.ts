@@ -46,6 +46,10 @@ function toolGroup(page: Page, label: RegExp) {
   return page.getByTestId("tool-call-group").filter({ hasText: label }).first();
 }
 
+function toolSequence(page: Page) {
+  return page.getByTestId("tool-call-sequence").first();
+}
+
 function thinkingTool(page: Page) {
   return toolBadge(page, /Thinking/i);
 }
@@ -102,7 +106,8 @@ test("keeps activity, tool groups, and tool details independently expandable", a
     await expect(reasoningDetails(page)).toHaveCount(0);
     await expect(thinkingTool(page)).toBeVisible();
     await expect(commentaryDetails(page)).toBeVisible();
-    await expect(toolGroup(page, /read/i)).toBeVisible();
+    await expect(toolSequence(page)).toBeVisible();
+    await expect(toolGroup(page, /read/i)).toHaveCount(0);
     await expect(readTool(page)).toHaveCount(0);
 
     await agent.client.waitForFinish(agent.agentId, 30_000);
@@ -113,8 +118,9 @@ test("keeps activity, tool groups, and tool details independently expandable", a
     await expect(reasoningDetails(page)).toHaveCount(0);
     await expect(thinkingTool(page)).toBeVisible();
     await expect(commentaryDetails(page)).toBeVisible();
-    await expect(toolGroup(page, /read/i)).toBeVisible();
-    await expect(toolGroup(page, /search/i)).toBeVisible();
+    await expect(toolSequence(page)).toBeVisible();
+    await expect(toolGroup(page, /read/i)).toHaveCount(0);
+    await expect(toolGroup(page, /search/i)).toHaveCount(0);
     await expect(readTool(page)).toHaveCount(0);
 
     await thinkingTool(page).getByRole("button").click();
@@ -123,6 +129,10 @@ test("keeps activity, tool groups, and tool details independently expandable", a
     await expect(reasoningDetails(page)).toHaveCount(0);
 
     await expect(page.getByText(/export function ConversationList/)).toHaveCount(0);
+    await toolSequence(page).click();
+    await expect(toolGroup(page, /read/i)).toBeVisible();
+    await expect(toolGroup(page, /search/i)).toBeVisible();
+    await expect(readTool(page)).toHaveCount(0);
     await toolGroup(page, /read/i).click();
     await expect(readTool(page)).toBeVisible();
     await readTool(page).getByRole("button").click();
@@ -141,7 +151,8 @@ test("keeps activity, tool groups, and tool details independently expandable", a
     await expectComposerVisible(page);
     await expect(reasoningDetails(page)).toHaveCount(0);
     await expect(thinkingTool(page)).toBeVisible();
-    await expect(toolGroup(page, /read/i)).toBeVisible();
+    await expect(toolSequence(page)).toBeVisible();
+    await expect(toolGroup(page, /read/i)).toHaveCount(0);
     await expect(readTool(page)).toHaveCount(0);
     await expect(page.getByText(STANDARD_FINAL_TEXT, { exact: true })).toBeVisible();
 

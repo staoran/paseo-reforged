@@ -137,6 +137,7 @@
 | 0096 | 已收口     | micro-spec | 已同步        | [Supervisor 日志容错与语音下载清理](micro_specs/0096_Supervisor日志容错与语音下载清理.md)         | 2026-08-19 11:31 | 两个真实 seam RED→GREEN；7 天清理、目标回归、typecheck/format/diff 通过；全仓 lint 仅受 9 个范围外 App/Relay 错误阻塞；本机空间保持只读         |
 | 0098 | 已收口     | spec       | 已同步        | [Timeline 增量回收与崩溃安全](specs/0098_Timeline增量回收与崩溃安全.md)                           | 2026-08-19 21:26 | 3 条 Standards findings 已全部修复并验证；目标测试 24/24、typecheck、目标/全仓 lint、格式、diff 与双轴静态审查通过；本次提交收口                |
 | 0099 | 已收口     | micro-spec | 已同步        | [收紧语音清理边界与 Supervisor 测试](micro_specs/0099_收紧语音清理边界与Supervisor测试.md)        | 2026-08-19 21:00 | 三个 RED→GREEN 与正式审查 P2/P3 均已处理；目标测试、typecheck、全仓 lint、0099-owned format/diff 全绿；本地提交未推送                           |
+| 0100 | 已收口     | micro-spec | 已同步        | [连续工具分类组二次折叠](micro_specs/0100_连续工具分类组二次折叠.md)                                       | 2026-08-20 09:53 | 多分类连续段收敛为一个合计外层，单分类保持原交互；投影/展开测试、三条 Browser E2E、typecheck、lint、格式与 diff 门禁通过                                |
 
 ## 候选待办
 

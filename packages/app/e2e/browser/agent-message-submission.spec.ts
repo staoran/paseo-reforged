@@ -69,6 +69,11 @@ interface UnrelatedRunningScenario {
   agent: Awaited<ReturnType<typeof seedMockAgentWorkspace>>;
 }
 
+/** Finds both single-category groups and multi-category outer sequences. */
+function toolCallFolds(page: Page): Locator {
+  return page.getByTestId(/^tool-call-(?:group|sequence)$/);
+}
+
 const test = baseTest.extend<{
   submissionScenario: SubmissionScenario;
   draftCreateScenario: DraftCreateScenario;
@@ -931,16 +936,14 @@ test.describe("Agent message submission", () => {
       page.getByTestId("assistant-message").last(),
     );
     const assistantMessageCount = await page.getByTestId("assistant-message").count();
-    const toolCallGroupCount = await page.getByTestId("tool-call-group").count();
+    const toolCallFoldCount = await toolCallFolds(page).count();
     await composer.press("Enter");
     const userMessage = page.getByTestId("user-message").filter({ hasText: prompt }).last();
     await expect(userMessage).toBeVisible();
     await expect
       .poll(async () => page.getByTestId("assistant-message").count())
       .toBeGreaterThan(assistantMessageCount);
-    await expect
-      .poll(async () => page.getByTestId("tool-call-group").count())
-      .toBeGreaterThan(toolCallGroupCount);
+    await expect.poll(async () => toolCallFolds(page).count()).toBeGreaterThan(toolCallFoldCount);
     await finishTimelineRowStabilityCheck();
   });
 

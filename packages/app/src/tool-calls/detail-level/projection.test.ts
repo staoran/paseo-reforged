@@ -11,6 +11,15 @@ import {
 
 type AssistantMessageItem = Extract<StreamItem, { kind: "assistant_message" }>;
 
+/** Returns a projected outer sequence and fails loudly when the host is absent. */
+function getSequence(result: ReturnType<typeof project>, id: string) {
+  const sequence = result.groupsByHostId.get(id);
+  if (!sequence) {
+    throw new Error(`Expected projected tool call sequence ${id}`);
+  }
+  return sequence;
+}
+
 function toolCall(
   id: string,
   detail: ToolCallDetail,
@@ -69,9 +78,13 @@ describe("tool call detail-level projection", () => {
   it.each(["overview", "detailed"] as const)(
     "groups loaded Activity members once in %s mode",
     (level) => {
-      const calls = ["1", "2", "3", "4", "5"].map((id) =>
-        toolCall(id, { type: "shell", command: `command-${id}` }),
-      );
+      const calls = [
+        toolCall("1", { type: "shell", command: "command-1" }),
+        toolCall("2", { type: "read", filePath: "/repo/a.ts" }),
+        toolCall("3", { type: "edit", filePath: "/repo/a.ts" }),
+        toolCall("4", { type: "edit", filePath: "/repo/b.ts" }),
+        toolCall("5", { type: "shell", command: "command-5" }),
+      ];
       const activityFold: ActivityFold = {
         id: "activity-1",
         completed: true,
@@ -87,7 +100,13 @@ describe("tool call detail-level projection", () => {
         expect.objectContaining({ id: calls[0]?.id, timestamp: calls[4]?.timestamp }),
       ]);
       expect(result.activityFolds[0]?.memberIds).toEqual(calls.map((call) => call.id));
-      expect(result.groupsByHostId.get(calls[0]?.id ?? "")?.run.calls).toEqual(calls);
+      expect(getSequence(result, calls[0]?.id ?? "").run.calls).toEqual(calls);
+      expect(getSequence(result, calls[0]?.id ?? "").groups.map((group) => group.kind)).toEqual([
+        "command",
+        "read",
+        "edit",
+        "command",
+      ]);
     },
   );
 
@@ -121,19 +140,60 @@ describe("tool call detail-level projection", () => {
 
       const result = project({ level, tail: calls });
 
-      expect(result.tail.map((item) => item.id)).toEqual(["1", "3", "4", "6"]);
-      expect(["1", "3", "4", "6"].map((id) => result.groupsByHostId.get(id)?.kind)).toEqual([
+      const sequence = getSequence(result, "1");
+      expect(result.tail.map((item) => item.id)).toEqual(["1"]);
+      expect(sequence.groups.map((group) => group.kind)).toEqual([
         "command",
         "read",
         "edit",
         "command",
       ]);
-      expect(["1", "3", "4", "6"].map((id) => result.groupsByHostId.get(id)?.run.calls)).toEqual([
+      expect(sequence.groups.map((group) => group.run.calls)).toEqual([
         calls.slice(0, 2),
         calls.slice(2, 3),
         calls.slice(3, 5),
         calls.slice(5),
       ]);
+    },
+  );
+
+  it.each(["overview", "detailed"] as const)(
+    "collapses multiple adjacent category groups into one top-level sequence in %s mode",
+    (level) => {
+      const calls = [
+        toolCall("1", { type: "read", filePath: "/repo/a.ts" }),
+        toolCall("2", { type: "shell", command: "npm test" }),
+        toolCall("3", { type: "search", query: "paseo", toolName: "web_search" }),
+        toolCall("4", { type: "read", filePath: "/repo/b.ts" }),
+      ];
+
+      const result = project({ level, tail: calls });
+
+      expect(result.tail.map((item) => item.id)).toEqual(["1"]);
+      expect(result.groupsByHostId.size).toBe(1);
+      expect(result.groupsByHostId.get("1")).toEqual(
+        expect.objectContaining({
+          run: expect.objectContaining({ calls }),
+          groups: [
+            expect.objectContaining({
+              kind: "read",
+              run: expect.objectContaining({ calls: [calls[0]] }),
+            }),
+            expect.objectContaining({
+              kind: "command",
+              run: expect.objectContaining({ calls: [calls[1]] }),
+            }),
+            expect.objectContaining({
+              kind: "search",
+              run: expect.objectContaining({ calls: [calls[2]] }),
+            }),
+            expect.objectContaining({
+              kind: "read",
+              run: expect.objectContaining({ calls: [calls[3]] }),
+            }),
+          ],
+        }),
+      );
     },
   );
 
@@ -156,14 +216,14 @@ describe("tool call detail-level projection", () => {
 
     const result = project({ level: "overview", tail: calls });
 
-    expect(result.tail.map((item) => item.id)).toEqual(["1", "2", "4"]);
-    expect(["1", "2", "4"].map((id) => result.groupsByHostId.get(id)?.kind)).toEqual([
-      "read",
-      "search",
-      "command",
+    const sequence = getSequence(result, "1");
+    expect(result.tail.map((item) => item.id)).toEqual(["1"]);
+    expect(sequence.groups.map((group) => group.kind)).toEqual(["read", "search", "command"]);
+    expect(sequence.groups.map((group) => group.run.calls)).toEqual([
+      calls.slice(0, 1),
+      calls.slice(1, 3),
+      calls.slice(3),
     ]);
-    expect(result.groupsByHostId.get("2")?.run.calls).toEqual(calls.slice(1, 3));
-    expect(result.groupsByHostId.get("4")?.run.calls).toEqual(calls.slice(3));
   });
 
   it("uses the same top-level command classification without an RTK wrapper", () => {
@@ -176,8 +236,9 @@ describe("tool call detail-level projection", () => {
 
     const result = project({ level: "overview", tail: calls });
 
-    expect(result.tail.map((item) => item.id)).toEqual(["1", "2", "3", "4"]);
-    expect(["1", "2", "3", "4"].map((id) => result.groupsByHostId.get(id)?.kind)).toEqual([
+    const sequence = getSequence(result, "1");
+    expect(result.tail.map((item) => item.id)).toEqual(["1"]);
+    expect(sequence.groups.map((group) => group.kind)).toEqual([
       "read",
       "search",
       "command",
@@ -332,28 +393,24 @@ describe("tool call detail-level projection", () => {
 
     const overview = project({ level: "overview", head: calls });
 
-    expect(overview.groupsByHostId.get("1")).toEqual({
+    const sequence = getSequence(overview, "1");
+    expect(sequence).toMatchObject({
       mode: "overview",
-      kind: "read",
       run: expect.any(Object),
       isLoading: false,
       summary: {
-        editedFileCount: 0,
-        commandCount: 0,
+        editedFileCount: 1,
+        commandCount: 1,
         readFileCount: 2,
         searchCount: 0,
         otherToolCount: 0,
         paseoCallCount: 0,
       },
     });
-    expect(overview.groupsByHostId.get("3")).toMatchObject({
-      kind: "command",
-      summary: { commandCount: 1 },
-    });
-    expect(overview.groupsByHostId.get("4")).toMatchObject({
-      kind: "edit",
-      summary: { editedFileCount: 1 },
-    });
+    expect(sequence.groups.map((group) => group.kind)).toEqual(["read", "command", "edit"]);
+    expect(sequence.groups[0]).toMatchObject({ summary: { readFileCount: 2 } });
+    expect(sequence.groups[1]).toMatchObject({ summary: { commandCount: 1 } });
+    expect(sequence.groups[2]).toMatchObject({ summary: { editedFileCount: 1 } });
   });
 
   it("distinguishes reads, searches, and other tools in overview", () => {
@@ -371,7 +428,8 @@ describe("tool call detail-level projection", () => {
 
     const result = project({ level: "overview", head: calls });
 
-    expect(result.groupsByHostId.get("1")).toMatchObject({
+    const sequence = getSequence(result, "1");
+    expect(sequence.groups[0]).toMatchObject({
       kind: "read",
       summary: {
         editedFileCount: 0,
@@ -381,15 +439,15 @@ describe("tool call detail-level projection", () => {
         otherToolCount: 0,
       },
     });
-    expect(result.groupsByHostId.get("3")).toMatchObject({
+    expect(sequence.groups[1]).toMatchObject({
       kind: "other",
       summary: { otherToolCount: 1 },
     });
-    expect(result.groupsByHostId.get("4")).toMatchObject({
+    expect(sequence.groups[2]).toMatchObject({
       kind: "search",
       summary: { searchCount: 1 },
     });
-    expect(result.groupsByHostId.get("5")).toMatchObject({
+    expect(sequence.groups[3]).toMatchObject({
       kind: "other",
       summary: { otherToolCount: 1 },
     });
@@ -407,15 +465,16 @@ describe("tool call detail-level projection", () => {
 
     const result = project({ level: "overview", head: calls });
 
-    expect(result.groupsByHostId.get("1")).toMatchObject({
+    const sequence = getSequence(result, "1");
+    expect(sequence.groups[0]).toMatchObject({
       kind: "edit",
       summary: { editedFileCount: 2, commandCount: 0, readFileCount: 0 },
     });
-    expect(result.groupsByHostId.get("4")).toMatchObject({
+    expect(sequence.groups[1]).toMatchObject({
       kind: "command",
       summary: { commandCount: 2 },
     });
-    expect(result.groupsByHostId.get("6")).toMatchObject({
+    expect(sequence.groups[2]).toMatchObject({
       kind: "read",
       summary: { readFileCount: 1 },
     });
@@ -435,11 +494,12 @@ describe("tool call detail-level projection", () => {
 
     const result = project({ level: "overview", head: calls });
 
-    expect(result.groupsByHostId.get("1")).toMatchObject({
+    const sequence = getSequence(result, "1");
+    expect(sequence.groups[0]).toMatchObject({
       kind: "paseo",
       summary: { otherToolCount: 0, paseoCallCount: 2 },
     });
-    expect(result.groupsByHostId.get("3")).toMatchObject({
+    expect(sequence.groups[1]).toMatchObject({
       kind: "other",
       summary: { otherToolCount: 2, paseoCallCount: 0 },
     });
@@ -458,15 +518,16 @@ describe("tool call detail-level projection", () => {
 
     const result = project({ level: "overview", head: calls });
 
-    expect(result.groupsByHostId.get("1")).toMatchObject({
+    const sequence = getSequence(result, "1");
+    expect(sequence.groups[0]).toMatchObject({
       kind: "search",
       summary: { searchCount: 2, otherToolCount: 0, paseoCallCount: 0 },
     });
-    expect(result.groupsByHostId.get("3")).toMatchObject({
+    expect(sequence.groups[1]).toMatchObject({
       kind: "paseo",
       summary: { searchCount: 0, paseoCallCount: 3 },
     });
-    expect(result.groupsByHostId.get("6")).toMatchObject({
+    expect(sequence.groups[2]).toMatchObject({
       kind: "search",
       summary: { searchCount: 1, paseoCallCount: 0 },
     });
@@ -555,8 +616,8 @@ describe("tool call detail-level projection", () => {
       toolCall("2", { type: "shell", command: "two" }),
     ];
     const head = [
-      toolCall("3", { type: "shell", command: "three" }),
-      toolCall("4", { type: "shell", command: "four" }, { status: "running" }),
+      toolCall("3", { type: "read", filePath: "/repo/a.ts" }),
+      toolCall("4", { type: "read", filePath: "/repo/b.ts" }, { status: "running" }),
     ];
 
     const result = project({ level: "overview", tail, head, isTurnActive: true });
@@ -571,6 +632,11 @@ describe("tool call detail-level projection", () => {
       latest: head[1],
       isSealed: false,
     });
+    expect(getSequence(result, "1").groups.map((group) => group.kind)).toEqual(["command", "read"]);
+    expect(getSequence(result, "1").groups.map((group) => group.run.isSealed)).toEqual([
+      true,
+      false,
+    ]);
     expect(result.historyGroupUpdatesByHostId.get("1")).toBe(result.groupsByHostId.get("1"));
   });
 
@@ -600,5 +666,32 @@ describe("tool call detail-level projection", () => {
     expect(result.head).toEqual([singleCall, plan, speak]);
     expect(result.groupsByHostId.get(singleCall.id)?.run.calls).toEqual([singleCall]);
     expect(result.groupsByHostId.size).toBe(1);
+  });
+
+  it("starts a new outer sequence after plan and spoken-message boundaries", () => {
+    const beforePlan = [
+      toolCall("1", { type: "read", filePath: "/repo/a.ts" }),
+      toolCall("2", { type: "shell", command: "npm test" }),
+    ];
+    const plan = toolCall("3", { type: "plan", text: "Plan" });
+    const afterPlan = [
+      toolCall("4", { type: "search", query: "paseo", toolName: "web_search" }),
+      toolCall("5", { type: "read", filePath: "/repo/b.ts" }),
+    ];
+    const speak = toolCall(
+      "6",
+      { type: "unknown", input: "Hello", output: null },
+      { name: "speak" },
+    );
+
+    const result = project({
+      level: "overview",
+      head: [...beforePlan, plan, ...afterPlan, speak],
+    });
+
+    expect(result.head.map((item) => item.id)).toEqual(["1", "3", "4", "6"]);
+    expect(result.groupsByHostId.size).toBe(2);
+    expect(getSequence(result, "1").groups.map((group) => group.kind)).toEqual(["read", "command"]);
+    expect(getSequence(result, "4").groups.map((group) => group.kind)).toEqual(["search", "read"]);
   });
 });

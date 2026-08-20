@@ -16,18 +16,31 @@ export async function awaitToolCall(page: Page, toolName: string | RegExp): Prom
   await expect(toolCall).toBeVisible({ timeout: 30_000 });
 }
 
-/** Expands visible category groups until the requested nested content is revealed. */
+/** Expands visible tool sequence and category layers until nested content is revealed. */
 async function expandVisibleToolCallGroups(page: Page, content: Locator): Promise<void> {
-  const groups = page.getByTestId("tool-call-group").filter({ visible: true });
-  await expect(groups.first()).toBeVisible({ timeout: 30_000 });
-  const groupCount = await groups.count();
-  for (let index = 0; index < groupCount; index += 1) {
+  const groupSelector =
+    '[data-testid="tool-call-sequence"]:visible, [data-testid="tool-call-group"]:visible';
+  await expect(page.locator(groupSelector).first()).toBeVisible({ timeout: 30_000 });
+
+  for (let pass = 0; pass < 100; pass += 1) {
     if (await content.isVisible().catch(() => false)) {
       return;
     }
-    const toggle = groups.nth(index).getByRole("button").first();
-    if ((await toggle.getAttribute("aria-expanded")) !== "true") {
+
+    const groups = page.locator(groupSelector);
+    const groupCount = await groups.count();
+    let expandedGroup = false;
+    for (let index = 0; index < groupCount; index += 1) {
+      const toggle = groups.nth(index).getByRole("button").first();
+      if ((await toggle.getAttribute("aria-expanded")) === "true") {
+        continue;
+      }
       await toggle.click();
+      expandedGroup = true;
+      break;
+    }
+    if (!expandedGroup) {
+      return;
     }
   }
 }

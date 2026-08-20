@@ -65,6 +65,7 @@ import {
   projectToolCallDetailLevel,
 } from "@/tool-calls/detail-level/projection";
 import { OverviewToolCallGroupView } from "@/tool-calls/detail-level/overview/view";
+import type { OverviewToolCallGroup } from "@/tool-calls/detail-level/overview/model";
 import {
   type ActivityFold,
   type AgentStreamRenderModel,
@@ -1000,32 +1001,85 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [autoExpandReasoning, context.cwd, setInlineDetailsExpanded, handleToolCallOpenFile],
     );
 
-    const renderToolCallItem = useCallback(
-      (layoutItem: StreamLayoutItem, item: Extract<StreamItem, { kind: "tool_call" }>) => {
-        const group = projectedToolCalls.groupsByHostId.get(item.id);
-        if (!group) {
-          return renderSingleToolCallItem(item, layoutItem.isLastInToolSequence);
-        }
+    const renderToolCallCategoryGroup = useCallback(
+      (input: {
+        group: OverviewToolCallGroup;
+        expansionId: string;
+        isLastInSequence: boolean;
+        constrainDetails: boolean;
+      }) => {
         const expanded = isToolCallGroupExpanded(
           effectiveToolCallGroupExpansionState,
-          group.run.id,
+          input.expansionId,
         );
         return (
           <OverviewToolCallGroupView
-            group={group}
+            group={input.group}
+            expansionId={input.expansionId}
             expanded={expanded}
-            isLastInSequence={layoutItem.isLastInToolSequence}
+            isLastInSequence={input.isLastInSequence}
+            constrainDetails={input.constrainDetails}
             onExpandedChange={handleToolCallGroupExpandedChange}
           >
             {expanded
-              ? group.run.calls.map((call, index) => (
+              ? input.group.run.calls.map((call, index) => (
                   <React.Fragment key={call.id}>
                     {renderSingleToolCallItem(
                       call,
-                      index === group.run.calls.length - 1,
+                      index === input.group.run.calls.length - 1,
                       GROUPED_TOOL_CALL_DETAIL_MAX_HEIGHT,
-                      group.mode === "overview",
+                      input.group.mode === "overview",
                     )}
+                  </React.Fragment>
+                ))
+              : null}
+          </OverviewToolCallGroupView>
+        );
+      },
+      [
+        effectiveToolCallGroupExpansionState,
+        handleToolCallGroupExpandedChange,
+        renderSingleToolCallItem,
+      ],
+    );
+
+    const renderToolCallItem = useCallback(
+      (layoutItem: StreamLayoutItem, item: Extract<StreamItem, { kind: "tool_call" }>) => {
+        const sequence = projectedToolCalls.groupsByHostId.get(item.id);
+        if (!sequence) {
+          return renderSingleToolCallItem(item, layoutItem.isLastInToolSequence);
+        }
+
+        const onlyGroup = sequence.groups.length === 1 ? sequence.groups[0] : null;
+        if (onlyGroup) {
+          return renderToolCallCategoryGroup({
+            group: onlyGroup,
+            expansionId: sequence.run.id,
+            isLastInSequence: layoutItem.isLastInToolSequence,
+            constrainDetails: true,
+          });
+        }
+
+        const sequenceExpanded = isToolCallGroupExpanded(
+          effectiveToolCallGroupExpansionState,
+          sequence.run.id,
+        );
+        return (
+          <OverviewToolCallGroupView
+            group={sequence}
+            expanded={sequenceExpanded}
+            isLastInSequence={layoutItem.isLastInToolSequence}
+            onExpandedChange={handleToolCallGroupExpandedChange}
+          >
+            {sequenceExpanded
+              ? sequence.groups.map((group, index) => (
+                  <React.Fragment key={group.run.id}>
+                    {renderToolCallCategoryGroup({
+                      group,
+                      expansionId: `${sequence.run.id}:category:${group.run.id}`,
+                      isLastInSequence: index === sequence.groups.length - 1,
+                      constrainDetails: false,
+                    })}
                   </React.Fragment>
                 ))
               : null}
@@ -1036,6 +1090,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         projectedToolCalls.groupsByHostId,
         effectiveToolCallGroupExpansionState,
         handleToolCallGroupExpandedChange,
+        renderToolCallCategoryGroup,
         renderSingleToolCallItem,
       ],
     );

@@ -1,15 +1,21 @@
 import { memo, useCallback, useMemo, useRef, type ReactNode } from "react";
-import { ScrollView } from "react-native";
+import { ScrollView, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { Wrench } from "lucide-react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { ExpandableBadge } from "@/components/message";
-import { type OverviewSummary, type OverviewToolCallGroup } from "./model";
+import {
+  type OverviewSummary,
+  type OverviewToolCallGroup,
+  type OverviewToolCallSequence,
+} from "./model";
 
 interface OverviewGroupProps {
-  group: OverviewToolCallGroup;
+  group: OverviewToolCallGroup | OverviewToolCallSequence;
+  expansionId?: string;
   expanded: boolean;
   isLastInSequence: boolean;
+  constrainDetails?: boolean;
   onExpandedChange: (groupId: string, expanded: boolean) => void;
   children: ReactNode;
 }
@@ -53,38 +59,44 @@ function useOverviewSummary(summary: OverviewSummary): string {
 
 export const OverviewToolCallGroupView = memo(function OverviewToolCallGroupView({
   group,
+  expansionId = group.run.id,
   expanded,
   isLastInSequence,
+  constrainDetails = true,
   onExpandedChange,
   children,
 }: OverviewGroupProps) {
   const scrollRef = useRef<ScrollView>(null);
   const aggregateSummary = useOverviewSummary(group.summary);
+  const testID = "groups" in group ? "tool-call-sequence" : "tool-call-group";
   const scrollToLatest = useCallback(() => {
     scrollRef.current?.scrollToEnd({ animated: false });
   }, []);
   const toggle = useCallback(() => {
-    onExpandedChange(group.run.id, !expanded);
-  }, [expanded, group.run.id, onExpandedChange]);
+    onExpandedChange(expansionId, !expanded);
+  }, [expanded, expansionId, onExpandedChange]);
   const renderDetails = useCallback(
-    () => (
-      <ScrollView
-        ref={scrollRef}
-        style={styles.scroll}
-        contentContainerStyle={styles.content}
-        nestedScrollEnabled
-        showsVerticalScrollIndicator
-        onContentSizeChange={scrollToLatest}
-      >
-        {children}
-      </ScrollView>
-    ),
-    [children, scrollToLatest],
+    () =>
+      constrainDetails ? (
+        <ScrollView
+          ref={scrollRef}
+          style={styles.scroll}
+          contentContainerStyle={styles.content}
+          nestedScrollEnabled
+          showsVerticalScrollIndicator
+          onContentSizeChange={scrollToLatest}
+        >
+          {children}
+        </ScrollView>
+      ) : (
+        <View style={styles.nestedContent}>{children}</View>
+      ),
+    [children, constrainDetails, scrollToLatest],
   );
 
   return (
     <ExpandableBadge
-      testID="tool-call-group"
+      testID={testID}
       label={aggregateSummary}
       icon={Wrench}
       isLoading={group.isLoading}
@@ -104,5 +116,9 @@ const styles = StyleSheet.create((theme) => ({
   content: {
     paddingTop: theme.spacing[1],
     paddingHorizontal: 13,
+  },
+  nestedContent: {
+    paddingTop: theme.spacing[1],
+    paddingLeft: 13,
   },
 }));
