@@ -1684,6 +1684,23 @@ export const en = {
       retry: "Retry",
       copy: "Copy",
       copied: "Copied",
+      transport: {
+        title: "Relay transport",
+        description: "End-to-end encrypted relay data settings.",
+        encoding: {
+          label: "Encrypted data format",
+          newConnections: "Applies to new relay connections.",
+          auto: "Auto",
+          base64: "Base64",
+          binary: "Binary",
+        },
+        compression: {
+          label: "Catch-up compression",
+          description:
+            "Applies immediately to eligible catch-up data not yet sending. Live interactive traffic stays uncompressed.",
+          accessibilityLabel: "Enable catch-up compression",
+        },
+      },
     },
   },
   realtimeVoice: {

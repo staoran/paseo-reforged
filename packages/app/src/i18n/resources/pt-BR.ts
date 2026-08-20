@@ -1705,6 +1705,23 @@ export const ptBR: TranslationResources = {
       retry: "Tentar novamente",
       copy: "Copiar",
       copied: "Copiado",
+      transport: {
+        title: "Transporte do relay",
+        description: "Configurações de dados do relay com criptografia de ponta a ponta.",
+        encoding: {
+          label: "Formato dos dados criptografados",
+          newConnections: "Aplica-se a novas conexões do relay.",
+          auto: "Automático",
+          base64: "Base64",
+          binary: "Binário",
+        },
+        compression: {
+          label: "Compressão de sincronização",
+          description:
+            "Aplica-se imediatamente aos dados de sincronização elegíveis cujo envio ainda não começou. O tráfego interativo em tempo real permanece sem compressão.",
+          accessibilityLabel: "Ativar compressão de sincronização",
+        },
+      },
     },
   },
   realtimeVoice: {

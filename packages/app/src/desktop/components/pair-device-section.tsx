@@ -11,10 +11,13 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { ExternalLink } from "@/components/ui/external-link";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { SegmentedControl } from "@/components/ui/segmented-control";
+import { Switch } from "@/components/ui/switch";
 import { useFetchQuery } from "@/data/query";
 import { daemonPairingOfferQueryKey } from "@/data/daemon-pairing";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useHostRuntimeClient, useHostRuntimeSnapshot } from "@/runtime/host-runtime";
+import type { RelayTransportConfig } from "@getpaseo/protocol/messages";
 import type { Theme } from "@/styles/theme";
 
 const RELAY_DOCS_URL = "https://paseo.sh/docs/security";
@@ -26,6 +29,9 @@ const foregroundMutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
 });
 const accentBrightColorMapping = (theme: Theme) => ({ color: theme.colors.accentBright });
+
+/** Supported user-facing ciphertext policy values. */
+type RelayCiphertextEncoding = NonNullable<RelayTransportConfig["ciphertextEncoding"]>;
 
 export interface PairDeviceSectionProps {
   serverId: string;
@@ -40,11 +46,13 @@ export function PairDeviceSection({ serverId, onClose }: PairDeviceSectionProps)
   const isDisconnected =
     runtimeSnapshot?.connectionStatus === "offline" ||
     runtimeSnapshot?.connectionStatus === "error";
-  const { patchConfig } = useDaemonConfig(serverId);
+  const { config, patchConfig } = useDaemonConfig(serverId);
   const [copied, setCopied] = useState(false);
   const serverFeatures = client?.getLastServerInfoMessage()?.features;
   const supportsPairingRpc = serverFeatures?.daemonStatusRpc === true;
   const canConfigureRelay = supportsPairingRpc && serverFeatures?.relayConfig === true;
+  /** New transport controls use their own capability and never infer support from relayConfig. */
+  const canConfigureRelayTransport = serverFeatures?.relayTransportPolicy === true;
 
   const pairingQuery = useFetchQuery({
     queryKey: daemonPairingOfferQueryKey(serverId),
@@ -63,9 +71,21 @@ export function PairDeviceSection({ serverId, onClose }: PairDeviceSectionProps)
       if (client?.getLastServerInfoMessage()?.features?.relayConfig !== true) {
         throw new Error(t("pairing.device.updateRequired"));
       }
-      const config = await patchConfig({ relay: { enabled: true } });
-      if (!config) throw new Error(t("workspace.terminal.hostDisconnected"));
+      const nextConfig = await patchConfig({ relay: { enabled: true } });
+      if (!nextConfig) throw new Error(t("workspace.terminal.hostDisconnected"));
       return pairingQuery.refetch();
+    },
+  });
+
+  /** Capability-guarded relay transport config mutation shared by both controls. */
+  const updateRelayTransport = useMutation({
+    mutationFn: async (transport: RelayTransportConfig) => {
+      if (client?.getLastServerInfoMessage()?.features?.relayTransportPolicy !== true) {
+        throw new Error(t("pairing.device.updateRequired"));
+      }
+      const nextConfig = await patchConfig({ relay: { transport } });
+      if (!nextConfig) throw new Error(t("workspace.terminal.hostDisconnected"));
+      return nextConfig;
     },
   });
 
@@ -98,6 +118,20 @@ export function PairDeviceSection({ serverId, onClose }: PairDeviceSectionProps)
   const handleEnableRelay = useCallback(() => {
     enableRelay.mutate();
   }, [enableRelay]);
+  /** Writes only the selected ciphertext policy; the daemon applies it to new connections. */
+  const handleCiphertextEncodingChange = useCallback(
+    (ciphertextEncoding: RelayCiphertextEncoding) => {
+      updateRelayTransport.mutate({ ciphertextEncoding });
+    },
+    [updateRelayTransport],
+  );
+  /** Writes only the hot-reloadable compression switch. */
+  const handleCompressionEnabledChange = useCallback(
+    (enabled: boolean) => {
+      updateRelayTransport.mutate({ compression: { enabled } });
+    },
+    [updateRelayTransport],
+  );
 
   const qrSvg = useMemo(() => qrQuery.data ?? null, [qrQuery.data]);
 
@@ -109,6 +143,12 @@ export function PairDeviceSection({ serverId, onClose }: PairDeviceSectionProps)
         error={pairingQuery.error}
         offer={pairingQuery.data}
         canConfigureRelay={canConfigureRelay}
+        canConfigureRelayTransport={canConfigureRelayTransport}
+        relayTransport={config?.relay?.transport}
+        transportUpdatePending={updateRelayTransport.isPending}
+        transportUpdateError={updateRelayTransport.error}
+        onCiphertextEncodingChange={handleCiphertextEncodingChange}
+        onCompressionEnabledChange={handleCompressionEnabledChange}
         enablePending={enableRelay.isPending}
         enableError={enableRelay.error}
         qrSvg={qrSvg}
@@ -129,6 +169,18 @@ interface PairDeviceBodyProps {
   error: Error | null;
   offer: { relayEnabled: boolean; url: string } | undefined;
   canConfigureRelay: boolean;
+  /** Whether the daemon accepts relay transport policy patches. */
+  canConfigureRelayTransport: boolean;
+  /** Persisted transport policy returned by the daemon config RPC. */
+  relayTransport: RelayTransportConfig | undefined;
+  /** Whether a transport policy write is in flight. */
+  transportUpdatePending: boolean;
+  /** Last transport policy write failure. */
+  transportUpdateError: Error | null;
+  /** Requests a connection-level ciphertext policy change. */
+  onCiphertextEncodingChange: (ciphertextEncoding: RelayCiphertextEncoding) => void;
+  /** Requests an immediate eligible-frame compression policy change. */
+  onCompressionEnabledChange: (enabled: boolean) => void;
   enablePending: boolean;
   enableError: Error | null;
   qrSvg: string | null;
@@ -254,6 +306,102 @@ function PairingOffer(props: PairDeviceBodyProps & { offer: { url: string } }) {
         >
           {props.copied ? t("pairing.device.copied") : t("pairing.device.copy")}
         </Button>
+      </View>
+      {props.canConfigureRelayTransport ? (
+        <RelayTransportSettings
+          policy={props.relayTransport}
+          updatePending={props.transportUpdatePending}
+          updateError={props.transportUpdateError}
+          onCiphertextEncodingChange={props.onCiphertextEncodingChange}
+          onCompressionEnabledChange={props.onCompressionEnabledChange}
+        />
+      ) : null}
+    </View>
+  );
+}
+
+/** Displays the persisted relay transport policy at the pairing surface. */
+function RelayTransportSettings({
+  policy,
+  updatePending,
+  updateError,
+  onCiphertextEncodingChange,
+  onCompressionEnabledChange,
+}: {
+  /** Persisted daemon policy displayed by the controls. */
+  policy: RelayTransportConfig | undefined;
+  /** Disables both controls while the single mutation is in flight. */
+  updatePending: boolean;
+  /** Last mutation failure surfaced without changing persisted display state. */
+  updateError: Error | null;
+  /** Mutation callback for a new connection-level encoding preference. */
+  onCiphertextEncodingChange: (ciphertextEncoding: RelayCiphertextEncoding) => void;
+  /** Mutation callback for the hot-reloadable compression switch. */
+  onCompressionEnabledChange: (enabled: boolean) => void;
+}) {
+  const { t } = useTranslation();
+  /** Missing encoding follows the daemon's configured-policy default. */
+  const ciphertextEncoding = policy?.ciphertextEncoding ?? "auto";
+  /** Missing compression follows the daemon's configured-policy default. */
+  const compressionEnabled = policy?.compression?.enabled ?? true;
+
+  return (
+    <View style={styles.transportSettings} testID="relay-transport-settings">
+      <View style={styles.transportHeading}>
+        <Text style={styles.transportTitle}>{t("pairing.device.transport.title")}</Text>
+        <Text style={styles.transportHint}>{t("pairing.device.transport.description")}</Text>
+      </View>
+      {updateError ? <Alert variant="error" description={updateError.message} /> : null}
+      <View style={styles.transportRow}>
+        <View style={styles.transportRowContent}>
+          <Text style={styles.transportLabel}>{t("pairing.device.transport.encoding.label")}</Text>
+          <Text style={styles.transportHint}>
+            {t("pairing.device.transport.encoding.newConnections")}
+          </Text>
+        </View>
+        <SegmentedControl
+          size="sm"
+          value={ciphertextEncoding}
+          onValueChange={onCiphertextEncodingChange}
+          options={[
+            {
+              value: "auto",
+              label: t("pairing.device.transport.encoding.auto"),
+              disabled: updatePending,
+              testID: "relay-ciphertext-encoding-auto",
+            },
+            {
+              value: "base64",
+              label: t("pairing.device.transport.encoding.base64"),
+              disabled: updatePending,
+              testID: "relay-ciphertext-encoding-base64",
+            },
+            {
+              value: "binary",
+              label: t("pairing.device.transport.encoding.binary"),
+              disabled: updatePending,
+              testID: "relay-ciphertext-encoding-binary",
+            },
+          ]}
+          testID="relay-ciphertext-encoding"
+        />
+      </View>
+      <View style={styles.transportRow}>
+        <View style={styles.transportRowContent}>
+          <Text style={styles.transportLabel}>
+            {t("pairing.device.transport.compression.label")}
+          </Text>
+          <Text style={styles.transportHint}>
+            {t("pairing.device.transport.compression.description")}
+          </Text>
+        </View>
+        <Switch
+          value={compressionEnabled}
+          onValueChange={onCompressionEnabledChange}
+          disabled={updatePending}
+          accessibilityLabel={t("pairing.device.transport.compression.accessibilityLabel")}
+          testID="relay-compression-switch"
+        />
       </View>
     </View>
   );
@@ -383,5 +531,42 @@ const styles = StyleSheet.create((theme) => ({
   hint: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
+  },
+  transportSettings: {
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+    paddingTop: theme.spacing[4],
+    gap: theme.spacing[3],
+  },
+  transportHeading: {
+    gap: theme.spacing[1],
+  },
+  transportTitle: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
+  },
+  transportRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: theme.spacing[3],
+    minWidth: 0,
+  },
+  transportRowContent: {
+    flex: 1,
+    flexBasis: 180,
+    minWidth: 0,
+    gap: theme.spacing[1],
+  },
+  transportLabel: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+  },
+  transportHint: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    lineHeight: theme.fontSize.xs * 1.5,
   },
 }));

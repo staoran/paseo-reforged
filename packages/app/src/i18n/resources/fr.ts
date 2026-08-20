@@ -1724,6 +1724,23 @@ export const fr: TranslationResources = {
       retry: "Réessayer",
       copy: "Copie",
       copied: "Copié",
+      transport: {
+        title: "Transport du relais",
+        description: "Réglages des données du relais chiffrées de bout en bout.",
+        encoding: {
+          label: "Format des données chiffrées",
+          newConnections: "S'applique aux nouvelles connexions au relais.",
+          auto: "Auto",
+          base64: "Base64",
+          binary: "Binaire",
+        },
+        compression: {
+          label: "Compression de rattrapage",
+          description:
+            "S'applique immédiatement aux données de rattrapage admissibles dont l'envoi n'a pas commencé. Le trafic interactif en direct reste non compressé.",
+          accessibilityLabel: "Activer la compression de rattrapage",
+        },
+      },
     },
   },
   realtimeVoice: {

@@ -1671,6 +1671,23 @@ export const ar: TranslationResources = {
       retry: "أعد المحاولة",
       copy: "ينسخ",
       copied: "منقول",
+      transport: {
+        title: "نقل التتابع",
+        description: "إعدادات بيانات التتابع المشفرة من طرف إلى طرف.",
+        encoding: {
+          label: "تنسيق البيانات المشفرة",
+          newConnections: "يُطبق على اتصالات التتابع الجديدة.",
+          auto: "تلقائي",
+          base64: "Base64",
+          binary: "ثنائي",
+        },
+        compression: {
+          label: "ضغط مزامنة الحالة",
+          description:
+            "يسري فورًا على بيانات المزامنة المؤهلة التي لم يبدأ إرسالها. تبقى حركة المرور التفاعلية المباشرة دون ضغط.",
+          accessibilityLabel: "تمكين ضغط مزامنة الحالة",
+        },
+      },
     },
   },
   realtimeVoice: {

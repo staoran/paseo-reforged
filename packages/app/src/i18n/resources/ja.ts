@@ -1689,6 +1689,23 @@ export const ja: TranslationResources = {
       retry: "再試行",
       copy: "コピー",
       copied: "コピーしました",
+      transport: {
+        title: "リレー転送",
+        description: "エンドツーエンド暗号化されたリレーデータの設定です。",
+        encoding: {
+          label: "暗号化データ形式",
+          newConnections: "新しいリレー接続に適用されます。",
+          auto: "自動",
+          base64: "Base64",
+          binary: "バイナリ",
+        },
+        compression: {
+          label: "追いつき同期の圧縮",
+          description:
+            "まだ送信を開始していない対象の追いつき同期データに即時適用されます。リアルタイムの対話通信は圧縮しません。",
+          accessibilityLabel: "追いつき同期の圧縮を有効にする",
+        },
+      },
     },
   },
   realtimeVoice: {

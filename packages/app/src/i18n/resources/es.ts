@@ -1720,6 +1720,23 @@ export const es: TranslationResources = {
       retry: "Rever",
       copy: "Copiar",
       copied: "Copiado",
+      transport: {
+        title: "Transporte del relay",
+        description: "Ajustes de datos del relay cifrados de extremo a extremo.",
+        encoding: {
+          label: "Formato de datos cifrados",
+          newConnections: "Se aplica a las nuevas conexiones del relay.",
+          auto: "Automático",
+          base64: "Base64",
+          binary: "Binario",
+        },
+        compression: {
+          label: "Compresión de sincronización",
+          description:
+            "Se aplica de inmediato a los datos de sincronización aptos que aún no se envían. El tráfico interactivo en vivo permanece sin comprimir.",
+          accessibilityLabel: "Activar compresión de sincronización",
+        },
+      },
     },
   },
   realtimeVoice: {

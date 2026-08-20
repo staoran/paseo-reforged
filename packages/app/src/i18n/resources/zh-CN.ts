@@ -1650,6 +1650,22 @@ export const zhCN: TranslationResources = {
       retry: "重试",
       copy: "复制",
       copied: "已复制",
+      transport: {
+        title: "中继传输",
+        description: "端到端加密中继数据设置。",
+        encoding: {
+          label: "密文格式",
+          newConnections: "对新建立的中继连接生效。",
+          auto: "自动",
+          base64: "Base64",
+          binary: "二进制",
+        },
+        compression: {
+          label: "追平压缩",
+          description: "对尚未开始发送的合格追平数据即时生效；实时交互流保持不压缩。",
+          accessibilityLabel: "启用追平压缩",
+        },
+      },
     },
   },
   realtimeVoice: {

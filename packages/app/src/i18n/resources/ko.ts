@@ -1682,6 +1682,23 @@ export const ko: TranslationResources = {
       retry: "다시 시도",
       copy: "복사",
       copied: "복사됨",
+      transport: {
+        title: "릴레이 전송",
+        description: "종단 간 암호화된 릴레이 데이터 설정입니다.",
+        encoding: {
+          label: "암호화 데이터 형식",
+          newConnections: "새 릴레이 연결에 적용됩니다.",
+          auto: "자동",
+          base64: "Base64",
+          binary: "바이너리",
+        },
+        compression: {
+          label: "상태 동기화 압축",
+          description:
+            "아직 전송을 시작하지 않은 대상 상태 동기화 데이터에 즉시 적용됩니다. 실시간 대화형 트래픽은 압축하지 않습니다.",
+          accessibilityLabel: "상태 동기화 압축 활성화",
+        },
+      },
     },
   },
   realtimeVoice: {
