@@ -1926,7 +1926,7 @@ function ActiveAgentComposer({
   return (
     <ReanimatedAnimated.View style={inputAreaStyle} onLayout={onInputAreaLayout}>
       <AgentTaskList serverId={serverId} agentId={agentId} />
-      <AgentGoalTrack serverId={serverId} agentId={agentId} />
+      <AgentGoalTrack key={`${serverId}:${agentId}`} serverId={serverId} agentId={agentId} />
       <SubagentsTrack
         rows={subagentRows}
         onOpenSubagent={handleOpenSubagent}

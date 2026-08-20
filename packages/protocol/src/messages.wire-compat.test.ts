@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { z } from "zod";
 import {
+  AgentGoalSnapshotSchema,
   AgentSnapshotPayloadSchema,
   AgentTimelineItemPayloadSchema,
   CreateAgentRequestMessageSchema,
@@ -391,6 +392,25 @@ describe("wire schema compatibility", () => {
       },
       "synced",
     ]);
+  });
+
+  test("Agent Goal snapshots reject negative and non-finite usage counters", () => {
+    const goal = {
+      objective: "Validate Goal counters",
+      status: "active",
+      tokenBudget: 100_000,
+      tokensUsed: 12_500,
+      timeUsedSeconds: 900,
+      createdAt: "2026-08-18T01:00:00.000Z",
+      updatedAt: "2026-08-18T01:05:00.000Z",
+    };
+
+    expect([
+      AgentGoalSnapshotSchema.safeParse({ ...goal, tokenBudget: -1 }).success,
+      AgentGoalSnapshotSchema.safeParse({ ...goal, tokensUsed: -1 }).success,
+      AgentGoalSnapshotSchema.safeParse({ ...goal, timeUsedSeconds: -1 }).success,
+      AgentGoalSnapshotSchema.safeParse({ ...goal, tokensUsed: Number.POSITIVE_INFINITY }).success,
+    ]).toEqual([false, false, false, false]);
   });
 
   test("Agent Goal get request and response preserve correlated authoritative state", () => {

@@ -93,6 +93,13 @@ Codex maps this port directly to App Server `thread/goal/get`, `thread/goal/set`
 App Server connection is established but before AgentManager subscribes are buffered and flushed in
 their original order. Only notifications for the active thread are accepted.
 
+If an established Goal-enabled Codex App Server exits unexpectedly, the adapter marks the projection
+stale, starts one reconnect operation, and rehydrates both `thread/goal/get` and `thread/read` before
+publishing recovery. Failed attempts retry with capped backoff; explicit session close cancels the
+timer and prevents another connection. Process stderr is never retained or forwarded. Diagnostics
+contain only a stable failure code, exit code, signal, a bounded child error code, and the total stderr
+byte count.
+
 Codex current-step projection comes from `turn/plan/updated` and remains read-only: the App Server
 Goal API has no native step-write RPC. `thread/goal/clear` does not stop a turn, so public Goal
 termination always composes clear with the ordinary provider `interrupt()` path and preserves partial

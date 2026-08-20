@@ -242,7 +242,14 @@ Goal reads and mutations use the dotted `agent.goal.get`, `agent.goal.update`, a
 projection cannot update a replacement Goal. Pausing and resuming preserve the generation. Replacing
 an objective is allowed only while paused, trims and validates at most 4000 Unicode characters, and
 returns a new generation with reset usage counters. A stale projection disables mutations and exposes
-an authoritative get/retry path.
+an authoritative get/retry path. Token budgets, token usage, and elapsed seconds are finite,
+non-negative wire values.
+
+The daemon serializes Goal mutations per Agent and performs an authoritative provider `get()` inside
+that lane immediately before checking generation and transition preconditions. This closes the normal
+notification-lag window. Codex `thread/goal/set` and `thread/goal/clear` do not accept an expected
+generation, so the native `get`-to-mutation interval is not atomic; a provider-side replacement in
+that interval remains a bounded race that the next notification or hydrate corrects.
 
 Terminate is an ordered compound operation: clear the provider Goal, then interrupt an active turn.
 Its response reports `clear`, `interrupt`, and `outcome` separately and carries the authoritative
@@ -250,7 +257,9 @@ Its response reports `clear`, `interrupt`, and `outcome` separately and carries 
 terminate `goalSync` from an older daemon as `stale`. A cleared Goal remains an authoritative success
 even when interrupt fails, so clients must apply `goal: null` while also showing the retryable failure.
 The App renders the Goal track above the composer only when the capability is advertised and `goal` is
-an object; while it owns that progress surface, it hides the duplicate task list row.
+an object; while it owns that progress surface, it hides the duplicate task list row. The paused
+objective editor is scoped to one host, Agent, and Goal generation. It closes immediately if that
+Goal resumes, is cleared, or changes generation, and switching Agents remounts the control state.
 
 **Notable session message types:**
 
@@ -345,6 +354,12 @@ events emitted while a provider reconnects and restores both the lifecycle (`run
 native thread) and Goal projection after daemon or App restart. Execution-status hydration never
 manufactures a turn id. A failed Goal pull marks the retained projection `stale` instead of treating
 the failure as an authoritative absence.
+
+An established Goal-capable Codex session also treats an unexpected App Server exit as recoverable
+provider state. It publishes a stale/system-error projection, reconnects in a single flight, hydrates
+the authoritative Goal and thread status, and retries failures with capped backoff until the session
+closes. A successful active-status hydrate restores `running` without requiring another user action;
+explicit session close cancels delayed recovery.
 
 Each workspace registry record also carries nullable `defaultAgentId`. Creation and import register
 the first eligible root agent without overwriting an existing default; startup migration repairs

@@ -140,4 +140,28 @@ describe("reduceGoalInteraction", () => {
       }),
     ).toEqual({ phase: "idle", editorGoal: null, error: "Pause failed." });
   });
+
+  it("closes an editor when the authoritative Goal resumes or changes generation", () => {
+    const editing = reduceGoalInteraction(INITIAL_GOAL_INTERACTION_STATE, {
+      type: "open_editor",
+      goal: pausedGoal,
+    });
+
+    expect(
+      reduceGoalInteraction(editing, {
+        type: "projection_changed",
+        goal: { ...pausedGoal, status: "active" },
+      }),
+    ).toEqual(INITIAL_GOAL_INTERACTION_STATE);
+    expect(
+      reduceGoalInteraction(editing, {
+        type: "projection_changed",
+        goal: {
+          ...pausedGoal,
+          objective: "Replacement Goal",
+          createdAt: "2026-08-19T02:20:00.000Z",
+        },
+      }),
+    ).toEqual(INITIAL_GOAL_INTERACTION_STATE);
+  });
 });

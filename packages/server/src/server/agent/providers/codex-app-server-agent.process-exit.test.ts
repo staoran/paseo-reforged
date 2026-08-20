@@ -21,7 +21,10 @@ import {
 const logger = createTestLogger();
 
 class ProcessExitCodexClient extends CodexAppServerAgentClient implements AgentClient {
-  constructor(private readonly appServers: FakeCodexAppServer[]) {
+  constructor(
+    private readonly appServers: FakeCodexAppServer[],
+    private readonly goalsEnabled = false,
+  ) {
     super(logger);
   }
 
@@ -46,7 +49,7 @@ class ProcessExitCodexClient extends CodexAppServerAgentClient implements AgentC
       },
       {},
       false,
-      false,
+      this.goalsEnabled,
       false,
       launchContext?.agentId,
     );
@@ -83,11 +86,11 @@ test("unexpected Codex app-server exit fails the active run and agent", async ()
     appServer.child.emit("exit", 17, null);
 
     await expect(run).rejects.toThrow(
-      "Codex app-server exited with code 17 and signal null\nprovider crashed",
+      "Codex app-server exited unexpectedly (code 17, signal none)",
     );
     await expect.poll(() => manager.getAgent(agent.id)?.lifecycle).toBe("error");
     expect(manager.getAgent(agent.id)?.lastError).toBe(
-      "Codex app-server exited with code 17 and signal null\nprovider crashed",
+      "Codex app-server exited unexpectedly (code 17, signal none)",
     );
     expect(events).toContainEqual(
       expect.objectContaining({
@@ -95,7 +98,8 @@ test("unexpected Codex app-server exit fails the active run and agent", async ()
         agentId: agent.id,
         event: expect.objectContaining({
           type: "turn_failed",
-          error: "Codex app-server exited with code 17 and signal null\nprovider crashed",
+          error: "Codex app-server exited unexpectedly (code 17, signal none)",
+          code: "provider_process_exited",
         }),
       }),
     );
@@ -279,7 +283,7 @@ test("unexpected exit fails an autonomous Codex turn", async () => {
 
     await expect.poll(() => manager.getAgent(agent.id)?.lifecycle).toBe("error");
     expect(manager.getAgent(agent.id)?.lastError).toBe(
-      "Codex app-server exited with code 23 and signal null\nautonomous provider crashed",
+      "Codex app-server exited unexpectedly (code 23, signal none)",
     );
     expect(
       events.filter((event) => event.type === "agent_stream" && event.event.type === "turn_failed"),
@@ -331,7 +335,9 @@ test("provider permissions do not survive an unexpected exit and reconnect", asy
 
     exitedAppServer.child.emit("exit", 17, null);
 
-    await expect(failedRun).rejects.toThrow("Codex app-server exited with code 17");
+    await expect(failedRun).rejects.toThrow(
+      "Codex app-server exited unexpectedly (code 17, signal none)",
+    );
     expect(manager.getPendingPermissions(agent.id)).toEqual([]);
 
     const recoveredRun = manager.runAgent(agent.id, "continue after reconnect");
@@ -437,6 +443,99 @@ test("idle provider exit preserves a synthetic plan approval across reconnect", 
     if (agentId && manager.getAgent(agentId)) {
       await manager.closeAgent(agentId);
     }
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("Codex app-server exit automatically reconnects and rehydrates an active Goal", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "codex-goal-process-recovery-"));
+  const initialGoal = {
+    threadId: "thread-1",
+    objective: "Recover this Goal without another user action",
+    status: "active" as const,
+    tokenBudget: 10_000,
+    tokensUsed: 2_000,
+    timeUsedSeconds: 60,
+    createdAt: 1_776_412_800,
+    updatedAt: 1_776_412_860,
+  };
+  const recoveredGoal = {
+    ...initialGoal,
+    tokensUsed: 2_500,
+    timeUsedSeconds: 75,
+    updatedAt: 1_776_412_875,
+  };
+  let releaseReconnect: (() => void) | undefined;
+  const reconnectGate = new Promise<void>((resolve) => {
+    releaseReconnect = resolve;
+  });
+  const exitedAppServer = createFakeCodexAppServer({
+    "thread/goal/get": () => ({ goal: initialGoal }),
+    "thread/read": () => ({
+      thread: { id: "thread-1", status: { type: "idle" }, turns: [] },
+    }),
+  });
+  const replacementAppServer = createFakeCodexAppServer({
+    initialize: async () => {
+      await reconnectGate;
+      return {};
+    },
+    "thread/goal/get": () => ({ goal: recoveredGoal }),
+    "thread/read": () => ({
+      thread: { id: "thread-1", status: { type: "active", activeFlags: [] }, turns: [] },
+    }),
+  });
+  const manager = new AgentManager({
+    clients: {
+      codex: new ProcessExitCodexClient([exitedAppServer, replacementAppServer], true),
+    },
+    logger,
+  });
+  const events: AgentManagerEvent[] = [];
+  const unsubscribe = manager.subscribe((event) => events.push(event), { replayState: false });
+  let agentId: string | null = null;
+
+  try {
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, modeId: "auto", model: "gpt-5.4" },
+      undefined,
+      { workspaceId: undefined },
+    );
+    agentId = agent.id;
+    exitedAppServer.startsTurn({ threadId: "thread-1", turnId: "autonomous-goal-turn" });
+    await expect.poll(() => manager.getAgent(agent.id)?.lifecycle).toBe("running");
+
+    exitedAppServer.child.stderr.write(initialGoal.objective);
+    exitedAppServer.child.emit("exit", 17, null);
+
+    await expect.poll(() => manager.getAgent(agent.id)?.goalSync).toBe("stale");
+    releaseReconnect?.();
+    await expect
+      .poll(() => manager.getAgent(agent.id)?.goal?.tokensUsed, { timeout: 5_000 })
+      .toBe(recoveredGoal.tokensUsed);
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "running",
+      lastError: undefined,
+      goal: expect.objectContaining({
+        objective: recoveredGoal.objective,
+        tokensUsed: recoveredGoal.tokensUsed,
+      }),
+      goalSync: "synced",
+    });
+    const [failedTurn] = events
+      .filter((event) => event.type === "agent_stream" && event.event.type === "turn_failed")
+      .map((event) => event.event);
+    expect(failedTurn).toMatchObject({
+      error: "Codex app-server exited unexpectedly (code 17, signal none)",
+      code: "provider_process_exited",
+    });
+    expect(failedTurn?.error).not.toContain(initialGoal.objective);
+  } finally {
+    releaseReconnect?.();
+    if (agentId && manager.getAgent(agentId)) {
+      await manager.closeAgent(agentId);
+    }
+    unsubscribe();
     rmSync(workdir, { recursive: true, force: true });
   }
 });

@@ -8,7 +8,6 @@ import { terminateWithTreeKill } from "../../../../utils/tree-kill.js";
 const DEFAULT_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
 const APP_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS = 2_000;
 const APP_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS = 1_000;
-const STDERR_BUFFER_LIMIT = 8192;
 
 interface JsonRpcRequest {
   id: number;
@@ -46,6 +45,46 @@ const CODEX_GOAL_LOG_STATUSES = new Set([
 type RequestHandler = (params: unknown, requestId: number) => unknown;
 type NotificationHandler = (method: string, params: unknown) => void;
 type UnexpectedTerminationHandler = (error: Error) => void;
+
+/** Stable non-sensitive code for an unexpected Codex app-server termination. */
+export type CodexAppServerTerminationCode = "provider_process_error" | "provider_process_exited";
+
+/** Bounded process diagnostics that never retain Codex stderr content. */
+export class CodexAppServerTerminationError extends Error {
+  /** Stable provider-neutral process failure code. */
+  readonly code: CodexAppServerTerminationCode;
+  /** Native process exit code, when the child reached exit. */
+  readonly exitCode: number | null;
+  /** Native termination signal, when reported by the child. */
+  readonly signal: NodeJS.Signals | null;
+  /** Total stderr bytes observed before termination. */
+  readonly stderrBytes: number;
+  /** Bounded operating-system error code for child process errors. */
+  readonly childErrorCode: string | null;
+
+  /** Constructs one non-sensitive termination error from bounded process metadata. */
+  constructor(input: {
+    code: CodexAppServerTerminationCode;
+    exitCode?: number | null;
+    signal?: NodeJS.Signals | null;
+    stderrBytes: number;
+    childErrorCode?: string | null;
+  }) {
+    const exitCode = input.exitCode ?? null;
+    const signal = input.signal ?? null;
+    super(
+      input.code === "provider_process_exited"
+        ? `Codex app-server exited unexpectedly (code ${exitCode ?? "none"}, signal ${signal ?? "none"})`
+        : "Codex app-server process failed unexpectedly",
+    );
+    this.name = "CodexAppServerTerminationError";
+    this.code = input.code;
+    this.exitCode = exitCode;
+    this.signal = signal;
+    this.stderrBytes = input.stderrBytes;
+    this.childErrorCode = input.childErrorCode ?? null;
+  }
+}
 
 type CodexStdoutErrorCode = "handler_failed" | "invalid_json" | "not_object";
 
@@ -214,6 +253,12 @@ function codexStdoutErrorLogFields(
   };
 }
 
+/** Reads a bounded operating-system code without retaining the child error message. */
+function readChildErrorCode(error: Error): string | null {
+  const code = (error as NodeJS.ErrnoException).code;
+  return typeof code === "string" && /^[A-Z0-9_]{1,64}$/.test(code) ? code : null;
+}
+
 export class CodexAppServerClient {
   private readonly rl: readline.Interface;
   private readonly pending = new Map<number, PendingRequest>();
@@ -222,7 +267,7 @@ export class CodexAppServerClient {
   private unexpectedTerminationHandler: UnexpectedTerminationHandler | null = null;
   private nextId = 1;
   private disposed = false;
-  private stderrBuffer = "";
+  private stderrBytes = 0;
 
   constructor(
     private readonly child: ChildProcessWithoutNullStreams,
@@ -240,24 +285,29 @@ export class CodexAppServerClient {
     });
 
     child.stderr.on("data", (chunk) => {
-      this.stderrBuffer += chunk.toString();
-      if (this.stderrBuffer.length > STDERR_BUFFER_LIMIT) {
-        this.stderrBuffer = this.stderrBuffer.slice(-STDERR_BUFFER_LIMIT);
-      }
+      const bytes = Buffer.isBuffer(chunk) ? chunk.byteLength : Buffer.byteLength(String(chunk));
+      this.stderrBytes = Math.min(Number.MAX_SAFE_INTEGER, this.stderrBytes + bytes);
     });
 
     child.on("error", (err) => {
-      this.logger.error({ err }, "Codex app-server child process error");
-      this.handleUnexpectedTermination(err);
+      this.handleUnexpectedTermination(
+        new CodexAppServerTerminationError({
+          code: "provider_process_error",
+          stderrBytes: this.stderrBytes,
+          childErrorCode: readChildErrorCode(err),
+        }),
+      );
     });
 
     child.on("exit", (code, signal) => {
-      const message =
-        code === 0 && !signal
-          ? "Codex app-server exited"
-          : `Codex app-server exited with code ${code ?? "null"} and signal ${signal ?? "null"}`;
-      const error = new Error(`${message}\n${this.stderrBuffer}`.trim());
-      this.handleUnexpectedTermination(error);
+      this.handleUnexpectedTermination(
+        new CodexAppServerTerminationError({
+          code: "provider_process_exited",
+          exitCode: code,
+          signal,
+          stderrBytes: this.stderrBytes,
+        }),
+      );
     });
   }
 
@@ -334,11 +384,21 @@ export class CodexAppServerClient {
     }
   }
 
-  private handleUnexpectedTermination(error: Error): void {
+  private handleUnexpectedTermination(error: CodexAppServerTerminationError): void {
     if (this.disposed) {
       return;
     }
     this.disposed = true;
+    this.logger.error(
+      {
+        appServerErrorCode: error.code,
+        exitCode: error.exitCode,
+        signal: error.signal,
+        stderrBytes: error.stderrBytes,
+        childErrorCode: error.childErrorCode,
+      },
+      "Codex app-server terminated unexpectedly",
+    );
     this.rl.close();
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer);

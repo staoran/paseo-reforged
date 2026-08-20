@@ -78,6 +78,7 @@ import { extractCodexTerminalSessionId, nonEmptyString } from "./tool-call-mappe
 import { buildCodexFeatures, codexModelSupportsFastMode } from "./codex-feature-definitions.js";
 import {
   CodexAppServerClient,
+  CodexAppServerTerminationError,
   parseCodexThreadForkResponse,
   parseCodexThreadRollbackResponse,
   type CodexThreadForkParams,
@@ -365,6 +366,9 @@ const CODEX_MODES: AgentMode[] = [
 ];
 
 const DEFAULT_CODEX_MODE_ID = "auto";
+
+/** Retry delays for autonomous native Goal recovery after an app-server exit. */
+const CODEX_GOAL_RECOVERY_BACKOFF_MS = [250, 1_000, 5_000, 30_000] as const;
 
 interface CodexAppServerClientLike {
   request(method: string, params?: unknown): Promise<unknown>;
@@ -3514,6 +3518,14 @@ export class CodexAppServerAgentSession implements AgentSession {
   private unpairedCompactionItemCompletions = 0;
   private connected = false;
   private connectionPromise: Promise<void> | null = null;
+  /** Delayed autonomous Goal recovery attempt, when one is scheduled. */
+  private goalRecoveryTimer: NodeJS.Timeout | null = null;
+  /** Current autonomous Goal reconnect and hydrate operation. */
+  private goalRecoveryPromise: Promise<void> | null = null;
+  /** Consecutive failed autonomous Goal recovery attempts. */
+  private goalRecoveryAttempt = 0;
+  /** Whether another recovery pass is required after the current pass settles. */
+  private goalRecoveryRequested = false;
   private closed = false;
   private collaborationModes: Array<{
     name: string;
@@ -3699,7 +3711,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
     this.client = client;
     client.setUnexpectedTerminationHandler((error) => {
-      this.handleUnexpectedTermination(error);
+      this.handleUnexpectedTermination(client, error);
     });
     client.setNotificationHandler((method, params) => this.handleNotification(method, params));
     this.registerRequestHandlers();
@@ -3772,7 +3784,11 @@ export class CodexAppServerAgentSession implements AgentSession {
     };
   }
 
-  private handleUnexpectedTermination(error: Error): void {
+  /** Fails the disconnected turn and starts native Goal recovery for the current client. */
+  private handleUnexpectedTermination(client: CodexAppServerClient, error: Error): void {
+    if (this.closed || this.client !== client) return;
+    const shouldRecoverGoal = this.goalsEnabled && this.connected;
+    this.client = null;
     this.connected = false;
     const hasActiveRootTurn = this.activeForegroundTurnId !== null || this.currentTurnId !== null;
     this.clearPendingPermissions({ preservePlanApprovals: !hasActiveRootTurn });
@@ -3781,6 +3797,8 @@ export class CodexAppServerAgentSession implements AgentSession {
         type: "turn_failed",
         provider: CODEX_PROVIDER,
         error: error.message,
+        code:
+          error instanceof CodexAppServerTerminationError ? error.code : "provider_process_error",
       });
     }
     this.activeForegroundTurnId = null;
@@ -3788,6 +3806,118 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.currentTurnId = null;
     this.pendingForegroundTurnIdentification?.resolve(null);
     this.pendingForegroundTurnIdentification = null;
+    if (shouldRecoverGoal) {
+      this.emitEvent({
+        type: "thread_status_changed",
+        provider: CODEX_PROVIDER,
+        status: { status: "systemError", message: error.message },
+      });
+      this.goalRecoveryRequested = true;
+      this.scheduleGoalRecovery(0);
+    }
+  }
+
+  /** Schedules one cancellable autonomous Goal recovery pass. */
+  private scheduleGoalRecovery(delayMs: number): void {
+    if (
+      this.closed ||
+      !this.goalsEnabled ||
+      this.goalRecoveryPromise !== null ||
+      this.goalRecoveryTimer !== null
+    ) {
+      return;
+    }
+    if (delayMs <= 0) {
+      this.startGoalRecovery();
+      return;
+    }
+    this.goalRecoveryTimer = setTimeout(() => {
+      this.goalRecoveryTimer = null;
+      this.startGoalRecovery();
+    }, delayMs);
+    this.goalRecoveryTimer.unref?.();
+  }
+
+  /** Runs one single-flight Goal reconnect and arranges a bounded-backoff retry on failure. */
+  private startGoalRecovery(): void {
+    if (this.closed || this.goalRecoveryPromise !== null) return;
+    this.goalRecoveryRequested = false;
+    const recovery = this.reconnectAndHydrateGoalState();
+    this.goalRecoveryPromise = recovery;
+    void recovery
+      .then(
+        () => {
+          this.goalRecoveryAttempt = 0;
+          return undefined;
+        },
+        () => {
+          this.goalRecoveryAttempt += 1;
+          this.goalRecoveryRequested = true;
+          this.logger.warn(
+            {
+              provider: CODEX_PROVIDER,
+              agentId: this.agentId,
+              appServerErrorCode: "provider_reconnect_failed",
+              recoveryAttempt: this.goalRecoveryAttempt,
+            },
+            "Codex Goal recovery attempt failed",
+          );
+          return undefined;
+        },
+      )
+      .finally(() => {
+        if (this.goalRecoveryPromise === recovery) {
+          this.goalRecoveryPromise = null;
+        }
+        if (!this.goalRecoveryRequested || this.closed) return;
+        const backoffIndex = Math.min(
+          Math.max(this.goalRecoveryAttempt - 1, 0),
+          CODEX_GOAL_RECOVERY_BACKOFF_MS.length - 1,
+        );
+        const delayMs =
+          this.goalRecoveryAttempt === 0
+            ? 0
+            : (CODEX_GOAL_RECOVERY_BACKOFF_MS[backoffIndex] ?? 30_000);
+        this.scheduleGoalRecovery(delayMs);
+      });
+  }
+
+  /** Reconnects the app-server and republishes provider-authoritative Goal and thread state. */
+  private async reconnectAndHydrateGoalState(): Promise<void> {
+    await this.connect();
+    if (this.closed) return;
+    let hydrationFailed = false;
+    try {
+      const goal = await this.getGoal();
+      this.emitEvent({ type: "goal_changed", provider: CODEX_PROVIDER, goal });
+    } catch {
+      hydrationFailed = true;
+      this.logger.warn(
+        {
+          provider: CODEX_PROVIDER,
+          agentId: this.agentId,
+          goalErrorCode: "provider_error",
+        },
+        "Failed to rehydrate Codex Goal after reconnect",
+      );
+    }
+    try {
+      const status = await this.getExecutionStatus();
+      this.emitEvent({ type: "thread_status_changed", provider: CODEX_PROVIDER, status });
+    } catch {
+      hydrationFailed = true;
+      this.logger.warn(
+        {
+          provider: CODEX_PROVIDER,
+          agentId: this.agentId,
+          appServerErrorCode: "thread_status_hydrate_failed",
+        },
+        "Failed to rehydrate Codex thread status after reconnect",
+      );
+    }
+    if (hydrationFailed) {
+      throw new Error("Codex Goal recovery hydration failed");
+    }
   }
 
   private async loadCollaborationModes(): Promise<void> {
@@ -4900,6 +5030,11 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   async close(): Promise<void> {
     this.closed = true;
+    this.goalRecoveryRequested = false;
+    if (this.goalRecoveryTimer) {
+      clearTimeout(this.goalRecoveryTimer);
+      this.goalRecoveryTimer = null;
+    }
     this.clearPendingPermissions();
     this.pendingSubAgentNotificationsByThreadId.clear();
     this.emitProviderRetryMessage(null);

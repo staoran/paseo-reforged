@@ -4075,6 +4075,86 @@ test("updateAgentGoal refreshes a stale projection before checking generation", 
   }
 });
 
+test("updateAgentGoal refreshes a synced projection before checking generation", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-update-authoritative-"));
+  const agentId = "00000000-0000-4000-8000-000000000224";
+  const initialGoal = {
+    objective: "Initial Goal",
+    status: "active" as const,
+    tokenBudget: null,
+    tokensUsed: 4_000,
+    timeUsedSeconds: 360,
+    createdAt: "2026-08-18T11:00:00.000Z",
+    updatedAt: "2026-08-18T11:06:00.000Z",
+  };
+  const replacementGoal = {
+    ...initialGoal,
+    objective: "Externally replaced Goal",
+    tokensUsed: 0,
+    timeUsedSeconds: 0,
+    createdAt: "2026-08-18T12:00:00.000Z",
+    updatedAt: "2026-08-18T12:00:00.000Z",
+  };
+
+  class AuthoritativeMutationGoalSession extends TestAgentSession {
+    currentGoal = initialGoal;
+    getCalls = 0;
+    setCalls = 0;
+    readonly goalControl: NonNullable<AgentSession["goalControl"]> = {
+      get: async () => {
+        this.getCalls += 1;
+        return this.currentGoal;
+      },
+      set: async () => {
+        this.setCalls += 1;
+        return { ...this.currentGoal, status: "paused" as const };
+      },
+      clear: async () => {},
+    };
+  }
+
+  const session = new AuthoritativeMutationGoalSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  try {
+    await manager.resumeAgentFromPersistence(
+      {
+        provider: "codex",
+        sessionId: "native-goal-update-authoritative-thread",
+        metadata: { cwd: workdir },
+      },
+      undefined,
+      agentId,
+    );
+    session.currentGoal = replacementGoal;
+
+    await expect(
+      manager.updateAgentGoal(agentId, { kind: "pause" }, initialGoal.createdAt),
+    ).resolves.toMatchObject({
+      ok: false,
+      goal: replacementGoal,
+      goalSync: "synced",
+      error: { code: "conflict" },
+    });
+    expect({ getCalls: session.getCalls, setCalls: session.setCalls }).toEqual({
+      getCalls: 2,
+      setCalls: 0,
+    });
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("updateAgentGoal resumes a paused Goal through the provider", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-update-resume-"));
   const agentId = "00000000-0000-4000-8000-000000000204";
@@ -4230,8 +4310,9 @@ test("updateAgentGoal enforces the resume transition matrix", async () => {
   const setInputs: Array<{ objective?: string; status?: "active" | "paused" }> = [];
 
   class ResumeMatrixGoalSession extends TestAgentSession {
+    currentGoal: typeof activeGoal | typeof blockedGoal = activeGoal;
     readonly goalControl: NonNullable<AgentSession["goalControl"]> = {
-      get: async () => activeGoal,
+      get: async () => this.currentGoal,
       set: async (input) => {
         setInputs.push(input);
         return resumedGoal;
@@ -4274,6 +4355,7 @@ test("updateAgentGoal enforces the resume transition matrix", async () => {
     });
     expect(setInputs).toEqual([]);
 
+    session.currentGoal = blockedGoal;
     session.pushEvent({ type: "goal_changed", provider: "codex", goal: blockedGoal });
     await manager.flush();
     await expect(
@@ -4716,15 +4798,18 @@ test("updateAgentGoal serializes mutations per Agent", async () => {
   const setInputs: Array<{ objective?: string; status?: "active" | "paused" }> = [];
 
   class SerializedGoalSession extends TestAgentSession {
+    currentGoal: typeof activeGoal | typeof pausedGoal | typeof resumedGoal = activeGoal;
     readonly goalControl: NonNullable<AgentSession["goalControl"]> = {
-      get: async () => activeGoal,
+      get: async () => this.currentGoal,
       set: async (input) => {
         setInputs.push(input);
         if (setInputs.length === 1) {
           firstStarted.resolve();
           await releaseFirst.promise;
+          this.currentGoal = pausedGoal;
           return pausedGoal;
         }
+        this.currentGoal = resumedGoal;
         return resumedGoal;
       },
       clear: async () => {},

@@ -1536,23 +1536,23 @@ export class AgentManager {
         },
       };
     }
-    if (agent.goalSync !== "synced") {
-      const refreshed = await this.getAgentGoal(agentId);
-      if (!refreshed.ok) {
-        return {
-          ready: false,
-          goal: refreshed.goal,
-          goalStep: refreshed.goalStep,
-          goalSync: refreshed.goalSync,
-          error:
-            refreshed.error ??
-            ({
-              code: "provider_error",
-              retryable: true,
-              message: "Failed to refresh the Agent Goal from the provider.",
-            } satisfies AgentGoalError),
-        };
-      }
+    // A locally synced projection may still predate an in-flight provider notification.
+    // Pull immediately before every mutation so generation and transition checks are authoritative.
+    const refreshed = await this.getAgentGoal(agentId);
+    if (!refreshed.ok) {
+      return {
+        ready: false,
+        goal: refreshed.goal,
+        goalStep: refreshed.goalStep,
+        goalSync: refreshed.goalSync,
+        error:
+          refreshed.error ??
+          ({
+            code: "provider_error",
+            retryable: true,
+            message: "Failed to refresh the Agent Goal from the provider.",
+          } satisfies AgentGoalError),
+      };
     }
     if (requireGoal && agent.goal == null) {
       return {
@@ -4697,6 +4697,11 @@ export class AgentManager {
 
   /** Applies provider execution state without synthesizing turn lifecycle events. */
   private applyExecutionStatus(agent: ActiveManagedAgent, status: AgentThreadStatus): boolean {
+    let goalBecameStale = false;
+    if (status.status === "systemError" && agent.session.goalControl !== undefined) {
+      goalBecameStale = agent.goalSync !== "stale";
+      agent.goalSync = "stale";
+    }
     if (status.status === "active") {
       if (agent.lifecycle === "running" && agent.lastError === undefined) {
         return false;
@@ -4718,14 +4723,14 @@ export class AgentManager {
       agent.activeTurnStartedAt = null;
       agent.activeTurnGoalGeneration = null;
       this.runs.clearAgentRun(agent.id);
-      return changed;
+      return changed || goalBecameStale;
     }
     if (
       status.status !== "idle" ||
       agent.activeForegroundTurnId !== null ||
       agent.pendingReplacement
     ) {
-      return false;
+      return goalBecameStale;
     }
     const changed =
       agent.lifecycle !== "idle" ||
@@ -4738,7 +4743,7 @@ export class AgentManager {
     agent.activeTurnStartedAt = null;
     agent.activeTurnGoalGeneration = null;
     this.runs.clearAgentRun(agent.id);
-    return changed;
+    return changed || goalBecameStale;
   }
 
   private async refreshRuntimeInfo(

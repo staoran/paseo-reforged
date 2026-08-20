@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useReducer, type ReactElement } from "react";
+import React, { useCallback, useEffect, useMemo, useReducer, type ReactElement } from "react";
 import { Pause, Pencil, Play, RotateCw, Square, Target } from "lucide-react-native";
 import { Pressable, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
@@ -26,6 +26,7 @@ import {
   INITIAL_GOAL_INTERACTION_STATE,
   applyGoalProjection,
   goalProjectionFromTerminateResponse,
+  reconcileGoalInteraction,
   reduceGoalInteraction,
   type GoalProjection,
 } from "./model";
@@ -238,9 +239,14 @@ export function AgentGoalTrack({
     reduceGoalInteraction,
     INITIAL_GOAL_INTERACTION_STATE,
   );
-  const pendingAction = interaction.phase === "pending" ? interaction.action : null;
-  const editorGoal = interaction.editorGoal;
-  const error = interaction.error;
+  const currentInteraction = reconcileGoalInteraction(interaction, state.goal);
+  const pendingAction = currentInteraction.phase === "pending" ? currentInteraction.action : null;
+  const editorGoal = currentInteraction.editorGoal;
+  const error = currentInteraction.error;
+
+  useEffect(() => {
+    dispatchInteraction({ type: "projection_changed", goal: state.goal });
+  }, [state.goal]);
   const presentation = useMemo(
     () =>
       buildGoalPresentation({

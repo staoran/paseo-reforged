@@ -100,7 +100,8 @@ export type GoalInteractionEvent =
   | { type: "open_editor"; goal: AgentGoalSnapshot }
   | { type: "close_editor" }
   | { type: "action_started"; action: GoalActionId }
-  | { type: "action_finished"; ok: boolean; error: string | null };
+  | { type: "action_finished"; ok: boolean; error: string | null }
+  | { type: "projection_changed"; goal: AgentGoalSnapshot | null | undefined };
 
 /** Fresh idle state used for the first render and successful editor completion. */
 export const INITIAL_GOAL_INTERACTION_STATE: GoalInteractionState = {
@@ -132,6 +133,16 @@ export function goalProjectionFromTerminateResponse(
   };
 }
 
+/** Invalidates an editor snapshot that no longer describes the current paused Goal generation. */
+export function reconcileGoalInteraction(
+  state: GoalInteractionState,
+  goal: AgentGoalSnapshot | null | undefined,
+): GoalInteractionState {
+  if (state.editorGoal === null) return state;
+  if (goal?.status === "paused" && goal.createdAt === state.editorGoal.createdAt) return state;
+  return INITIAL_GOAL_INTERACTION_STATE;
+}
+
 /** Applies one user or RPC event to the Goal track's discriminated interaction state. */
 export function reduceGoalInteraction(
   state: GoalInteractionState,
@@ -154,6 +165,8 @@ export function reduceGoalInteraction(
         return { phase: "editing", editorGoal: state.editorGoal, error: event.error };
       }
       return { phase: "idle", editorGoal: null, error: event.error };
+    case "projection_changed":
+      return reconcileGoalInteraction(state, event.goal);
   }
 }
 

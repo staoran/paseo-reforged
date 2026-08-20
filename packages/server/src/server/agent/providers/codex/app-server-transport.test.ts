@@ -10,6 +10,38 @@ import {
 import { CodexAppServerClient } from "./app-server-transport.js";
 
 describe("Codex app-server transport", () => {
+  test("reports bounded diagnostics when the child exits without exposing stderr", async () => {
+    const sentinel = "GOAL_OBJECTIVE_FROM_STDERR_MUST_NOT_ESCAPE";
+    const chunks: string[] = [];
+    const stream = new PassThrough();
+    stream.on("data", (chunk) => chunks.push(String(chunk)));
+    const child = createCodexAppServerChildProcess();
+    const client = new CodexAppServerClient(child, pino({ level: "trace" }, stream));
+    const termination = new Promise<Error>((resolve) => {
+      client.setUnexpectedTerminationHandler(resolve);
+    });
+    const pending = client.request("model/list", {});
+
+    child.stderr.write(sentinel);
+    child.emit("exit", 17, null);
+
+    await expect(pending).rejects.toMatchObject({
+      message: "Codex app-server exited unexpectedly (code 17, signal none)",
+      code: "provider_process_exited",
+    });
+    await expect(termination).resolves.toMatchObject({
+      message: "Codex app-server exited unexpectedly (code 17, signal none)",
+      code: "provider_process_exited",
+    });
+    const output = chunks.join("");
+    expect(output).not.toContain(sentinel);
+    expect(output).toContain('"appServerErrorCode":"provider_process_exited"');
+    expect(output).toContain(`"stderrBytes":${Buffer.byteLength(sentinel)}`);
+    child.stdout.end();
+    child.stderr.end();
+    child.stdin.end();
+  });
+
   test("does not write Goal objectives into raw JSON-RPC trace logs", async () => {
     const sentinel = "RAW_GOAL_OBJECTIVE_MUST_NOT_REACH_LOGS";
     const chunks: string[] = [];

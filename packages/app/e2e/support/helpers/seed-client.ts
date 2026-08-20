@@ -1,6 +1,11 @@
 import path from "node:path";
 import { readFileSync } from "node:fs";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
+import type {
+  AgentGoalGetResponsePayload,
+  AgentGoalUpdateMutation,
+  AgentGoalUpdateResponsePayload,
+} from "@getpaseo/protocol/messages";
 import { connectDaemonClient } from "./daemon-client-loader";
 import { withProjectOwnership } from "./project-ownership";
 import { createTempDirectory, createTempGitRepo } from "./workspace";
@@ -130,6 +135,12 @@ export interface SeedDaemonClient {
     }>;
   }>;
   updateAgent(agentId: string, updates: { name?: string }): Promise<void>;
+  getAgentGoal(agentId: string): Promise<AgentGoalGetResponsePayload>;
+  updateAgentGoal(
+    agentId: string,
+    mutation: AgentGoalUpdateMutation,
+    options?: { expectedGeneration?: string },
+  ): Promise<AgentGoalUpdateResponsePayload>;
   setAgentMode(agentId: string, modeId: string): Promise<unknown>;
   waitForAgentUpsert(
     agentId: string,

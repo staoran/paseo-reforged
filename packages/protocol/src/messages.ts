@@ -819,9 +819,9 @@ export const AgentGoalStatusSchema = z.enum(AGENT_GOAL_STATUSES);
 export const AgentGoalSnapshotSchema: z.ZodType<AgentGoalSnapshot> = z.object({
   objective: z.string(),
   status: AgentGoalStatusSchema,
-  tokenBudget: z.number().nullable(),
-  tokensUsed: z.number(),
-  timeUsedSeconds: z.number(),
+  tokenBudget: z.number().finite().nonnegative().nullable(),
+  tokensUsed: z.number().finite().nonnegative(),
+  timeUsedSeconds: z.number().finite().nonnegative(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });

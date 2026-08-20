@@ -54,6 +54,19 @@ test.describe("Goal controls", () => {
           exact: true,
         }),
       ).toBeVisible();
+      const pausedGoal = await session.client.getAgentGoal(session.agentId);
+      expect(pausedGoal.goal?.status).toBe("paused");
+      await session.client.updateAgentGoal(
+        session.agentId,
+        { kind: "resume" },
+        { expectedGeneration: pausedGoal.goal?.createdAt },
+      );
+      await expect(page.getByTestId("goal-editor-objective")).toHaveCount(0);
+      await expect(page.getByText("Active", { exact: true })).toBeVisible();
+
+      await page.getByRole("button", { name: "Pause Goal" }).click();
+      await expect(page.getByText("Paused", { exact: true })).toBeVisible();
+      await page.getByRole("button", { name: "Edit Goal" }).click();
       await page.getByTestId("goal-editor-objective").fill("  Ship edited Goal controls  ");
       await page.getByRole("button", { name: "Save Goal" }).click();
       await expect(page.getByText("Ship edited Goal controls", { exact: true })).toBeVisible();
