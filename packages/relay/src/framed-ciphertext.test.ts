@@ -82,6 +82,14 @@ interface DaemonFramedHandshakeFixture {
   sharedKey: ReturnType<typeof deriveSharedKey>;
 }
 
+/** Physical transport close metadata observed by a handshake test. */
+interface TransportCloseResult {
+  /** WebSocket close code selected by the protocol failure. */
+  code?: number;
+  /** Bounded WebSocket close reason selected by the protocol failure. */
+  reason?: string;
+}
+
 /** Creates a daemon handshake using only public transport and crypto boundaries. */
 function startDaemonFramedHandshake(args: {
   /** Ordered framed encodings offered by the synthetic client. */
@@ -1240,9 +1248,9 @@ describe("framed ciphertext v1 contract", () => {
     /** Daemon identity transferred to the client through the pairing channel. */
     const daemonKeyPair = generateKeyPair();
     /** Physical close result exposing which validation gate rejected the ready frame. */
-    let resolveClose: ((result: { code?: number; reason?: string }) => void) | null = null;
+    let resolveClose: ((result: TransportCloseResult) => void) | null = null;
     /** Close promise prevents an unexpected confirm path from hanging the test. */
-    const closed = new Promise<{ code?: number; reason?: string }>((resolve) => {
+    const closed = new Promise<TransportCloseResult>((resolve) => {
       resolveClose = resolve;
     });
     /** All client writes used to prove no confirm is emitted for the oversized token. */

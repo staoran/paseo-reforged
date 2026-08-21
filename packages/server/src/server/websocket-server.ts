@@ -497,9 +497,6 @@ interface SendBinaryToClientOptions {
   hint: RelayTrafficHint;
 }
 
-/** Inputs for one awaited binary frame send to a physical client socket. */
-interface SendBinaryToClientAndWaitOptions extends SendBinaryToClientOptions {}
-
 /** Inputs for one bounded send through the WebSocket server's common path. */
 interface SendFrameToClientOptions {
   /** Physical client socket receiving the frame. */
@@ -1161,9 +1158,7 @@ export class VoiceAssistantWebSocketServer {
   }
 
   /** Sends one classified binary frame and waits for its physical write. */
-  private async sendBinaryToClientAndWait(
-    options: SendBinaryToClientAndWaitOptions,
-  ): Promise<void> {
+  private async sendBinaryToClientAndWait(options: SendBinaryToClientOptions): Promise<void> {
     const { ws, frame, hint } = options;
     try {
       const sent = await sendBoundedPhysicalFrameAndWait({

@@ -198,6 +198,20 @@ interface CompressionEnabledChangeOptions {
   enabled: boolean;
 }
 
+/** Persisted relay transport settings displayed in the pairing surface. */
+interface RelayTransportSettingsProps {
+  /** Persisted daemon policy displayed by the controls. */
+  policy: RelayTransportConfig | undefined;
+  /** Disables both controls while the single mutation is in flight. */
+  updatePending: boolean;
+  /** Last mutation failure surfaced without changing persisted display state. */
+  updateError: Error | null;
+  /** Mutation callback for a new connection-level encoding preference. */
+  onCiphertextEncodingChange: (ciphertextEncoding: RelayCiphertextEncoding) => void;
+  /** Mutation callback for the hot-reloadable compression switch. */
+  onCompressionEnabledChange: (options: CompressionEnabledChangeOptions) => void;
+}
+
 function PairDeviceBody(props: PairDeviceBodyProps) {
   const { t } = useTranslation();
   if (props.isDisconnected) {
@@ -333,18 +347,7 @@ function RelayTransportSettings({
   updateError,
   onCiphertextEncodingChange,
   onCompressionEnabledChange,
-}: {
-  /** Persisted daemon policy displayed by the controls. */
-  policy: RelayTransportConfig | undefined;
-  /** Disables both controls while the single mutation is in flight. */
-  updatePending: boolean;
-  /** Last mutation failure surfaced without changing persisted display state. */
-  updateError: Error | null;
-  /** Mutation callback for a new connection-level encoding preference. */
-  onCiphertextEncodingChange: (ciphertextEncoding: RelayCiphertextEncoding) => void;
-  /** Mutation callback for the hot-reloadable compression switch. */
-  onCompressionEnabledChange: (options: CompressionEnabledChangeOptions) => void;
-}) {
+}: RelayTransportSettingsProps) {
   const { t } = useTranslation();
   /** Missing encoding follows the daemon's configured-policy default. */
   const ciphertextEncoding = policy?.ciphertextEncoding ?? "auto";

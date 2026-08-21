@@ -4,7 +4,8 @@ import { createClientChannel, type Transport } from "@getpaseo/relay/e2ee";
 import { exportPublicKey, generateKeyPair } from "@getpaseo/relay";
 import { startRelayTransport } from "./relay-transport";
 import { resolveConfiguredRelayTransportPolicy } from "./relay-transport-policy.js";
-import { createNodeRawDeflateCodec, type RelayTrafficHint } from "./relay-frame-compression.js";
+import { createNodeRawDeflateCodec } from "./relay-frame-compression.js";
+import type { EncryptedRelaySocket } from "./websocket/encrypted-relay-socket.js";
 import { RelayTransportRuntimeMetricsWindow } from "./websocket/runtime-metrics.js";
 
 function createMockLogger() {
@@ -445,15 +446,14 @@ describe("relay-transport control lifecycle", () => {
       compressionAdapter: createNodeRawDeflateCodec(),
     });
     /** Relay-aware socket shape that retains sender-side traffic semantics. */
-    const encryptedSocket = (await attached) as {
-      sendClassified: (options: { data: string; hint: RelayTrafficHint }) => void | Promise<void>;
-      on: (event: "message", listener: (data: string | ArrayBuffer) => void) => void;
-    };
+    const encryptedSocket = (await attached) as EncryptedRelaySocket;
     /** Client-to-daemon framed identity payload observed at the attached socket seam. */
     const inboundPayload = "client-framed-identity";
     /** Delivery signal for the daemon-side framed decoder. */
     const inboundDelivered = new Promise<string | ArrayBuffer>((resolve) => {
-      encryptedSocket.on("message", resolve);
+      encryptedSocket.on("message", (data) => {
+        if (typeof data === "string" || data instanceof ArrayBuffer) resolve(data);
+      });
     });
     await clientChannel.send(inboundPayload);
     await expect(inboundDelivered).resolves.toBe(inboundPayload);

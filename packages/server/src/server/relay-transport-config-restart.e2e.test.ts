@@ -13,10 +13,18 @@ import { DaemonClient } from "./test-utils/index.js";
 // Temporary Paseo homes created by restart lifecycle tests.
 const tempDirs: string[] = [];
 
+/** Running isolated daemon and its allocated TCP port. */
+interface StartedPersistedConfigDaemon {
+  /** Daemon lifecycle owned by the restart test. */
+  daemon: PaseoDaemon;
+  /** Ephemeral listener port allocated by the operating system. */
+  port: number;
+}
+
 /** Starts a real daemon from the persisted config in the supplied Paseo home. */
 async function startDaemonFromPersistedConfig(
   paseoHome: string,
-): Promise<{ daemon: PaseoDaemon; port: number }> {
+): Promise<StartedPersistedConfigDaemon> {
   // Production config loader output with an ephemeral test listener.
   const config = {
     ...loadConfig(paseoHome, { env: {} }),

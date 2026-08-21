@@ -11,7 +11,6 @@ import {
   prepareIdentityFramedPayload,
   type FrameCompressionAdapter,
   type FramedCiphertextEncoding,
-  type InflateRawFrameOptions,
   type PreparedFramedPayload,
 } from "@getpaseo/relay/e2ee";
 
@@ -80,8 +79,6 @@ export interface DaemonDeflateRawOptions {
 export interface DaemonFrameCompressionCodec extends FrameCompressionAdapter {
   /** Compresses one independent raw DEFLATE frame at the daemon's private level. */
   deflateRaw(options: DaemonDeflateRawOptions): Promise<ArrayBuffer>;
-  /** Inflates one bounded raw DEFLATE frame. */
-  inflateRaw(options: InflateRawFrameOptions): Promise<ArrayBuffer>;
 }
 
 /** Inputs needed to prepare one daemon relay frame before encryption. */
@@ -116,6 +113,14 @@ export interface PreparedDaemonFramedPayload extends PreparedFramedPayload {
 export interface DaemonFrameCompression {
   /** Prepares one authenticated payload without encrypting or sending it. */
   prepare(options: PrepareDaemonFramedPayloadOptions): Promise<PreparedDaemonFramedPayload>;
+}
+
+/** Inputs for creating one daemon compression coordinator. */
+export interface CreateDaemonFrameCompressionOptions {
+  /** Runtime-specific raw DEFLATE codec. */
+  codec: DaemonFrameCompressionCodec;
+  /** Optional monotonic clock used by runtime metrics and deterministic tests. */
+  clock?: () => number;
 }
 
 interface ResolvePreCompressionSkipReasonOptions {
@@ -232,12 +237,9 @@ function prepareIdentityFallback(
 }
 
 /** Creates one connection-local coordinator backed by the process-wide job gate. */
-export function createDaemonFrameCompression(options: {
-  /** Runtime-specific raw DEFLATE codec. */
-  codec: DaemonFrameCompressionCodec;
-  /** Optional monotonic clock used by runtime metrics and deterministic tests. */
-  clock?: () => number;
-}): DaemonFrameCompression {
+export function createDaemonFrameCompression(
+  options: CreateDaemonFrameCompressionOptions,
+): DaemonFrameCompression {
   /** Monotonic clock shared by every preparation owned by this coordinator. */
   const clock = options.clock ?? defaultMonotonicClock;
   return {

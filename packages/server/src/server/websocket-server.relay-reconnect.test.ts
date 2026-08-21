@@ -99,7 +99,7 @@ import { z } from "zod";
 import { VoiceAssistantWebSocketServer } from "./websocket-server";
 import { parseServerInfoStatusPayload } from "./messages.js";
 import type { SpeechReadinessSnapshot } from "./speech/speech-runtime.js";
-import type { RelayTrafficHint } from "./relay-frame-compression.js";
+import type { PhysicalSendClassifiedOptions } from "./websocket/physical-socket.js";
 
 interface WebSocketServerInternals {
   attachSocket(ws: unknown, req: unknown): Promise<void>;
@@ -198,6 +198,12 @@ class MockSocket {
       handlers.filter((handler) => handler !== listener),
     );
   }
+}
+
+/** Mock physical socket exposing the relay-only classified send extension. */
+interface ClassifiedMockSocket extends MockSocket {
+  /** Records application data together with its sender-side relay classification. */
+  sendClassified(options: PhysicalSendClassifiedOptions): void;
 }
 
 function createLogger() {
@@ -530,11 +536,9 @@ describe("relay external socket reconnect behavior", () => {
     /** Server under test owns the authenticated session-to-socket routing boundary. */
     const server = createServer();
     /** Relay socket records semantic hints without changing the observable wire payload. */
-    const socket = new MockSocket() as MockSocket & {
-      sendClassified: (options: { data: unknown; hint: RelayTrafficHint }) => void;
-    };
+    const socket = new MockSocket() as ClassifiedMockSocket;
     /** Classified sends observed after authentication. */
-    const classifiedSends: Array<{ data: unknown; hint: RelayTrafficHint }> = [];
+    const classifiedSends: PhysicalSendClassifiedOptions[] = [];
     socket.sendClassified = ({ data, hint }) => {
       classifiedSends.push({ data, hint });
       socket.send(data);
@@ -566,11 +570,9 @@ describe("relay external socket reconnect behavior", () => {
     /** Server under test owns both broadcast and source-scoped binary routes. */
     const server = createServer();
     /** Relay socket records the traffic semantics presented at its classified send seam. */
-    const socket = new MockSocket() as MockSocket & {
-      sendClassified: (options: { data: unknown; hint: RelayTrafficHint }) => void;
-    };
+    const socket = new MockSocket() as ClassifiedMockSocket;
     /** Classified binary sends observed after the authenticated session is attached. */
-    const classifiedSends: Array<{ data: unknown; hint: RelayTrafficHint }> = [];
+    const classifiedSends: PhysicalSendClassifiedOptions[] = [];
     socket.sendClassified = ({ data, hint }) => {
       classifiedSends.push({ data, hint });
       socket.send(data);

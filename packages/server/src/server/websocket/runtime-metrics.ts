@@ -145,6 +145,15 @@ export interface RelayByteSummary {
   max: number;
 }
 
+/** Label-only view restored from one outbound relay aggregate key. */
+type RelayOutboundFrameLabels = Pick<
+  RelayPreparedFrameMetric,
+  "ciphertextEncoding" | "trafficClass" | "codec"
+>;
+
+/** Label-only view restored from one inbound relay aggregate key. */
+type RelayInboundFrameLabels = Pick<RelayInboundFrameMetric, "ciphertextEncoding" | "codec">;
+
 /** Relay transport aggregates embedded in the existing WebSocket metrics snapshot. */
 export interface RelayTransportRuntimeMetricsSnapshot {
   /** Latest fully defaulted relay transport configuration. */
@@ -849,11 +858,7 @@ function relayOutboundFrameKey(
 }
 
 /** Restores one bounded outbound label tuple from aggregate map storage. */
-function parseOutboundFrameKey(key: string): {
-  ciphertextEncoding: FramedCiphertextEncoding;
-  trafficClass: RelayTrafficClass;
-  codec: FramedCiphertextCodec;
-} {
+function parseOutboundFrameKey(key: string): RelayOutboundFrameLabels {
   const [encoding, trafficClass, codec] = key.split("|");
   return {
     ciphertextEncoding: encoding === "base64" ? "base64" : "binary",
@@ -873,10 +878,7 @@ function relayInboundFrameKey(
 }
 
 /** Restores one bounded inbound label tuple from aggregate map storage. */
-function parseInboundFrameKey(key: string): {
-  ciphertextEncoding: FramedCiphertextEncoding;
-  codec: FramedCiphertextCodec;
-} {
+function parseInboundFrameKey(key: string): RelayInboundFrameLabels {
   const [encoding, codec] = key.split("|");
   return {
     ciphertextEncoding: encoding === "base64" ? "base64" : "binary",
@@ -974,7 +976,7 @@ function summarizeDurations(samples: readonly number[]): RelayDurationSummary {
 }
 
 /** Returns p95 and max for a non-negative byte gauge. */
-function summarizeByteSamples(samples: readonly number[]): { p95: number; max: number } {
+function summarizeByteSamples(samples: readonly number[]): RelayByteSummary {
   const sorted = [...samples].sort((left, right) => left - right);
   return {
     p95: percentile({ sorted, quantile: 0.95 }),

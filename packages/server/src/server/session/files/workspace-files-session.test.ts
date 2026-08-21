@@ -18,6 +18,7 @@ import {
 } from "@getpaseo/protocol/binary-frames/index";
 import {
   WorkspaceFilesSession,
+  type WorkspaceFileBinaryMessageOptions,
   type WorkspaceFilesSessionHost,
 } from "./workspace-files-session.js";
 import { DownloadTokenStore } from "../../file-download/token-store.js";
@@ -41,7 +42,7 @@ function makeDir(prefix: string): string {
 function makeSubsystem(
   options: {
     hasBinaryChannel?: boolean;
-    emitBinary?: (options: { frame: Uint8Array; hint: RelayTrafficHint }) => Promise<void> | void;
+    emitBinary?: (options: WorkspaceFileBinaryMessageOptions) => Promise<void> | void;
   } = {},
 ) {
   const emitted: SessionOutboundMessage[] = [];

@@ -76,8 +76,8 @@ interface PhysicalSendDispatch {
   expectsCallback: boolean;
 }
 
-/** Selects the relay-aware send extension when both a hint and extension are available. */
-function dispatchPhysicalFrame(params: {
+/** Inputs for selecting one direct or relay-aware physical send method. */
+interface DispatchPhysicalFrameOptions {
   /** Physical direct or encrypted relay socket. */
   socket: BoundedPhysicalSocket;
   /** Application frame passed unchanged to the selected send method. */
@@ -86,8 +86,11 @@ function dispatchPhysicalFrame(params: {
   trafficHint?: RelayTrafficHint;
   /** Optional physical completion callback. */
   callback?: (error?: Error) => void;
-}): PhysicalSendDispatch {
-  const { socket, frame, trafficHint, callback } = params;
+}
+
+/** Selects the relay-aware send extension when both a hint and extension are available. */
+function dispatchPhysicalFrame(options: DispatchPhysicalFrameOptions): PhysicalSendDispatch {
+  const { socket, frame, trafficHint, callback } = options;
   if (trafficHint && socket.sendClassified) {
     return {
       result: socket.sendClassified({ data: frame, hint: trafficHint }),

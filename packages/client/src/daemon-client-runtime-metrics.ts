@@ -38,6 +38,32 @@ interface RelayFrameAggregate {
   wireBytes: number;
 }
 
+/** Bounded labels restored from one inbound relay metric key. */
+interface RelayInboundFrameLabels {
+  /** Locked ciphertext representation. */
+  ciphertextEncoding: FramedCiphertextEncoding;
+  /** Authenticated framed payload codec. */
+  codec: FramedCiphertextCodec;
+}
+
+/** Percentile summary for bounded relay duration samples. */
+interface RelayDurationSummary {
+  /** Nearest-rank median duration. */
+  p50: number;
+  /** Nearest-rank 95th-percentile duration. */
+  p95: number;
+  /** Largest retained duration. */
+  max: number;
+}
+
+/** Percentile summary for a bounded relay byte gauge. */
+interface RelayByteSummary {
+  /** Nearest-rank 95th-percentile byte count. */
+  p95: number;
+  /** Largest retained byte count. */
+  max: number;
+}
+
 interface RuntimeMetricsLogger {
   info(obj: object, msg?: string): void;
 }
@@ -444,10 +470,7 @@ function relayInboundFrameKey(
 }
 
 /** Restores one bounded inbound relay label tuple. */
-function parseRelayInboundFrameKey(key: string): {
-  ciphertextEncoding: FramedCiphertextEncoding;
-  codec: FramedCiphertextCodec;
-} {
+function parseRelayInboundFrameKey(key: string): RelayInboundFrameLabels {
   const [encoding, codec] = key.split("|");
   return {
     ciphertextEncoding: encoding === "base64" ? "base64" : "binary",
@@ -610,7 +633,7 @@ function createBoundedCountRecord<TKey extends string>(
 }
 
 /** Returns deterministic p50, p95, and max values for duration samples. */
-function summarizeDurations(samples: readonly number[]): { p50: number; p95: number; max: number } {
+function summarizeDurations(samples: readonly number[]): RelayDurationSummary {
   const sorted = [...samples].sort((left, right) => left - right);
   return {
     p50: percentile(sorted, 0.5),
@@ -620,7 +643,7 @@ function summarizeDurations(samples: readonly number[]): { p50: number; p95: num
 }
 
 /** Returns p95 and max for a non-negative byte gauge. */
-function summarizeByteSamples(samples: readonly number[]): { p95: number; max: number } {
+function summarizeByteSamples(samples: readonly number[]): RelayByteSummary {
   const sorted = [...samples].sort((left, right) => left - right);
   return {
     p95: percentile(sorted, 0.95),

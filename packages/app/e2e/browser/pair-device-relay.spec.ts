@@ -1,5 +1,5 @@
 import type { WebSocketRoute } from "@playwright/test";
-import type { RelayTransportConfig } from "@getpaseo/protocol/messages";
+import type { MutableDaemonConfig, RelayTransportConfig } from "@getpaseo/protocol/messages";
 import { expect, test, type Page } from "../support/fixtures";
 import { connectDaemonClient } from "../support/helpers/daemon-client-loader";
 import { wsRoutePatternForPort } from "../support/helpers/daemon-port";
@@ -12,6 +12,14 @@ import {
   reloadAndOpenPairDevice,
 } from "../support/helpers/pair-device";
 
+/** Public config RPC result consumed by the relay pairing tests. */
+interface RelayTransportDaemonConfigResponse {
+  /** Correlation id returned by the daemon config RPC. */
+  requestId: string;
+  /** Current mutable daemon config parsed by the protocol schema. */
+  config: MutableDaemonConfig;
+}
+
 type WebSocketMessage = Parameters<Parameters<WebSocketRoute["onMessage"]>[0]>[0];
 
 interface RelayTransportDaemonClient {
@@ -20,9 +28,7 @@ interface RelayTransportDaemonClient {
   /** Closes the direct test connection. */
   close(): Promise<void>;
   /** Reads the daemon's current mutable relay transport policy. */
-  getDaemonConfig(): Promise<{
-    config: { relay?: { transport?: RelayTransportConfig } };
-  }>;
+  getDaemonConfig(): Promise<RelayTransportDaemonConfigResponse>;
   /** Seeds a persisted relay transport policy before the browser connects. */
   patchDaemonConfig(config: { relay: { transport: RelayTransportConfig } }): Promise<unknown>;
 }

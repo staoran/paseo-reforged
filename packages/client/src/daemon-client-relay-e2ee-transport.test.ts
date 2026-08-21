@@ -12,6 +12,16 @@ import { createEncryptedTransport } from "./daemon-client-relay-e2ee-transport.j
 import { DaemonClientRuntimeMetrics } from "./daemon-client-runtime-metrics.js";
 import type { DaemonTransport } from "./daemon-client-transport-types.js";
 
+/** First observable application delivery or protocol close after framed decode. */
+interface RelayTransportDecodeOutcome {
+  /** Outcome selected by the public transport callback that fires first. */
+  kind: "application" | "closed";
+  /** Decoded application payload when delivery succeeds. */
+  data?: unknown;
+  /** Transport opcode associated with a delivered application payload. */
+  isBinary?: boolean;
+}
+
 describe("daemon client relay E2EE transport", () => {
   test("advertises raw DEFLATE when the client relay transport starts", async () => {
     /** Daemon identity supplied through the pairing result. */
@@ -149,11 +159,9 @@ describe("daemon client relay E2EE transport", () => {
       runtimeMetrics,
     });
     /** First public application or close result after the compressed frame arrives. */
-    let resolveOutcome:
-      | ((outcome: { kind: string; data?: unknown; isBinary?: boolean }) => void)
-      | null = null;
+    let resolveOutcome: ((outcome: RelayTransportDecodeOutcome) => void) | null = null;
     /** Outcome promise preventing a protocol close from hanging the test. */
-    const outcome = new Promise<{ kind: string; data?: unknown; isBinary?: boolean }>((resolve) => {
+    const outcome = new Promise<RelayTransportDecodeOutcome>((resolve) => {
       resolveOutcome = resolve;
     });
     /** Physical close signal for a later malformed compressed frame. */

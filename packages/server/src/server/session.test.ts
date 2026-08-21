@@ -32,7 +32,7 @@ import type { AgentTimelineFetchResult } from "./agent/agent-timeline-store-type
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { createPersistedProjectRecord } from "./workspace-registry.js";
 import { deriveProjectKey } from "./project-key.js";
-import type { SessionOptions } from "./session.js";
+import type { SessionBinaryMessageOptions, SessionOptions } from "./session.js";
 import type { SessionInboundMessage, SessionOutboundMessage } from "./messages.js";
 import {
   asSessionInternals as asSessionInternalsHelper,
@@ -96,7 +96,7 @@ function asSessionInternals(session: Session): SessionHandlerInternals {
 
 function createBinaryMessageHandler(
   binaryMessages: Uint8Array[] | undefined,
-): ((options: { frame: Uint8Array }) => void) | undefined {
+): ((options: SessionBinaryMessageOptions) => void) | undefined {
   if (!binaryMessages) {
     return undefined;
   }
