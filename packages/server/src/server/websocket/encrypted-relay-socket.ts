@@ -2,11 +2,13 @@ import { EventEmitter } from "node:events";
 import {
   MAX_FRAMED_WIRE_BYTES,
   preparedEncryptedFrameWireByteLength,
+  type NegotiatedEncryptedTransport,
   type PreparedEncryptedFrame,
   type SendPreparedEncryptedFrameOptions,
 } from "@getpaseo/relay/e2ee";
 // Node and emitted ESM run without a TypeScript path-alias resolver.
 import { MAX_PHYSICAL_SOCKET_BUFFERED_BYTES } from "./physical-socket.js";
+import type { RelayPreparedFrameMetric } from "./runtime-metrics.js";
 import type { RelaySendFifoWaitSample, RelayTrafficHint } from "../relay-frame-compression.js";
 
 /** Default classification retained for every existing WebSocket-compatible caller. */
@@ -23,6 +25,8 @@ export interface EncryptedRelayChannel {
   outboundWireByteLength: (data: string | ArrayBuffer) => number;
   /** Returns whether this connection uses the framed prepared-frame pipeline. */
   usesFramedCiphertextV1: () => boolean;
+  /** Returns the immutable legacy or framed transport negotiated by this channel. */
+  getNegotiatedTransport: () => NegotiatedEncryptedTransport;
   /** Encrypts and representation-encodes one framed payload exactly once. */
   prepareOutboundFrame: (data: string | ArrayBuffer) => PreparedEncryptedFrame;
   /** Writes one final framed wire through the encrypted channel FIFO. */
@@ -68,6 +72,8 @@ export interface EncryptedRelaySocket {
 
 /** Content-free metrics port observed at the encrypted socket queue boundary. */
 export interface EncryptedRelaySocketMetrics {
+  /** Aggregates one prepared or legacy identity frame without retaining application bytes. */
+  recordPreparedFrame(metric: RelayPreparedFrameMetric): void;
   /** Records time from send invocation until its ordered FIFO operation starts. */
   recordQueueMs(sample: RelaySendFifoWaitSample): void;
   /** Samples aggregate final wire bytes retained behind the send FIFO. */
@@ -206,6 +212,32 @@ export function createEncryptedRelaySocket(params: {
             new Error("Encrypted relay socket exceeded its outbound high-water mark"),
           );
         }
+        try {
+          /** Immutable legacy selection distinguishes Base64-only from hybrid connections. */
+          const negotiated = channel.getNegotiatedTransport();
+          /** Legacy hybrid sends only ArrayBuffer payloads as raw binary ciphertext. */
+          const sendsBinaryCiphertext =
+            negotiated.mode === "legacy" &&
+            negotiated.ciphertextEncoding === "hybrid" &&
+            outbound instanceof ArrayBuffer;
+          /** Actual per-frame WebSocket representation used by the legacy channel. */
+          const ciphertextEncoding = sendsBinaryCiphertext ? "binary" : "base64";
+          /** Identity payload bytes before the fixed NaCl and representation overhead. */
+          const originalByteLength = relayPayloadByteLength(outbound);
+          runtimeMetrics?.recordPreparedFrame({
+            ciphertextEncoding,
+            trafficClass: hint.trafficClass,
+            codec: "identity",
+            originalByteLength,
+            encodedByteLength: originalByteLength,
+            wireByteLength: outboundBytes,
+            skipReason: "legacy-mode",
+            prepareMs: 0,
+            codecMs: null,
+          });
+        } catch {
+          // Metrics are observational and cannot fail application traffic.
+        }
         return channel.send(outbound).catch((error) => {
           if (emitter.listenerCount("error") > 0) emitter.emit("error", error);
           throw error;
@@ -317,6 +349,11 @@ function normalizeRelaySendPayload(data: string | Uint8Array | ArrayBuffer): str
   const out = new Uint8Array(view.byteLength);
   out.set(view);
   return out.buffer;
+}
+
+/** Returns the exact plaintext byte length used by legacy identity encryption. */
+function relayPayloadByteLength(data: string | ArrayBuffer): number {
+  return typeof data === "string" ? new TextEncoder().encode(data).byteLength : data.byteLength;
 }
 
 /** Returns the cross-runtime monotonic clock used by production queue metrics. */

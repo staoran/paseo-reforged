@@ -48,7 +48,7 @@ export interface RelayPreparedFrameMetric {
   originalByteLength: number;
   encodedByteLength: number;
   wireByteLength: number;
-  skipReason: CompressionSkipReason | null;
+  skipReason: RelayCompressionSkipReason | null;
   prepareMs: number;
   codecMs: number | null;
 }

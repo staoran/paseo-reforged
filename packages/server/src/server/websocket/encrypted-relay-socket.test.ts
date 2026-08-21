@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import {
   framedCiphertextWireByteLength,
+  type NegotiatedEncryptedTransport,
   type PreparedEncryptedFrame,
   type SendPreparedEncryptedFrameOptions,
 } from "@getpaseo/relay/e2ee";
@@ -10,6 +11,7 @@ import {
   createEncryptedRelaySocket,
   type EncryptedRelayChannel,
 } from "./encrypted-relay-socket.js";
+import { WebSocketRuntimeMetricsWindow } from "./runtime-metrics.js";
 import type { RelayTrafficHint } from "../relay-frame-compression.js";
 
 class BlockingChannel implements EncryptedRelayChannel {
@@ -74,14 +76,28 @@ class BlockingChannel implements EncryptedRelayChannel {
 
   /** Returns the legacy encrypted wire estimate. */
   outboundWireByteLength(data: string | ArrayBuffer): number {
+    /** Plaintext bytes entering legacy NaCl encryption. */
     const plaintextBytes =
       typeof data === "string" ? new TextEncoder().encode(data).byteLength : data.byteLength;
-    return plaintextBytes + 40;
+    /** Binary NaCl bundle before any Base64 representation. */
+    const encryptedBytes = plaintextBytes + 40;
+    return typeof data === "string" ? Math.ceil(encryptedBytes / 3) * 4 : encryptedBytes;
   }
 
   /** Returns the immutable negotiated ciphertext mode. */
   usesFramedCiphertextV1(): boolean {
     return this.framedCiphertextV1;
+  }
+
+  /** Returns the deterministic transport selection represented by this test channel. */
+  getNegotiatedTransport(): NegotiatedEncryptedTransport {
+    return this.framedCiphertextV1
+      ? {
+          mode: "framed-v1",
+          ciphertextEncoding: "binary",
+          compressionAlgorithms: ["deflate-raw"],
+        }
+      : { mode: "legacy", ciphertextEncoding: "hybrid", compressionAlgorithms: [] };
   }
 
   /** Releases the currently blocked physical send and all subsequent sends. */
@@ -102,6 +118,15 @@ class FramedBase64Channel extends BlockingChannel {
     const plaintextBytes =
       typeof data === "string" ? new TextEncoder().encode(data).byteLength : data.byteLength;
     return Math.ceil((plaintextBytes + 40) / 3) * 4;
+  }
+
+  /** Returns the framed Base64 selection represented by this specialized channel. */
+  override getNegotiatedTransport(): NegotiatedEncryptedTransport {
+    return {
+      mode: "framed-v1",
+      ciphertextEncoding: "base64",
+      compressionAlgorithms: ["deflate-raw"],
+    };
   }
 }
 
@@ -511,6 +536,56 @@ test("classified relay sends preserve explicit hints while ordinary sends defaul
   ]);
 
   expect(observedHints).toEqual([{ trafficClass: "state-sync" }, { trafficClass: "realtime" }]);
+});
+
+test("legacy classified sends report actual ciphertext representation and uncompressed bytes", async () => {
+  /** Legacy hybrid channel emits strings as Base64 and binary payloads as raw ciphertext. */
+  const channel = new BlockingChannel(false);
+  /** Production recorder exposes content-free transport aggregates at the diagnostics seam. */
+  const metrics = new WebSocketRuntimeMetricsWindow(() => 0);
+  /** Socket under test receives classified sends through the legacy compatibility path. */
+  const socket = createEncryptedRelaySocket({
+    channel,
+    emitter: new EventEmitter(),
+    getTransportBufferedAmount: () => 0,
+    terminateTransport: () => undefined,
+    runtimeMetrics: metrics.relayTransport,
+  });
+  channel.drain();
+
+  await Promise.all([
+    socket.sendClassified({ data: "abc", hint: { trafficClass: "state-sync" } }),
+    socket.sendClassified({ data: new Uint8Array([1, 2, 3, 4]), hint: { trafficClass: "bulk" } }),
+  ]);
+
+  /** Final bounded aggregate emitted through the production diagnostics contract. */
+  const snapshot = metrics.snapshotAndReset().relayTransport;
+  expect({
+    outboundFrames: snapshot.outboundFrames,
+    legacySkipCount: snapshot.compressionSkipCount["legacy-mode"],
+  }).toEqual({
+    outboundFrames: [
+      {
+        ciphertextEncoding: "base64",
+        trafficClass: "state-sync",
+        codec: "identity",
+        frameCount: 1,
+        originalBytes: 3,
+        encodedBytes: 3,
+        wireBytes: 60,
+      },
+      {
+        ciphertextEncoding: "binary",
+        trafficClass: "bulk",
+        codec: "identity",
+        frameCount: 1,
+        originalBytes: 4,
+        encodedBytes: 4,
+        wireBytes: 44,
+      },
+    ],
+    legacySkipCount: 2,
+  });
 });
 
 test("rejects a prepared framed wire at the exclusive 32 MiB limit", async () => {
