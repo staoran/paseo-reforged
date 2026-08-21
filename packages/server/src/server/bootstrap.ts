@@ -1612,6 +1612,7 @@ export async function createPaseoDaemon(
               },
               serverId,
               daemonKeyPair: daemonKeyPair.keyPair,
+              runtimeMetrics: wsServer.getRelayTransportRuntimeMetrics(),
             });
             daemonConfigStore.onFieldChange("relay.enabled", (value) => {
               relayRuntime?.setEnabled(value === true);
