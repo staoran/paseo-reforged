@@ -73,6 +73,18 @@ interface BenchmarkCliOptions {
   runs: number;
 }
 
+/** Raw corpus bytes loaded from explicit operator paths. */
+interface BenchmarkCorpusInputs {
+  /** Raw UTF-8 JSON bytes. */
+  json: Uint8Array;
+  /** Raw terminal stream bytes. */
+  terminal: Uint8Array;
+  /** Raw file-transfer bytes. */
+  file: Uint8Array;
+  /** Raw UTF-8 completed tool-call bytes. */
+  toolCall: Uint8Array;
+}
+
 /** Output port used by tests and the process entrypoint. */
 export interface RelayFrameCodecBenchmarkCliIo {
   /** Receives content-free report text. */
@@ -367,28 +379,24 @@ async function readBenchmarkInput(label: InputLabel, path: string): Promise<Uint
     return bytes;
   } catch (error) {
     /** Stable error code retained without the original path or message. */
-    const code =
-      typeof error === "object" && error !== null && "code" in error
-        ? String((error as { code?: unknown }).code ?? "invalid")
-        : "invalid";
+    const code = readFilesystemErrorCode(error);
     // The original cause can contain the private corpus path, so expose only the bounded code.
     // eslint-disable-next-line preserve-caught-error
     throw new Error(`Unable to read ${label} relay benchmark input (${code})`);
   }
 }
 
+/** Reads a filesystem error code without trusting or rendering the original error. */
+function readFilesystemErrorCode(error: unknown): string {
+  if (typeof error !== "object") return "invalid";
+  if (error === null) return "invalid";
+  if (!("code" in error)) return "invalid";
+  return String(error.code ?? "invalid");
+}
+
 /** Builds semantic corpus profiles without retaining any source path. */
 function buildCorpora(
-  inputs: {
-    /** Raw UTF-8 JSON bytes. */
-    json: Uint8Array;
-    /** Raw terminal stream bytes. */
-    terminal: Uint8Array;
-    /** Raw file-transfer bytes. */
-    file: Uint8Array;
-    /** Raw UTF-8 completed tool-call bytes. */
-    toolCall: Uint8Array;
-  },
+  inputs: BenchmarkCorpusInputs,
   options: Pick<BenchmarkCliOptions, "terminalFormat" | "toolCallFormat">,
 ): BenchmarkCorpus[] {
   /** Text state-sync frames whose legacy representation is Base64 text. */
@@ -551,7 +559,9 @@ function extractPaseoTimelineToolCallFrames(input: Uint8Array): BenchmarkFrame[]
 
 /** Returns whether an unknown parsed value is a non-null object record. */
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  if (typeof value !== "object") return false;
+  if (value === null) return false;
+  return !Array.isArray(value);
 }
 
 /** Concatenates exact byte chunks without retaining their source boundaries or metadata. */

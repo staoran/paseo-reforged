@@ -44,7 +44,9 @@ interface RelayTransportProtocolGateOptions {
 
 /** Narrows an untrusted JSON value to an indexable object. */
 function isJsonRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+  if (typeof value !== "object") return false;
+  if (value === null) return false;
+  return !Array.isArray(value);
 }
 
 /** Parses one text WebSocket frame as a JSON object. */

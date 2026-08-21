@@ -25,12 +25,10 @@ type TestLogger = ReturnType<typeof createMockLogger>;
 
 /** Narrows the daemon attachment boundary to the relay-aware encrypted socket contract. */
 function isEncryptedRelaySocket(socket: RelaySocketLike): socket is EncryptedRelaySocket {
-  return (
-    typeof socket.bufferedAmount === "number" &&
-    typeof socket.terminate === "function" &&
-    "sendClassified" in socket &&
-    typeof socket.sendClassified === "function"
-  );
+  if (typeof socket.bufferedAmount !== "number") return false;
+  if (typeof socket.terminate !== "function") return false;
+  if (!("sendClassified" in socket)) return false;
+  return typeof socket.sendClassified === "function";
 }
 
 function hasLogMessage(logger: TestLogger, level: "info" | "warn", message: string): boolean {

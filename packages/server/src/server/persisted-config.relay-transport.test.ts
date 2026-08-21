@@ -10,6 +10,14 @@ import {
   savePersistedConfig,
 } from "./persisted-config.js";
 
+/** Launch-time options for one legacy relay config store fixture. */
+interface LegacyRelayConfigStoreOptions {
+  /** Relay state visible for this daemon launch. */
+  initialRelayEnabled?: boolean;
+  /** Whether this launch may persist relay availability changes. */
+  relayEnabledMutable?: boolean;
+}
+
 // Invalid transport values excluded from the v1 persisted contract.
 const invalidTransportCases = [
   ["an unsupported ciphertext encoding", { ciphertextEncoding: "text" }],
@@ -113,14 +121,7 @@ describe("DaemonConfigStore relay transport persistence", () => {
   });
 
   /** Creates a public config store backed by an explicit legacy persisted relay shape. */
-  function createLegacyRelayConfigStore(
-    options: {
-      /** Relay state visible for this daemon launch. */
-      initialRelayEnabled?: boolean;
-      /** Whether this launch may persist relay availability changes. */
-      relayEnabledMutable?: boolean;
-    } = {},
-  ) {
+  function createLegacyRelayConfigStore(options: LegacyRelayConfigStoreOptions = {}) {
     // Isolated home used to observe the public config store persistence result.
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-relay-transport-config-"));
     tempDirs.push(paseoHome);

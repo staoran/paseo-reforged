@@ -837,16 +837,22 @@ function effectiveCompressionKey(policy: EffectiveRelayTransportCompressionPolic
 /** Restores one bounded effective-policy tuple from aggregate map storage. */
 function parseEffectiveCompressionKey(key: string): EffectiveRelayTransportCompressionPolicy {
   const [enabled, algorithm, reason] = key.split("|");
+  /** Bounded effective reason restored from aggregate storage. */
+  let boundedReason: EffectiveRelayTransportCompressionPolicy["reason"] = null;
+  switch (reason) {
+    case "configured-disabled":
+    case "legacy-mode":
+    case "peer-unsupported":
+      boundedReason = reason;
+      break;
+  }
   return {
     enabled: enabled === "1",
     algorithm:
       algorithm === RELAY_TRANSPORT_COMPRESSION_ALGORITHM
         ? RELAY_TRANSPORT_COMPRESSION_ALGORITHM
         : null,
-    reason:
-      reason === "configured-disabled" || reason === "legacy-mode" || reason === "peer-unsupported"
-        ? reason
-        : null,
+    reason: boundedReason,
   };
 }
 
@@ -860,12 +866,18 @@ function relayOutboundFrameKey(
 /** Restores one bounded outbound label tuple from aggregate map storage. */
 function parseOutboundFrameKey(key: string): RelayOutboundFrameLabels {
   const [encoding, trafficClass, codec] = key.split("|");
+  /** Bounded traffic class restored from aggregate storage. */
+  let boundedTrafficClass: RelayTrafficClass = "realtime";
+  switch (trafficClass) {
+    case "state-sync":
+    case "bulk":
+    case "bulk-live":
+      boundedTrafficClass = trafficClass;
+      break;
+  }
   return {
     ciphertextEncoding: encoding === "base64" ? "base64" : "binary",
-    trafficClass:
-      trafficClass === "state-sync" || trafficClass === "bulk" || trafficClass === "bulk-live"
-        ? trafficClass
-        : "realtime",
+    trafficClass: boundedTrafficClass,
     codec: codec === "deflate-raw" ? "deflate-raw" : "identity",
   };
 }

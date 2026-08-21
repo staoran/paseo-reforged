@@ -82,16 +82,8 @@ interface DaemonFramedHandshakeFixture {
   sharedKey: ReturnType<typeof deriveSharedKey>;
 }
 
-/** Physical transport close metadata observed by a handshake test. */
-interface TransportCloseResult {
-  /** WebSocket close code selected by the protocol failure. */
-  code?: number;
-  /** Bounded WebSocket close reason selected by the protocol failure. */
-  reason?: string;
-}
-
-/** Creates a daemon handshake using only public transport and crypto boundaries. */
-function startDaemonFramedHandshake(args: {
+/** Options for one daemon-side framed handshake fixture. */
+interface DaemonFramedHandshakeOptions {
   /** Ordered framed encodings offered by the synthetic client. */
   ciphertextEncodings: readonly CiphertextEncoding[];
   /** Compression decoders offered by the synthetic client. */
@@ -112,7 +104,20 @@ function startDaemonFramedHandshake(args: {
   close?: Transport["close"];
   /** Whether a physical close request emits the matching transport close event. */
   echoCloseEvent?: boolean;
-}): DaemonFramedHandshakeFixture {
+}
+
+/** Physical transport close metadata observed by a handshake test. */
+interface TransportCloseResult {
+  /** WebSocket close code selected by the protocol failure. */
+  code?: number;
+  /** Bounded WebSocket close reason selected by the protocol failure. */
+  reason?: string;
+}
+
+/** Creates a daemon handshake using only public transport and crypto boundaries. */
+function startDaemonFramedHandshake(
+  args: DaemonFramedHandshakeOptions,
+): DaemonFramedHandshakeFixture {
   // Long-lived daemon identity used by the responder under test.
   const daemonKeyPair = generateKeyPair();
   // Ephemeral client identity supplied through the public hello frame.
@@ -271,8 +276,8 @@ interface ClientFramedChannelFixture {
   sharedKey: ReturnType<typeof deriveSharedKey>;
 }
 
-/** Opens a client channel with a synthetic framed selection at the public transport seam. */
-async function openClientFramedChannel(args: {
+/** Options for one opened client-side framed channel fixture. */
+interface ClientFramedChannelOptions {
   /** Framed ciphertext representation selected by the synthetic daemon. */
   ciphertextEncoding: TestCiphertextEncoding;
   /** Optional application callbacks observed after client open. */
@@ -285,7 +290,12 @@ async function openClientFramedChannel(args: {
   compressionAlgorithms?: readonly string[];
   /** Optional content-free observer supplied at the public channel boundary. */
   runtimeObserver?: EncryptedChannelRuntimeObserver;
-}): Promise<ClientFramedChannelFixture> {
+}
+
+/** Opens a client channel with a synthetic framed selection at the public transport seam. */
+async function openClientFramedChannel(
+  args: ClientFramedChannelOptions,
+): Promise<ClientFramedChannelFixture> {
   // Daemon identity used to derive the same channel key as the client.
   const daemonKeyPair = generateKeyPair();
   // All client writes observed at the public transport seam.

@@ -13,7 +13,6 @@ import {
 } from "@getpaseo/protocol/connection-offer";
 
 const relayEndpoint = process.env.PASEO_LIVE_RELAY_ENDPOINT ?? "paseo-relay-next.fly.dev:443";
-const liveTest = process.env.RUN_LIVE_RELAY_E2E === "1" ? test : test.skip;
 
 /** Hosted relay representations covered by the live transparency matrix. */
 const liveCiphertextScenarios = [
@@ -154,78 +153,70 @@ describe("live hosted relay", () => {
   });
 
   for (const scenario of liveCiphertextScenarios) {
-    liveTest(
-      `transparently carries authenticated framed ${scenario.ciphertextEncoding} traffic`,
-      async () => {
-        const metricsProbe = createRuntimeMetricsProbe();
-        const logger = pino({ level: "silent" });
-        daemon = await createTestPaseoDaemon({
-          listen: "127.0.0.1",
-          relayEnabled: true,
-          relayEndpoint,
-          relayUseTls: true,
-          relayTransport: { ciphertextEncoding: scenario.ciphertextEncoding },
-          logger,
-        });
-        await seedStateSyncAgents(daemon);
-        const offer = await pairingOfferFor(daemon);
-        client = clientFor(offer, metricsProbe.logger);
-
-        await client.connect();
-        expect((await client.fetchAgents()).entries).toHaveLength(40);
-        await client.close();
-        client = null;
-        expect(metricsProbe.negotiatedModes).toContain(scenario.negotiatedMode);
-        expect(metricsProbe.inboundCodecs).toContain("deflate-raw");
-      },
-      60_000,
-    );
-  }
-
-  liveTest(
-    "carries a complete DaemonClient agent workflow through the hosted relay",
-    async () => {
+    test(`transparently carries authenticated framed ${scenario.ciphertextEncoding} traffic`, async () => {
+      const metricsProbe = createRuntimeMetricsProbe();
       const logger = pino({ level: "silent" });
       daemon = await createTestPaseoDaemon({
         listen: "127.0.0.1",
         relayEnabled: true,
         relayEndpoint,
         relayUseTls: true,
-        agentClients: { codex: new CodexAppServerAgentClient(logger) },
+        relayTransport: { ciphertextEncoding: scenario.ciphertextEncoding },
         logger,
       });
+      await seedStateSyncAgents(daemon);
       const offer = await pairingOfferFor(daemon);
-      client = clientFor(offer);
+      client = clientFor(offer, metricsProbe.logger);
 
       await client.connect();
-      const initialAgents = await client.fetchAgents();
-      const agent = await client.createAgent({
-        provider: "codex",
-        cwd: daemon.staticDir,
-        title: "Live relay acceptance",
-        modeId: "full-access",
-      });
-      await client.sendMessage(agent.id, "Respond with exactly: RELAY_ACCEPTANCE_OK");
-      const finished = await client.waitForFinish(agent.id, 120_000);
-      const timeline = await client.fetchAgentTimeline(agent.id, {
-        direction: "tail",
-        limit: 20,
-        projection: "canonical",
-      });
-      const assistantText = timeline.entries
-        .filter((entry) => entry.item.type === "assistant_message")
-        .map((entry) => entry.item.text)
-        .join("");
+      expect((await client.fetchAgents()).entries).toHaveLength(40);
+      await client.close();
+      client = null;
+      expect(metricsProbe.negotiatedModes).toContain(scenario.negotiatedMode);
+      expect(metricsProbe.inboundCodecs).toContain("deflate-raw");
+    }, 60_000);
+  }
 
-      expect(initialAgents.entries).toEqual([]);
-      expect(agent).toMatchObject({
-        provider: "codex",
-        cwd: daemon.staticDir,
-        status: "idle",
-      });
-      expect(finished).toMatchObject({ status: "idle" });
-      expect(assistantText).toMatch(/^RELAY_ACCEPTANCE_OK\s*$/);
-    },
-    180_000,
-  );
+  test("carries a complete DaemonClient agent workflow through the hosted relay", async () => {
+    const logger = pino({ level: "silent" });
+    daemon = await createTestPaseoDaemon({
+      listen: "127.0.0.1",
+      relayEnabled: true,
+      relayEndpoint,
+      relayUseTls: true,
+      agentClients: { codex: new CodexAppServerAgentClient(logger) },
+      logger,
+    });
+    const offer = await pairingOfferFor(daemon);
+    client = clientFor(offer);
+
+    await client.connect();
+    const initialAgents = await client.fetchAgents();
+    const agent = await client.createAgent({
+      provider: "codex",
+      cwd: daemon.staticDir,
+      title: "Live relay acceptance",
+      modeId: "full-access",
+    });
+    await client.sendMessage(agent.id, "Respond with exactly: RELAY_ACCEPTANCE_OK");
+    const finished = await client.waitForFinish(agent.id, 120_000);
+    const timeline = await client.fetchAgentTimeline(agent.id, {
+      direction: "tail",
+      limit: 20,
+      projection: "canonical",
+    });
+    const assistantText = timeline.entries
+      .filter((entry) => entry.item.type === "assistant_message")
+      .map((entry) => entry.item.text)
+      .join("");
+
+    expect(initialAgents.entries).toEqual([]);
+    expect(agent).toMatchObject({
+      provider: "codex",
+      cwd: daemon.staticDir,
+      status: "idle",
+    });
+    expect(finished).toMatchObject({ status: "idle" });
+    expect(assistantText).toMatch(/^RELAY_ACCEPTANCE_OK\s*$/);
+  }, 180_000);
 });

@@ -52,6 +52,36 @@ export interface EncryptedChannelEvents {
 
 type ChannelState = "connecting" | "handshaking" | "confirming" | "opening" | "open" | "closed";
 
+/** Inputs for deciding whether one prepared application frame may reach the transport. */
+interface ApplicationFrameWritePermissionOptions {
+  /** Current encrypted channel lifecycle state. */
+  state: ChannelState;
+  /** Whether the handshake FIFO may write while the channel is opening. */
+  allowOpening: boolean;
+}
+
+/** Returns whether application sends must wait behind the encrypted handshake. */
+function shouldQueueApplicationSend(state: ChannelState): boolean {
+  switch (state) {
+    case "handshaking":
+    case "confirming":
+    case "opening":
+      return true;
+    default:
+      return false;
+  }
+}
+
+/** Returns whether one prepared application frame may write in the current lifecycle state. */
+function canWriteApplicationFrame({
+  state,
+  allowOpening,
+}: ApplicationFrameWritePermissionOptions): boolean {
+  if (state === "open") return true;
+  if (!allowOpening) return false;
+  return state === "opening";
+}
+
 /** WebSocket ciphertext representation used by framed-v1 connections. */
 export type CiphertextEncoding = "base64" | "binary";
 
@@ -905,7 +935,9 @@ export async function createDaemonChannel(
 
     /** Drains handshake backlog serially and hands post-attach frames to the channel in order. */
     const drainBufferedMessages = async (): Promise<void> => {
-      if (drainingBufferedMessages || phase === "sending-ready" || phase === "closed") return;
+      if (drainingBufferedMessages) return;
+      if (phase === "sending-ready") return;
+      if (phase === "closed") return;
       drainingBufferedMessages = true;
       try {
         while (bufferedMessages.length > 0) {
@@ -1273,8 +1305,12 @@ export class EncryptedChannel {
             })),
             decodedFramed.data)
           : decodePlaintext(plaintextBytes, ciphertext.isBinary);
-        if (decodedFramed && framedDecodeStartedAt !== null && this.options.framedCiphertextV1) {
+        if (decodedFramed) {
           const selection = this.options.framedCiphertextV1;
+          if (!selection) throw new Error("Decoded framed payload without a framed selection");
+          if (framedDecodeStartedAt === null) {
+            throw new Error("Decoded framed payload without a decode start time");
+          }
           notifyRuntimeObserver({
             observer: this.options.runtimeObserver,
             notify: (observer) =>
@@ -1378,7 +1414,7 @@ export class EncryptedChannel {
   }
 
   async send(data: string | ArrayBuffer): Promise<void> {
-    if (this.state === "handshaking" || this.state === "confirming" || this.state === "opening") {
+    if (shouldQueueApplicationSend(this.state)) {
       if (this.pendingSends.length >= MAX_PENDING_SENDS) {
         this.pendingSends.shift();
       }
@@ -1500,7 +1536,7 @@ export class EncryptedChannel {
     if (selection?.ciphertextEncoding === "base64" && typeof frame.wireData !== "string") {
       throw new Error("Prepared framed Base64 ciphertext requires text wire data");
     }
-    if (this.state !== "open" && !(allowOpening && this.state === "opening")) {
+    if (!canWriteApplicationFrame({ state: this.state, allowOpening })) {
       throw new Error("Channel not open");
     }
     if (!frame.framedCiphertextV1) {
@@ -1509,7 +1545,7 @@ export class EncryptedChannel {
       return;
     }
     const sendOperation = this.sendTail.then(async () => {
-      if (this.state !== "open" && !(allowOpening && this.state === "opening")) {
+      if (!canWriteApplicationFrame({ state: this.state, allowOpening })) {
         throw new Error("Channel not open");
       }
       onTransportWriteStart?.();
