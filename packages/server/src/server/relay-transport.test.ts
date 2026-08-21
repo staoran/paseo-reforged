@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type pino from "pino";
 import { createClientChannel, type Transport } from "@getpaseo/relay/e2ee";
 import { exportPublicKey, generateKeyPair } from "@getpaseo/relay";
-import { startRelayTransport } from "./relay-transport";
+import { startRelayTransport, type RelaySocketLike } from "./relay-transport";
 import { resolveConfiguredRelayTransportPolicy } from "./relay-transport-policy.js";
 import { createNodeRawDeflateCodec } from "./relay-frame-compression.js";
 import type { EncryptedRelaySocket } from "./websocket/encrypted-relay-socket.js";
@@ -22,6 +22,16 @@ function createMockLogger() {
 }
 
 type TestLogger = ReturnType<typeof createMockLogger>;
+
+/** Narrows the daemon attachment boundary to the relay-aware encrypted socket contract. */
+function isEncryptedRelaySocket(socket: RelaySocketLike): socket is EncryptedRelaySocket {
+  return (
+    typeof socket.bufferedAmount === "number" &&
+    typeof socket.terminate === "function" &&
+    "sendClassified" in socket &&
+    typeof socket.sendClassified === "function"
+  );
+}
 
 function hasLogMessage(logger: TestLogger, level: "info" | "warn", message: string): boolean {
   return logger.messages.some((entry) => {
@@ -315,13 +325,16 @@ describe("relay-transport control lifecycle", () => {
   test("encrypted sends wait for the physical data socket callback", async () => {
     const logger = createMockLogger();
     const daemonKeyPair = generateKeyPair();
-    let resolveAttached: ((socket: unknown) => void) | undefined;
-    const attached = new Promise<unknown>((resolve) => {
+    let resolveAttached: ((socket: EncryptedRelaySocket) => void) | undefined;
+    const attached = new Promise<EncryptedRelaySocket>((resolve) => {
       resolveAttached = resolve;
     });
     const controller = startRelayTransport({
       logger: logger as unknown as pino.Logger,
-      attachSocket: async (socket) => resolveAttached?.(socket),
+      attachSocket: async (socket) => {
+        if (!isEncryptedRelaySocket(socket)) throw new Error("Expected encrypted relay socket");
+        resolveAttached?.(socket);
+      },
       relayEndpoint: "relay.paseo.sh:443",
       relayUseTls: true,
       serverId: "srv_test",
@@ -371,9 +384,7 @@ describe("relay-transport control lifecycle", () => {
     await Promise.resolve();
     expect(attachedCompleted).toBe(false);
     dataSocket.completeNextSend();
-    const encryptedSocket = (await attached) as {
-      send: (data: Uint8Array) => void | Promise<void>;
-    };
+    const encryptedSocket = await attached;
     let completed = false;
     // Physical writes observed before invoking the encrypted socket send.
     const sentBeforeApplication = dataSocket.sent.length;
@@ -396,9 +407,9 @@ describe("relay-transport control lifecycle", () => {
     /** Stable daemon key used by the real authenticated framed handshake. */
     const daemonKeyPair = generateKeyPair();
     /** Resolver that exposes the attached encrypted socket after exact mode confirmation. */
-    let resolveAttached: ((socket: unknown) => void) | undefined;
+    let resolveAttached: ((socket: EncryptedRelaySocket) => void) | undefined;
     /** Attached socket is the public daemon send seam under test. */
-    const attached = new Promise<unknown>((resolve) => {
+    const attached = new Promise<EncryptedRelaySocket>((resolve) => {
       resolveAttached = resolve;
     });
     /** Content-free metrics recorder observed through its public snapshot. */
@@ -406,7 +417,10 @@ describe("relay-transport control lifecycle", () => {
     /** Long-lived relay controller owning the control and data sockets. */
     const controller = startRelayTransport({
       logger: createMockLogger() as unknown as pino.Logger,
-      attachSocket: async (socket) => resolveAttached?.(socket),
+      attachSocket: async (socket) => {
+        if (!isEncryptedRelaySocket(socket)) throw new Error("Expected encrypted relay socket");
+        resolveAttached?.(socket);
+      },
       relayEndpoint: "relay.paseo.sh:443",
       relayUseTls: true,
       serverId: "srv_classified_compression",
@@ -446,7 +460,7 @@ describe("relay-transport control lifecycle", () => {
       compressionAdapter: createNodeRawDeflateCodec(),
     });
     /** Relay-aware socket shape that retains sender-side traffic semantics. */
-    const encryptedSocket = (await attached) as EncryptedRelaySocket;
+    const encryptedSocket = await attached;
     /** Client-to-daemon framed identity payload observed at the attached socket seam. */
     const inboundPayload = "client-framed-identity";
     /** Delivery signal for the daemon-side framed decoder. */

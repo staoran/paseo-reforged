@@ -1,5 +1,5 @@
 import type { WebSocketRoute } from "@playwright/test";
-import type { MutableDaemonConfig, RelayTransportConfig } from "@getpaseo/protocol/messages";
+import type { RelayTransportConfig, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { expect, test, type Page } from "../support/fixtures";
 import { connectDaemonClient } from "../support/helpers/daemon-client-loader";
 import { wsRoutePatternForPort } from "../support/helpers/daemon-port";
@@ -12,13 +12,11 @@ import {
   reloadAndOpenPairDevice,
 } from "../support/helpers/pair-device";
 
-/** Public config RPC result consumed by the relay pairing tests. */
-interface RelayTransportDaemonConfigResponse {
-  /** Correlation id returned by the daemon config RPC. */
-  requestId: string;
-  /** Current mutable daemon config parsed by the protocol schema. */
-  config: MutableDaemonConfig;
-}
+/** Canonical config RPC payload consumed by the relay pairing tests. */
+type RelayTransportDaemonConfigResponse = Extract<
+  SessionOutboundMessage,
+  { type: "get_daemon_config_response" }
+>["payload"];
 
 type WebSocketMessage = Parameters<Parameters<WebSocketRoute["onMessage"]>[0]>[0];
 

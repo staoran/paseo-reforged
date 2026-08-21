@@ -3,6 +3,18 @@ import { expect, test } from "vitest";
 
 import { DaemonClientRuntimeMetrics } from "./daemon-client-runtime-metrics.js";
 
+/** Reads the relay-only metrics child from one logger entry after boundary validation. */
+function requireRelayTransportMetrics(entry: object | undefined): object {
+  if (!entry || !("relayTransport" in entry)) {
+    throw new Error("Expected relay transport metrics log entry");
+  }
+  const relayTransport = entry.relayTransport;
+  if (typeof relayTransport !== "object" || relayTransport === null) {
+    throw new Error("Expected relay transport metrics object");
+  }
+  return relayTransport;
+}
+
 test("logs content-free relay decode aggregates with bounded labels", () => {
   /** Logger payloads emitted by the public flush seam. */
   const entries: object[] = [];
@@ -38,7 +50,7 @@ test("logs content-free relay decode aggregates with bounded labels", () => {
   metrics.flush({ final: true });
 
   expect(entries).toHaveLength(1);
-  const relayTransport = (entries[0] as { relayTransport: unknown }).relayTransport;
+  const relayTransport = requireRelayTransportMetrics(entries[0]);
   expect(relayTransport).toEqual({
     negotiatedModeCount: {
       "legacy-base64": 0,
@@ -119,16 +131,10 @@ test("keeps relay percentile samples bounded across rolling buckets", () => {
   metrics.flush({ final: true });
 
   /** Last rolling report after the bounded merge of both buckets. */
-  const relayTransport = (
-    entries.at(-1) as {
-      relayTransport: {
-        inboundFrames: Array<{ frameCount: number }>;
-        inboundDecodeMs: Array<{ max: number }>;
-        pendingReceiveWireBytes: { max: number };
-      };
-    }
-  ).relayTransport;
-  expect(relayTransport.inboundFrames[0]?.frameCount).toBe(2_049);
-  expect(relayTransport.inboundDecodeMs[0]?.max).toBe(0);
-  expect(relayTransport.pendingReceiveWireBytes.max).toBe(0);
+  const relayTransport = requireRelayTransportMetrics(entries.at(-1));
+  expect(relayTransport).toMatchObject({
+    inboundFrames: [{ frameCount: 2_049 }],
+    inboundDecodeMs: [{ max: 0 }],
+    pendingReceiveWireBytes: { max: 0 },
+  });
 });

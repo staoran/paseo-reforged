@@ -12,15 +12,24 @@ import { createEncryptedTransport } from "./daemon-client-relay-e2ee-transport.j
 import { DaemonClientRuntimeMetrics } from "./daemon-client-runtime-metrics.js";
 import type { DaemonTransport } from "./daemon-client-transport-types.js";
 
-/** First observable application delivery or protocol close after framed decode. */
-interface RelayTransportDecodeOutcome {
-  /** Outcome selected by the public transport callback that fires first. */
-  kind: "application" | "closed";
-  /** Decoded application payload when delivery succeeds. */
-  data?: unknown;
-  /** Transport opcode associated with a delivered application payload. */
-  isBinary?: boolean;
+/** Successful application delivery observed after framed decode. */
+interface RelayTransportApplicationOutcome {
+  /** Discriminator for an application delivery. */
+  kind: "application";
+  /** Decoded application payload. */
+  data: unknown;
+  /** Transport opcode associated with the application payload. */
+  isBinary: boolean;
 }
+
+/** Protocol close observed before application delivery. */
+interface RelayTransportClosedOutcome {
+  /** Discriminator for a transport close. */
+  kind: "closed";
+}
+
+/** First observable application delivery or protocol close after framed decode. */
+type RelayTransportDecodeOutcome = RelayTransportApplicationOutcome | RelayTransportClosedOutcome;
 
 describe("daemon client relay E2EE transport", () => {
   test("advertises raw DEFLATE when the client relay transport starts", async () => {

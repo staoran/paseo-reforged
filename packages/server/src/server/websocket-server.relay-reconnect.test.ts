@@ -200,10 +200,16 @@ class MockSocket {
   }
 }
 
-/** Mock physical socket exposing the relay-only classified send extension. */
-interface ClassifiedMockSocket extends MockSocket {
+/** Mock physical socket exposing and recording relay-only classified sends. */
+class ClassifiedMockSocket extends MockSocket {
+  /** Classified sends observed at the relay-aware physical socket seam. */
+  readonly classifiedSends: PhysicalSendClassifiedOptions[] = [];
+
   /** Records application data together with its sender-side relay classification. */
-  sendClassified(options: PhysicalSendClassifiedOptions): void;
+  sendClassified({ data, hint }: PhysicalSendClassifiedOptions): void {
+    this.classifiedSends.push({ data, hint });
+    this.send(data);
+  }
 }
 
 function createLogger() {
@@ -536,15 +542,9 @@ describe("relay external socket reconnect behavior", () => {
     /** Server under test owns the authenticated session-to-socket routing boundary. */
     const server = createServer();
     /** Relay socket records semantic hints without changing the observable wire payload. */
-    const socket = new MockSocket() as ClassifiedMockSocket;
-    /** Classified sends observed after authentication. */
-    const classifiedSends: PhysicalSendClassifiedOptions[] = [];
-    socket.sendClassified = ({ data, hint }) => {
-      classifiedSends.push({ data, hint });
-      socket.send(data);
-    };
+    const socket = new ClassifiedMockSocket();
     await attachRelayAndHello({ server, socket, clientId: "cid-relay-traffic-hint" });
-    classifiedSends.length = 0;
+    socket.classifiedSends.length = 0;
 
     /** Public session callback used by producers to emit one structured response. */
     const onMessage = sessionMock.instances[0]?.args.onMessage;
@@ -561,8 +561,8 @@ describe("relay external socket reconnect behavior", () => {
       });
     }
 
-    expect(classifiedSends).toHaveLength(1);
-    expect(classifiedSends[0]?.hint).toEqual({ trafficClass: "state-sync" });
+    expect(socket.classifiedSends).toHaveLength(1);
+    expect(socket.classifiedSends[0]?.hint).toEqual({ trafficClass: "state-sync" });
     await server.close();
   });
 
@@ -570,15 +570,9 @@ describe("relay external socket reconnect behavior", () => {
     /** Server under test owns both broadcast and source-scoped binary routes. */
     const server = createServer();
     /** Relay socket records the traffic semantics presented at its classified send seam. */
-    const socket = new MockSocket() as ClassifiedMockSocket;
-    /** Classified binary sends observed after the authenticated session is attached. */
-    const classifiedSends: PhysicalSendClassifiedOptions[] = [];
-    socket.sendClassified = ({ data, hint }) => {
-      classifiedSends.push({ data, hint });
-      socket.send(data);
-    };
+    const socket = new ClassifiedMockSocket();
     await attachRelayAndHello({ server, socket, clientId: "cid-relay-binary-hints" });
-    classifiedSends.length = 0;
+    socket.classifiedSends.length = 0;
 
     /** Public callbacks supplied to the session for broadcast and source-scoped frames. */
     const onBinaryMessage = sessionMock.instances[0]?.args.onBinaryMessage;
@@ -604,7 +598,7 @@ describe("relay external socket reconnect behavior", () => {
       });
     }
 
-    expect(classifiedSends.map(({ hint }) => hint)).toEqual([
+    expect(socket.classifiedSends.map(({ hint }) => hint)).toEqual([
       { trafficClass: "state-sync" },
       { trafficClass: "bulk", compressible: true },
     ]);

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "vitest";
 import pino from "pino";
+import { z } from "zod";
 
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon, type TestPaseoDaemon } from "../test-utils/paseo-daemon.js";
@@ -20,6 +21,24 @@ const liveCiphertextScenarios = [
   { ciphertextEncoding: "binary", negotiatedMode: "framed-v1-binary" },
 ] as const;
 
+/** Content-free client metrics fields consumed by the hosted relay probe. */
+const RuntimeMetricsLogRecordSchema = z.object({
+  msg: z.string().optional(),
+  relayTransport: z
+    .object({
+      negotiatedModeCount: z.record(z.string(), z.number()).optional(),
+      inboundFrames: z
+        .array(
+          z.object({
+            codec: z.string().optional(),
+            frameCount: z.number().optional(),
+          }),
+        )
+        .optional(),
+    })
+    .optional(),
+});
+
 interface RuntimeMetricsProbe {
   /** Client logger that receives content-free runtime metric records. */
   logger: pino.Logger;
@@ -37,13 +56,10 @@ function createRuntimeMetricsProbe(): RuntimeMetricsProbe {
     { level: "info" },
     {
       write(serialized: string): void {
-        const record = JSON.parse(serialized) as {
-          msg?: string;
-          relayTransport?: {
-            negotiatedModeCount?: Record<string, number>;
-            inboundFrames?: Array<{ codec?: string; frameCount?: number }>;
-          };
-        };
+        /** Parsed logger payload before schema validation. */
+        const parsed: unknown = JSON.parse(serialized);
+        /** Validated content-free metrics record. */
+        const record = RuntimeMetricsLogRecordSchema.parse(parsed);
         if (record.msg !== "ws_runtime_metrics_client") return;
         for (const [mode, count] of Object.entries(
           record.relayTransport?.negotiatedModeCount ?? {},
