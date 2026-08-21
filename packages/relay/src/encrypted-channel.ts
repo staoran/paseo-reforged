@@ -94,6 +94,26 @@ export interface ClientChannelOptions {
   runtimeObserver?: EncryptedChannelRuntimeObserver;
 }
 
+/** Complete input for creating one client-side encrypted channel. */
+export interface CreateClientChannelOptions extends ClientChannelOptions {
+  /** Physical transport carrying handshake and encrypted application frames. */
+  transport: Transport;
+  /** Daemon public key received through the pairing boundary. */
+  daemonPublicKeyB64: string;
+  /** Optional application callbacks for the channel lifecycle. */
+  events?: EncryptedChannelEvents;
+}
+
+/** Complete input for creating one daemon-side encrypted channel. */
+export interface CreateDaemonChannelOptions extends DaemonChannelOptions {
+  /** Physical relay transport carrying handshake and encrypted application frames. */
+  transport: Transport;
+  /** Daemon identity used to derive the shared key. */
+  daemonKeyPair: KeyPair;
+  /** Optional application callbacks for the channel lifecycle. */
+  events?: EncryptedChannelEvents;
+}
+
 /** Content-free metadata emitted after one framed application payload is decoded. */
 export interface EncryptedChannelInboundFrameMetric {
   /** Connection-locked ciphertext representation. */
@@ -138,6 +158,45 @@ export interface PreparedEncryptedFrame {
   readonly wireByteLength: number;
   /** Whether the frame uses the authenticated framed-v1 contract. */
   readonly framedCiphertextV1: boolean;
+}
+
+/** Inputs for writing one prepared frame through the encrypted channel FIFO. */
+export interface SendPreparedEncryptedFrameOptions {
+  /** Fully encrypted and representation-encoded frame to write. */
+  frame: PreparedEncryptedFrame;
+  /** Transfers external byte ownership immediately before the physical write starts. */
+  onTransportWriteStart?: () => void;
+}
+
+interface WritePreparedEncryptedFrameOptions extends SendPreparedEncryptedFrameOptions {
+  /** Allows the authenticated opening flush to use the same channel FIFO. */
+  allowOpening: boolean;
+}
+
+/** Inputs for resolving the immutable daemon framed selection. */
+interface ResolveDaemonFramedSelectionOptions {
+  /** Structurally valid client offer, or null for legacy negotiation. */
+  offer: FramedCiphertextV1Offer | null;
+  /** Daemon representation preference fixed for this connection. */
+  configuredEncoding: ConfiguredCiphertextEncoding;
+  /** Compression codecs implemented by the daemon runtime. */
+  supportedCompressionAlgorithms: readonly string[];
+}
+
+/** Inputs for serializing one exact daemon ready frame. */
+interface BuildDaemonReadyTextOptions {
+  /** Whether the legacy binary capability remains advertised. */
+  binaryCiphertext: boolean;
+  /** Framed selection echoed for exact authenticated confirmation. */
+  selection: FramedCiphertextV1Selection | null;
+}
+
+/** Inputs for invoking one content-free observer callback in isolation. */
+interface NotifyRuntimeObserverOptions {
+  /** Optional observer configured for this encrypted channel. */
+  observer?: EncryptedChannelRuntimeObserver;
+  /** Type-safe observer invocation whose errors cannot affect protocol behavior. */
+  notify: (observer: EncryptedChannelRuntimeObserver) => void;
 }
 
 /** Returns the actual WebSocket application bytes carried by one prepared encrypted frame. */
@@ -261,6 +320,14 @@ function isCiphertextEncoding(value: unknown): value is CiphertextEncoding {
   return value === "base64" || value === "binary";
 }
 
+/** Returns whether an untrusted framed capability array stays within token bounds. */
+function isBoundedFramedCapabilityTokenArray(value: unknown): value is string[] {
+  if (!Array.isArray(value) || value.length > MAX_FRAMED_CAPABILITY_TOKENS) return false;
+  return value.every(
+    (token) => typeof token === "string" && token.length <= MAX_FRAMED_CAPABILITY_TOKEN_LENGTH,
+  );
+}
+
 /** Reads a valid framed-v1 selection limited to capabilities offered by this client. */
 function parseFramedCiphertextV1Selection(
   message: E2EEReadyMessage,
@@ -275,10 +342,7 @@ function parseFramedCiphertextV1Selection(
   if (!SUPPORTED_FRAMED_CIPHERTEXT_ENCODINGS.includes(value.ciphertextEncoding)) {
     throw new Error("Framed-v1 selection uses an unoffered ciphertext encoding");
   }
-  if (!Array.isArray(value.compressionAlgorithms)) {
-    throw new Error("Invalid framed-v1 compression selection");
-  }
-  if (!value.compressionAlgorithms.every((algorithm) => typeof algorithm === "string")) {
+  if (!isBoundedFramedCapabilityTokenArray(value.compressionAlgorithms)) {
     throw new Error("Invalid framed-v1 compression selection");
   }
   if (
@@ -300,12 +364,8 @@ function parseFramedCiphertextV1Offer(message: E2EEHelloMessage): FramedCipherte
   // Untrusted capability value supplied by a remote client.
   const value = message.capabilities?.framedCiphertextV1;
   if (!isRecord(value)) return null;
-  if (!Array.isArray(value.ciphertextEncodings)) return null;
-  if (!value.ciphertextEncodings.every((encoding) => typeof encoding === "string")) return null;
-  if (!Array.isArray(value.compressionAlgorithms)) return null;
-  if (!value.compressionAlgorithms.every((algorithm) => typeof algorithm === "string")) {
-    return null;
-  }
+  if (!isBoundedFramedCapabilityTokenArray(value.ciphertextEncodings)) return null;
+  if (!isBoundedFramedCapabilityTokenArray(value.compressionAlgorithms)) return null;
 
   return {
     ciphertextEncodings: value.ciphertextEncodings.filter(isCiphertextEncoding),
@@ -315,10 +375,9 @@ function parseFramedCiphertextV1Offer(message: E2EEHelloMessage): FramedCipherte
 
 /** Resolves the immutable framed-v1 selection for one daemon connection. */
 function resolveDaemonFramedSelection(
-  offer: FramedCiphertextV1Offer | null,
-  configuredEncoding: ConfiguredCiphertextEncoding,
-  supportedCompressionAlgorithms: readonly string[],
+  options: ResolveDaemonFramedSelectionOptions,
 ): FramedCiphertextV1Selection | null {
+  const { offer, configuredEncoding, supportedCompressionAlgorithms } = options;
   // COMPAT(framedCiphertextV1): introduced in v0.4.0-beta.4; remove legacy fallback after 2027-08-18.
   if (!offer) return null;
 
@@ -339,10 +398,8 @@ function resolveDaemonFramedSelection(
 }
 
 /** Serializes the exact ready frame saved for initial send and same-key replay. */
-function buildDaemonReadyText(
-  binaryCiphertext: boolean,
-  selection: FramedCiphertextV1Selection | null,
-): string {
+function buildDaemonReadyText(options: BuildDaemonReadyTextOptions): string {
+  const { binaryCiphertext, selection } = options;
   // Capability object is omitted entirely for the legacy Base64 fallback.
   const capabilities: E2EECapabilities | undefined =
     binaryCiphertext || selection
@@ -413,6 +470,10 @@ const SUPPORTED_FRAMED_CIPHERTEXT_ENCODINGS: readonly CiphertextEncoding[] = ["b
 const SUPPORTED_FRAMED_COMPRESSION_ALGORITHMS: readonly string[] = [];
 /** Framed compression codec enabled when a client runtime provides its decoder. */
 const CLIENT_FRAMED_COMPRESSION_ALGORITHMS: readonly string[] = ["deflate-raw"];
+/** Maximum additive tokens accepted in each untrusted framed capability array. */
+const MAX_FRAMED_CAPABILITY_TOKENS = 16;
+/** Maximum UTF-16 code units accepted in one untrusted framed capability token. */
+const MAX_FRAMED_CAPABILITY_TOKEN_LENGTH = 64;
 
 export function base64EncryptedWireByteLength(plaintextBytes: number): number {
   return 4 * Math.ceil((plaintextBytes + ENCRYPTED_PAYLOAD_OVERHEAD_BYTES) / 3);
@@ -459,12 +520,33 @@ function hasUnref(timeout: unknown): timeout is TimeoutWithUnref {
  * 3. Sends e2ee_hello with own public key
  * 4. Derives shared key and starts encrypted communication
  */
-export async function createClientChannel(
+export function createClientChannel(options: CreateClientChannelOptions): Promise<EncryptedChannel>;
+// COMPAT(relayChannelObjectOptions): positional API predates v0.4.0-beta.5; remove after 2027-08-21.
+export function createClientChannel(
   transport: Transport,
   daemonPublicKeyB64: string,
-  events: EncryptedChannelEvents = {},
-  options: ClientChannelOptions = {},
+  events?: EncryptedChannelEvents,
+  options?: ClientChannelOptions,
+): Promise<EncryptedChannel>;
+export async function createClientChannel(
+  ...args:
+    | [options: CreateClientChannelOptions]
+    | [
+        transport: Transport,
+        daemonPublicKeyB64: string,
+        events?: EncryptedChannelEvents,
+        options?: ClientChannelOptions,
+      ]
 ): Promise<EncryptedChannel> {
+  /** Canonical object input normalized from the temporary positional compatibility overload. */
+  let input: CreateClientChannelOptions;
+  if (args.length === 1) {
+    input = args[0];
+  } else {
+    const [transport, daemonPublicKeyB64, events = {}, options = {}] = args;
+    input = { transport, daemonPublicKeyB64, events, ...options };
+  }
+  const { transport, daemonPublicKeyB64, events = {}, ...options } = input;
   const keyPair = generateKeyPair();
   const daemonPublicKey = importPublicKey(daemonPublicKeyB64);
   const sharedKey = deriveSharedKey(keyPair.secretKey, daemonPublicKey);
@@ -548,12 +630,33 @@ export async function createClientChannel(
  * 2. Waits for client's e2ee_hello with their public key
  * 3. Derives shared key and starts encrypted communication
  */
-export async function createDaemonChannel(
+export function createDaemonChannel(options: CreateDaemonChannelOptions): Promise<EncryptedChannel>;
+// COMPAT(relayChannelObjectOptions): positional API predates v0.4.0-beta.5; remove after 2027-08-21.
+export function createDaemonChannel(
   transport: Transport,
   daemonKeyPair: KeyPair,
-  events: EncryptedChannelEvents = {},
-  options: DaemonChannelOptions = {},
+  events?: EncryptedChannelEvents,
+  options?: DaemonChannelOptions,
+): Promise<EncryptedChannel>;
+export async function createDaemonChannel(
+  ...args:
+    | [options: CreateDaemonChannelOptions]
+    | [
+        transport: Transport,
+        daemonKeyPair: KeyPair,
+        events?: EncryptedChannelEvents,
+        options?: DaemonChannelOptions,
+      ]
 ): Promise<EncryptedChannel> {
+  /** Canonical object input normalized from the temporary positional compatibility overload. */
+  let input: CreateDaemonChannelOptions;
+  if (args.length === 1) {
+    input = args[0];
+  } else {
+    const [transport, daemonKeyPair, events = {}, options = {}] = args;
+    input = { transport, daemonKeyPair, events, ...options };
+  }
+  const { transport, daemonKeyPair, events = {}, ...options } = input;
   // Immutable daemon preference captured when this data connection is created.
   const configuredEncoding = options.ciphertextEncoding ?? "auto";
 
@@ -695,9 +798,11 @@ export async function createDaemonChannel(
         runtimeObserver: options.runtimeObserver,
       });
       attachedChannel.setState("open");
-      notifyRuntimeObserver(options.runtimeObserver, "onNegotiatedTransport", () =>
-        attachedChannel.getNegotiatedTransport(),
-      );
+      notifyRuntimeObserver({
+        observer: options.runtimeObserver,
+        notify: (observer) =>
+          observer.onNegotiatedTransport?.(attachedChannel.getNegotiatedTransport()),
+      });
       channel = attachedChannel;
       phase = "open";
       events.onopen?.();
@@ -845,15 +950,16 @@ export async function createDaemonChannel(
         const clientPublicKey = importPublicKey(msg.key);
         sharedKey = deriveSharedKey(daemonKeyPair.secretKey, clientPublicKey);
 
-        framedSelection = resolveDaemonFramedSelection(
-          parseFramedCiphertextV1Offer(msg),
+        framedSelection = resolveDaemonFramedSelection({
+          offer: parseFramedCiphertextV1Offer(msg),
           configuredEncoding,
-          options.compressionAlgorithms ?? SUPPORTED_FRAMED_COMPRESSION_ALGORITHMS,
-        );
+          supportedCompressionAlgorithms:
+            options.compressionAlgorithms ?? SUPPORTED_FRAMED_COMPRESSION_ALGORITHMS,
+        });
         binaryCiphertext = framedSelection
           ? framedSelection.ciphertextEncoding === "binary"
           : configuredEncoding !== "base64" && supportsBinaryCiphertext(msg);
-        savedReadyText = buildDaemonReadyText(binaryCiphertext, framedSelection);
+        savedReadyText = buildDaemonReadyText({ binaryCiphertext, selection: framedSelection });
         await transport.send(savedReadyText);
         if (isHandshakeClosed()) return;
 
@@ -1014,14 +1120,19 @@ export class EncryptedChannel {
 
   /** Emits one bounded protocol reason without retaining the source exception. */
   private notifyProtocolError(reason: EncryptedChannelProtocolErrorReason): void {
-    notifyRuntimeObserver(this.options.runtimeObserver, "onFramedProtocolError", () => reason);
+    notifyRuntimeObserver({
+      observer: this.options.runtimeObserver,
+      notify: (observer) => observer.onFramedProtocolError?.(reason),
+    });
   }
 
   /** Samples the current receive reservation gauge without affecting traffic. */
   private samplePendingReceiveWireBytes(): void {
-    notifyRuntimeObserver(this.options.runtimeObserver, "onPendingReceiveWireBytes", () =>
-      Math.max(0, this.receiveWireBudget.pendingBytes),
-    );
+    notifyRuntimeObserver({
+      observer: this.options.runtimeObserver,
+      notify: (observer) =>
+        observer.onPendingReceiveWireBytes?.(Math.max(0, this.receiveWireBudget.pendingBytes)),
+    });
   }
 
   setState(state: ChannelState): void {
@@ -1137,14 +1248,18 @@ export class EncryptedChannel {
           : decodePlaintext(plaintextBytes, ciphertext.isBinary);
         if (decodedFramed && framedDecodeStartedAt !== null && this.options.framedCiphertextV1) {
           const selection = this.options.framedCiphertextV1;
-          notifyRuntimeObserver(this.options.runtimeObserver, "onInboundFrame", () => ({
-            ciphertextEncoding: selection.ciphertextEncoding,
-            codec: decodedFramed.codec,
-            originalByteLength: decodedFramed.originalByteLength,
-            encodedByteLength: decodedFramed.encodedByteLength,
-            wireByteLength: transportMessageWireByteLength(message),
-            decodeMs: elapsedMs(framedDecodeStartedAt, defaultMonotonicClock()),
-          }));
+          notifyRuntimeObserver({
+            observer: this.options.runtimeObserver,
+            notify: (observer) =>
+              observer.onInboundFrame?.({
+                ciphertextEncoding: selection.ciphertextEncoding,
+                codec: decodedFramed.codec,
+                originalByteLength: decodedFramed.originalByteLength,
+                encodedByteLength: decodedFramed.encodedByteLength,
+                wireByteLength: transportMessageWireByteLength(message),
+                decodeMs: elapsedMs(framedDecodeStartedAt, defaultMonotonicClock()),
+              }),
+          });
         }
         if (this.state !== "open") return;
         if (typeof plaintext === "string" && isReservedModeConfirmText(plaintext)) {
@@ -1227,9 +1342,10 @@ export class EncryptedChannel {
     }
     if (this.state !== "opening") return;
     this.state = "open";
-    notifyRuntimeObserver(this.options.runtimeObserver, "onNegotiatedTransport", () =>
-      this.getNegotiatedTransport(),
-    );
+    notifyRuntimeObserver({
+      observer: this.options.runtimeObserver,
+      notify: (observer) => observer.onNegotiatedTransport?.(this.getNegotiatedTransport()),
+    });
     this.events.onopen?.();
     for (const cb of this.onOpenCallbacks) cb();
   }
@@ -1253,7 +1369,10 @@ export class EncryptedChannel {
   /** Encrypts and writes one application frame after the channel mode is fixed. */
   private async sendApplicationFrame(data: string | ArrayBuffer): Promise<void> {
     const prepared = this.prepareOutboundFrame(data);
-    await this.writePreparedFrame(prepared, this.state === "opening");
+    await this.writePreparedFrame({
+      frame: prepared,
+      allowOpening: this.state === "opening",
+    });
   }
 
   /** Encrypts and representation-encodes one logical or already-framed payload exactly once. */
@@ -1288,8 +1407,12 @@ export class EncryptedChannel {
       return { wireData, wireByteLength, framedCiphertextV1: true };
     }
 
+    if (typeof data !== "string" && !(data instanceof ArrayBuffer)) {
+      throw new Error("Prepared framed payload requires a framed-v1 connection");
+    }
+
     // Legacy plaintext kind still controls its pre-framed hybrid representation.
-    const ciphertext = encrypt(this.sharedKey, data as string | ArrayBuffer);
+    const ciphertext = encrypt(this.sharedKey, data);
     const wireData =
       this.options.binaryCiphertext && data instanceof ArrayBuffer
         ? ciphertext
@@ -1302,8 +1425,14 @@ export class EncryptedChannel {
   }
 
   /** Writes one fully prepared frame through the connection-wide send FIFO. */
-  async sendPreparedFrame(frame: PreparedEncryptedFrame): Promise<void> {
-    await this.writePreparedFrame(frame, false);
+  // COMPAT(relayPreparedFrameObjectOptions): frame-only API predates v0.4.0-beta.5; remove after 2027-08-21.
+  async sendPreparedFrame(frame: PreparedEncryptedFrame): Promise<void>;
+  async sendPreparedFrame(options: SendPreparedEncryptedFrameOptions): Promise<void>;
+  async sendPreparedFrame(
+    frameOrOptions: PreparedEncryptedFrame | SendPreparedEncryptedFrameOptions,
+  ): Promise<void> {
+    const options = "frame" in frameOrOptions ? frameOrOptions : { frame: frameOrOptions };
+    await this.writePreparedFrame({ ...options, allowOpening: false });
   }
 
   /** Returns whether this open channel is locked to framed-v1 application traffic. */
@@ -1329,10 +1458,8 @@ export class EncryptedChannel {
   }
 
   /** Writes a prepared frame while the handshake opening flush still owns the channel. */
-  private async writePreparedFrame(
-    frame: PreparedEncryptedFrame,
-    allowOpening: boolean,
-  ): Promise<void> {
+  private async writePreparedFrame(options: WritePreparedEncryptedFrameOptions): Promise<void> {
+    const { frame, allowOpening, onTransportWriteStart } = options;
     if (preparedEncryptedFrameWireByteLength(frame) !== frame.wireByteLength) {
       throw new Error("Prepared encrypted frame wire length mismatch");
     }
@@ -1350,6 +1477,7 @@ export class EncryptedChannel {
       throw new Error("Channel not open");
     }
     if (!frame.framedCiphertextV1) {
+      onTransportWriteStart?.();
       await this.transport.send(frame.wireData);
       return;
     }
@@ -1357,6 +1485,7 @@ export class EncryptedChannel {
       if (this.state !== "open" && !(allowOpening && this.state === "opening")) {
         throw new Error("Channel not open");
       }
+      onTransportWriteStart?.();
       return this.transport.send(frame.wireData);
     });
     // A rejected write must not strand later queued operations on a rejected tail.
@@ -1442,7 +1571,10 @@ export class EncryptedChannel {
     if (keysEqual(nextSharedKey, this.sharedKey)) {
       const readyText =
         this.options.daemonReadyText ??
-        buildDaemonReadyText(this.options.binaryCiphertext === true, null);
+        buildDaemonReadyText({
+          binaryCiphertext: this.options.binaryCiphertext === true,
+          selection: null,
+        });
       await this.transport.send(readyText);
       return;
     }
@@ -1482,17 +1614,11 @@ export class EncryptedChannel {
 }
 
 /** Calls one runtime observer method without allowing observability to affect traffic. */
-function notifyRuntimeObserver<
-  TMethod extends keyof EncryptedChannelRuntimeObserver,
-  TArgument extends Parameters<NonNullable<EncryptedChannelRuntimeObserver[TMethod]>>[0],
->(
-  observer: EncryptedChannelRuntimeObserver | undefined,
-  method: TMethod,
-  createArgument: () => TArgument,
-): void {
+function notifyRuntimeObserver(options: NotifyRuntimeObserverOptions): void {
+  const { observer, notify } = options;
+  if (!observer) return;
   try {
-    const callback = observer?.[method] as ((argument: TArgument) => void) | undefined;
-    callback?.(createArgument());
+    notify(observer);
   } catch {
     // Runtime observers are intentionally isolated from protocol behavior.
   }

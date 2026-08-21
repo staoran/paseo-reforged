@@ -52,15 +52,15 @@ test("uses identity above the compression input cap when the framed wire remains
     },
   });
 
-  const prepared = await compression.prepare(
-    original.buffer,
-    { trafficClass: "state-sync" },
-    {
+  const prepared = await compression.prepare({
+    data: original.buffer,
+    hint: { trafficClass: "state-sync" },
+    policy: {
       compressionEnabled: true,
       negotiatedCompressionAlgorithms: ["deflate-raw"],
       ciphertextEncoding: "binary",
     },
-  );
+  });
 
   expect(deflateRaw).not.toHaveBeenCalled();
   expect({
@@ -97,15 +97,15 @@ test("prepares eligible state sync as a level-1 raw DEFLATE frame", async () => 
     },
   });
 
-  const prepared = await compression.prepare(
-    original.buffer,
-    { trafficClass: "state-sync" },
-    {
+  const prepared = await compression.prepare({
+    data: original.buffer,
+    hint: { trafficClass: "state-sync" },
+    policy: {
       compressionEnabled: true,
       negotiatedCompressionAlgorithms: ["deflate-raw"],
       ciphertextEncoding: "binary",
     },
-  );
+  });
 
   expect(deflateRaw).toHaveBeenCalledOnce();
   expect(deflateRaw).toHaveBeenCalledWith(original.buffer, 1);
@@ -149,15 +149,15 @@ test.each([
     codec: { deflateRaw, inflateRaw: async () => original.buffer },
   });
 
-  const prepared = await compression.prepare(
-    original.buffer,
-    { trafficClass: testCase.trafficClass, compressible: true },
-    {
+  const prepared = await compression.prepare({
+    data: original.buffer,
+    hint: { trafficClass: testCase.trafficClass, compressible: true },
+    policy: {
       compressionEnabled: true,
       negotiatedCompressionAlgorithms: ["deflate-raw"],
       ciphertextEncoding: "base64",
     },
-  );
+  });
 
   expect(deflateRaw).toHaveBeenCalledOnce();
   expect({ codec: prepared.codec, skipReason: prepared.skipReason }).toEqual({
@@ -228,10 +228,14 @@ test.each([
     },
   });
 
-  const prepared = await compression.prepare(original.buffer, testCase.hint, {
-    compressionEnabled: testCase.compressionEnabled,
-    negotiatedCompressionAlgorithms: testCase.algorithms,
-    ciphertextEncoding: "binary",
+  const prepared = await compression.prepare({
+    data: original.buffer,
+    hint: testCase.hint,
+    policy: {
+      compressionEnabled: testCase.compressionEnabled,
+      negotiatedCompressionAlgorithms: testCase.algorithms,
+      ciphertextEncoding: "binary",
+    },
   });
 
   expect(deflateRaw).not.toHaveBeenCalled();
@@ -281,9 +285,21 @@ test("uses two non-waiting compression slots and releases them after completion"
     ciphertextEncoding: "binary" as const,
   };
 
-  const first = compression.prepare(original.buffer, { trafficClass: "state-sync" }, policy);
-  const second = compression.prepare(original.buffer, { trafficClass: "state-sync" }, policy);
-  const third = await compression.prepare(original.buffer, { trafficClass: "state-sync" }, policy);
+  const first = compression.prepare({
+    data: original.buffer,
+    hint: { trafficClass: "state-sync" },
+    policy,
+  });
+  const second = compression.prepare({
+    data: original.buffer,
+    hint: { trafficClass: "state-sync" },
+    policy,
+  });
+  const third = await compression.prepare({
+    data: original.buffer,
+    hint: { trafficClass: "state-sync" },
+    policy,
+  });
 
   expect(deflateRaw).toHaveBeenCalledTimes(2);
   expect({ codec: third.codec, skipReason: third.skipReason }).toEqual({
@@ -293,7 +309,11 @@ test("uses two non-waiting compression slots and releases them after completion"
 
   for (const complete of completeJobs) complete();
   await Promise.all([first, second]);
-  const fourth = await compression.prepare(original.buffer, { trafficClass: "state-sync" }, policy);
+  const fourth = await compression.prepare({
+    data: original.buffer,
+    hint: { trafficClass: "state-sync" },
+    policy,
+  });
   expect(deflateRaw).toHaveBeenCalledTimes(3);
   expect({ codec: fourth.codec, skipReason: fourth.skipReason }).toEqual({
     codec: "deflate-raw",
@@ -331,13 +351,21 @@ test("shares the two compression slots across daemon coordinators", async () => 
     ciphertextEncoding: "binary" as const,
   };
 
-  const first = firstCoordinator.prepare(original.buffer, { trafficClass: "state-sync" }, policy);
-  const second = firstCoordinator.prepare(original.buffer, { trafficClass: "state-sync" }, policy);
-  const crossCoordinator = await secondCoordinator.prepare(
-    original.buffer,
-    { trafficClass: "state-sync" },
+  const first = firstCoordinator.prepare({
+    data: original.buffer,
+    hint: { trafficClass: "state-sync" },
     policy,
-  );
+  });
+  const second = firstCoordinator.prepare({
+    data: original.buffer,
+    hint: { trafficClass: "state-sync" },
+    policy,
+  });
+  const crossCoordinator = await secondCoordinator.prepare({
+    data: original.buffer,
+    hint: { trafficClass: "state-sync" },
+    policy,
+  });
   for (const complete of completeJobs) complete();
   await Promise.all([first, second]);
 
@@ -372,15 +400,15 @@ test.each([
     },
   });
 
-  const prepared = await compression.prepare(
-    original.buffer,
-    { trafficClass: "state-sync" },
-    {
+  const prepared = await compression.prepare({
+    data: original.buffer,
+    hint: { trafficClass: "state-sync" },
+    policy: {
       compressionEnabled: true,
       negotiatedCompressionAlgorithms: ["deflate-raw"],
       ciphertextEncoding: "binary",
     },
-  );
+  });
 
   expect(deflateRaw).toHaveBeenCalledOnce();
   expect({

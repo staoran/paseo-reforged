@@ -15,17 +15,17 @@
 | file path          | `mydocs/micro_specs/0095_中继压缩指标与benchmark.md`    |
 | parent spec        | `mydocs/specs/0084_跨端中继二进制加密与状态追平压缩.md` |
 | superseded by      | `N/A`                                                   |
-| created / updated  | `2026-08-19 / 2026-08-20`                               |
+| created / updated  | `2026-08-19 / 2026-08-21`                               |
 
 ## 1. 目标与完成契约
 
 - 当前理解：server/client 无内容 runtime metrics、diagnostics snapshot 和显式输入 benchmark 已实现；弱网、live relay、Hermes 与真实交互 p95 仍由 0097 验收。
 - 核心目标：提供不泄露内容的 server/client 聚合指标和可重复 benchmark，验证带宽、CPU、延迟与 skip reason。
 - Done Contract：
-  - server/client 只记录 class/codec/encoding、原始/编码/wire bytes、prepare/decode/queue 时长、错误和 skip reason，不记录 payload、路径、文件名、正文或 secret。
+  - server/client 只记录 class/codec/encoding、原始/编码/wire bytes、prepare/decode 时长、encrypted-socket send FIFO wait、codec callback wall time、错误和 skip reason，不记录 payload、路径、文件名、正文或 secret。
   - benchmark 能用显式输入复现 legacy、framed Base64/binary、deflate level 1/3/6 研究对比，并输出聚合比率/吞吐/延迟。
   - 指标区分 configured/negotiated/effective reason、实时压缩尝试为 0、bulk-live 门禁和 receive errors。
-  - 为 event-loop p99、worker-pool queue、inboundDecodeMs 和 wire high-water 提供可核验样本。
+  - 为 event-loop p99、send FIFO wait、codec callback wall time、inboundDecodeMs 和 wire high-water 提供可核验样本；不把 zlib callback wall time 误称为可独立分离的 worker-pool queue。
 
 ## 2. 范围与事实
 
@@ -63,13 +63,14 @@
 
 ## 5. 执行与变更记录
 
-- 实际改动：server 聚合 configured/negotiated/effective、出入站 class/codec/encoding/bytes、skip reason、prepare/queue/codec/decode 时长、protocol error 和双向 pending bytes；活动连接 reason 随 compression 热更新即时重算。
+- 实际改动：server 聚合 configured/negotiated/effective、出入站 class/codec/encoding/bytes、skip reason、prepare/send FIFO wait/codec callback wall/decode 时长、protocol error 和双向 pending bytes；活动连接 reason 随 compression 热更新即时重算。`compressionQueueMs` 从 send 调用计到其有序 FIFO operation 开始；`compressionCodecMs` 包围异步 zlib callback，包含可能的 libuv worker-pool 等待，当前实现不能将 worker queue 与纯 codec 执行独立拆分。
 - 实际改动：client rolling metrics 聚合 negotiated mode、入站 framed bytes/decode、protocol error 和 pending receive bytes；`EncryptedChannel` observer 只接收有界 label 与数值，observer 异常不影响握手或应用消息交付。
 - 实际改动：daemon diagnostics 输出相同的 content-free relay snapshot；所有百分位样本使用固定容量窗口，避免密集流量导致常驻内存无界增长。
 - 实际改动：benchmark 要求显式传入 JSON、terminal、file、tool-call；支持 raw、`codex-session-jsonl` 与 `paseo-timeline-segment`，完整测量 legacy、framed Base64/binary identity 和 level 1/3/6 deflate 的 original/encoded/encrypted/wire bytes、采用率、frame 分位数、CPU、prepare/decode/wall、吞吐和 event-loop p99。
 - 偏差与用户决策：completed tool-call 从真实 timeline 边界重建 `agent_stream`，使用固定匿名 `agentId`，不是原始 WebSocket 抓包；terminal 从真实 Codex session 中显式提取 `exec` 输出并重分帧；报告不保留输入路径、原文或逐帧内容。
 - 测量修正：初版 event-loop sampler 为 10 ms，无法核验 5 ms 门禁；提交前改为 1 ms 并在环境行显式报告分辨率，再用同类真实输入复测。
 - Change Log：`2026-08-19` 从父 Spec 执行清单 12 拆出；`2026-08-20` 完成指标、benchmark、真实测量与静态门禁，进入 Review/已收口。
+- Change Log：`2026-08-21` 统一审查澄清 send FIFO 与 zlib callback wall 指标语义，移除“可独立观测 worker-pool queue”的错误表述。
 
 ### 真实 corpus 聚合结果
 

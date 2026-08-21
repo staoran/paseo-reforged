@@ -4,6 +4,7 @@ import {
   type EncryptedChannel,
   type EncryptedChannelInboundFrameMetric,
   type EncryptedChannelProtocolErrorReason,
+  type FrameCompressionAdapter,
   type NegotiatedEncryptedTransport,
   type Transport as RelayTransport,
 } from "@getpaseo/relay/e2ee";
@@ -31,8 +32,22 @@ interface RelayE2eeRuntimeMetrics {
   recordRelayPendingReceiveWireBytes(bytes: number): void;
 }
 
-/** Stateless browser/Hermes decoder shared by client relay connections. */
-const relayCompressionAdapter = createFflateFrameCompressionAdapter();
+/** Complete input for wrapping one daemon transport with relay E2EE. */
+export interface CreateEncryptedTransportOptions {
+  /** Physical daemon transport carrying relay handshake and ciphertext. */
+  base: DaemonTransport;
+  /** Daemon public key received through pairing. */
+  daemonPublicKeyB64: string;
+  /** Transport logger used for bounded handshake diagnostics. */
+  logger: TransportLogger;
+  /** Optional content-free metrics recorder owned by the daemon client. */
+  runtimeMetrics?: RelayE2eeRuntimeMetrics;
+  /** Nullable decoder capability; null deliberately disables compression advertisement. */
+  compressionAdapter?: FrameCompressionAdapter | null;
+}
+
+/** Stateless browser/Node decoder shared by client relay connections when validated. */
+const relayCompressionAdapter = isHermesRuntime() ? null : createFflateFrameCompressionAdapter();
 
 export function createRelayE2eeTransportFactory(args: {
   baseFactory: DaemonTransportFactory;
@@ -42,21 +57,24 @@ export function createRelayE2eeTransportFactory(args: {
 }): DaemonTransportFactory {
   return ({ url, headers }) => {
     const base = args.baseFactory({ url, headers });
-    return createEncryptedTransport(
+    return createEncryptedTransport({
       base,
-      args.daemonPublicKeyB64,
-      args.logger,
-      args.runtimeMetrics,
-    );
+      daemonPublicKeyB64: args.daemonPublicKeyB64,
+      logger: args.logger,
+      runtimeMetrics: args.runtimeMetrics,
+    });
   };
 }
 
+/** Wraps one physical daemon transport with the negotiated relay E2EE channel. */
 export function createEncryptedTransport(
-  base: DaemonTransport,
-  daemonPublicKeyB64: string,
-  logger: TransportLogger,
-  runtimeMetrics?: RelayE2eeRuntimeMetrics,
+  options: CreateEncryptedTransportOptions,
 ): DaemonTransport {
+  /** Metrics recorder forwarded into the encrypted channel observer. */
+  const { base, daemonPublicKeyB64, logger, runtimeMetrics } = options;
+  /** Decoder advertised for this connection, including an explicit unavailable state. */
+  const compressionAdapter =
+    options.compressionAdapter === undefined ? relayCompressionAdapter : options.compressionAdapter;
   let channel: EncryptedChannel | null = null;
   let opened = false;
   let closed = false;
@@ -120,32 +138,30 @@ export function createEncryptedTransport(
 
   const startHandshake = async () => {
     try {
-      channel = await createClientChannel(
-        relayTransport,
+      channel = await createClientChannel({
+        transport: relayTransport,
         daemonPublicKeyB64,
-        {
+        events: {
           onopen: emitOpen,
           onmessage: (data) => emitMessage(data),
           onclose: (code, reason) => emitClose({ code, reason }),
           onerror: (error) => emitError(error),
         },
-        {
-          compressionAdapter: relayCompressionAdapter,
-          ...(runtimeMetrics
-            ? {
-                runtimeObserver: {
-                  onNegotiatedTransport: (negotiated) =>
-                    runtimeMetrics.recordRelayNegotiated(negotiated),
-                  onInboundFrame: (metric) => runtimeMetrics.recordRelayInboundFrame(metric),
-                  onFramedProtocolError: (reason) =>
-                    runtimeMetrics.recordRelayFramedProtocolError(reason),
-                  onPendingReceiveWireBytes: (bytes) =>
-                    runtimeMetrics.recordRelayPendingReceiveWireBytes(bytes),
-                },
-              }
-            : {}),
-        },
-      );
+        ...(compressionAdapter ? { compressionAdapter } : {}),
+        ...(runtimeMetrics
+          ? {
+              runtimeObserver: {
+                onNegotiatedTransport: (negotiated) =>
+                  runtimeMetrics.recordRelayNegotiated(negotiated),
+                onInboundFrame: (metric) => runtimeMetrics.recordRelayInboundFrame(metric),
+                onFramedProtocolError: (reason) =>
+                  runtimeMetrics.recordRelayFramedProtocolError(reason),
+                onPendingReceiveWireBytes: (bytes) =>
+                  runtimeMetrics.recordRelayPendingReceiveWireBytes(bytes),
+              },
+            }
+          : {}),
+      });
     } catch (error) {
       logger.warn({ err: normalizeTransportError(error) }, "relay_e2ee_handshake_failed");
       emitError(error);
@@ -211,6 +227,11 @@ export function createEncryptedTransport(
       return () => errorHandlers.delete(handler);
     },
   };
+}
+
+/** Returns whether this JavaScript runtime is powered by Hermes. */
+function isHermesRuntime(): boolean {
+  return Reflect.get(globalThis, "HermesInternal") !== undefined;
 }
 
 function emitHandlers<TArgs extends unknown[]>(

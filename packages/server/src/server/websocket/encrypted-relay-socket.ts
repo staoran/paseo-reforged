@@ -3,9 +3,11 @@ import {
   MAX_FRAMED_WIRE_BYTES,
   preparedEncryptedFrameWireByteLength,
   type PreparedEncryptedFrame,
+  type SendPreparedEncryptedFrameOptions,
 } from "@getpaseo/relay/e2ee";
+// Node and emitted ESM run without a TypeScript path-alias resolver.
 import { MAX_PHYSICAL_SOCKET_BUFFERED_BYTES } from "./physical-socket.js";
-import type { RelayTrafficHint } from "../relay-frame-compression.js";
+import type { RelaySendFifoWaitSample, RelayTrafficHint } from "../relay-frame-compression.js";
 
 /** Default classification retained for every existing WebSocket-compatible caller. */
 const DEFAULT_RELAY_TRAFFIC_HINT = Object.freeze({
@@ -17,14 +19,14 @@ export interface EncryptedRelayChannel {
   setState: (state: "open") => void;
   /** Sends one legacy application payload through the existing channel contract. */
   send: (data: string | ArrayBuffer) => Promise<void>;
-  /** Returns the legacy estimate used only when framed-v1 was not negotiated. */
+  /** Returns the identity-frame wire upper bound for admission control. */
   outboundWireByteLength: (data: string | ArrayBuffer) => number;
   /** Returns whether this connection uses the framed prepared-frame pipeline. */
   usesFramedCiphertextV1: () => boolean;
   /** Encrypts and representation-encodes one framed payload exactly once. */
   prepareOutboundFrame: (data: string | ArrayBuffer) => PreparedEncryptedFrame;
   /** Writes one final framed wire through the encrypted channel FIFO. */
-  sendPreparedFrame: (frame: PreparedEncryptedFrame) => Promise<void>;
+  sendPreparedFrame: (options: SendPreparedEncryptedFrameOptions) => Promise<void>;
   /** Closes the encrypted channel gracefully. */
   close: (code?: number, reason?: string) => void;
 }
@@ -32,7 +34,7 @@ export interface EncryptedRelayChannel {
 export interface EncryptedRelaySocket {
   /** WebSocket-compatible ready state exposed to the daemon session layer. */
   readonly readyState: number;
-  /** Physical transport bytes already accepted by the underlying WebSocket. */
+  /** Aggregate outbound wire bytes retained by this socket and its physical transport. */
   readonly bufferedAmount: number;
   /** Sends one application payload through the negotiated encrypted transport. */
   send: (data: string | Uint8Array | ArrayBuffer) => void | Promise<void>;
@@ -54,7 +56,7 @@ export interface EncryptedRelaySocket {
 /** Content-free metrics port observed at the encrypted socket queue boundary. */
 export interface EncryptedRelaySocketMetrics {
   /** Records time from send invocation until its ordered FIFO operation starts. */
-  recordQueueMs(trafficClass: RelayTrafficHint["trafficClass"], durationMs: number): void;
+  recordQueueMs(sample: RelaySendFifoWaitSample): void;
   /** Samples aggregate final wire bytes retained behind the send FIFO. */
   recordPendingPreparedBytes(bytes: number): void;
 }
@@ -89,7 +91,7 @@ export function createEncryptedRelaySocket(params: {
     clock = defaultMonotonicClock,
   } = params;
   let readyState = 1;
-  /** Raw bytes retained while asynchronous frame preparation is incomplete. */
+  /** Identity-frame wire bytes reserved while asynchronous preparation is incomplete. */
   let pendingPreparationBytes = 0;
   /** Final wire bytes prepared but waiting behind the send FIFO. */
   let pendingPreparedWireBytes = 0;
@@ -99,8 +101,8 @@ export function createEncryptedRelaySocket(params: {
   const framedCiphertextV1 = channel.usesFramedCiphertextV1();
 
   interface SendReservation {
-    /** Original application byte count charged before preparation completes. */
-    inputBytes: number;
+    /** Identity-frame wire upper bound charged before preparation completes. */
+    preparingWireBytes: number;
     /** Final wire byte count charged after preparation completes. */
     wireBytes: number;
     /** Whether this reservation has already been released. */
@@ -122,7 +124,7 @@ export function createEncryptedRelaySocket(params: {
   const releaseReservation = (reservation: SendReservation): void => {
     if (reservation.released) return;
     reservation.released = true;
-    pendingPreparationBytes -= reservation.inputBytes;
+    pendingPreparationBytes -= reservation.preparingWireBytes;
     pendingPreparedWireBytes -= reservation.wireBytes;
     if (pendingPreparationBytes < 0) pendingPreparationBytes = 0;
     if (pendingPreparedWireBytes < 0) pendingPreparedWireBytes = 0;
@@ -173,7 +175,9 @@ export function createEncryptedRelaySocket(params: {
       return readyState;
     },
     get bufferedAmount() {
-      return getTransportBufferedAmount() ?? 0;
+      return (
+        (getTransportBufferedAmount() ?? 0) + pendingPreparationBytes + pendingPreparedWireBytes
+      );
     },
     send: (data) => socket.sendClassified(data, DEFAULT_RELAY_TRAFFIC_HINT),
     sendClassified: (data, hint) => {
@@ -195,12 +199,12 @@ export function createEncryptedRelaySocket(params: {
           throw error;
         });
       }
-      const inputBytes = outboundByteLength(outbound);
+      const preparingWireBytes = channel.outboundWireByteLength(outbound);
       /** Monotonic enqueue time used only for the ordered FIFO wait metric. */
       const queuedAt = clock();
       const physicalBytes = getTransportBufferedAmount() ?? 0;
       if (
-        physicalBytes + pendingPreparationBytes + pendingPreparedWireBytes + inputBytes >
+        physicalBytes + pendingPreparationBytes + pendingPreparedWireBytes + preparingWireBytes >
         MAX_PHYSICAL_SOCKET_BUFFERED_BYTES
       ) {
         terminate();
@@ -210,12 +214,12 @@ export function createEncryptedRelaySocket(params: {
       }
 
       const reservation: SendReservation = {
-        inputBytes,
+        preparingWireBytes,
         wireBytes: 0,
         released: false,
       };
       reservations.add(reservation);
-      pendingPreparationBytes += inputBytes;
+      pendingPreparationBytes += preparingWireBytes;
 
       let prepared: PreparedEncryptedFrame | Promise<PreparedEncryptedFrame>;
       try {
@@ -232,9 +236,9 @@ export function createEncryptedRelaySocket(params: {
         if (preparedEncryptedFrameWireByteLength(frame) !== frame.wireByteLength) {
           throw new Error("Prepared encrypted frame wire length mismatch");
         }
-        pendingPreparationBytes -= reservation.inputBytes;
+        pendingPreparationBytes -= reservation.preparingWireBytes;
         if (pendingPreparationBytes < 0) pendingPreparationBytes = 0;
-        reservation.inputBytes = 0;
+        reservation.preparingWireBytes = 0;
         reservation.wireBytes = frame.wireByteLength;
         pendingPreparedWireBytes += frame.wireByteLength;
         samplePendingPreparedBytes();
@@ -245,7 +249,10 @@ export function createEncryptedRelaySocket(params: {
 
       const sendOperation = sendTail.then(async () => {
         try {
-          runtimeMetrics?.recordQueueMs(hint.trafficClass, elapsedMs(queuedAt, clock()));
+          runtimeMetrics?.recordQueueMs({
+            trafficClass: hint.trafficClass,
+            durationMs: elapsedMs(queuedAt, clock()),
+          });
         } catch {
           // Metrics are observational and cannot fail application traffic.
         }
@@ -262,11 +269,15 @@ export function createEncryptedRelaySocket(params: {
         ) {
           throw new Error("Encrypted relay socket exceeded its outbound high-water mark");
         }
-        pendingPreparedWireBytes -= frame.wireByteLength;
-        if (pendingPreparedWireBytes < 0) pendingPreparedWireBytes = 0;
-        reservation.wireBytes = 0;
-        samplePendingPreparedBytes();
-        return channel.sendPreparedFrame(frame);
+        return channel.sendPreparedFrame({
+          frame,
+          onTransportWriteStart: () => {
+            pendingPreparedWireBytes -= reservation.wireBytes;
+            if (pendingPreparedWireBytes < 0) pendingPreparedWireBytes = 0;
+            reservation.wireBytes = 0;
+            // Keep the ownership handoff reentrancy-free until transport.send starts.
+          },
+        });
       });
       sendTail = sendOperation.catch(() => undefined);
       return sendOperation
@@ -294,11 +305,6 @@ function normalizeRelaySendPayload(data: string | Uint8Array | ArrayBuffer): str
   const out = new Uint8Array(view.byteLength);
   out.set(view);
   return out.buffer;
-}
-
-/** Returns the exact application byte count charged while a frame is prepared. */
-function outboundByteLength(data: string | ArrayBuffer): number {
-  return typeof data === "string" ? Buffer.byteLength(data, "utf8") : data.byteLength;
 }
 
 /** Returns the cross-runtime monotonic clock used by production queue metrics. */

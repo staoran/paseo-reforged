@@ -35,8 +35,10 @@ describe("daemon client relay E2EE transport", () => {
       onMessage: () => () => {},
     };
     /** Public encrypted transport under test. */
-    const encrypted = createEncryptedTransport(base, exportPublicKey(daemonKeyPair.publicKey), {
-      warn: vi.fn(),
+    const encrypted = createEncryptedTransport({
+      base,
+      daemonPublicKeyB64: exportPublicKey(daemonKeyPair.publicKey),
+      logger: { warn: vi.fn() },
     });
 
     openHandler?.();
@@ -48,6 +50,49 @@ describe("daemon client relay E2EE transport", () => {
     encrypted.close();
 
     expect(hello.capabilities?.framedCiphertextV1?.compressionAlgorithms).toEqual(["deflate-raw"]);
+  });
+
+  test("does not advertise raw DEFLATE when no client decoder is available", async () => {
+    /** Daemon identity supplied through the pairing result. */
+    const daemonKeyPair = generateKeyPair();
+    /** Plaintext handshake writes observed on the base transport. */
+    const sent: (string | Uint8Array | ArrayBuffer)[] = [];
+    /** Base transport callback that begins the encrypted handshake. */
+    let openHandler: (() => void) | null = null;
+    /** Physical transport used by the public encrypted transport adapter. */
+    const base: DaemonTransport = {
+      send: (data) => sent.push(data),
+      close: vi.fn(),
+      onOpen: (handler) => {
+        openHandler = handler;
+        return () => {
+          if (openHandler === handler) openHandler = null;
+        };
+      },
+      onClose: () => () => {},
+      onError: () => () => {},
+      onMessage: () => () => {},
+    };
+    /** Public encrypted transport configured without a framed compression decoder. */
+    const encrypted = createEncryptedTransport({
+      base,
+      daemonPublicKeyB64: exportPublicKey(daemonKeyPair.publicKey),
+      logger: { warn: vi.fn() },
+      compressionAdapter: null,
+    });
+
+    openHandler?.();
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    /** First relay write containing the client capability advertisement. */
+    const rawHello = sent[0];
+    if (typeof rawHello !== "string") throw new Error("Expected a text E2EE hello");
+    /** Parsed hello observed at the public transport boundary. */
+    const hello: unknown = JSON.parse(rawHello);
+    encrypted.close();
+
+    expect(hello).toMatchObject({
+      capabilities: { framedCiphertextV1: { compressionAlgorithms: [] } },
+    });
   });
 
   test("delivers daemon raw DEFLATE text through the client transport events", async () => {
@@ -97,14 +142,12 @@ describe("daemon client relay E2EE transport", () => {
       },
     );
     /** Public encrypted transport under test. */
-    const encrypted = createEncryptedTransport(
+    const encrypted = createEncryptedTransport({
       base,
-      exportPublicKey(daemonKeyPair.publicKey),
-      {
-        warn: vi.fn(),
-      },
+      daemonPublicKeyB64: exportPublicKey(daemonKeyPair.publicKey),
+      logger: { warn: vi.fn() },
       runtimeMetrics,
-    );
+    });
     /** First public application or close result after the compressed frame arrives. */
     let resolveOutcome:
       | ((outcome: { kind: string; data?: unknown; isBinary?: boolean }) => void)

@@ -355,8 +355,10 @@ describe("relay-transport control lifecycle", () => {
     const clientOpen = new Promise<void>((resolve) => {
       resolveClientOpen = resolve;
     });
-    await createClientChannel(clientTransport, exportPublicKey(daemonKeyPair.publicKey), {
-      onopen: () => resolveClientOpen?.(),
+    await createClientChannel({
+      transport: clientTransport,
+      daemonPublicKeyB64: exportPublicKey(daemonKeyPair.publicKey),
+      events: { onopen: () => resolveClientOpen?.() },
     });
 
     let attachedCompleted = false;
@@ -437,12 +439,11 @@ describe("relay-transport control lifecycle", () => {
         isBinary: data instanceof ArrayBuffer || data instanceof Uint8Array,
       });
     };
-    const clientChannel = await createClientChannel(
-      clientTransport,
-      exportPublicKey(daemonKeyPair.publicKey),
-      {},
-      { compressionAdapter: createNodeRawDeflateCodec() },
-    );
+    const clientChannel = await createClientChannel({
+      transport: clientTransport,
+      daemonPublicKeyB64: exportPublicKey(daemonKeyPair.publicKey),
+      compressionAdapter: createNodeRawDeflateCodec(),
+    });
     /** Relay-aware socket shape that retains sender-side traffic semantics. */
     const encryptedSocket = (await attached) as {
       sendClassified: (data: string, hint: RelayTrafficHint) => void | Promise<void>;

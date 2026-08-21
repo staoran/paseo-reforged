@@ -9,6 +9,8 @@ export type {
   CiphertextEncoding,
   ClientChannelOptions,
   ConfiguredCiphertextEncoding,
+  CreateClientChannelOptions,
+  CreateDaemonChannelOptions,
   DaemonChannelOptions,
   EncryptedChannelInboundFrameMetric,
   EncryptedChannelEvents,
@@ -16,6 +18,7 @@ export type {
   EncryptedChannelRuntimeObserver,
   NegotiatedEncryptedTransport,
   PreparedEncryptedFrame,
+  SendPreparedEncryptedFrameOptions,
   Transport,
   TransportMessage,
 } from "./encrypted-channel.js";

@@ -1,3 +1,4 @@
+// Node and emitted ESM run without a TypeScript path-alias resolver.
 import type { SessionOutboundMessage, WSOutboundMessage } from "../messages.js";
 import type { ProcessMemoryDiagnostics } from "../process-diagnostics.js";
 import {
@@ -7,7 +8,11 @@ import {
   type EffectiveRelayTransportCompressionPolicy,
   type NegotiatedRelayTransportPolicy,
 } from "../relay-transport-policy.js";
-import type { CompressionSkipReason, RelayTrafficClass } from "../relay-frame-compression.js";
+import type {
+  CompressionSkipReason,
+  RelaySendFifoWaitSample,
+  RelayTrafficClass,
+} from "../relay-frame-compression.js";
 import type { FramedCiphertextCodec, FramedCiphertextEncoding } from "@getpaseo/relay/e2ee";
 
 /** Stable negotiated mode labels used by diagnostics and logs. */
@@ -88,7 +93,9 @@ export interface RelayTransportRuntimeMetricsSnapshot {
   compressionPrepareMs: Array<
     RelayDurationSummary & { algorithm: typeof RELAY_TRANSPORT_COMPRESSION_ALGORITHM }
   >;
+  /** Encrypted-socket send FIFO wait from invocation until the ordered operation starts. */
   compressionQueueMs: Array<RelayDurationSummary & { trafficClass: RelayTrafficClass }>;
+  /** Raw DEFLATE callback wall time, including any libuv worker-pool wait. */
   compressionCodecMs: Array<
     RelayDurationSummary & { algorithm: typeof RELAY_TRANSPORT_COMPRESSION_ALGORITHM }
   >;
@@ -119,13 +126,48 @@ interface RelayFrameAggregate {
   wireBytes: number;
 }
 
-/** Bounded negotiated labels in deterministic snapshot order. */
-const RELAY_NEGOTIATED_MODE_LABELS: readonly RelayNegotiatedModeLabel[] = [
-  "legacy-base64",
-  "legacy-hybrid",
-  "framed-v1-base64",
-  "framed-v1-binary",
-];
+/** Byte fields shared by outbound preparation and inbound decode metrics. */
+interface RelayFrameByteMetric {
+  originalByteLength: number;
+  encodedByteLength: number;
+  wireByteLength: number;
+}
+
+/** Inputs for accumulating one frame into its bounded label bucket. */
+interface AddFrameAggregateOptions {
+  /** Aggregate map owned by the runtime metrics window. */
+  map: Map<string, RelayFrameAggregate>;
+  /** Deterministic bounded-label key. */
+  key: string;
+  /** Content-free frame byte counts. */
+  metric: RelayFrameByteMetric;
+}
+
+/** Inputs for adding one duration to a bounded label bucket. */
+interface PushMapSampleOptions<TKey> {
+  /** Sample map owned by the runtime metrics window. */
+  map: Map<TKey, RecentRelayMetricSamples>;
+  /** Bounded label selecting one recent-value window. */
+  key: TKey;
+  /** Duration retained after normalization. */
+  durationMs: number;
+}
+
+/** Inputs for selecting one percentile from sorted observations. */
+interface PercentileOptions {
+  /** Numeric observations sorted in ascending order. */
+  sorted: readonly number[];
+  /** Requested quantile between zero and one. */
+  quantile: number;
+}
+
+/** Inputs for deterministic ordering of two content-free metric rows. */
+interface CompareMetricRowsOptions {
+  /** Left metric row supplied by the array comparator. */
+  left: object;
+  /** Right metric row supplied by the array comparator. */
+  right: object;
+}
 
 /** Bounded traffic classes in deterministic snapshot order. */
 const RELAY_TRAFFIC_CLASSES: readonly RelayTrafficClass[] = [
@@ -133,29 +175,6 @@ const RELAY_TRAFFIC_CLASSES: readonly RelayTrafficClass[] = [
   "state-sync",
   "bulk",
   "bulk-live",
-];
-
-/** Bounded skip reasons in deterministic snapshot order. */
-const RELAY_COMPRESSION_SKIP_REASONS: readonly RelayCompressionSkipReason[] = [
-  "configured-disabled",
-  "legacy-mode",
-  "peer-unsupported",
-  "traffic-ineligible",
-  "too-small",
-  "too-large",
-  "no-gain",
-  "ratio",
-  "busy",
-  "error",
-];
-
-/** Bounded framed protocol reasons in deterministic snapshot order. */
-const RELAY_FRAMED_PROTOCOL_ERROR_REASONS: readonly RelayFramedProtocolErrorReason[] = [
-  "invalid-wire",
-  "decrypt-failed",
-  "invalid-envelope",
-  "decode-failed",
-  "receive-high-water",
 ];
 
 /** Default relay policy used before bootstrap publishes configured state. */
@@ -216,9 +235,9 @@ export class RelayTransportRuntimeMetricsWindow {
   private readonly compressionSkipCounts = new Map<RelayCompressionSkipReason, number>();
   /** Total preparation duration samples for compressor-entering frames. */
   private readonly compressionPrepareSamples = new RecentRelayMetricSamples();
-  /** FIFO wait samples keyed by sender-side traffic class. */
+  /** Encrypted-socket send FIFO wait samples keyed by sender-side traffic class. */
   private readonly compressionQueueSamples = new Map<RelayTrafficClass, RecentRelayMetricSamples>();
-  /** Native codec callback wall-time samples. */
+  /** Native codec callback wall-time samples, including any libuv worker-pool wait. */
   private readonly compressionCodecSamples = new RecentRelayMetricSamples();
   /** Inbound decode duration samples keyed by encoding and codec. */
   private readonly inboundDecodeSamples = new Map<string, RecentRelayMetricSamples>();
@@ -256,8 +275,8 @@ export class RelayTransportRuntimeMetricsWindow {
 
   /** Aggregates one prepared frame without retaining its application bytes. */
   recordPreparedFrame(metric: RelayPreparedFrameMetric): void {
-    const key = relayOutboundFrameKey(metric.ciphertextEncoding, metric.trafficClass, metric.codec);
-    addFrameAggregate(this.outboundFrames, key, metric);
+    const key = relayOutboundFrameKey(metric);
+    addFrameAggregate({ map: this.outboundFrames, key, metric });
     if (metric.skipReason) incrementCount(this.compressionSkipCounts, metric.skipReason);
     if (metric.codecMs !== null) {
       this.compressionPrepareSamples.push(normalizeDuration(metric.prepareMs));
@@ -266,15 +285,16 @@ export class RelayTransportRuntimeMetricsWindow {
   }
 
   /** Records the ordered-send wait before one prepared frame reaches the FIFO head. */
-  recordQueueMs(trafficClass: RelayTrafficClass, durationMs: number): void {
-    pushMapSample(this.compressionQueueSamples, trafficClass, durationMs);
+  recordQueueMs(sample: RelaySendFifoWaitSample): void {
+    const { trafficClass, durationMs } = sample;
+    pushMapSample({ map: this.compressionQueueSamples, key: trafficClass, durationMs });
   }
 
   /** Aggregates one decoded framed payload without retaining decoded bytes. */
   recordInboundFrame(metric: RelayInboundFrameMetric): void {
-    const key = relayInboundFrameKey(metric.ciphertextEncoding, metric.codec);
-    addFrameAggregate(this.inboundFrames, key, metric);
-    pushMapSample(this.inboundDecodeSamples, key, metric.decodeMs);
+    const key = relayInboundFrameKey(metric);
+    addFrameAggregate({ map: this.inboundFrames, key, metric });
+    pushMapSample({ map: this.inboundDecodeSamples, key, durationMs: metric.decodeMs });
   }
 
   /** Increments one bounded framed receive failure reason. */
@@ -296,21 +316,12 @@ export class RelayTransportRuntimeMetricsWindow {
   snapshotAndReset(): RelayTransportRuntimeMetricsSnapshot {
     const snapshot: RelayTransportRuntimeMetricsSnapshot = {
       configuredPolicy: { ...this.configuredPolicy },
-      negotiatedModeCount: createBoundedCountRecord(
-        RELAY_NEGOTIATED_MODE_LABELS,
-        this.negotiatedModeCounts,
-      ),
+      negotiatedModeCount: createNegotiatedModeCountRecord(this.negotiatedModeCounts),
       activeConnectionCount: this.computeActiveConnections(),
       effectiveCompressionCount: this.computeEffectiveCompressionCounts(),
-      compressionAttemptCount: createBoundedCountRecord(
-        RELAY_TRAFFIC_CLASSES,
-        this.compressionAttemptCounts,
-      ),
+      compressionAttemptCount: createTrafficClassCountRecord(this.compressionAttemptCounts),
       outboundFrames: this.computeOutboundFrames(),
-      compressionSkipCount: createBoundedCountRecord(
-        RELAY_COMPRESSION_SKIP_REASONS,
-        this.compressionSkipCounts,
-      ),
+      compressionSkipCount: createCompressionSkipCountRecord(this.compressionSkipCounts),
       compressionPrepareMs: this.compressionPrepareSamples.length
         ? [
             {
@@ -333,8 +344,7 @@ export class RelayTransportRuntimeMetricsWindow {
         : [],
       inboundDecodeMs: this.computeInboundDecodeMs(),
       inboundFrames: this.computeInboundFrames(),
-      framedProtocolErrorCount: createBoundedCountRecord(
-        RELAY_FRAMED_PROTOCOL_ERROR_REASONS,
+      framedProtocolErrorCount: createFramedProtocolErrorCountRecord(
         this.framedProtocolErrorCounts,
       ),
       pendingPreparedBytes: summarizeByteSamples(this.pendingPreparedByteSamples.values()),
@@ -366,7 +376,8 @@ export class RelayTransportRuntimeMetricsWindow {
     return [...counts.entries()]
       .map(([key, count]) => {
         /** Label tuple stored alongside the count under the same deterministic key. */
-        const value = values.get(key)!;
+        const value = values.get(key);
+        if (!value) throw new Error("Active relay metric labels are missing");
         return {
           mode: value.mode,
           ciphertextEncoding: value.ciphertextEncoding,
@@ -375,7 +386,7 @@ export class RelayTransportRuntimeMetricsWindow {
           count,
         };
       })
-      .sort(compareMetricRows);
+      .sort((left, right) => compareMetricRows({ left, right }));
   }
 
   /** Aggregates current effective compression reasons across active connections. */
@@ -396,7 +407,7 @@ export class RelayTransportRuntimeMetricsWindow {
           count,
         };
       })
-      .sort(compareMetricRows);
+      .sort((left, right) => compareMetricRows({ left, right }));
   }
 
   /** Converts outbound aggregate keys back into stable diagnostic rows. */
@@ -415,7 +426,7 @@ export class RelayTransportRuntimeMetricsWindow {
           wireBytes: aggregate.wireBytes,
         };
       })
-      .sort(compareMetricRows);
+      .sort((left, right) => compareMetricRows({ left, right }));
   }
 
   /** Converts inbound timing keys into stable percentile rows. */
@@ -434,7 +445,7 @@ export class RelayTransportRuntimeMetricsWindow {
           max: summary.max,
         };
       })
-      .sort(compareMetricRows);
+      .sort((left, right) => compareMetricRows({ left, right }));
   }
 
   /** Converts inbound aggregate keys back into stable diagnostic rows. */
@@ -452,7 +463,7 @@ export class RelayTransportRuntimeMetricsWindow {
           wireBytes: aggregate.wireBytes,
         };
       })
-      .sort(compareMetricRows);
+      .sort((left, right) => compareMetricRows({ left, right }));
   }
 
   /** Clears current-window events while retaining gauges and active connections. */
@@ -765,11 +776,9 @@ function parseEffectiveCompressionKey(key: string): EffectiveRelayTransportCompr
 
 /** Serializes one bounded outbound label tuple for aggregate map storage. */
 function relayOutboundFrameKey(
-  encoding: FramedCiphertextEncoding,
-  trafficClass: RelayTrafficClass,
-  codec: FramedCiphertextCodec,
+  metric: Pick<RelayPreparedFrameMetric, "ciphertextEncoding" | "trafficClass" | "codec">,
 ): string {
-  return `${encoding}|${trafficClass}|${codec}`;
+  return `${metric.ciphertextEncoding}|${metric.trafficClass}|${metric.codec}`;
 }
 
 /** Restores one bounded outbound label tuple from aggregate map storage. */
@@ -791,10 +800,9 @@ function parseOutboundFrameKey(key: string): {
 
 /** Serializes one bounded inbound label tuple for aggregate map storage. */
 function relayInboundFrameKey(
-  encoding: FramedCiphertextEncoding,
-  codec: FramedCiphertextCodec,
+  metric: Pick<RelayInboundFrameMetric, "ciphertextEncoding" | "codec">,
 ): string {
-  return `${encoding}|${codec}`;
+  return `${metric.ciphertextEncoding}|${metric.codec}`;
 }
 
 /** Restores one bounded inbound label tuple from aggregate map storage. */
@@ -810,15 +818,8 @@ function parseInboundFrameKey(key: string): {
 }
 
 /** Adds one content-free byte sample to an aggregate map. */
-function addFrameAggregate(
-  map: Map<string, RelayFrameAggregate>,
-  key: string,
-  metric: {
-    originalByteLength: number;
-    encodedByteLength: number;
-    wireByteLength: number;
-  },
-): void {
+function addFrameAggregate(options: AddFrameAggregateOptions): void {
+  const { map, key, metric } = options;
   const aggregate = map.get(key) ?? {
     frameCount: 0,
     originalBytes: 0,
@@ -833,30 +834,74 @@ function addFrameAggregate(
 }
 
 /** Adds one normalized duration sample to a bounded label map. */
-function pushMapSample<TKey>(
-  map: Map<TKey, RecentRelayMetricSamples>,
-  key: TKey,
-  durationMs: number,
-): void {
+function pushMapSample<TKey>(options: PushMapSampleOptions<TKey>): void {
+  const { map, key, durationMs } = options;
   const samples = map.get(key) ?? new RecentRelayMetricSamples();
   samples.push(normalizeDuration(durationMs));
   map.set(key, samples);
 }
 
-/** Converts a bounded label list and sparse map into a complete counter record. */
-function createBoundedCountRecord<TKey extends string>(
-  keys: readonly TKey[],
-  counts: ReadonlyMap<TKey, number>,
-): Record<TKey, number> {
-  return Object.fromEntries(keys.map((key) => [key, counts.get(key) ?? 0])) as Record<TKey, number>;
+/** Completes every negotiated-mode counter without a dynamic record assertion. */
+function createNegotiatedModeCountRecord(
+  counts: ReadonlyMap<RelayNegotiatedModeLabel, number>,
+): Record<RelayNegotiatedModeLabel, number> {
+  return {
+    "legacy-base64": counts.get("legacy-base64") ?? 0,
+    "legacy-hybrid": counts.get("legacy-hybrid") ?? 0,
+    "framed-v1-base64": counts.get("framed-v1-base64") ?? 0,
+    "framed-v1-binary": counts.get("framed-v1-binary") ?? 0,
+  };
+}
+
+/** Completes every traffic-class counter without a dynamic record assertion. */
+function createTrafficClassCountRecord(
+  counts: ReadonlyMap<RelayTrafficClass, number>,
+): Record<RelayTrafficClass, number> {
+  return {
+    realtime: counts.get("realtime") ?? 0,
+    "state-sync": counts.get("state-sync") ?? 0,
+    bulk: counts.get("bulk") ?? 0,
+    "bulk-live": counts.get("bulk-live") ?? 0,
+  };
+}
+
+/** Completes every compression-skip counter without a dynamic record assertion. */
+function createCompressionSkipCountRecord(
+  counts: ReadonlyMap<RelayCompressionSkipReason, number>,
+): Record<RelayCompressionSkipReason, number> {
+  return {
+    "configured-disabled": counts.get("configured-disabled") ?? 0,
+    "legacy-mode": counts.get("legacy-mode") ?? 0,
+    "peer-unsupported": counts.get("peer-unsupported") ?? 0,
+    "traffic-ineligible": counts.get("traffic-ineligible") ?? 0,
+    "too-small": counts.get("too-small") ?? 0,
+    "too-large": counts.get("too-large") ?? 0,
+    "no-gain": counts.get("no-gain") ?? 0,
+    ratio: counts.get("ratio") ?? 0,
+    busy: counts.get("busy") ?? 0,
+    error: counts.get("error") ?? 0,
+  };
+}
+
+/** Completes every framed-protocol counter without a dynamic record assertion. */
+function createFramedProtocolErrorCountRecord(
+  counts: ReadonlyMap<RelayFramedProtocolErrorReason, number>,
+): Record<RelayFramedProtocolErrorReason, number> {
+  return {
+    "invalid-wire": counts.get("invalid-wire") ?? 0,
+    "decrypt-failed": counts.get("decrypt-failed") ?? 0,
+    "invalid-envelope": counts.get("invalid-envelope") ?? 0,
+    "decode-failed": counts.get("decode-failed") ?? 0,
+    "receive-high-water": counts.get("receive-high-water") ?? 0,
+  };
 }
 
 /** Returns deterministic p50, p95, and max values for duration samples. */
 function summarizeDurations(samples: readonly number[]): RelayDurationSummary {
   const sorted = [...samples].sort((left, right) => left - right);
   return {
-    p50: percentile(sorted, 0.5),
-    p95: percentile(sorted, 0.95),
+    p50: percentile({ sorted, quantile: 0.5 }),
+    p95: percentile({ sorted, quantile: 0.95 }),
     max: sorted.at(-1) ?? 0,
   };
 }
@@ -865,13 +910,14 @@ function summarizeDurations(samples: readonly number[]): RelayDurationSummary {
 function summarizeByteSamples(samples: readonly number[]): { p95: number; max: number } {
   const sorted = [...samples].sort((left, right) => left - right);
   return {
-    p95: percentile(sorted, 0.95),
+    p95: percentile({ sorted, quantile: 0.95 }),
     max: sorted.at(-1) ?? 0,
   };
 }
 
 /** Selects a nearest-rank percentile from an already sorted sample set. */
-function percentile(sorted: readonly number[], quantile: number): number {
+function percentile(options: PercentileOptions): number {
+  const { sorted, quantile } = options;
   if (sorted.length === 0) return 0;
   const index = Math.max(0, Math.ceil(sorted.length * quantile) - 1);
   return sorted[index] ?? 0;
@@ -890,6 +936,7 @@ function normalizeByteCount(value: number): number {
 }
 
 /** Orders bounded metric rows without depending on map insertion timing. */
-function compareMetricRows(left: object, right: object): number {
+function compareMetricRows(options: CompareMetricRowsOptions): number {
+  const { left, right } = options;
   return JSON.stringify(left).localeCompare(JSON.stringify(right));
 }

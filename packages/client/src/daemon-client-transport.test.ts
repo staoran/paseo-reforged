@@ -14,6 +14,8 @@ const createClientChannelMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@getpaseo/relay/e2ee", () => ({
   createClientChannel: createClientChannelMock,
+  // Production resolves decoder capability when the transport module loads.
+  createFflateFrameCompressionAdapter: () => ({ inflateRaw: vi.fn() }),
 }));
 
 describe("daemon-client transport helpers", () => {
@@ -24,8 +26,8 @@ describe("daemon-client transport helpers", () => {
     let openHandler: (() => void) | null = null;
     const close = vi.fn();
 
-    createEncryptedTransport(
-      {
+    createEncryptedTransport({
+      base: {
         send: vi.fn(),
         close,
         onOpen: (handler) => {
@@ -40,9 +42,9 @@ describe("daemon-client transport helpers", () => {
         onError: () => () => {},
         onMessage: () => () => {},
       },
-      "daemon-public-key",
-      { warn: vi.fn() },
-    );
+      daemonPublicKeyB64: "daemon-public-key",
+      logger: { warn: vi.fn() },
+    });
 
     expect(openHandler).not.toBeNull();
     openHandler?.();

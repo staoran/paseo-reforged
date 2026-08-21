@@ -307,33 +307,37 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
           try {
             let pingSent = false;
             let channelRef: Awaited<ReturnType<typeof createClientChannel>> | null = null;
-            const channel = await createClientChannel(transport, daemonPublicKeyB64, {
-              onmessage: (data) => {
-                try {
-                  const payload = typeof data === "string" ? JSON.parse(data) : data;
-                  const wsMsg = WSOutboundMessageSchema.safeParse(payload);
-                  if (
-                    wsMsg.success &&
-                    wsMsg.data.type === "session" &&
-                    wsMsg.data.message.type === "status" &&
-                    wsMsg.data.message.payload?.status === "server_info"
-                  ) {
-                    if (!pingSent && channelRef) {
-                      pingSent = true;
-                      void channelRef.send(JSON.stringify({ type: "ping" }));
+            const channel = await createClientChannel({
+              transport,
+              daemonPublicKeyB64,
+              events: {
+                onmessage: (data) => {
+                  try {
+                    const payload = typeof data === "string" ? JSON.parse(data) : data;
+                    const wsMsg = WSOutboundMessageSchema.safeParse(payload);
+                    if (
+                      wsMsg.success &&
+                      wsMsg.data.type === "session" &&
+                      wsMsg.data.message.type === "status" &&
+                      wsMsg.data.message.payload?.status === "server_info"
+                    ) {
+                      if (!pingSent && channelRef) {
+                        pingSent = true;
+                        void channelRef.send(JSON.stringify({ type: "ping" }));
+                      }
+                      return;
                     }
-                    return;
+                    if (wsMsg.success && wsMsg.data.type === "pong") {
+                      settleResolve(wsMsg.data);
+                      ws.close();
+                    }
+                  } catch (err) {
+                    settleReject(err);
                   }
-                  if (wsMsg.success && wsMsg.data.type === "pong") {
-                    settleResolve(wsMsg.data);
-                    ws.close();
-                  }
-                } catch (err) {
+                },
+                onerror: (err) => {
                   settleReject(err);
-                }
-              },
-              onerror: (err) => {
-                settleReject(err);
+                },
               },
             });
             channelRef = channel;
@@ -455,31 +459,35 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
           try {
             let pingSent = false;
             let channelRef: Awaited<ReturnType<typeof createClientChannel>> | null = null;
-            const channel = await createClientChannel(transport, daemonPublicKeyB64, {
-              onmessage: (data) => {
-                const payload = typeof data === "string" ? JSON.parse(data) : data;
-                const wsMsg = WSOutboundMessageSchema.safeParse(payload);
-                if (
-                  wsMsg.success &&
-                  wsMsg.data.type === "session" &&
-                  wsMsg.data.message.type === "status" &&
-                  wsMsg.data.message.payload?.status === "server_info"
-                ) {
-                  if (!pingSent && channelRef) {
-                    pingSent = true;
-                    void channelRef.send(JSON.stringify({ type: "ping" }));
+            const channel = await createClientChannel({
+              transport,
+              daemonPublicKeyB64,
+              events: {
+                onmessage: (data) => {
+                  const payload = typeof data === "string" ? JSON.parse(data) : data;
+                  const wsMsg = WSOutboundMessageSchema.safeParse(payload);
+                  if (
+                    wsMsg.success &&
+                    wsMsg.data.type === "session" &&
+                    wsMsg.data.message.type === "status" &&
+                    wsMsg.data.message.payload?.status === "server_info"
+                  ) {
+                    if (!pingSent && channelRef) {
+                      pingSent = true;
+                      void channelRef.send(JSON.stringify({ type: "ping" }));
+                    }
+                    return;
                   }
-                  return;
-                }
-                if (wsMsg.success && wsMsg.data.type === "pong") {
+                  if (wsMsg.success && wsMsg.data.type === "pong") {
+                    clearTimeout(timeout);
+                    resolve(wsMsg.data);
+                    ws.close();
+                  }
+                },
+                onerror: (err) => {
                   clearTimeout(timeout);
-                  resolve(wsMsg.data);
-                  ws.close();
-                }
-              },
-              onerror: (err) => {
-                clearTimeout(timeout);
-                reject(err);
+                  reject(err);
+                },
               },
             });
             channelRef = channel;

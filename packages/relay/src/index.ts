@@ -23,6 +23,8 @@ export type {
   CiphertextEncoding,
   ClientChannelOptions,
   ConfiguredCiphertextEncoding,
+  CreateClientChannelOptions,
+  CreateDaemonChannelOptions,
   DaemonChannelOptions,
   EncryptedChannelEvents,
   NegotiatedEncryptedTransport,

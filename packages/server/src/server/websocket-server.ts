@@ -1332,10 +1332,8 @@ export class VoiceAssistantWebSocketServer {
         if (!connection) {
           return null;
         }
-        // Relay-attached sockets are a WebSocketLike that doesn't expose
-        // bufferedAmount. Return null when no socket gives a signal so the
-        // terminal fallback can't mistake "no signal" for "client keeping up";
-        // a direct ws reports its real buffered bytes (0 when drained).
+        // Direct sockets expose physical bytes; encrypted relay sockets also include
+        // framed preparation/FIFO reservations. Null means no socket supplied a signal.
         let maxBuffered: number | null = null;
         for (const socket of connection.sockets) {
           if (typeof socket.bufferedAmount === "number") {

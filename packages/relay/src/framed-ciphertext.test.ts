@@ -164,7 +164,10 @@ function startDaemonFramedHandshake(args: {
     onerror: null,
   };
   // Public daemon channel promise whose resolution represents application attach.
-  const channelPromise = createDaemonChannel(transport, daemonKeyPair, args.events, {
+  const channelPromise = createDaemonChannel({
+    transport,
+    daemonKeyPair,
+    events: args.events,
     ciphertextEncoding: args.configuredEncoding ?? "auto",
     compressionAlgorithms: args.daemonCompressionAlgorithms,
   });
@@ -219,6 +222,13 @@ function buildIdentityEnvelope(binary: boolean, payload: readonly number[]): Arr
   new DataView(envelope.buffer).setUint32(4, payload.length, false);
   envelope.set(payload, 8);
   return envelope.buffer;
+}
+
+/** Parses an observed plaintext handshake frame after checking its wire representation. */
+function parseTextHandshakeFrame(frame: string | ArrayBuffer | undefined): unknown {
+  if (typeof frame !== "string") throw new Error("Expected a plaintext handshake frame");
+  const message: unknown = JSON.parse(frame);
+  return message;
 }
 
 /** Observes a public promise after all microtasks in the current transport turn can settle. */
@@ -289,21 +299,19 @@ async function openClientFramedChannel(args: {
     onerror: null,
   };
   // Client channel observed only through its public factory and events.
-  const channel = await createClientChannel(
+  const channel = await createClientChannel({
     transport,
-    exportPublicKey(daemonKeyPair.publicKey),
-    {
+    daemonPublicKeyB64: exportPublicKey(daemonKeyPair.publicKey),
+    events: {
       ...args.events,
       onopen: () => {
         args.events?.onopen?.();
         resolveOpened?.();
       },
     },
-    {
-      compressionAdapter: args.compressionAdapter,
-      runtimeObserver: args.runtimeObserver,
-    },
-  );
+    compressionAdapter: args.compressionAdapter,
+    runtimeObserver: args.runtimeObserver,
+  });
   // Client hello carrying the ephemeral key for independent key derivation.
   const hello = JSON.parse(sent[0] as string) as { key: string };
   // Shared key independently derived on the synthetic daemon side.
@@ -554,8 +562,10 @@ describe("framed ciphertext v1 contract", () => {
       onerror: null,
     };
     // Client channel under test.
-    const channel = await createClientChannel(transport, exportPublicKey(daemonKeyPair.publicKey), {
-      onopen: () => resolveOpen?.(),
+    const channel = await createClientChannel({
+      transport,
+      daemonPublicKeyB64: exportPublicKey(daemonKeyPair.publicKey),
+      events: { onopen: () => resolveOpen?.() },
     });
     // First client wire frame is the plaintext capability offer.
     const hello = JSON.parse(
@@ -595,12 +605,12 @@ describe("framed ciphertext v1 contract", () => {
     // Runtime decoder whose presence gates the advertised codec.
     const compressionAdapter = { inflateRaw: vi.fn(async () => new ArrayBuffer(0)) };
     // Client channel under test.
-    const channel = await createClientChannel(
+    const channel = await createClientChannel({
       transport,
-      exportPublicKey(daemonKeyPair.publicKey),
-      { onopen: () => resolveOpen?.() },
-      { compressionAdapter },
-    );
+      daemonPublicKeyB64: exportPublicKey(daemonKeyPair.publicKey),
+      events: { onopen: () => resolveOpen?.() },
+      compressionAdapter,
+    });
     // First client wire frame is the plaintext capability offer.
     const hello = JSON.parse(
       (transport.send as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as string,
@@ -641,12 +651,12 @@ describe("framed ciphertext v1 contract", () => {
     // Runtime decoder whose presence authorizes the selected codec.
     const compressionAdapter = { inflateRaw: vi.fn(async () => new ArrayBuffer(0)) };
     // Client channel under test.
-    const channel = await createClientChannel(
+    const channel = await createClientChannel({
       transport,
-      exportPublicKey(daemonKeyPair.publicKey),
-      { onopen: () => resolveOutcome?.("opened") },
-      { compressionAdapter },
-    );
+      daemonPublicKeyB64: exportPublicKey(daemonKeyPair.publicKey),
+      events: { onopen: () => resolveOutcome?.("opened") },
+      compressionAdapter,
+    });
     // Client hello carrying the ephemeral key used for independent confirm inspection.
     const hello = JSON.parse(sent[0] as string) as { key: string };
     // Shared key independently derived on the synthetic daemon side.
@@ -896,7 +906,10 @@ describe("framed ciphertext v1 contract", () => {
       onerror: null,
     };
     // New client always offers framed-v1, even without a compression decoder.
-    const channel = await createClientChannel(transport, exportPublicKey(daemonKeyPair.publicKey));
+    const channel = await createClientChannel({
+      transport,
+      daemonPublicKeyB64: exportPublicKey(daemonKeyPair.publicKey),
+    });
 
     // Ready and all following wires arrive before the receive promise tail runs.
     deliverFramedBinaryReady(transport);
@@ -1124,6 +1137,118 @@ describe("framed ciphertext v1 contract", () => {
     expect(new TextDecoder().decode(plaintext.slice(8))).toBe(original);
   });
 
+  it("closes when ready selects more than 16 compression tokens", async () => {
+    /** Daemon identity transferred to the client through the pairing channel. */
+    const daemonKeyPair = generateKeyPair();
+    /** Completion signal for protocol close or an incorrect framed open transition. */
+    let resolveOutcome: ((outcome: "closed" | "opened") => void) | null = null;
+    /** First public decision after the oversized selection arrives. */
+    const outcome = new Promise<"closed" | "opened">((resolve) => {
+      resolveOutcome = resolve;
+    });
+    /** Captured physical close operation for bounded selection rejection. */
+    const close = vi.fn(() => resolveOutcome?.("closed"));
+    /** All client writes used to prove no confirm is emitted for an oversized selection. */
+    const sent: (string | ArrayBuffer)[] = [];
+    /** Public transport seam for the client handshake under test. */
+    const transport: Transport = {
+      send: (data) => sent.push(data),
+      close,
+      onmessage: null,
+      onclose: null,
+      onerror: null,
+    };
+    /** Real decoder makes deflate-raw an offered token before the peer repeats it. */
+    const compressionAdapter = createFflateFrameCompressionAdapter();
+    const channel = await createClientChannel({
+      transport,
+      daemonPublicKeyB64: exportPublicKey(daemonKeyPair.publicKey),
+      events: { onopen: () => resolveOutcome?.("opened") },
+      compressionAdapter,
+    });
+
+    transport.onmessage?.({
+      data: JSON.stringify({
+        type: "e2ee_ready",
+        capabilities: {
+          binaryCiphertext: true,
+          framedCiphertextV1: {
+            ciphertextEncoding: "binary",
+            compressionAlgorithms: Array.from({ length: 17 }, () => "deflate-raw"),
+          },
+        },
+      }),
+      isBinary: false,
+    });
+    const firstOutcome = await outcome;
+    const observed = {
+      firstOutcome,
+      sentCount: sent.length,
+      closeCallCount: close.mock.calls.length,
+      channelOpen: channel.isOpen(),
+    };
+    if (channel.isOpen()) channel.close();
+
+    expect(observed).toEqual({
+      firstOutcome: "closed",
+      sentCount: 1,
+      closeCallCount: 1,
+      channelOpen: false,
+    });
+  });
+
+  it("closes when ready contains a compression token longer than 64 UTF-16 code units", async () => {
+    /** Daemon identity transferred to the client through the pairing channel. */
+    const daemonKeyPair = generateKeyPair();
+    /** Physical close result exposing which validation gate rejected the ready frame. */
+    let resolveClose: ((result: { code?: number; reason?: string }) => void) | null = null;
+    /** Close promise prevents an unexpected confirm path from hanging the test. */
+    const closed = new Promise<{ code?: number; reason?: string }>((resolve) => {
+      resolveClose = resolve;
+    });
+    /** All client writes used to prove no confirm is emitted for the oversized token. */
+    const sent: (string | ArrayBuffer)[] = [];
+    /** Public transport seam for the client handshake under test. */
+    const transport: Transport = {
+      send: (data) => sent.push(data),
+      close: (code, reason) => resolveClose?.({ code, reason }),
+      onmessage: null,
+      onclose: null,
+      onerror: null,
+    };
+    const channel = await createClientChannel({
+      transport,
+      daemonPublicKeyB64: exportPublicKey(daemonKeyPair.publicKey),
+    });
+
+    transport.onmessage?.({
+      data: JSON.stringify({
+        type: "e2ee_ready",
+        capabilities: {
+          binaryCiphertext: true,
+          framedCiphertextV1: {
+            ciphertextEncoding: "binary",
+            compressionAlgorithms: ["x".repeat(65)],
+          },
+        },
+      }),
+      isBinary: false,
+    });
+    const closeResult = await closed;
+    const observed = {
+      closeResult,
+      sentCount: sent.length,
+      channelOpen: channel.isOpen(),
+    };
+    if (channel.isOpen()) channel.close();
+
+    expect(observed).toEqual({
+      closeResult: { code: 1011, reason: "Invalid framed-v1 compression selection" },
+      sentCount: 1,
+      channelOpen: false,
+    });
+  });
+
   it.each([
     {
       selectionViolation: "an unoffered compression algorithm",
@@ -1161,8 +1286,10 @@ describe("framed ciphertext v1 contract", () => {
       onerror: null,
     };
     // Client advertises an empty compression decoder list in its hello.
-    const channel = await createClientChannel(transport, exportPublicKey(daemonKeyPair.publicKey), {
-      onopen: () => resolveOutcome?.("opened"),
+    const channel = await createClientChannel({
+      transport,
+      daemonPublicKeyB64: exportPublicKey(daemonKeyPair.publicKey),
+      events: { onopen: () => resolveOutcome?.("opened") },
     });
 
     // Present but unauthorized selection must fail closed instead of becoming a legacy ready.
@@ -1202,7 +1329,7 @@ describe("framed ciphertext v1 contract", () => {
     await fixture.readySent;
 
     // Selection is asserted before confirm so an incorrect ready cannot strand the test pending.
-    expect(JSON.parse(fixture.sent[0] as string)).toEqual({
+    expect(parseTextHandshakeFrame(fixture.sent[0])).toEqual({
       type: "e2ee_ready",
       capabilities: {
         binaryCiphertext: true,
@@ -1264,7 +1391,7 @@ describe("framed ciphertext v1 contract", () => {
     await fixture.readySent;
 
     // Base64 selection deliberately omits the legacy binary capability echo.
-    expect(JSON.parse(fixture.sent[0] as string)).toEqual({
+    expect(parseTextHandshakeFrame(fixture.sent[0])).toEqual({
       type: "e2ee_ready",
       capabilities: {
         framedCiphertextV1: {
@@ -1301,7 +1428,7 @@ describe("framed ciphertext v1 contract", () => {
     await fixture.readySent;
     const daemonChannel = await fixture.channelPromise;
     const observed = {
-      ready: JSON.parse(fixture.sent[0] as string),
+      ready: parseTextHandshakeFrame(fixture.sent[0]),
       channelOpen: daemonChannel.isOpen(),
     };
     if (daemonChannel.isOpen()) daemonChannel.close();
@@ -1315,6 +1442,48 @@ describe("framed ciphertext v1 contract", () => {
     });
   });
 
+  it("treats a framed offer with more than 16 encoding tokens as absent", async () => {
+    /** Seventeen additive encoding tokens exceed the bounded offer contract. */
+    const ciphertextEncodings = Array.from({ length: 17 }, () => "base64");
+    const fixture = startDaemonFramedHandshake({
+      ciphertextEncodings: [],
+      framedOffer: {
+        ciphertextEncodings,
+        compressionAlgorithms: [],
+      },
+    });
+    await fixture.readySent;
+
+    expect(parseTextHandshakeFrame(fixture.sent[0])).toEqual({
+      type: "e2ee_ready",
+      capabilities: { binaryCiphertext: true },
+    });
+    const daemonChannel = await fixture.channelPromise;
+    expect(daemonChannel.isOpen()).toBe(true);
+    daemonChannel.close();
+  });
+
+  it("treats a framed offer with a token longer than 64 UTF-16 code units as absent", async () => {
+    /** One oversized additive codec token exercises the per-token offer bound. */
+    const oversizedAlgorithm = "x".repeat(65);
+    const fixture = startDaemonFramedHandshake({
+      ciphertextEncodings: [],
+      framedOffer: {
+        ciphertextEncodings: ["base64"],
+        compressionAlgorithms: [oversizedAlgorithm],
+      },
+    });
+    await fixture.readySent;
+
+    expect(parseTextHandshakeFrame(fixture.sent[0])).toEqual({
+      type: "e2ee_ready",
+      capabilities: { binaryCiphertext: true },
+    });
+    const daemonChannel = await fixture.channelPromise;
+    expect(daemonChannel.isOpen()).toBe(true);
+    daemonChannel.close();
+  });
+
   it("ignores unknown offer tokens and selects the remaining framed Base64 capability", async () => {
     // Unknown additive tokens surround the one encoding implemented by both peers.
     const fixture = startDaemonFramedHandshake({
@@ -1325,7 +1494,7 @@ describe("framed ciphertext v1 contract", () => {
       },
     });
     await fixture.readySent;
-    expect(JSON.parse(fixture.sent[0] as string)).toEqual({
+    expect(parseTextHandshakeFrame(fixture.sent[0])).toEqual({
       type: "e2ee_ready",
       capabilities: {
         framedCiphertextV1: {
@@ -1442,7 +1611,7 @@ describe("framed ciphertext v1 contract", () => {
       });
       await fixture.readySent;
 
-      expect(JSON.parse(fixture.sent[0] as string)).toEqual(expectedReady);
+      expect(parseTextHandshakeFrame(fixture.sent[0])).toEqual(expectedReady);
 
       if (confirmEncoding !== null) {
         // Framed selection requires the exact authenticated echo before attach.
@@ -1470,7 +1639,7 @@ describe("framed ciphertext v1 contract", () => {
     // Legacy negotiation attaches immediately and retains the separately offered binary capability.
     const daemonChannel = await fixture.channelPromise;
     const observed = {
-      ready: JSON.parse(fixture.sent[0] as string),
+      ready: parseTextHandshakeFrame(fixture.sent[0]),
       channelOpen: daemonChannel.isOpen(),
     };
     if (daemonChannel.isOpen()) daemonChannel.close();
@@ -1526,7 +1695,7 @@ describe("framed ciphertext v1 contract", () => {
         },
       });
       await fixture.readySent;
-      expect(JSON.parse(fixture.sent[0] as string)).toEqual({
+      expect(parseTextHandshakeFrame(fixture.sent[0])).toEqual({
         type: "e2ee_ready",
         capabilities: expectedCapabilities,
       });
@@ -2126,8 +2295,10 @@ describe("framed ciphertext v1 contract", () => {
       onerror: null,
     };
     // Client channel under test.
-    const channel = await createClientChannel(transport, exportPublicKey(daemonKeyPair.publicKey), {
-      onopen: () => resolveOpen?.(),
+    const channel = await createClientChannel({
+      transport,
+      daemonPublicKeyB64: exportPublicKey(daemonKeyPair.publicKey),
+      events: { onopen: () => resolveOpen?.() },
     });
     // Client hello supplies the ephemeral key needed for independent decryption.
     const hello = JSON.parse(
@@ -2214,11 +2385,15 @@ describe("framed ciphertext v1 contract", () => {
       onerror: null,
     };
     // Framed client observed only through channel events.
-    const channel = await createClientChannel(transport, exportPublicKey(daemonKeyPair.publicKey), {
-      onopen: () => resolveOpen?.(),
-      onmessage: (data) => {
-        received.push(data);
-        resolveReceived?.();
+    const channel = await createClientChannel({
+      transport,
+      daemonPublicKeyB64: exportPublicKey(daemonKeyPair.publicKey),
+      events: {
+        onopen: () => resolveOpen?.(),
+        onmessage: (data) => {
+          received.push(data);
+          resolveReceived?.();
+        },
       },
     });
     // Client hello carrying the ephemeral key for independent daemon encryption.
@@ -2268,11 +2443,15 @@ describe("framed ciphertext v1 contract", () => {
       onerror: null,
     };
     // Framed client observed only through channel events.
-    const channel = await createClientChannel(transport, exportPublicKey(daemonKeyPair.publicKey), {
-      onopen: () => resolveOpen?.(),
-      onmessage: (data) => {
-        received.push(data);
-        resolveReceived?.();
+    const channel = await createClientChannel({
+      transport,
+      daemonPublicKeyB64: exportPublicKey(daemonKeyPair.publicKey),
+      events: {
+        onopen: () => resolveOpen?.(),
+        onmessage: (data) => {
+          received.push(data);
+          resolveReceived?.();
+        },
       },
     });
     // Client hello carrying the ephemeral key for independent daemon encryption.
@@ -2323,9 +2502,13 @@ describe("framed ciphertext v1 contract", () => {
       onclose: null,
       onerror: null,
     };
-    const channel = await createClientChannel(transport, exportPublicKey(daemonKeyPair.publicKey), {
-      onopen: () => resolveOutcome?.("opened"),
-      onerror: (error) => errors.push(error.message),
+    const channel = await createClientChannel({
+      transport,
+      daemonPublicKeyB64: exportPublicKey(daemonKeyPair.publicKey),
+      events: {
+        onopen: () => resolveOutcome?.("opened"),
+        onerror: (error) => errors.push(error.message),
+      },
     });
 
     deliverFramedBinaryReady(transport);
@@ -2549,11 +2732,15 @@ describe("framed ciphertext v1 contract", () => {
       onerror: null,
     };
     // Client channel whose application callback is the observed public boundary.
-    const channel = await createClientChannel(transport, exportPublicKey(daemonKeyPair.publicKey), {
-      onopen: () => resolveOpened?.(),
-      onmessage: (data) => {
-        receivedMessages.push(data);
-        resolveReceived?.();
+    const channel = await createClientChannel({
+      transport,
+      daemonPublicKeyB64: exportPublicKey(daemonKeyPair.publicKey),
+      events: {
+        onopen: () => resolveOpened?.(),
+        onmessage: (data) => {
+          receivedMessages.push(data);
+          resolveReceived?.();
+        },
       },
     });
     // Client hello carrying the ephemeral key for independent encryption.
@@ -2602,9 +2789,13 @@ describe("framed ciphertext v1 contract", () => {
     };
     // Client reference used by the public onopen callback.
     let channel: Awaited<ReturnType<typeof createClientChannel>> | null = null;
-    channel = await createClientChannel(transport, exportPublicKey(daemonKeyPair.publicKey), {
-      onopen: () => {
-        void channel?.send("from-onopen");
+    channel = await createClientChannel({
+      transport,
+      daemonPublicKeyB64: exportPublicKey(daemonKeyPair.publicKey),
+      events: {
+        onopen: () => {
+          void channel?.send("from-onopen");
+        },
       },
     });
     // Client hello carrying the ephemeral key for independent wire decryption.
@@ -2671,11 +2862,15 @@ describe("framed ciphertext v1 contract", () => {
       onerror: null,
     };
     // Client channel observed only through its public events.
-    const channel = await createClientChannel(transport, exportPublicKey(daemonKeyPair.publicKey), {
-      onopen: () => resolveOpened?.(),
-      onmessage: (data) => {
-        received.push(data);
-        resolveReceived?.();
+    const channel = await createClientChannel({
+      transport,
+      daemonPublicKeyB64: exportPublicKey(daemonKeyPair.publicKey),
+      events: {
+        onopen: () => resolveOpened?.(),
+        onmessage: (data) => {
+          received.push(data);
+          resolveReceived?.();
+        },
       },
     });
     // Client hello carrying the ephemeral key for independent encryption.
@@ -2740,10 +2935,14 @@ describe("framed ciphertext v1 contract", () => {
       onerror: null,
     };
     // Client channel whose transition remains pending during duplicate ready delivery.
-    const channel = await createClientChannel(transport, exportPublicKey(daemonKeyPair.publicKey), {
-      onopen: () => {
-        openCount += 1;
-        resolveOpened?.();
+    const channel = await createClientChannel({
+      transport,
+      daemonPublicKeyB64: exportPublicKey(daemonKeyPair.publicKey),
+      events: {
+        onopen: () => {
+          openCount += 1;
+          resolveOpened?.();
+        },
       },
     });
 
@@ -2823,7 +3022,7 @@ describe("framed ciphertext v1 contract", () => {
     deliverLegacyEncryptedText(fixture, confirmText);
     await closed;
     const observed = {
-      ready: JSON.parse(fixture.sent[0] as string),
+      ready: parseTextHandshakeFrame(fixture.sent[0]),
       daemonMessages,
       closeCallCount: close.mock.calls.length,
       channelOpen: daemonChannel.isOpen(),
@@ -2871,10 +3070,14 @@ describe("framed ciphertext v1 contract", () => {
       onerror: null,
     };
     // Public daemon channel that must reserve confirm messages in every state.
-    const daemonChannelPromise = createDaemonChannel(daemonTransport, daemonKeyPair, {
-      onmessage: (data) => {
-        daemonMessages.push(data);
-        resolveDaemonOutcome?.("application");
+    const daemonChannelPromise = createDaemonChannel({
+      transport: daemonTransport,
+      daemonKeyPair,
+      events: {
+        onmessage: (data) => {
+          daemonMessages.push(data);
+          resolveDaemonOutcome?.("application");
+        },
       },
     });
     daemonTransport.onmessage?.({

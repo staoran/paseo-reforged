@@ -38,6 +38,14 @@ export interface RelayTrafficHint {
   compressible?: boolean;
 }
 
+/** One content-free sample of encrypted-socket FIFO wait. */
+export interface RelaySendFifoWaitSample {
+  /** Sender-side semantic traffic class. */
+  trafficClass: RelayTrafficClass;
+  /** Wall time from send invocation until the ordered send operation starts. */
+  durationMs: number;
+}
+
 /** Effective framed policy fixed for one daemon data connection. */
 export interface DaemonFrameCompressionPolicy {
   /** Runtime compression switch after config resolution. */
@@ -64,6 +72,16 @@ export type CompressionSkipReason =
 export interface DaemonFrameCompressionCodec
   extends FrameCompressionEncoder, FrameCompressionAdapter {}
 
+/** Inputs needed to prepare one daemon relay frame before encryption. */
+export interface PrepareDaemonFramedPayloadOptions {
+  /** Original application payload. */
+  data: string | ArrayBuffer;
+  /** Sender-side semantic traffic classification. */
+  hint: RelayTrafficHint;
+  /** Effective framed policy locked for this connection. */
+  policy: DaemonFrameCompressionPolicy;
+}
+
 /** Prepared authenticated payload and exact eventual wire metadata. */
 export interface PreparedDaemonFramedPayload extends PreparedFramedPayload {
   /** Exact WebSocket ciphertext length after encryption and locked representation. */
@@ -85,11 +103,27 @@ export interface PreparedDaemonFramedPayload extends PreparedFramedPayload {
 /** Daemon compression coordinator sharing one process-wide non-waiting job gate. */
 export interface DaemonFrameCompression {
   /** Prepares one authenticated payload without encrypting or sending it. */
-  prepare(
-    data: string | ArrayBuffer,
-    hint: RelayTrafficHint,
-    policy: DaemonFrameCompressionPolicy,
-  ): Promise<PreparedDaemonFramedPayload>;
+  prepare(options: PrepareDaemonFramedPayloadOptions): Promise<PreparedDaemonFramedPayload>;
+}
+
+interface ResolvePreCompressionSkipReasonOptions {
+  /** Original application payload bytes. */
+  byteLength: number;
+  /** Sender-side semantic traffic classification. */
+  hint: RelayTrafficHint;
+  /** Effective framed policy locked for this connection. */
+  policy: DaemonFrameCompressionPolicy;
+}
+
+interface PrepareIdentityFallbackOptions extends PrepareDaemonFramedPayloadOptions {
+  /** Stable reason identity replaced compression. */
+  skipReason: CompressionSkipReason;
+  /** Monotonic start of the full preparation operation. */
+  prepareStartedAt: number;
+  /** Raw codec callback wall time when the adapter was entered. */
+  codecMs: number | null;
+  /** Monotonic clock used to finish the preparation duration. */
+  clock: () => number;
 }
 
 /** Copies a Node buffer view into a standalone cross-runtime ArrayBuffer. */
@@ -141,10 +175,9 @@ export function createNodeRawDeflateCodec(): DaemonFrameCompressionCodec {
 
 /** Resolves a policy or traffic reason that forbids entering the compressor. */
 function resolvePreCompressionSkipReason(
-  byteLength: number,
-  hint: RelayTrafficHint,
-  policy: DaemonFrameCompressionPolicy,
+  options: ResolvePreCompressionSkipReasonOptions,
 ): CompressionSkipReason | null {
+  const { byteLength, hint, policy } = options;
   if (!policy.compressionEnabled) return "configured-disabled";
   if (!policy.negotiatedCompressionAlgorithms.includes("deflate-raw")) {
     return "peer-unsupported";
@@ -166,18 +199,9 @@ function resolvePreCompressionSkipReason(
 
 /** Wraps the original bytes in identity while retaining preparation metadata. */
 function prepareIdentityFallback(
-  data: string | ArrayBuffer,
-  hint: RelayTrafficHint,
-  policy: DaemonFrameCompressionPolicy,
-  skipReason: CompressionSkipReason,
-  timing: {
-    /** Monotonic start of the full preparation operation. */
-    prepareStartedAt: number;
-    /** Raw codec callback wall time when the adapter was entered. */
-    codecMs: number | null;
-  },
-  clock: () => number,
+  options: PrepareIdentityFallbackOptions,
 ): PreparedDaemonFramedPayload {
+  const { data, hint, policy, skipReason, prepareStartedAt, codecMs, clock } = options;
   // Authenticated identity envelope used for every safe compression fallback.
   const prepared = prepareIdentityFramedPayload(data);
   return {
@@ -189,9 +213,9 @@ function prepareIdentityFallback(
     ciphertextEncoding: policy.ciphertextEncoding,
     trafficClass: hint.trafficClass,
     skipReason,
-    compressionAttempted: timing.codecMs !== null,
-    prepareMs: elapsedMs(timing.prepareStartedAt, clock()),
-    codecMs: timing.codecMs,
+    compressionAttempted: codecMs !== null,
+    prepareMs: elapsedMs(prepareStartedAt, clock()),
+    codecMs,
   };
 }
 
@@ -205,32 +229,38 @@ export function createDaemonFrameCompression(options: {
   /** Monotonic clock shared by every preparation owned by this coordinator. */
   const clock = options.clock ?? defaultMonotonicClock;
   return {
-    prepare: async (data, hint, policy) => {
+    prepare: async ({ data, hint, policy }) => {
       /** Monotonic start retained only for content-free wall-time metrics. */
       const prepareStartedAt = clock();
       // Logical application bytes passed unchanged to the codec boundary.
       const originalBytes = typeof data === "string" ? new TextEncoder().encode(data).buffer : data;
       // Eligibility result computed before consuming a daemon compression slot.
-      const skipReason = resolvePreCompressionSkipReason(originalBytes.byteLength, hint, policy);
+      const skipReason = resolvePreCompressionSkipReason({
+        byteLength: originalBytes.byteLength,
+        hint,
+        policy,
+      });
       if (skipReason) {
-        return prepareIdentityFallback(
+        return prepareIdentityFallback({
           data,
           hint,
           policy,
           skipReason,
-          { prepareStartedAt, codecMs: null },
+          prepareStartedAt,
+          codecMs: null,
           clock,
-        );
+        });
       }
       if (activeDaemonCompressionJobs >= MAX_CONCURRENT_DAEMON_COMPRESSION_JOBS) {
-        return prepareIdentityFallback(
+        return prepareIdentityFallback({
           data,
           hint,
           policy,
-          "busy",
-          { prepareStartedAt, codecMs: null },
+          skipReason: "busy",
+          prepareStartedAt,
+          codecMs: null,
           clock,
-        );
+        });
       }
       activeDaemonCompressionJobs += 1;
       try {
@@ -245,27 +275,29 @@ export function createDaemonFrameCompression(options: {
           codecMs = elapsedMs(codecStartedAt, clock());
         } catch {
           codecMs = elapsedMs(codecStartedAt, clock());
-          return prepareIdentityFallback(
+          return prepareIdentityFallback({
             data,
             hint,
             policy,
-            "error",
-            { prepareStartedAt, codecMs },
+            skipReason: "error",
+            prepareStartedAt,
+            codecMs,
             clock,
-          );
+          });
         }
         if (
           compressed.byteLength === 0 ||
           originalBytes.byteLength > compressed.byteLength * MAX_COMPRESSION_RATIO
         ) {
-          return prepareIdentityFallback(
+          return prepareIdentityFallback({
             data,
             hint,
             policy,
-            "ratio",
-            { prepareStartedAt, codecMs },
+            skipReason: "ratio",
+            prepareStartedAt,
+            codecMs,
             clock,
-          );
+          });
         }
         // Required reduction combining the fixed and proportional policy gates.
         const requiredSavings = Math.max(
@@ -273,28 +305,30 @@ export function createDaemonFrameCompression(options: {
           Math.ceil(originalBytes.byteLength * MIN_COMPRESSION_SAVINGS_RATIO),
         );
         if (compressed.byteLength > originalBytes.byteLength - requiredSavings) {
-          return prepareIdentityFallback(
+          return prepareIdentityFallback({
             data,
             hint,
             policy,
-            "no-gain",
-            { prepareStartedAt, codecMs },
+            skipReason: "no-gain",
+            prepareStartedAt,
+            codecMs,
             clock,
-          );
+          });
         }
         // Authenticated envelope prepared exactly once before the later encryption stage.
         let prepared: PreparedFramedPayload;
         try {
           prepared = prepareDeflateFramedPayload(data, compressed);
         } catch {
-          return prepareIdentityFallback(
+          return prepareIdentityFallback({
             data,
             hint,
             policy,
-            "error",
-            { prepareStartedAt, codecMs },
+            skipReason: "error",
+            prepareStartedAt,
+            codecMs,
             clock,
-          );
+          });
         }
         return {
           ...prepared,

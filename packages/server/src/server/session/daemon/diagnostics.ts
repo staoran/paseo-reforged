@@ -338,11 +338,11 @@ function collectWebSocketRuntimeEntries(options: DaemonDiagnosticsOptions): Diag
       value: formatRelayAlgorithmTiming(snapshot.relayTransport.compressionPrepareMs),
     },
     {
-      label: "Relay queue timing",
+      label: "Relay send FIFO timing",
       value: formatRelayTrafficTiming(snapshot.relayTransport.compressionQueueMs),
     },
     {
-      label: "Relay codec timing",
+      label: "Relay codec callback wall timing",
       value: formatRelayAlgorithmTiming(snapshot.relayTransport.compressionCodecMs),
     },
     {

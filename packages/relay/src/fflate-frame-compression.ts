@@ -5,7 +5,7 @@ import {
   type FrameCompressionEncoder,
 } from "./framed-ciphertext.js";
 
-/** Portable raw DEFLATE codec used by browser and Hermes clients. */
+/** Portable raw DEFLATE codec; runtime capability gates decide whether a client advertises it. */
 export type FflateFrameCompressionAdapter = FrameCompressionAdapter & FrameCompressionEncoder;
 
 /** Largest compression level accepted by fflate. */
@@ -34,7 +34,7 @@ function assertOutputBound(expectedLength: number, maxOutputLength: number): voi
   }
 }
 
-/** Creates the portable raw DEFLATE adapter used by non-Node runtimes. */
+/** Creates the portable raw DEFLATE adapter used by validated non-Node runtimes. */
 export function createFflateFrameCompressionAdapter(): FflateFrameCompressionAdapter {
   return {
     /** Inflates one frame and rejects truncated or oversized output. */

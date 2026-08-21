@@ -1,5 +1,9 @@
 import { EventEmitter } from "node:events";
-import type { PreparedEncryptedFrame } from "@getpaseo/relay/e2ee";
+import {
+  framedCiphertextWireByteLength,
+  type PreparedEncryptedFrame,
+  type SendPreparedEncryptedFrameOptions,
+} from "@getpaseo/relay/e2ee";
 import { expect, test } from "vitest";
 import { MAX_PHYSICAL_SOCKET_BUFFERED_BYTES } from "./physical-socket.js";
 import {
@@ -57,7 +61,9 @@ class BlockingChannel implements EncryptedRelayChannel {
   }
 
   /** Writes one prepared frame through the same controllable transport. */
-  sendPreparedFrame(frame: PreparedEncryptedFrame): Promise<void> {
+  sendPreparedFrame(options: SendPreparedEncryptedFrameOptions): Promise<void> {
+    const { frame, onTransportWriteStart } = options;
+    onTransportWriteStart?.();
     return this.send(frame.wireData);
   }
 
@@ -82,6 +88,76 @@ class BlockingChannel implements EncryptedRelayChannel {
   drain(): void {
     this.drained = true;
     this.resolveSend?.();
+  }
+}
+
+class FramedBase64Channel extends BlockingChannel {
+  /** Creates a framed channel whose identity ciphertext uses Base64 representation. */
+  constructor() {
+    super(true);
+  }
+
+  /** Returns the deterministic Base64 wire upper bound for one identity frame. */
+  override outboundWireByteLength(data: string | ArrayBuffer): number {
+    const plaintextBytes =
+      typeof data === "string" ? new TextEncoder().encode(data).byteLength : data.byteLength;
+    return Math.ceil((plaintextBytes + 40) / 3) * 4;
+  }
+}
+
+class NestedFifoChannel extends BlockingChannel {
+  /** Resolves when the outer socket has queued its first prepared frame into this channel. */
+  readonly firstPreparedSendQueued: Promise<void>;
+  /** Shared exact-size wire used by every deterministic prepared frame. */
+  private readonly wireData: ArrayBuffer;
+  /** Inner FIFO barrier that keeps the physical transport write from starting. */
+  private readonly transportBarrier: Promise<void>;
+  /** Releases the inner FIFO barrier during deterministic cleanup. */
+  private releaseTransportBarrier: () => void = () => undefined;
+  /** Marks the first prepared send as queued behind the inner FIFO. */
+  private markFirstPreparedSendQueued: () => void = () => undefined;
+
+  /** Creates a framed channel with a controllable second transport FIFO. */
+  constructor(wireByteLength: number) {
+    super(true);
+    this.wireData = new ArrayBuffer(wireByteLength);
+    this.firstPreparedSendQueued = new Promise((resolve) => {
+      this.markFirstPreparedSendQueued = resolve;
+    });
+    this.transportBarrier = new Promise((resolve) => {
+      this.releaseTransportBarrier = resolve;
+    });
+  }
+
+  /** Reuses one exact-size frame so the test exercises byte accounting without extra copies. */
+  override prepareOutboundFrame(): PreparedEncryptedFrame {
+    return {
+      wireData: this.wireData,
+      wireByteLength: this.wireData.byteLength,
+      framedCiphertextV1: true,
+    };
+  }
+
+  /** Returns the production framed-binary identity wire length used for admission. */
+  override outboundWireByteLength(data: string | ArrayBuffer): number {
+    const encodedByteLength =
+      typeof data === "string" ? new TextEncoder().encode(data).byteLength : data.byteLength;
+    return framedCiphertextWireByteLength(encodedByteLength, "binary");
+  }
+
+  /** Queues a prepared frame behind the same nested FIFO used by the real encrypted channel. */
+  override async sendPreparedFrame(options: SendPreparedEncryptedFrameOptions): Promise<void> {
+    const { frame, onTransportWriteStart } = options;
+    this.markFirstPreparedSendQueued();
+    await this.transportBarrier;
+    onTransportWriteStart?.();
+    await super.sendPreparedFrame({ frame });
+  }
+
+  /** Releases the nested FIFO and makes all deterministic physical sends complete. */
+  releaseTransport(): void {
+    this.drain();
+    this.releaseTransportBarrier();
   }
 }
 
@@ -226,6 +302,102 @@ test("legacy channel send rejection leaves the attached relay socket open", asyn
   });
   expect(channel.closes).toEqual([]);
   expect(emittedErrors).toEqual([sendError]);
+});
+
+test("framed Base64 send rejects when encoded wire bytes exceed the outbound high-water mark", async () => {
+  /** Framed Base64 channel exposes a wire estimate larger than its plaintext input. */
+  const channel = new FramedBase64Channel();
+  /** Preparation count proves admission happens before compression and encryption work. */
+  let preparationCount = 0;
+  /** Physical termination count exposes fail-closed high-water handling. */
+  let terminations = 0;
+  /** Five plaintext bytes become a 60-byte Base64 wire with the test channel overhead. */
+  const payload = new Uint8Array([1, 2, 3, 4, 5]);
+  const socket = createEncryptedRelaySocket({
+    channel,
+    emitter: new EventEmitter(),
+    getTransportBufferedAmount: () => MAX_PHYSICAL_SOCKET_BUFFERED_BYTES - 59,
+    terminateTransport: () => {
+      terminations += 1;
+    },
+    prepareOutboundFrame: () => {
+      preparationCount += 1;
+      return new Promise<PreparedEncryptedFrame>(() => undefined);
+    },
+  });
+
+  const rejected = Promise.resolve(socket.send(payload));
+
+  expect({ preparationCount, terminations }).toEqual({ preparationCount: 0, terminations: 1 });
+  await expect(rejected).rejects.toThrow("outbound high-water mark");
+});
+
+test("framed bufferedAmount includes wire bytes reserved during asynchronous preparation", async () => {
+  /** Framed Base64 channel reserves 60 wire bytes for the five-byte payload. */
+  const channel = new FramedBase64Channel();
+  /** Unresolved preparation keeps the reservation observable at the socket boundary. */
+  const pendingPreparation = new Promise<PreparedEncryptedFrame>(() => undefined);
+  const socket = createEncryptedRelaySocket({
+    channel,
+    emitter: new EventEmitter(),
+    getTransportBufferedAmount: () => 7,
+    terminateTransport: () => undefined,
+    prepareOutboundFrame: () => pendingPreparation,
+  });
+
+  const sending = Promise.resolve(socket.send(new Uint8Array([1, 2, 3, 4, 5])));
+
+  expect(socket.bufferedAmount).toBe(67);
+  socket.terminate();
+  await expect(sending).rejects.toThrow("not open");
+});
+
+test("rejects a third large frame while the first prepared frame waits in the channel FIFO", async () => {
+  /** Each exact framed wire is below 32 MiB, while three together exceed 64 MiB. */
+  const frameWireBytes = 22 * 1024 * 1024;
+  /** Identity payload whose encrypted framed binary wire matches the channel's exact test wire. */
+  const payload = new Uint8Array(frameWireBytes - framedCiphertextWireByteLength(0, "binary"));
+  /** Nested FIFO exposes the handoff gap before its physical transport write begins. */
+  const channel = new NestedFifoChannel(frameWireBytes);
+  /** Physical termination count exposes fail-closed aggregate admission. */
+  let terminations = 0;
+  /** Socket under test owns the outer preparation/send FIFO and all wire reservations. */
+  const socket = createEncryptedRelaySocket({
+    channel,
+    emitter: new EventEmitter(),
+    getTransportBufferedAmount: () => 0,
+    terminateTransport: () => {
+      terminations += 1;
+    },
+  });
+
+  /** First two sends fit exactly within the aggregate admission budget. */
+  const firstSend = Promise.resolve(socket.send(payload));
+  const secondSend = Promise.resolve(socket.send(payload));
+  await channel.firstPreparedSendQueued;
+  /** Third send must include both the prepared handoff and the queued second reservation. */
+  const thirdSend = Promise.resolve(socket.send(payload));
+  /** Settled third-send result observed without releasing the inner transport barrier. */
+  let thirdErrorMessage: string | null = null;
+  void thirdSend.catch((error: unknown) => {
+    thirdErrorMessage = error instanceof Error ? error.message : String(error);
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+  const observed = {
+    thirdErrorMessage,
+    terminations,
+    readyState: socket.readyState,
+  };
+
+  channel.releaseTransport();
+  await Promise.allSettled([firstSend, secondSend, thirdSend]);
+
+  expect(observed).toEqual({
+    thirdErrorMessage: "Encrypted relay socket exceeded its outbound high-water mark",
+    terminations: 1,
+    readyState: 3,
+  });
 });
 
 test("final send capacity includes frames that are still being prepared", async () => {

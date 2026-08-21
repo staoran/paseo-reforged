@@ -55,7 +55,7 @@ describe("WebSocketRuntimeMetricsWindow", () => {
       prepareMs: 3,
       codecMs: 2,
     });
-    metrics.relayTransport.recordQueueMs("state-sync", 4);
+    metrics.relayTransport.recordQueueMs({ trafficClass: "state-sync", durationMs: 4 });
     metrics.relayTransport.recordInboundFrame({
       ciphertextEncoding: "binary",
       codec: "identity",
@@ -247,7 +247,7 @@ describe("WebSocketRuntimeMetricsWindow", () => {
       prepareMs: 999,
       codecMs: 999,
     });
-    metrics.relayTransport.recordQueueMs("state-sync", 999);
+    metrics.relayTransport.recordQueueMs({ trafficClass: "state-sync", durationMs: 999 });
     metrics.relayTransport.recordInboundFrame({
       ciphertextEncoding: "binary",
       codec: "identity",
@@ -271,7 +271,7 @@ describe("WebSocketRuntimeMetricsWindow", () => {
         prepareMs: 0,
         codecMs: 0,
       });
-      metrics.relayTransport.recordQueueMs("state-sync", 0);
+      metrics.relayTransport.recordQueueMs({ trafficClass: "state-sync", durationMs: 0 });
       metrics.relayTransport.recordInboundFrame({
         ciphertextEncoding: "binary",
         codec: "identity",

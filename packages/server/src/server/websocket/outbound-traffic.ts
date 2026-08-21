@@ -1,3 +1,4 @@
+// Node and emitted ESM run without a TypeScript path-alias resolver.
 import type { SessionOutboundMessage, WSOutboundMessage } from "../messages.js";
 import type { RelayTrafficHint } from "../relay-frame-compression.js";
 

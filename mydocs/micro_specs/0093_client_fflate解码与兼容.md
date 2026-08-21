@@ -15,7 +15,7 @@
 | file path          | `mydocs/micro_specs/0093_client_fflate解码与兼容.md`    |
 | parent spec        | `mydocs/specs/0084_跨端中继二进制加密与状态追平压缩.md` |
 | superseded by      | `N/A`                                                   |
-| created / updated  | `2026-08-19`                                            |
+| created / updated  | `2026-08-19 / 2026-08-21`                               |
 
 ## 1. 目标与完成契约
 
@@ -66,21 +66,22 @@
 
 - 实际改动：新增 `fflate@0.8.2` direct runtime dependency 与 portable raw DEFLATE adapter；使用 `expectedLength + 1` 哨兵缓冲，严格拒绝 overflow/underflow，并保留对称 deflate 仅供 vectors/跨实现验证。
 - 实际改动：`createClientChannel` 增加可选 decoder capability gate；只有注入 decoder 才 advertisement `deflate-raw`，selection/confirm 精确回显；framed 入站将 adapter 交给唯一 envelope parser。
-- 实际改动：client relay transport 默认注入共享 fflate adapter；v1 client 出站继续固定 identity；补齐 Node↔fflate vectors、Base64/binary × text/ArrayBuffer 四象限和真实 transport events 测试。
-- 偏差与用户决策：无；未引入 Node-only API，daemon encoder 仍由 0089/后续 server adapter 负责。
+- 实际改动：client relay transport 在浏览器及已验证的非 Hermes runtime 默认注入共享 fflate adapter；检测到 `globalThis.HermesInternal` 时注入 `null`，不 advertisement `deflate-raw`，但仍可协商 framed identity。v1 client 出站继续固定 identity；补齐 Node↔fflate vectors、Base64/binary × text/ArrayBuffer 四象限和真实 transport events 测试。
+- 偏差与用户决策：统一审查确认当前环境没有 Hermes 真机证据，因此不能把“代码不依赖 Node API”当成运行能力；Hermes 默认 fail closed 到 framed identity，待 0097 真机门禁通过后才能开启 codec advertisement。daemon encoder 仍由 0089/后续 server adapter 负责。
 - Change Log：`2026-08-19` 从父 Spec 执行清单 10 拆出。
 - Change Log：`2026-08-19` 完成 adapter、capability gate、framed decode、跨实现 vectors 和 client transport GREEN，进入 Review/已收口。
+- Change Log：`2026-08-21` 统一审查补入 decoder 不可用与 Hermes runtime 的保守 advertisement 门禁。
 
 ## 6. 验证与完成判断
 
-| 验收项        | 命令或步骤                                                      | 结果 | 证据                                                                                 |
-| ------------- | --------------------------------------------------------------- | ---- | ------------------------------------------------------------------------------------ |
-| vectors       | `fflate-frame-compression.test.ts --bail=1`                     | PASS | 5/5；Node→fflate、fflate→Node、4 MiB sentinel、exact overflow/underflow              |
-| capability    | `framed-ciphertext.test.ts --bail=1`                            | PASS | 75 passed / 1 skipped；decoder gate、selection/confirm、四象限、client identity 出站 |
-| compatibility | `daemon-client-relay-e2ee-transport.test.ts --bail=1`           | PASS | 2/2；真实 base transport advertisement 与 daemon compressed text event               |
-| static        | relay/client build、typecheck、target oxlint、format/diff check | PASS | relay/client typecheck 通过；目标 oxlint 0/0；格式和 diff check 通过                 |
+| 验收项        | 命令或步骤                                                      | 结果 | 证据                                                                                   |
+| ------------- | --------------------------------------------------------------- | ---- | -------------------------------------------------------------------------------------- |
+| vectors       | `fflate-frame-compression.test.ts --bail=1`                     | PASS | 5/5；Node→fflate、fflate→Node、4 MiB sentinel、exact overflow/underflow                |
+| capability    | `framed-ciphertext.test.ts --bail=1`                            | PASS | 91/91；decoder gate、selection/confirm、四象限、client identity 出站与 16/64 边界      |
+| compatibility | `daemon-client-relay-e2ee-transport.test.ts --bail=1`           | PASS | 3/3；decoder unavailable 不广告、base transport advertisement 与 compressed text event |
+| static        | relay/client build、typecheck、target oxlint、format/diff check | PASS | relay/client typecheck 通过；目标 oxlint 0/0；格式和 diff check 通过                   |
 
-- 未验证项与原因：Hermes 真机尚未可用；根 workspace typecheck 仍被范围外 `packages/server/src/server/agent/file-agent-timeline-store.ts` 缺失方法阻塞。
+- 未验证项与原因：Hermes 真机尚未可用，因此当前 Hermes runtime 明确不 advertisement `deflate-raw`；framed identity 与 legacy fallback 保留。根 workspace typecheck 已于 `2026-08-21` 复跑通过。
 - 剩余风险：移动端 p95、GC、OOM 和耗电由 0097 验证。
 - Done Contract 是否由证据满足：`是；0093 scoped contract 已满足，Hermes p95/OOM 和 mixed-version 仍留 0097`。
 
