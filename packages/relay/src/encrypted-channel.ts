@@ -60,18 +60,6 @@ interface ApplicationFrameWritePermissionOptions {
   allowOpening: boolean;
 }
 
-/** Returns whether application sends must wait behind the encrypted handshake. */
-function shouldQueueApplicationSend(state: ChannelState): boolean {
-  switch (state) {
-    case "handshaking":
-    case "confirming":
-    case "opening":
-      return true;
-    default:
-      return false;
-  }
-}
-
 /** Returns whether one prepared application frame may write in the current lifecycle state. */
 function canWriteApplicationFrame({
   state,
@@ -1414,19 +1402,21 @@ export class EncryptedChannel {
   }
 
   async send(data: string | ArrayBuffer): Promise<void> {
-    if (shouldQueueApplicationSend(this.state)) {
-      if (this.pendingSends.length >= MAX_PENDING_SENDS) {
-        this.pendingSends.shift();
-      }
-      this.pendingSends.push(data);
-      return;
+    switch (this.state) {
+      case "handshaking":
+      case "confirming":
+      case "opening":
+        if (this.pendingSends.length >= MAX_PENDING_SENDS) {
+          this.pendingSends.shift();
+        }
+        this.pendingSends.push(data);
+        return;
+      case "open":
+        await this.sendApplicationFrame(data);
+        return;
+      default:
+        throw new Error("Channel not open");
     }
-
-    if (this.state !== "open") {
-      throw new Error("Channel not open");
-    }
-
-    await this.sendApplicationFrame(data);
   }
 
   /** Encrypts and writes one application frame after the channel mode is fixed. */

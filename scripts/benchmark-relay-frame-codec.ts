@@ -379,19 +379,18 @@ async function readBenchmarkInput(label: InputLabel, path: string): Promise<Uint
     return bytes;
   } catch (error) {
     /** Stable error code retained without the original path or message. */
-    const code = readFilesystemErrorCode(error);
+    let code = "invalid";
+    switch (typeof error) {
+      case "object":
+        if (error === null) break;
+        if (!("code" in error)) break;
+        code = String(error.code ?? "invalid");
+        break;
+    }
     // The original cause can contain the private corpus path, so expose only the bounded code.
     // eslint-disable-next-line preserve-caught-error
     throw new Error(`Unable to read ${label} relay benchmark input (${code})`);
   }
-}
-
-/** Reads a filesystem error code without trusting or rendering the original error. */
-function readFilesystemErrorCode(error: unknown): string {
-  if (typeof error !== "object") return "invalid";
-  if (error === null) return "invalid";
-  if (!("code" in error)) return "invalid";
-  return String(error.code ?? "invalid");
 }
 
 /** Builds semantic corpus profiles without retaining any source path. */
