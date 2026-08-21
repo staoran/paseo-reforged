@@ -17,6 +17,7 @@ import {
   prepareDeflateFramedPayload,
   prepareIdentityFramedPayload,
   type FrameCompressionAdapter,
+  type InflateRawFrameOptions,
   type PreparedFramedPayload,
 } from "../packages/relay/src/framed-ciphertext.js";
 
@@ -76,6 +77,14 @@ interface BenchmarkCliOptions {
 export interface RelayFrameCodecBenchmarkCliIo {
   /** Receives content-free report text. */
   writeStdout(value: string): void;
+}
+
+/** Inputs for one relay frame codec benchmark CLI invocation. */
+export interface RunRelayFrameCodecBenchmarkCliOptions {
+  /** Explicit command-line flags supplied by the operator or test. */
+  args: readonly string[];
+  /** Optional output sink used by tests instead of process stdout. */
+  io?: RelayFrameCodecBenchmarkCliIo;
 }
 
 /** One exact application frame and its comparison bytes. */
@@ -229,11 +238,14 @@ const BENCHMARK_COMPRESSION_ADAPTER: FrameCompressionAdapter = {
 
 /** Runs the content-free relay frame benchmark from explicit CLI arguments. */
 export async function runRelayFrameCodecBenchmarkCli(
-  args: readonly string[],
-  io: RelayFrameCodecBenchmarkCliIo = {
-    writeStdout: (value) => process.stdout.write(value),
-  },
+  request: RunRelayFrameCodecBenchmarkCliOptions,
 ): Promise<void> {
+  const {
+    args,
+    io = {
+      writeStdout: (value) => process.stdout.write(value),
+    },
+  } = request;
   /** Validated operator options retained only during this invocation. */
   const options = parseCliOptions(args);
   /** Explicit corpus bytes loaded with sanitized error messages. */
@@ -267,7 +279,7 @@ export async function runRelayFrameCodecBenchmarkCli(
     let legacyWireBytes = 0;
     for (const variant of BENCHMARK_VARIANTS) {
       /** Aggregated timings and deterministic bytes for this matrix row. */
-      const result = await benchmarkVariant(corpus, variant, options.runs, sharedKey);
+      const result = await benchmarkVariant({ corpus, variant, runs: options.runs, sharedKey });
       if (variant.label === "legacy") legacyWireBytes = result.bytes.wireBytes;
       io.writeStdout(`${formatResult(result, legacyWireBytes)}\n`);
     }
@@ -380,7 +392,11 @@ function buildCorpora(
   options: Pick<BenchmarkCliOptions, "terminalFormat" | "toolCallFormat">,
 ): BenchmarkCorpus[] {
   /** Text state-sync frames whose legacy representation is Base64 text. */
-  const jsonFrames = splitUtf8Frames("json", inputs.json, JSON_FRAME_BYTES);
+  const jsonFrames = splitUtf8Frames({
+    label: "json",
+    input: inputs.json,
+    maximumBytes: JSON_FRAME_BYTES,
+  });
   /** Terminal bytes extracted only through the operator-selected format. */
   const terminalBytes =
     options.terminalFormat === "codex-session-jsonl"
@@ -392,7 +408,11 @@ function buildCorpora(
   const toolCallFrames =
     options.toolCallFormat === "paseo-timeline-segment"
       ? extractPaseoTimelineToolCallFrames(inputs.toolCall)
-      : splitUtf8Frames("tool-call", inputs.toolCall, TOOL_CALL_FRAME_BYTES);
+      : splitUtf8Frames({
+          label: "tool-call",
+          input: inputs.toolCall,
+          maximumBytes: TOOL_CALL_FRAME_BYTES,
+        });
   /** Core non-terminal corpora in stable output order. */
   const corpora: BenchmarkCorpus[] = [
     {
@@ -561,11 +581,17 @@ function splitBinaryFrames(input: Uint8Array, maximumBytes: number): BenchmarkFr
 }
 
 /** Splits UTF-8 input at code-point boundaries and returns text application frames. */
-function splitUtf8Frames(
-  label: Extract<InputLabel, "json" | "tool-call">,
-  input: Uint8Array,
-  maximumBytes: number,
-): BenchmarkFrame[] {
+interface SplitUtf8FramesOptions {
+  /** Public corpus label used only in bounded errors. */
+  label: Extract<InputLabel, "json" | "tool-call">;
+  /** UTF-8 bytes to split at code-point boundaries. */
+  input: Uint8Array;
+  /** Maximum bytes in one application frame. */
+  maximumBytes: number;
+}
+
+function splitUtf8Frames(options: SplitUtf8FramesOptions): BenchmarkFrame[] {
+  const { label, input, maximumBytes } = options;
   /** Output frames preserving valid UTF-8 text without content retention elsewhere. */
   const frames: BenchmarkFrame[] = [];
   /** Fatal decoder rejects mislabeled or boundary-corrupted text input. */
@@ -591,21 +617,28 @@ function splitUtf8Frames(
 }
 
 /** Executes warm-up and measured runs for one corpus/variant combination. */
-async function benchmarkVariant(
-  corpus: BenchmarkCorpus,
-  variant: BenchmarkVariant,
-  runs: number,
-  sharedKey: SharedKey,
-): Promise<BenchmarkResult> {
+interface BenchmarkVariantOptions {
+  /** Corpus being measured. */
+  corpus: BenchmarkCorpus;
+  /** Wire and codec variant being measured. */
+  variant: BenchmarkVariant;
+  /** Number of measured iterations after warm-up. */
+  runs: number;
+  /** Ephemeral key used for the real encryption path. */
+  sharedKey: SharedKey;
+}
+
+async function benchmarkVariant(options: BenchmarkVariantOptions): Promise<BenchmarkResult> {
+  const { corpus, variant, runs, sharedKey } = options;
   /** Event-loop delay sampler used as a non-content CPU contention signal. */
   const eventLoopDelay = monitorEventLoopDelay({ resolution: EVENT_LOOP_DELAY_RESOLUTION_MS });
   eventLoopDelay.enable();
   try {
-    await runVariantOnce(corpus, variant, sharedKey);
+    await runVariantOnce({ corpus, variant, sharedKey });
     /** Measured samples retained only as aggregate numeric metadata. */
     const samples: BenchmarkRunSample[] = [];
     for (let run = 0; run < runs; run += 1) {
-      samples.push(await runVariantOnce(corpus, variant, sharedKey));
+      samples.push(await runVariantOnce({ corpus, variant, sharedKey }));
     }
     /** First sample contains deterministic byte totals checked against later runs. */
     const first = samples[0];
@@ -637,11 +670,17 @@ async function benchmarkVariant(
 }
 
 /** Processes every frame through real compression, envelope, crypto, and decode primitives. */
-async function runVariantOnce(
-  corpus: BenchmarkCorpus,
-  variant: BenchmarkVariant,
-  sharedKey: SharedKey,
-): Promise<BenchmarkRunSample> {
+interface RunVariantOnceOptions {
+  /** Corpus being measured. */
+  corpus: BenchmarkCorpus;
+  /** Wire and codec variant being measured. */
+  variant: BenchmarkVariant;
+  /** Ephemeral key used for the real encryption path. */
+  sharedKey: SharedKey;
+}
+
+async function runVariantOnce(options: RunVariantOnceOptions): Promise<BenchmarkRunSample> {
+  const { corpus, variant, sharedKey } = options;
   /** Process CPU baseline for this measured run. */
   const cpuStarted = process.cpuUsage();
   /** End-to-end monotonic wall baseline for this measured run. */
@@ -669,7 +708,8 @@ async function runVariantOnce(
     candidateBytes += candidate.byteLength;
     /** Whether the research candidate is legal and effective under runtime policy. */
     const adopted =
-      variant.codec === "deflate-raw" && canAdoptCandidate(corpus, frame.bytes, candidate);
+      variant.codec === "deflate-raw" &&
+      canAdoptCandidate({ corpus, original: frame.bytes, candidate });
     if (adopted) adoptedFrames += 1;
     /** Prepared authenticated envelope, omitted on the legacy wire. */
     let prepared: PreparedFramedPayload | null = null;
@@ -703,9 +743,10 @@ async function runVariantOnce(
     /** Original application bytes restored through legacy or framed decoding. */
     const restored = variant.framed
       ? applicationBytes(
-          await decodeFramedPayload(decrypted, BENCHMARK_COMPRESSION_ADAPTER).then(
-            (decoded) => decoded.data,
-          ),
+          await decodeFramedPayload({
+            plaintext: decrypted,
+            compressionAdapter: BENCHMARK_COMPRESSION_ADAPTER,
+          }).then((decoded) => decoded.data),
         )
       : new Uint8Array(decrypted);
     decodeMs += performance.now() - decodeStarted;
@@ -738,11 +779,17 @@ async function runVariantOnce(
 }
 
 /** Applies the v1 semantic, size, savings, and ratio gates to a research candidate. */
-function canAdoptCandidate(
-  corpus: BenchmarkCorpus,
-  original: Uint8Array,
-  candidate: ArrayBuffer,
-): boolean {
+interface CanAdoptCandidateOptions {
+  /** Corpus policy governing semantic eligibility and minimum size. */
+  corpus: BenchmarkCorpus;
+  /** Original application bytes. */
+  original: Uint8Array;
+  /** Candidate raw DEFLATE bytes. */
+  candidate: ArrayBuffer;
+}
+
+function canAdoptCandidate(options: CanAdoptCandidateOptions): boolean {
+  const { corpus, original, candidate } = options;
   if (!corpus.runtimeCompressionEligible) return false;
   if (original.byteLength < corpus.minimumCompressionBytes) return false;
   if (original.byteLength > MAX_COMPRESSION_INPUT_BYTES || candidate.byteLength === 0) return false;
@@ -769,11 +816,8 @@ function deflateRawAsync(input: Uint8Array, level: ResearchDeflateLevel): Promis
 }
 
 /** Inflates one raw DEFLATE frame under the authenticated output bound. */
-function inflateRawBounded(
-  input: ArrayBuffer,
-  expectedLength: number,
-  maxOutputLength: number,
-): Promise<ArrayBuffer> {
+function inflateRawBounded(options: InflateRawFrameOptions): Promise<ArrayBuffer> {
+  const { input, expectedLength, maxOutputLength } = options;
   return new Promise((resolvePromise, rejectPromise) => {
     inflateRaw(Buffer.from(input), { maxOutputLength }, (error, output) => {
       if (error || output.byteLength !== expectedLength) {
@@ -934,7 +978,7 @@ function isMainModule(): boolean {
 }
 
 if (isMainModule()) {
-  runRelayFrameCodecBenchmarkCli(process.argv.slice(2)).catch((error: unknown) => {
+  runRelayFrameCodecBenchmarkCli({ args: process.argv.slice(2) }).catch((error: unknown) => {
     /** Sanitized CLI failure produced by parsers and category-aware readers. */
     const message = error instanceof Error ? error.message : "Relay benchmark failed";
     process.stderr.write(`${message}\n`);

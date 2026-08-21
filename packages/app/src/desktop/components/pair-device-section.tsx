@@ -127,7 +127,7 @@ export function PairDeviceSection({ serverId, onClose }: PairDeviceSectionProps)
   );
   /** Writes only the hot-reloadable compression switch. */
   const handleCompressionEnabledChange = useCallback(
-    (enabled: boolean) => {
+    ({ enabled }: CompressionEnabledChangeOptions) => {
       updateRelayTransport.mutate({ compression: { enabled } });
     },
     [updateRelayTransport],
@@ -180,7 +180,7 @@ interface PairDeviceBodyProps {
   /** Requests a connection-level ciphertext policy change. */
   onCiphertextEncodingChange: (ciphertextEncoding: RelayCiphertextEncoding) => void;
   /** Requests an immediate eligible-frame compression policy change. */
-  onCompressionEnabledChange: (enabled: boolean) => void;
+  onCompressionEnabledChange: (options: CompressionEnabledChangeOptions) => void;
   enablePending: boolean;
   enableError: Error | null;
   qrSvg: string | null;
@@ -190,6 +190,12 @@ interface PairDeviceBodyProps {
   onEnableRelay: () => void;
   onClose: () => void;
   onCopy: () => void;
+}
+
+/** Input for changing the hot-reloadable relay compression switch. */
+interface CompressionEnabledChangeOptions {
+  /** Whether eligible framed payloads should attempt compression immediately. */
+  enabled: boolean;
 }
 
 function PairDeviceBody(props: PairDeviceBodyProps) {
@@ -337,13 +343,18 @@ function RelayTransportSettings({
   /** Mutation callback for a new connection-level encoding preference. */
   onCiphertextEncodingChange: (ciphertextEncoding: RelayCiphertextEncoding) => void;
   /** Mutation callback for the hot-reloadable compression switch. */
-  onCompressionEnabledChange: (enabled: boolean) => void;
+  onCompressionEnabledChange: (options: CompressionEnabledChangeOptions) => void;
 }) {
   const { t } = useTranslation();
   /** Missing encoding follows the daemon's configured-policy default. */
   const ciphertextEncoding = policy?.ciphertextEncoding ?? "auto";
   /** Missing compression follows the daemon's configured-policy default. */
   const compressionEnabled = policy?.compression?.enabled ?? true;
+  /** Adapts the native boolean switch callback to the named relay policy input. */
+  const handleCompressionEnabledChange = useCallback(
+    (enabled: boolean) => onCompressionEnabledChange({ enabled }),
+    [onCompressionEnabledChange],
+  );
 
   return (
     <View style={styles.transportSettings} testID="relay-transport-settings">
@@ -397,7 +408,7 @@ function RelayTransportSettings({
         </View>
         <Switch
           value={compressionEnabled}
-          onValueChange={onCompressionEnabledChange}
+          onValueChange={handleCompressionEnabledChange}
           disabled={updatePending}
           accessibilityLabel={t("pairing.device.transport.compression.accessibilityLabel")}
           testID="relay-compression-switch"

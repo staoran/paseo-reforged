@@ -50,7 +50,7 @@ describe("relay transport policy resolver", () => {
       compressionAlgorithms: [],
     } as const satisfies NegotiatedRelayTransportPolicy;
 
-    expect(resolveRelayTransportPolicy(configured, negotiated)).toEqual({
+    expect(resolveRelayTransportPolicy({ configured, negotiated })).toEqual({
       mode: "legacy",
       ciphertextEncoding: "hybrid",
       compression: {
@@ -73,7 +73,7 @@ describe("relay transport policy resolver", () => {
       compressionAlgorithms: [],
     } as const satisfies NegotiatedRelayTransportPolicy;
 
-    expect(resolveRelayTransportPolicy(configured, negotiated).compression).toEqual({
+    expect(resolveRelayTransportPolicy({ configured, negotiated }).compression).toEqual({
       enabled: false,
       algorithm: null,
       reason: "configured-disabled",
@@ -90,7 +90,7 @@ describe("relay transport policy resolver", () => {
       compressionAlgorithms: [],
     } as const satisfies NegotiatedRelayTransportPolicy;
 
-    expect(resolveRelayTransportPolicy(configured, negotiated).compression).toEqual({
+    expect(resolveRelayTransportPolicy({ configured, negotiated }).compression).toEqual({
       enabled: false,
       algorithm: null,
       reason: "peer-unsupported",
@@ -101,7 +101,12 @@ describe("relay transport policy resolver", () => {
     // Default configured policy used with the reusable supported connection snapshot.
     const configured = resolveConfiguredRelayTransportPolicy(undefined);
 
-    expect(resolveRelayTransportPolicy(configured, framedBinaryWithDeflate)).toEqual({
+    expect(
+      resolveRelayTransportPolicy({
+        configured,
+        negotiated: framedBinaryWithDeflate,
+      }),
+    ).toEqual({
       mode: "framed-v1",
       ciphertextEncoding: "binary",
       compression: {
@@ -119,7 +124,10 @@ describe("relay transport policy resolver", () => {
     });
 
     expect(
-      resolveRelayTransportPolicy(configured, framedBinaryWithDeflate).ciphertextEncoding,
+      resolveRelayTransportPolicy({
+        configured,
+        negotiated: framedBinaryWithDeflate,
+      }).ciphertextEncoding,
     ).toBe("binary");
   });
 });

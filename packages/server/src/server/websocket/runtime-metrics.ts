@@ -63,59 +63,120 @@ export interface RelayInboundFrameMetric {
   decodeMs: number;
 }
 
+/** One active connection bucket grouped by immutable selection and effective codec. */
+export interface RelayActiveConnectionMetric {
+  /** Negotiated legacy or framed mode. */
+  mode: NegotiatedRelayTransportPolicy["mode"];
+  /** Negotiated ciphertext representation. */
+  ciphertextEncoding: NegotiatedRelayTransportPolicy["ciphertextEncoding"];
+  /** Effective frame codec represented by this bucket. */
+  codec: FramedCiphertextCodec;
+  /** Stable reason compression is disabled, or null when enabled. */
+  effectiveReason: RelayCompressionSkipReason | null;
+  /** Active connections in this bucket. */
+  count: number;
+}
+
+/** One effective compression-policy bucket and its active connection count. */
+export interface RelayEffectiveCompressionMetric extends EffectiveRelayTransportCompressionPolicy {
+  /** Active connections with this effective policy. */
+  count: number;
+}
+
+/** Aggregated outbound frame bytes for one bounded label tuple. */
+export interface RelayOutboundFrameAggregateMetric {
+  /** Locked ciphertext representation. */
+  ciphertextEncoding: FramedCiphertextEncoding;
+  /** Sender-side semantic traffic class. */
+  trafficClass: RelayTrafficClass;
+  /** Authenticated payload codec. */
+  codec: FramedCiphertextCodec;
+  /** Frames represented by this bucket. */
+  frameCount: number;
+  /** Original application bytes represented by this bucket. */
+  originalBytes: number;
+  /** Encoded payload bytes represented by this bucket. */
+  encodedBytes: number;
+  /** Final WebSocket wire bytes represented by this bucket. */
+  wireBytes: number;
+}
+
+/** Duration summary for the fixed relay compression algorithm. */
+export interface RelayCompressionDurationMetric extends RelayDurationSummary {
+  /** Fixed codec measured by this row. */
+  algorithm: typeof RELAY_TRANSPORT_COMPRESSION_ALGORITHM;
+}
+
+/** Duration summary grouped by sender-side traffic class. */
+export interface RelayTrafficClassDurationMetric extends RelayDurationSummary {
+  /** Traffic class measured by this row. */
+  trafficClass: RelayTrafficClass;
+}
+
+/** Decode duration summary grouped by locked representation and codec. */
+export interface RelayInboundDecodeDurationMetric extends RelayDurationSummary {
+  /** Locked ciphertext representation. */
+  ciphertextEncoding: FramedCiphertextEncoding;
+  /** Authenticated payload codec. */
+  codec: FramedCiphertextCodec;
+}
+
+/** Aggregated inbound frame bytes for one bounded label tuple. */
+export interface RelayInboundFrameAggregateMetric {
+  /** Locked ciphertext representation. */
+  ciphertextEncoding: FramedCiphertextEncoding;
+  /** Authenticated payload codec. */
+  codec: FramedCiphertextCodec;
+  /** Frames represented by this bucket. */
+  frameCount: number;
+  /** Original application bytes represented by this bucket. */
+  originalBytes: number;
+  /** Encoded payload bytes represented by this bucket. */
+  encodedBytes: number;
+  /** Final WebSocket wire bytes represented by this bucket. */
+  wireBytes: number;
+}
+
+/** Percentile and maximum summary for a bounded byte gauge. */
+export interface RelayByteSummary {
+  /** Nearest-rank 95th percentile. */
+  p95: number;
+  /** Largest observed byte count. */
+  max: number;
+}
+
 /** Relay transport aggregates embedded in the existing WebSocket metrics snapshot. */
 export interface RelayTransportRuntimeMetricsSnapshot {
+  /** Latest fully defaulted relay transport configuration. */
   configuredPolicy: ConfiguredRelayTransportPolicy;
+  /** Negotiated connection totals keyed by stable mode label. */
   negotiatedModeCount: Record<RelayNegotiatedModeLabel, number>;
-  activeConnectionCount: Array<{
-    mode: NegotiatedRelayTransportPolicy["mode"];
-    ciphertextEncoding: NegotiatedRelayTransportPolicy["ciphertextEncoding"];
-    codec: FramedCiphertextCodec;
-    effectiveReason: RelayCompressionSkipReason | null;
-    count: number;
-  }>;
-  effectiveCompressionCount: Array<
-    EffectiveRelayTransportCompressionPolicy & {
-      count: number;
-    }
-  >;
+  /** Current active connections grouped by negotiated and effective labels. */
+  activeConnectionCount: RelayActiveConnectionMetric[];
+  /** Current active connections grouped by effective compression policy. */
+  effectiveCompressionCount: RelayEffectiveCompressionMetric[];
+  /** Compression attempts grouped by sender-side traffic class. */
   compressionAttemptCount: Record<RelayTrafficClass, number>;
-  outboundFrames: Array<{
-    ciphertextEncoding: FramedCiphertextEncoding;
-    trafficClass: RelayTrafficClass;
-    codec: FramedCiphertextCodec;
-    frameCount: number;
-    originalBytes: number;
-    encodedBytes: number;
-    wireBytes: number;
-  }>;
+  /** Outbound frame byte aggregates grouped by stable labels. */
+  outboundFrames: RelayOutboundFrameAggregateMetric[];
+  /** Identity fallback totals grouped by stable reason. */
   compressionSkipCount: Record<RelayCompressionSkipReason, number>;
-  compressionPrepareMs: Array<
-    RelayDurationSummary & { algorithm: typeof RELAY_TRANSPORT_COMPRESSION_ALGORITHM }
-  >;
+  /** Full compression preparation duration for attempted frames. */
+  compressionPrepareMs: RelayCompressionDurationMetric[];
   /** Encrypted-socket send FIFO wait from invocation until the ordered operation starts. */
-  compressionQueueMs: Array<RelayDurationSummary & { trafficClass: RelayTrafficClass }>;
+  compressionQueueMs: RelayTrafficClassDurationMetric[];
   /** Raw DEFLATE callback wall time, including any libuv worker-pool wait. */
-  compressionCodecMs: Array<
-    RelayDurationSummary & { algorithm: typeof RELAY_TRANSPORT_COMPRESSION_ALGORITHM }
-  >;
-  inboundDecodeMs: Array<
-    RelayDurationSummary & {
-      ciphertextEncoding: FramedCiphertextEncoding;
-      codec: FramedCiphertextCodec;
-    }
-  >;
-  inboundFrames: Array<{
-    ciphertextEncoding: FramedCiphertextEncoding;
-    codec: FramedCiphertextCodec;
-    frameCount: number;
-    originalBytes: number;
-    encodedBytes: number;
-    wireBytes: number;
-  }>;
+  compressionCodecMs: RelayCompressionDurationMetric[];
+  /** Framed decode duration grouped by locked representation and codec. */
+  inboundDecodeMs: RelayInboundDecodeDurationMetric[];
+  /** Inbound frame byte aggregates grouped by stable labels. */
+  inboundFrames: RelayInboundFrameAggregateMetric[];
+  /** Framed protocol errors grouped by bounded content-free reason. */
   framedProtocolErrorCount: Record<RelayFramedProtocolErrorReason, number>;
-  pendingPreparedBytes: { p95: number; max: number };
-  pendingReceiveWireBytes: { p95: number; max: number };
+  /** Final wire bytes retained behind preparation and send FIFO work. */
+  pendingPreparedBytes: RelayByteSummary;
+  /** Raw inbound wire bytes retained by the receive FIFO. */
+  pendingReceiveWireBytes: RelayByteSummary;
 }
 
 /** Aggregated byte totals for one outbound relay label tuple. */
@@ -362,7 +423,10 @@ export class RelayTransportRuntimeMetricsWindow {
       Omit<RelayTransportRuntimeMetricsSnapshot["activeConnectionCount"][number], "count">
     >();
     for (const negotiated of this.activeConnections) {
-      const effective = resolveRelayTransportPolicy(this.configuredPolicy, negotiated);
+      const effective = resolveRelayTransportPolicy({
+        configured: this.configuredPolicy,
+        negotiated,
+      });
       const value = {
         mode: negotiated.mode,
         ciphertextEncoding: negotiated.ciphertextEncoding,
@@ -393,7 +457,10 @@ export class RelayTransportRuntimeMetricsWindow {
   private computeEffectiveCompressionCounts(): RelayTransportRuntimeMetricsSnapshot["effectiveCompressionCount"] {
     const counts = new Map<string, number>();
     for (const negotiated of this.activeConnections) {
-      const effective = resolveRelayTransportPolicy(this.configuredPolicy, negotiated);
+      const effective = resolveRelayTransportPolicy({
+        configured: this.configuredPolicy,
+        negotiated,
+      });
       incrementCount(counts, effectiveCompressionKey(effective.compression));
     }
     return [...counts.entries()]

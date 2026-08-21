@@ -44,8 +44,18 @@ import type { RelayTrafficHint } from "../../relay-frame-compression.js";
  */
 export interface WorkspaceFilesSessionHost {
   emit(msg: SessionOutboundMessage, source?: object): void;
-  emitBinary(frame: Uint8Array, hint: RelayTrafficHint, source?: object): Promise<void>;
+  emitBinary(options: WorkspaceFileBinaryMessageOptions): Promise<void>;
   hasBinaryChannel(): boolean;
+}
+
+/** Binary file frame and optional source retained through relay preparation. */
+export interface WorkspaceFileBinaryMessageOptions {
+  /** Encoded file-transfer frame. */
+  frame: Uint8Array;
+  /** Semantic class used by relay compression policy. */
+  hint: RelayTrafficHint;
+  /** Request source receiving this file frame, when source-scoped delivery applies. */
+  source?: object;
 }
 
 export interface WorkspaceFilesSessionOptions {
@@ -266,8 +276,8 @@ export class WorkspaceFilesSession {
       } else {
         if (request.acceptBinary && this.host.hasBinaryChannel()) {
           await streamExplorerFile({ root: cwd, relativePath: requestedPath }, async (file) => {
-            await this.host.emitBinary(
-              encodeFileTransferFrame({
+            await this.host.emitBinary({
+              frame: encodeFileTransferFrame({
                 opcode: FileTransferOpcode.FileBegin,
                 requestId,
                 metadata: {
@@ -278,28 +288,28 @@ export class WorkspaceFilesSession {
                   revision: file.revision,
                 },
               }),
-              { trafficClass: "realtime", compressible: false },
+              hint: { trafficClass: "realtime", compressible: false },
               source,
-            );
+            });
             for await (const chunk of file.chunks) {
-              await this.host.emitBinary(
-                encodeFileTransferFrame({
+              await this.host.emitBinary({
+                frame: encodeFileTransferFrame({
                   opcode: FileTransferOpcode.FileChunk,
                   requestId,
                   payload: chunk,
                 }),
-                { trafficClass: "bulk", compressible: file.encoding === "utf-8" },
+                hint: { trafficClass: "bulk", compressible: file.encoding === "utf-8" },
                 source,
-              );
+              });
             }
-            await this.host.emitBinary(
-              encodeFileTransferFrame({
+            await this.host.emitBinary({
+              frame: encodeFileTransferFrame({
                 opcode: FileTransferOpcode.FileEnd,
                 requestId,
               }),
-              { trafficClass: "realtime", compressible: false },
+              hint: { trafficClass: "realtime", compressible: false },
               source,
-            );
+            });
           });
         } else {
           const file = await readExplorerFile({

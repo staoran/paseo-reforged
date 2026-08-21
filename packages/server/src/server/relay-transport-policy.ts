@@ -44,6 +44,14 @@ export interface EffectiveRelayTransportPolicy {
   readonly compression: EffectiveRelayTransportCompressionPolicy;
 }
 
+/** Inputs for resolving one live relay transport policy snapshot. */
+export interface ResolveRelayTransportPolicyOptions {
+  /** Current daemon configuration, read immediately before frame preparation. */
+  configured: ConfiguredRelayTransportPolicy;
+  /** Immutable negotiation result captured for the active connection. */
+  negotiated: NegotiatedRelayTransportPolicy;
+}
+
 /** Fills runtime defaults without materializing them in persisted or RPC config. */
 export function resolveConfiguredRelayTransportPolicy(
   config: RelayTransportConfig | undefined,
@@ -56,9 +64,9 @@ export function resolveConfiguredRelayTransportPolicy(
 
 /** Combines current configuration with one immutable negotiated connection snapshot. */
 export function resolveRelayTransportPolicy(
-  configured: ConfiguredRelayTransportPolicy,
-  negotiated: NegotiatedRelayTransportPolicy,
+  options: ResolveRelayTransportPolicyOptions,
 ): EffectiveRelayTransportPolicy {
+  const { configured, negotiated } = options;
   if (negotiated.mode === "legacy") {
     return {
       mode: negotiated.mode,

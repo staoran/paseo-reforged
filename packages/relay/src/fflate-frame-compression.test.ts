@@ -12,11 +12,14 @@ describe("fflate frame compression", () => {
     /** Browser-compatible codec under test. */
     const adapter = createFflateFrameCompressionAdapter();
 
-    const decoded = await adapter.inflateRaw(
-      compressed.buffer.slice(compressed.byteOffset, compressed.byteOffset + compressed.byteLength),
-      original.byteLength,
-      original.byteLength + 1,
-    );
+    const decoded = await adapter.inflateRaw({
+      input: compressed.buffer.slice(
+        compressed.byteOffset,
+        compressed.byteOffset + compressed.byteLength,
+      ),
+      expectedLength: original.byteLength,
+      maxOutputLength: original.byteLength + 1,
+    });
 
     expect(new Uint8Array(decoded)).toEqual(original);
     expect(decoded.byteLength).toBe(original.byteLength);
@@ -28,7 +31,7 @@ describe("fflate frame compression", () => {
     /** Browser-compatible codec under test. */
     const adapter = createFflateFrameCompressionAdapter();
 
-    const compressed = await adapter.deflateRaw(original.buffer, 1);
+    const compressed = await adapter.deflateRaw({ input: original.buffer, level: 1 });
     const decoded = inflateRawSync(new Uint8Array(compressed));
     /** Node Buffer normalized to the cross-runtime byte view asserted by the contract. */
     const decodedBytes = new Uint8Array(decoded.buffer, decoded.byteOffset, decoded.byteLength);
@@ -45,14 +48,14 @@ describe("fflate frame compression", () => {
     const adapter = createFflateFrameCompressionAdapter();
 
     await expect(
-      adapter.inflateRaw(
-        compressed.buffer.slice(
+      adapter.inflateRaw({
+        input: compressed.buffer.slice(
           compressed.byteOffset,
           compressed.byteOffset + compressed.byteLength,
         ),
-        original.byteLength - 1,
-        original.byteLength,
-      ),
+        expectedLength: original.byteLength - 1,
+        maxOutputLength: original.byteLength,
+      }),
     ).rejects.toThrow("Framed ciphertext decompressed length exceeds authenticated length");
   });
 
@@ -65,14 +68,14 @@ describe("fflate frame compression", () => {
     const adapter = createFflateFrameCompressionAdapter();
 
     await expect(
-      adapter.inflateRaw(
-        compressed.buffer.slice(
+      adapter.inflateRaw({
+        input: compressed.buffer.slice(
           compressed.byteOffset,
           compressed.byteOffset + compressed.byteLength,
         ),
-        original.byteLength + 1,
-        original.byteLength + 2,
-      ),
+        expectedLength: original.byteLength + 1,
+        maxOutputLength: original.byteLength + 2,
+      }),
     ).rejects.toThrow("Framed ciphertext decompressed length is shorter than authenticated length");
   });
 
@@ -84,11 +87,14 @@ describe("fflate frame compression", () => {
     /** Browser-compatible codec under test. */
     const adapter = createFflateFrameCompressionAdapter();
 
-    const decoded = await adapter.inflateRaw(
-      compressed.buffer.slice(compressed.byteOffset, compressed.byteOffset + compressed.byteLength),
-      original.byteLength,
-      original.byteLength + 1,
-    );
+    const decoded = await adapter.inflateRaw({
+      input: compressed.buffer.slice(
+        compressed.byteOffset,
+        compressed.byteOffset + compressed.byteLength,
+      ),
+      expectedLength: original.byteLength,
+      maxOutputLength: original.byteLength + 1,
+    });
 
     expect(decoded.byteLength).toBe(MAX_COMPRESSION_INPUT_BYTES);
     expect(new Uint8Array(decoded)[0]).toBe(0x2a);

@@ -41,22 +41,20 @@ function makeDir(prefix: string): string {
 function makeSubsystem(
   options: {
     hasBinaryChannel?: boolean;
-    emitBinary?: (frame: Uint8Array, hint: RelayTrafficHint | undefined) => Promise<void> | void;
+    emitBinary?: (options: { frame: Uint8Array; hint: RelayTrafficHint }) => Promise<void> | void;
   } = {},
 ) {
   const emitted: SessionOutboundMessage[] = [];
   const binary: Uint8Array[] = [];
   /** Sender-side traffic semantics observed beside binary file frames. */
-  const binaryHints: Array<RelayTrafficHint | undefined> = [];
+  const binaryHints: RelayTrafficHint[] = [];
   let hasBinary = options.hasBinaryChannel ?? false;
   const host: WorkspaceFilesSessionHost = {
     emit: (msg) => emitted.push(msg),
-    emitBinary: async (frame, ...args) => {
+    emitBinary: async ({ frame, hint }) => {
       binary.push(frame);
-      /** Current second callback argument, undefined until the hint contract is implemented. */
-      const hint = args[0] as RelayTrafficHint | undefined;
       binaryHints.push(hint);
-      await options.emitBinary?.(frame, hint);
+      await options.emitBinary?.({ frame, hint });
     },
     hasBinaryChannel: () => hasBinary,
   };
@@ -399,7 +397,7 @@ describe("WorkspaceFilesSession", () => {
     let chunkSends = 0;
     const { subsystem, emitted, binary, binaryHints } = makeSubsystem({
       hasBinaryChannel: true,
-      emitBinary: async (frame) => {
+      emitBinary: async ({ frame }) => {
         if (decodeFileTransferFrame(frame)?.opcode !== FileTransferOpcode.FileChunk) return;
         chunkSends += 1;
         if (chunkSends === 1) await firstChunkSent;

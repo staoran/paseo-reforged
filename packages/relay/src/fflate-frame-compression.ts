@@ -38,11 +38,8 @@ function assertOutputBound(expectedLength: number, maxOutputLength: number): voi
 export function createFflateFrameCompressionAdapter(): FflateFrameCompressionAdapter {
   return {
     /** Inflates one frame and rejects truncated or oversized output. */
-    async inflateRaw(
-      input: ArrayBuffer,
-      expectedLength: number,
-      maxOutputLength: number,
-    ): Promise<ArrayBuffer> {
+    async inflateRaw(options): Promise<ArrayBuffer> {
+      const { input, expectedLength, maxOutputLength } = options;
       assertCompressionByteLength(input.byteLength, "Compressed input");
       assertCompressionByteLength(expectedLength, "Expected output");
       assertOutputBound(expectedLength, maxOutputLength);
@@ -63,7 +60,7 @@ export function createFflateFrameCompressionAdapter(): FflateFrameCompressionAda
     },
 
     /** Compresses one independent raw DEFLATE frame for compatibility vectors. */
-    async deflateRaw(input: ArrayBuffer, level: number): Promise<ArrayBuffer> {
+    async deflateRaw({ input, level }): Promise<ArrayBuffer> {
       assertCompressionByteLength(input.byteLength, "Compression input");
       if (!Number.isInteger(level) || level < 0 || level > MAX_FFLATE_LEVEL) {
         throw new Error("Invalid fflate compression level");

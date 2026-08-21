@@ -12,10 +12,14 @@ test("Node codec emits raw DEFLATE and restores exact bounded output", async () 
   // Production Node adapter under test.
   const codec = createNodeRawDeflateCodec();
 
-  const compressed = await codec.deflateRaw(original.buffer, 1);
+  const compressed = await codec.deflateRaw({ input: original.buffer, level: 1 });
   // Independent Node raw decoder proves the encoder emitted no gzip/zlib wrapper.
   const independentlyInflated = inflateRawSync(new Uint8Array(compressed));
-  const restored = await codec.inflateRaw(compressed, original.byteLength, original.byteLength + 1);
+  const restored = await codec.inflateRaw({
+    input: compressed,
+    expectedLength: original.byteLength,
+    maxOutputLength: original.byteLength + 1,
+  });
 
   expect(new Uint8Array(independentlyInflated)).toEqual(original);
   expect(new Uint8Array(restored)).toEqual(original);
@@ -31,11 +35,14 @@ test.each([
   const codec = createNodeRawDeflateCodec();
 
   await expect(
-    codec.inflateRaw(
-      compressed.buffer.slice(compressed.byteOffset, compressed.byteOffset + compressed.byteLength),
-      4096,
-      4097,
-    ),
+    codec.inflateRaw({
+      input: compressed.buffer.slice(
+        compressed.byteOffset,
+        compressed.byteOffset + compressed.byteLength,
+      ),
+      expectedLength: 4096,
+      maxOutputLength: 4097,
+    }),
   ).rejects.toThrow();
 });
 
@@ -108,7 +115,7 @@ test("prepares eligible state sync as a level-1 raw DEFLATE frame", async () => 
   });
 
   expect(deflateRaw).toHaveBeenCalledOnce();
-  expect(deflateRaw).toHaveBeenCalledWith(original.buffer, 1);
+  expect(deflateRaw).toHaveBeenCalledWith({ input: original.buffer, level: 1 });
   expect({
     binary: prepared.binary,
     codec: prepared.codec,

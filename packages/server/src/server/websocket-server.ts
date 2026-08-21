@@ -30,7 +30,13 @@ import { asUint8Array, decodeBinaryFrame } from "@getpaseo/protocol/binary-frame
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import type { HostnamesConfig } from "./hostnames.js";
 import { isHostnameAllowed } from "./hostnames.js";
-import { Session, type SessionLifecycleIntent, type SessionRuntimeMetrics } from "./session.js";
+import {
+  Session,
+  type SessionBinaryMessageOptions,
+  type SessionBinaryMessageToSourceOptions,
+  type SessionLifecycleIntent,
+  type SessionRuntimeMetrics,
+} from "./session.js";
 import type { HubRelationshipManagement } from "./hub/relationship-controller.js";
 import { WorkspaceSetupRuntime } from "./workspace-setup-runtime.js";
 import type { HubExecutionAgents } from "./hub/daemon-executions.js";
@@ -98,6 +104,7 @@ import {
   MAX_PHYSICAL_SOCKET_BUFFERED_BYTES,
   outboundFrameByteLength,
   physicalSocketHasCapacity,
+  type PhysicalSendClassifiedOptions,
   sendBoundedPhysicalFrame,
   sendBoundedPhysicalFrameAndWait,
 } from "./websocket/physical-socket.js";
@@ -415,11 +422,7 @@ export interface WebSocketLike {
     callback?: (error?: Error) => void,
   ) => void | Promise<void>;
   /** Relay-only extension retaining sender semantics through framed preparation. */
-  sendClassified?: (
-    data: string | Uint8Array | ArrayBuffer,
-    hint: RelayTrafficHint,
-    callback?: (error?: Error) => void,
-  ) => void | Promise<void>;
+  sendClassified?: (options: PhysicalSendClassifiedOptions) => void | Promise<void>;
   close: (code?: number, reason?: string) => void;
   terminate?: () => void;
   on: (event: "message" | "close" | "error", listener: (...args: unknown[]) => void) => void;
@@ -470,12 +473,8 @@ interface SocketSessionOptions {
   connectionLogger: pino.Logger;
   onMessage: (message: SessionOutboundMessage) => void;
   onMessageToSource?: (source: object, message: SessionOutboundMessage) => void;
-  onBinaryMessage?: (frame: Uint8Array, hint: RelayTrafficHint) => void;
-  onBinaryMessageToSource?: (
-    source: object,
-    frame: Uint8Array,
-    hint: RelayTrafficHint,
-  ) => Promise<void>;
+  onBinaryMessage?: (options: SessionBinaryMessageOptions) => void;
+  onBinaryMessageToSource?: (options: SessionBinaryMessageToSourceOptions) => Promise<void>;
   getTransportBufferedAmount?: () => number | null;
   onLifecycleIntent?: (intent: SessionLifecycleIntent) => void;
   hubExecutionAgents?: HubExecutionAgents;
@@ -486,6 +485,43 @@ interface ClosePhysicalSocketParams {
   ws: WebSocketLike;
   logMessage: string;
   logFields?: Record<string, unknown>;
+}
+
+/** Inputs for one asynchronous binary frame send to a physical client socket. */
+interface SendBinaryToClientOptions {
+  /** Physical client socket receiving the frame. */
+  ws: WebSocketLike;
+  /** Encoded protocol frame. */
+  frame: Uint8Array;
+  /** Sender-side relay classification. */
+  hint: RelayTrafficHint;
+}
+
+/** Inputs for one awaited binary frame send to a physical client socket. */
+interface SendBinaryToClientAndWaitOptions extends SendBinaryToClientOptions {}
+
+/** Inputs for one bounded send through the WebSocket server's common path. */
+interface SendFrameToClientOptions {
+  /** Physical client socket receiving the frame. */
+  ws: WebSocketLike;
+  /** Text or binary frame payload. */
+  frame: string | Uint8Array;
+  /** Exact payload byte count used for admission control. */
+  frameBytes: number;
+  /** Callback recording successful queue admission. */
+  recordSent: () => void;
+  /** Optional sender-side relay classification. */
+  trafficHint?: RelayTrafficHint;
+}
+
+/** Inputs for broadcasting one classified binary frame to a trusted connection. */
+interface SendBinaryToConnectionOptions {
+  /** Trusted connection whose sockets receive the frame. */
+  connection: SessionConnection;
+  /** Encoded protocol frame. */
+  frame: Uint8Array;
+  /** Sender-side relay classification. */
+  hint: RelayTrafficHint;
 }
 
 const SLOW_REQUEST_THRESHOLD_MS = 500;
@@ -1098,35 +1134,37 @@ export class VoiceAssistantWebSocketServer {
     /** Sender-side semantics resolved while the structured message is still available. */
     const trafficHint = classifyOutboundMessage(message);
     for (const ws of writableSockets) {
-      this.sendFrameToClient(
+      this.sendFrameToClient({
         ws,
-        payload,
-        payloadBytes,
-        () => {
+        frame: payload,
+        frameBytes: payloadBytes,
+        recordSent: () => {
           this.runtimeMetrics.recordOutboundMessage(message, ws.bufferedAmount);
         },
         trafficHint,
-      );
+      });
     }
   }
 
-  private sendBinaryToClient(ws: WebSocketLike, frame: Uint8Array, hint: RelayTrafficHint): void {
-    this.sendFrameToClient(
+  /** Sends one classified binary frame through the bounded physical-send path. */
+  private sendBinaryToClient(options: SendBinaryToClientOptions): void {
+    const { ws, frame, hint } = options;
+    this.sendFrameToClient({
       ws,
       frame,
-      outboundFrameByteLength(frame),
-      () => {
+      frameBytes: outboundFrameByteLength(frame),
+      recordSent: () => {
         this.runtimeMetrics.recordOutboundBinaryFrame(ws.bufferedAmount);
       },
-      hint,
-    );
+      trafficHint: hint,
+    });
   }
 
+  /** Sends one classified binary frame and waits for its physical write. */
   private async sendBinaryToClientAndWait(
-    ws: WebSocketLike,
-    frame: Uint8Array,
-    hint: RelayTrafficHint,
+    options: SendBinaryToClientAndWaitOptions,
   ): Promise<void> {
+    const { ws, frame, hint } = options;
     try {
       const sent = await sendBoundedPhysicalFrameAndWait({
         socket: ws,
@@ -1144,13 +1182,9 @@ export class VoiceAssistantWebSocketServer {
     }
   }
 
-  private sendFrameToClient(
-    ws: WebSocketLike,
-    frame: string | Uint8Array,
-    frameBytes: number,
-    recordSent: () => void,
-    trafficHint?: RelayTrafficHint,
-  ): void {
+  /** Sends one text or binary frame and records successful queue admission. */
+  private sendFrameToClient(options: SendFrameToClientOptions): void {
+    const { ws, frame, frameBytes, recordSent, trafficHint } = options;
     try {
       const sent = sendBoundedPhysicalFrame({
         socket: ws,
@@ -1219,16 +1253,14 @@ export class VoiceAssistantWebSocketServer {
     this.sendMessageToSockets(sockets, message);
   }
 
-  private sendBinaryToConnection(
-    connection: SessionConnection,
-    frame: Uint8Array,
-    hint: RelayTrafficHint,
-  ): void {
+  /** Broadcasts one classified binary frame to every socket in a trusted connection. */
+  private sendBinaryToConnection(options: SendBinaryToConnectionOptions): void {
+    const { connection, frame, hint } = options;
     if (connection.kind !== "trusted") {
       return;
     }
     for (const ws of connection.sockets) {
-      this.sendBinaryToClient(ws, frame, hint);
+      this.sendBinaryToClient({ ws, frame, hint });
     }
   }
 
@@ -1316,17 +1348,24 @@ export class VoiceAssistantWebSocketServer {
         }
         this.sendToClient(source as WebSocketLike, wrapSessionMessage(msg));
       },
-      onBinaryMessage: (frame, hint) => {
+      onBinaryMessage: ({ frame, hint }) => {
         if (!connection) {
           return;
         }
-        this.sendBinaryToConnection(connection, frame, hint);
+        this.sendBinaryToConnection({ connection, frame, hint });
       },
-      onBinaryMessageToSource: async (source, frame, hint) => {
+      onBinaryMessageToSource: async ({ source, frame, hint }) => {
+        if (!source) {
+          throw new Error("File transfer source socket is missing");
+        }
         if (!connection || !connection.sockets.has(source as WebSocketLike)) {
           throw new Error("File transfer source socket is no longer attached");
         }
-        await this.sendBinaryToClientAndWait(source as WebSocketLike, frame, hint);
+        await this.sendBinaryToClientAndWait({
+          ws: source as WebSocketLike,
+          frame,
+          hint,
+        });
       },
       getTransportBufferedAmount: () => {
         if (!connection) {

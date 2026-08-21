@@ -107,8 +107,8 @@ describe("terminal-session-controller restore", () => {
     const controller = new TerminalSessionController({
       terminalManager,
       emit: (message) => outboundMessages.push(message),
-      emitBinary: (bytes, ...args) => {
-        binaryHints.push(args[0] as RelayTrafficHint);
+      emitBinary: ({ frame: bytes, hint }) => {
+        binaryHints.push(hint);
         const frame = decodeTerminalStreamFrame(bytes);
         if (frame) {
           binaryFrames.push(frame);
@@ -697,7 +697,7 @@ describe("terminal-session-controller backpressure snapshot fallback", () => {
     const controller = new TerminalSessionController({
       terminalManager,
       emit: vi.fn(),
-      emitBinary: (bytes) => {
+      emitBinary: ({ frame: bytes }) => {
         const frame = decodeTerminalStreamFrame(bytes);
         if (frame) {
           frames.push(frame);

@@ -20,28 +20,25 @@ afterEach(async () => {
 describe("relay frame codec benchmark CLI", () => {
   test("requires every corpus path and at least five measured runs", async () => {
     await expect(
-      runRelayFrameCodecBenchmarkCli([
-        "--json",
-        "json-input",
-        "--terminal",
-        "terminal-input",
-        "--file",
-        "file-input",
-      ]),
+      runRelayFrameCodecBenchmarkCli({
+        args: ["--json", "json-input", "--terminal", "terminal-input", "--file", "file-input"],
+      }),
     ).rejects.toThrow("Missing required relay benchmark option --tool-call");
     await expect(
-      runRelayFrameCodecBenchmarkCli([
-        "--json",
-        "json-input",
-        "--terminal",
-        "terminal-input",
-        "--file",
-        "file-input",
-        "--tool-call",
-        "tool-call-input",
-        "--runs",
-        "4",
-      ]),
+      runRelayFrameCodecBenchmarkCli({
+        args: [
+          "--json",
+          "json-input",
+          "--terminal",
+          "terminal-input",
+          "--file",
+          "file-input",
+          "--tool-call",
+          "tool-call-input",
+          "--runs",
+          "4",
+        ],
+      }),
     ).rejects.toThrow("Relay benchmark --runs must be an integer >= 5");
   });
 
@@ -70,8 +67,8 @@ describe("relay frame codec benchmark CLI", () => {
     /** Captured stdout chunks at the approved benchmark seam. */
     const stdout: string[] = [];
 
-    await runRelayFrameCodecBenchmarkCli(
-      [
+    await runRelayFrameCodecBenchmarkCli({
+      args: [
         "--json",
         inputs.json,
         "--terminal",
@@ -83,10 +80,10 @@ describe("relay frame codec benchmark CLI", () => {
         "--runs",
         "5",
       ],
-      {
+      io: {
         writeStdout: (value) => stdout.push(value),
       },
-    );
+    });
 
     /** Complete content-free benchmark report. */
     const report = stdout.join("");
@@ -199,8 +196,8 @@ describe("relay frame codec benchmark CLI", () => {
     /** Captured aggregate report at the approved stdout seam. */
     const stdout: string[] = [];
 
-    await runRelayFrameCodecBenchmarkCli(
-      [
+    await runRelayFrameCodecBenchmarkCli({
+      args: [
         "--json",
         inputs.json,
         "--terminal",
@@ -216,10 +213,10 @@ describe("relay frame codec benchmark CLI", () => {
         "--runs",
         "5",
       ],
-      {
+      io: {
         writeStdout: (value) => stdout.push(value),
       },
-    );
+    });
 
     /** Content-free report proving extraction and semantic event framing. */
     const report = stdout.join("");

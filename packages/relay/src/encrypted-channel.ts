@@ -26,6 +26,7 @@ import {
   type DecodedFramedPayload,
   type FrameCompressionAdapter,
   type FramedCiphertextCodec,
+  type InflateRawFrameOptions,
   type PreparedFramedPayload,
 } from "./framed-ciphertext.js";
 
@@ -197,6 +198,22 @@ interface NotifyRuntimeObserverOptions {
   observer?: EncryptedChannelRuntimeObserver;
   /** Type-safe observer invocation whose errors cannot affect protocol behavior. */
   notify: (observer: EncryptedChannelRuntimeObserver) => void;
+}
+
+/** Input for closing a daemon handshake after a protocol or transport failure. */
+interface FailHandshakeOptions {
+  /** Failure that should be exposed to the factory promise and close reason. */
+  error: unknown;
+  /** WebSocket close code used for the physical handshake transport. */
+  closeCode?: number;
+}
+
+/** Input for closing an attached encrypted channel after a receive failure. */
+interface FailReceiveOptions {
+  /** Failure that should close the channel. */
+  error: unknown;
+  /** WebSocket close code used for the physical transport. */
+  closeCode?: number;
 }
 
 /** Returns the actual WebSocket application bytes carried by one prepared encrypted frame. */
@@ -743,7 +760,8 @@ export async function createDaemonChannel(
     };
 
     /** Closes and rejects a daemon handshake after an accepted hello cannot safely attach. */
-    const failHandshake = (error: unknown, closeCode = 1011): void => {
+    const failHandshake = (failure: FailHandshakeOptions): void => {
+      const { error, closeCode = 1011 } = failure;
       if (phase === "closed") return;
       // Normalized protocol error shared by the promise and physical close reason.
       const err = error instanceof Error ? error : new Error(String(error));
@@ -769,11 +787,17 @@ export async function createDaemonChannel(
       // Raw WebSocket bytes counted before Base64 allocation or authenticated parsing.
       const bytes = transportMessageWireByteLength(message);
       if (framedSelection && bytes >= MAX_FRAMED_WIRE_BYTES) {
-        failHandshake(new Error("Framed ciphertext exceeds the wire byte limit"), 1009);
+        failHandshake({
+          error: new Error("Framed ciphertext exceeds the wire byte limit"),
+          closeCode: 1009,
+        });
         return null;
       }
       if (receiveWireBudget.pendingBytes + bytes > MAX_PENDING_RECEIVE_WIRE_BYTES) {
-        failHandshake(new Error("Encrypted channel exceeded its inbound high-water mark"), 1009);
+        failHandshake({
+          error: new Error("Encrypted channel exceeded its inbound high-water mark"),
+          closeCode: 1009,
+        });
         return null;
       }
       const reservation: ReceiveWireReservation = { bytes, released: false };
@@ -899,7 +923,7 @@ export async function createDaemonChannel(
           error instanceof Error && error.message === REHANDSHAKE_KEY_MISMATCH_CLOSE_REASON
             ? REHANDSHAKE_KEY_MISMATCH_CLOSE_CODE
             : 1011;
-        failHandshake(error, closeCode);
+        failHandshake({ error, closeCode });
       } finally {
         drainingBufferedMessages = false;
         if (bufferedMessages.length > 0 && (phase === "pending-confirm" || phase === "open")) {
@@ -972,7 +996,7 @@ export async function createDaemonChannel(
       } catch (error) {
         const err = error instanceof Error ? error : new Error(String(error));
         if (acceptedHello) {
-          failHandshake(err);
+          failHandshake({ error: err });
         } else {
           rejectFactory(err);
         }
@@ -985,7 +1009,7 @@ export async function createDaemonChannel(
         if (phase === "awaiting-hello") {
           rejectFactory(error);
         } else {
-          failHandshake(error);
+          failHandshake({ error });
         }
       },
       onclose: (code: number, reason: string) => {
@@ -1042,7 +1066,7 @@ export class EncryptedChannel {
       },
       onerror: (error: Error) => {
         if (this.options.framedCiphertextV1) {
-          this.failReceive(error);
+          this.failReceive({ error });
         } else {
           this.releaseAllReceiveReservations();
         }
@@ -1056,7 +1080,7 @@ export class EncryptedChannel {
     if (!this.framedReceiveExpected) {
       this.receiveTail = this.receiveTail
         .then(() => this.handleMessage(message))
-        .catch((error: unknown) => this.failReceive(error));
+        .catch((error: unknown) => this.failReceive({ error }));
       return;
     }
     const reservation = this.reserveReceiveWire(message);
@@ -1064,7 +1088,7 @@ export class EncryptedChannel {
     this.receiveTail = this.receiveTail
       .then(() => this.handleMessage(message))
       .catch((error: unknown) => {
-        this.failReceive(error);
+        this.failReceive({ error });
       })
       .finally(() => this.releaseReceiveWire(reservation));
   }
@@ -1075,12 +1099,18 @@ export class EncryptedChannel {
     const bytes = transportMessageWireByteLength(message);
     if (this.options.framedCiphertextV1 && bytes >= MAX_FRAMED_WIRE_BYTES) {
       this.notifyProtocolError("invalid-wire");
-      this.failReceive(new Error("Framed ciphertext exceeds the wire byte limit"), 1009);
+      this.failReceive({
+        error: new Error("Framed ciphertext exceeds the wire byte limit"),
+        closeCode: 1009,
+      });
       return null;
     }
     if (this.receiveWireBudget.pendingBytes + bytes > MAX_PENDING_RECEIVE_WIRE_BYTES) {
       this.notifyProtocolError("receive-high-water");
-      this.failReceive(new Error("Encrypted channel exceeded its inbound high-water mark"), 1009);
+      this.failReceive({
+        error: new Error("Encrypted channel exceeded its inbound high-water mark"),
+        closeCode: 1009,
+      });
       return null;
     }
     const reservation: ReceiveWireReservation = { bytes, released: false };
@@ -1106,7 +1136,8 @@ export class EncryptedChannel {
   }
 
   /** Fails the current connection without allowing a partially decoded frame to escape. */
-  private failReceive(error: unknown, closeCode = 1011): void {
+  private failReceive(options: FailReceiveOptions): void {
+    const { error, closeCode = 1011 } = options;
     if (this.state === "closed") return;
     const err = error instanceof Error ? error : new Error(String(error));
     this.state = "closed";
@@ -1188,11 +1219,11 @@ export class EncryptedChannel {
 
         if (this.options.framedCiphertextV1) {
           // Ciphertext bytes validated against the immutable connection representation.
-          const framedWire = decodeFramedCiphertextWire(
-            message.data,
-            message.isBinary,
-            this.options.framedCiphertextV1.ciphertextEncoding,
-          );
+          const framedWire = decodeFramedCiphertextWire({
+            data: message.data,
+            isBinary: message.isBinary,
+            encoding: this.options.framedCiphertextV1.ciphertextEncoding,
+          });
           framedFailureReason = "decrypt-failed";
           return { data: framedWire, isBinary: null };
         }
@@ -1229,21 +1260,17 @@ export class EncryptedChannel {
         /** Adapter wrapper marks failures that occurred after bounded inflate began. */
         const observedCompressionAdapter = this.options.compressionAdapter
           ? {
-              inflateRaw: (input: ArrayBuffer, expectedLength: number, maxOutputLength: number) => {
+              inflateRaw: (options: InflateRawFrameOptions) => {
                 framedFailureReason = "decode-failed";
-                return this.options.compressionAdapter!.inflateRaw(
-                  input,
-                  expectedLength,
-                  maxOutputLength,
-                );
+                return this.options.compressionAdapter!.inflateRaw(options);
               },
             }
           : undefined;
         const plaintext = this.options.framedCiphertextV1
-          ? ((decodedFramed = await decodeFramedPayload(
-              plaintextBytes,
-              observedCompressionAdapter,
-            )),
+          ? ((decodedFramed = await decodeFramedPayload({
+              plaintext: plaintextBytes,
+              compressionAdapter: observedCompressionAdapter,
+            })),
             decodedFramed.data)
           : decodePlaintext(plaintextBytes, ciphertext.isBinary);
         if (decodedFramed && framedDecodeStartedAt !== null && this.options.framedCiphertextV1) {

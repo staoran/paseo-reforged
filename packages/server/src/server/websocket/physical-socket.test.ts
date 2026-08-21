@@ -132,8 +132,7 @@ test("physical sends use relay classification when supported and ignore it on di
     readyState: 1,
     bufferedAmount: 0,
     send: (frame: string | Uint8Array | ArrayBuffer) => relayFallbackFrames.push(frame),
-    sendClassified: (_frame: string | Uint8Array | ArrayBuffer, hint: RelayTrafficHint) =>
-      relayHints.push(hint),
+    sendClassified: ({ hint }: { hint: RelayTrafficHint }) => relayHints.push(hint),
   };
   /** Frames observed by a direct WebSocket without the relay extension. */
   const directFrames: Array<string | Uint8Array | ArrayBuffer> = [];

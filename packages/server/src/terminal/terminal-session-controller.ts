@@ -66,7 +66,7 @@ interface SnapshotSendResult {
 export interface TerminalSessionControllerOptions {
   terminalManager: TerminalManager | null;
   emit: (msg: SessionOutboundMessage) => void;
-  emitBinary: (frame: Uint8Array, hint: RelayTrafficHint) => void;
+  emitBinary: (options: TerminalBinaryMessageOptions) => void;
   hasBinaryChannel: () => boolean;
   isPathWithinRoot: (rootPath: string, candidatePath: string) => boolean;
   sessionLogger: pino.Logger;
@@ -84,6 +84,14 @@ export interface TerminalSessionControllerOptions {
   // Bytes queued on the client transport but not yet sent, or null when the
   // transport exposes no backpressure signal (e.g. the multiplexed relay socket).
   getClientBufferedAmount?: () => number | null;
+}
+
+/** Encoded terminal frame and its sender-side relay classification. */
+export interface TerminalBinaryMessageOptions {
+  /** Encoded terminal stream frame. */
+  frame: Uint8Array;
+  /** Semantic class retained until relay frame preparation. */
+  hint: RelayTrafficHint;
 }
 
 interface TerminalWorkspaceRef {
@@ -125,7 +133,7 @@ export class TerminalSessionController {
   private readonly terminalManager: TerminalManager | null;
   private readonly emit: (msg: SessionOutboundMessage) => void;
   /** Emits encoded terminal frames with sender-side transport semantics. */
-  private readonly emitBinary: (frame: Uint8Array, hint: RelayTrafficHint) => void;
+  private readonly emitBinary: (options: TerminalBinaryMessageOptions) => void;
   private readonly hasBinaryChannel: () => boolean;
   private readonly isPathWithinRoot: (rootPath: string, candidatePath: string) => boolean;
   private readonly sessionLogger: pino.Logger;
@@ -869,14 +877,14 @@ export class TerminalSessionController {
             void this.trySendSnapshot(activeStream);
             return;
           }
-          this.emitBinary(
-            encodeTerminalStreamFrame({
+          this.emitBinary({
+            frame: encodeTerminalStreamFrame({
               opcode: TerminalStreamOpcode.Output,
               slot,
               payload,
             }),
-            { trafficClass: "realtime" },
-          );
+            hint: { trafficClass: "realtime" },
+          });
         },
       }),
     };
@@ -978,13 +986,13 @@ export class TerminalSessionController {
       return { shouldContinue: false };
     }
 
-    this.emitBinary(
-      encodeLegacyTerminalSnapshotFrame({
+    this.emitBinary({
+      frame: encodeLegacyTerminalSnapshotFrame({
         slot: activeStream.slot,
         snapshot,
       }),
-      { trafficClass: "state-sync" },
-    );
+      hint: { trafficClass: "state-sync" },
+    });
     // The snapshot frame went out-of-band; keep the replay that follows on the
     // coalescer's trailing path so it doesn't flush back-to-back with it.
     activeStream.outputCoalescer.markFlushed();
@@ -1013,13 +1021,13 @@ export class TerminalSessionController {
       return { shouldContinue: false };
     }
 
-    this.emitBinary(
-      encodeTerminalRestoreFrame({
+    this.emitBinary({
+      frame: encodeTerminalRestoreFrame({
         slot: activeStream.slot,
         snapshot,
       }),
-      { trafficClass: "state-sync" },
-    );
+      hint: { trafficClass: "state-sync" },
+    });
     // The restore frame went out-of-band; keep the replay that follows on the
     // coalescer's trailing path so it doesn't flush back-to-back with it.
     activeStream.outputCoalescer.markFlushed();

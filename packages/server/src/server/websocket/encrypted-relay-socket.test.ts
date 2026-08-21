@@ -498,22 +498,15 @@ test("classified relay sends preserve explicit hints while ordinary sends defaul
     emitter: new EventEmitter(),
     getTransportBufferedAmount: () => 0,
     terminateTransport: () => undefined,
-    prepareOutboundFrame: (...args) => {
-      observedHints.push(args[1] as RelayTrafficHint);
-      return channel.prepareOutboundFrame(args[0]);
+    prepareOutboundFrame: ({ data, hint }) => {
+      observedHints.push(hint);
+      return channel.prepareOutboundFrame(data);
     },
   });
-  /** Public shape expected by relay-aware daemon senders. */
-  const classifiedSocket = socket as typeof socket & {
-    sendClassified: (
-      data: string | Uint8Array | ArrayBuffer,
-      hint: RelayTrafficHint,
-    ) => void | Promise<void>;
-  };
 
   channel.drain();
   await Promise.all([
-    classifiedSocket.sendClassified("catch-up", { trafficClass: "state-sync" }),
+    socket.sendClassified({ data: "catch-up", hint: { trafficClass: "state-sync" } }),
     socket.send("live"),
   ]);
 

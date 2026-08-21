@@ -31,6 +31,22 @@ export interface EncryptedRelayChannel {
   close: (code?: number, reason?: string) => void;
 }
 
+/** Inputs for one relay-aware application send. */
+export interface EncryptedRelaySendClassifiedOptions {
+  /** Application payload normalized before encryption. */
+  data: string | Uint8Array | ArrayBuffer;
+  /** Sender-side semantic classification retained through preparation. */
+  hint: RelayTrafficHint;
+}
+
+/** Inputs for one asynchronous framed payload preparation. */
+export interface EncryptedRelayPrepareOutboundFrameOptions {
+  /** Application payload awaiting compression and encryption. */
+  data: string | ArrayBuffer;
+  /** Sender-side semantic classification retained through compression policy. */
+  hint: RelayTrafficHint;
+}
+
 export interface EncryptedRelaySocket {
   /** WebSocket-compatible ready state exposed to the daemon session layer. */
   readonly readyState: number;
@@ -39,10 +55,7 @@ export interface EncryptedRelaySocket {
   /** Sends one application payload through the negotiated encrypted transport. */
   send: (data: string | Uint8Array | ArrayBuffer) => void | Promise<void>;
   /** Sends one application payload with sender-side semantics retained for framed preparation. */
-  sendClassified: (
-    data: string | Uint8Array | ArrayBuffer,
-    hint: RelayTrafficHint,
-  ) => void | Promise<void>;
+  sendClassified: (options: EncryptedRelaySendClassifiedOptions) => void | Promise<void>;
   /** Closes the encrypted channel gracefully. */
   close: (code?: number, reason?: string) => void;
   /** Terminates the underlying relay WebSocket immediately. */
@@ -73,8 +86,7 @@ export function createEncryptedRelaySocket(params: {
   terminateTransport: () => void;
   /** Optional asynchronous framed preparation supplied by the daemon compression policy. */
   prepareOutboundFrame?: (
-    data: string | ArrayBuffer,
-    hint: RelayTrafficHint,
+    options: EncryptedRelayPrepareOutboundFrameOptions,
   ) => PreparedEncryptedFrame | Promise<PreparedEncryptedFrame>;
   /** Optional content-free recorder for FIFO wait and reservation gauges. */
   runtimeMetrics?: EncryptedRelaySocketMetrics;
@@ -179,8 +191,8 @@ export function createEncryptedRelaySocket(params: {
         (getTransportBufferedAmount() ?? 0) + pendingPreparationBytes + pendingPreparedWireBytes
       );
     },
-    send: (data) => socket.sendClassified(data, DEFAULT_RELAY_TRAFFIC_HINT),
-    sendClassified: (data, hint) => {
+    send: (data) => socket.sendClassified({ data, hint: DEFAULT_RELAY_TRAFFIC_HINT }),
+    sendClassified: ({ data, hint }) => {
       if (readyState !== 1) {
         return Promise.reject(new Error("Encrypted relay socket is not open"));
       }
@@ -224,7 +236,7 @@ export function createEncryptedRelaySocket(params: {
       let prepared: PreparedEncryptedFrame | Promise<PreparedEncryptedFrame>;
       try {
         prepared = prepareOutboundFrame
-          ? prepareOutboundFrame(outbound, hint)
+          ? prepareOutboundFrame({ data: outbound, hint })
           : channel.prepareOutboundFrame(outbound);
       } catch (error) {
         return Promise.reject(failSend(error));
@@ -251,7 +263,7 @@ export function createEncryptedRelaySocket(params: {
         try {
           runtimeMetrics?.recordQueueMs({
             trafficClass: hint.trafficClass,
-            durationMs: elapsedMs(queuedAt, clock()),
+            durationMs: elapsedMs({ startedAt: queuedAt, endedAt: clock() }),
           });
         } catch {
           // Metrics are observational and cannot fail application traffic.
@@ -313,8 +325,15 @@ function defaultMonotonicClock(): number {
 }
 
 /** Normalizes one monotonic duration to a finite non-negative metric. */
-function elapsedMs(startedAt: number, endedAt: number): number {
-  const duration = endedAt - startedAt;
+interface ElapsedMsOptions {
+  /** Monotonic operation start. */
+  startedAt: number;
+  /** Monotonic operation end. */
+  endedAt: number;
+}
+
+function elapsedMs(options: ElapsedMsOptions): number {
+  const duration = options.endedAt - options.startedAt;
   if (!Number.isFinite(duration) || duration < 0) return 0;
   return duration;
 }

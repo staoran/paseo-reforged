@@ -96,11 +96,11 @@ function asSessionInternals(session: Session): SessionHandlerInternals {
 
 function createBinaryMessageHandler(
   binaryMessages: Uint8Array[] | undefined,
-): ((frame: Uint8Array) => void) | undefined {
+): ((options: { frame: Uint8Array }) => void) | undefined {
   if (!binaryMessages) {
     return undefined;
   }
-  return (frame) => {
+  return ({ frame }) => {
     binaryMessages.push(frame);
   };
 }

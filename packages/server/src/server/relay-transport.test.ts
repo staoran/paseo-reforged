@@ -446,7 +446,7 @@ describe("relay-transport control lifecycle", () => {
     });
     /** Relay-aware socket shape that retains sender-side traffic semantics. */
     const encryptedSocket = (await attached) as {
-      sendClassified: (data: string, hint: RelayTrafficHint) => void | Promise<void>;
+      sendClassified: (options: { data: string; hint: RelayTrafficHint }) => void | Promise<void>;
       on: (event: "message", listener: (data: string | ArrayBuffer) => void) => void;
     };
     /** Client-to-daemon framed identity payload observed at the attached socket seam. */
@@ -464,8 +464,14 @@ describe("relay-transport control lifecycle", () => {
     /** Number of handshake wires already emitted before application traffic. */
     const sentBeforeApplication = dataSocket.sent.length;
 
-    await encryptedSocket.sendClassified(realtimePayload, { trafficClass: "realtime" });
-    await encryptedSocket.sendClassified(stateSyncPayload, { trafficClass: "state-sync" });
+    await encryptedSocket.sendClassified({
+      data: realtimePayload,
+      hint: { trafficClass: "realtime" },
+    });
+    await encryptedSocket.sendClassified({
+      data: stateSyncPayload,
+      hint: { trafficClass: "state-sync" },
+    });
 
     expect(dataSocket.sent).toHaveLength(sentBeforeApplication + 2);
     /** Opaque realtime wire produced through framed identity. */

@@ -10,8 +10,8 @@ import {
   prepareDeflateFramedPayload,
   prepareIdentityFramedPayload,
   type FrameCompressionAdapter,
-  type FrameCompressionEncoder,
   type FramedCiphertextEncoding,
+  type InflateRawFrameOptions,
   type PreparedFramedPayload,
 } from "@getpaseo/relay/e2ee";
 
@@ -68,9 +68,21 @@ export type CompressionSkipReason =
   | "busy"
   | "error";
 
+/** Inputs for one daemon-owned asynchronous raw DEFLATE operation. */
+export interface DaemonDeflateRawOptions {
+  /** Uncompressed application bytes. */
+  input: ArrayBuffer;
+  /** Private codec level selected by the daemon runtime. */
+  level: number;
+}
+
 /** Node-capable codec port shared by compression preparation and bounded decoding. */
-export interface DaemonFrameCompressionCodec
-  extends FrameCompressionEncoder, FrameCompressionAdapter {}
+export interface DaemonFrameCompressionCodec extends FrameCompressionAdapter {
+  /** Compresses one independent raw DEFLATE frame at the daemon's private level. */
+  deflateRaw(options: DaemonDeflateRawOptions): Promise<ArrayBuffer>;
+  /** Inflates one bounded raw DEFLATE frame. */
+  inflateRaw(options: InflateRawFrameOptions): Promise<ArrayBuffer>;
+}
 
 /** Inputs needed to prepare one daemon relay frame before encryption. */
 export interface PrepareDaemonFramedPayloadOptions {
@@ -137,7 +149,7 @@ function copyNodeBuffer(buffer: Buffer): ArrayBuffer {
 /** Creates the production asynchronous Node raw DEFLATE codec. */
 export function createNodeRawDeflateCodec(): DaemonFrameCompressionCodec {
   return {
-    deflateRaw: (input, level) =>
+    deflateRaw: ({ input, level }) =>
       new Promise<ArrayBuffer>((resolve, reject) => {
         nodeDeflateRaw(Buffer.from(input), { level }, (error, output) => {
           if (error) {
@@ -147,7 +159,7 @@ export function createNodeRawDeflateCodec(): DaemonFrameCompressionCodec {
           resolve(copyNodeBuffer(output));
         });
       }),
-    inflateRaw: (input, expectedLength, maxOutputLength) =>
+    inflateRaw: ({ input, expectedLength, maxOutputLength }) =>
       new Promise<ArrayBuffer>((resolve, reject) => {
         if (
           !Number.isSafeInteger(expectedLength) ||
@@ -214,7 +226,7 @@ function prepareIdentityFallback(
     trafficClass: hint.trafficClass,
     skipReason,
     compressionAttempted: codecMs !== null,
-    prepareMs: elapsedMs(prepareStartedAt, clock()),
+    prepareMs: elapsedMs({ startedAt: prepareStartedAt, endedAt: clock() }),
     codecMs,
   };
 }
@@ -271,10 +283,13 @@ export function createDaemonFrameCompression(options: {
         /** Codec callback wall time including any libuv worker-pool wait. */
         let codecMs: number;
         try {
-          compressed = await options.codec.deflateRaw(originalBytes, FIXED_DEFLATE_LEVEL);
-          codecMs = elapsedMs(codecStartedAt, clock());
+          compressed = await options.codec.deflateRaw({
+            input: originalBytes,
+            level: FIXED_DEFLATE_LEVEL,
+          });
+          codecMs = elapsedMs({ startedAt: codecStartedAt, endedAt: clock() });
         } catch {
-          codecMs = elapsedMs(codecStartedAt, clock());
+          codecMs = elapsedMs({ startedAt: codecStartedAt, endedAt: clock() });
           return prepareIdentityFallback({
             data,
             hint,
@@ -340,7 +355,7 @@ export function createDaemonFrameCompression(options: {
           trafficClass: hint.trafficClass,
           skipReason: null,
           compressionAttempted: true,
-          prepareMs: elapsedMs(prepareStartedAt, clock()),
+          prepareMs: elapsedMs({ startedAt: prepareStartedAt, endedAt: clock() }),
           codecMs,
         };
       } finally {
@@ -356,8 +371,15 @@ function defaultMonotonicClock(): number {
 }
 
 /** Normalizes one monotonic duration to a finite non-negative metric. */
-function elapsedMs(startedAt: number, endedAt: number): number {
-  const duration = endedAt - startedAt;
+interface ElapsedMsOptions {
+  /** Monotonic operation start. */
+  startedAt: number;
+  /** Monotonic operation end. */
+  endedAt: number;
+}
+
+function elapsedMs(options: ElapsedMsOptions): number {
+  const duration = options.endedAt - options.startedAt;
   if (!Number.isFinite(duration) || duration < 0) return 0;
   return duration;
 }

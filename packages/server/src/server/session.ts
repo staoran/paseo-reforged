@@ -475,6 +475,20 @@ const nodeSessionFileSystem: SessionFileSystem = {
 // Stub types for features under development (modules not yet available)
 type AgentMcpTransportFactory = () => Promise<unknown>;
 
+/** Broadcast binary frame and its sender-side relay classification. */
+export interface SessionBinaryMessageOptions {
+  /** Encoded protocol frame delivered to every eligible socket. */
+  frame: Uint8Array;
+  /** Semantic class retained until relay frame preparation. */
+  hint: RelayTrafficHint;
+}
+
+/** Source-scoped binary frame and its sender-side relay classification. */
+export interface SessionBinaryMessageToSourceOptions extends SessionBinaryMessageOptions {
+  /** Socket or source identity that requested the frame. */
+  source?: object;
+}
+
 export interface SessionOptions {
   clientId: string;
   scopes: readonly string[];
@@ -482,12 +496,8 @@ export interface SessionOptions {
   clientCapabilities?: Record<string, unknown> | null;
   onMessage: (msg: SessionOutboundMessage) => void;
   onMessageToSource?: (source: object, msg: SessionOutboundMessage) => void;
-  onBinaryMessage?: (frame: Uint8Array, hint: RelayTrafficHint) => void;
-  onBinaryMessageToSource?: (
-    source: object,
-    frame: Uint8Array,
-    hint: RelayTrafficHint,
-  ) => Promise<void>;
+  onBinaryMessage?: (options: SessionBinaryMessageOptions) => void;
+  onBinaryMessageToSource?: (options: SessionBinaryMessageToSourceOptions) => Promise<void>;
   getTransportBufferedAmount?: () => number | null;
   onLifecycleIntent?: (intent: SessionLifecycleIntent) => void;
   onWorkspaceRecovered?: (workspace: PersistedWorkspaceRecord) => Promise<void>;
@@ -681,10 +691,10 @@ export class Session {
     | ((source: object, msg: SessionOutboundMessage) => void)
     | null;
   /** Broadcast binary callback retaining sender-side relay semantics. */
-  private readonly onBinaryMessage: ((frame: Uint8Array, hint: RelayTrafficHint) => void) | null;
+  private readonly onBinaryMessage: ((options: SessionBinaryMessageOptions) => void) | null;
   /** Source-scoped binary callback retaining sender-side relay semantics. */
   private readonly onBinaryMessageToSource:
-    | ((source: object, frame: Uint8Array, hint: RelayTrafficHint) => Promise<void>)
+    | ((options: SessionBinaryMessageToSourceOptions) => Promise<void>)
     | null;
   private readonly getTransportBufferedAmount: () => number | null;
   private readonly onLifecycleIntent: ((intent: SessionLifecycleIntent) => void) | null;
@@ -838,7 +848,7 @@ export class Session {
     this.workspaceFilesSession = new WorkspaceFilesSession({
       host: {
         emit: (msg, source) => this.emitForSource(msg, source),
-        emitBinary: (frame, hint, source) => this.emitBinaryForFileTransfer(frame, hint, source),
+        emitBinary: (binaryOptions) => this.emitBinaryForFileTransfer(binaryOptions),
         hasBinaryChannel: () => this.onBinaryMessage !== null,
       },
       downloadTokenStore,
@@ -993,7 +1003,7 @@ export class Session {
     this.terminalController = new TerminalSessionController({
       terminalManager,
       emit: (msg) => this.emit(msg),
-      emitBinary: (frame, hint) => this.emitBinary(frame, hint),
+      emitBinary: (binaryOptions) => this.emitBinary(binaryOptions),
       hasBinaryChannel: () => this.onBinaryMessage !== null,
       isPathWithinRoot: (rootPath, candidatePath) => this.isPathWithinRoot(rootPath, candidatePath),
       sessionLogger: this.sessionLogger,
@@ -7815,12 +7825,12 @@ export class Session {
   }
 
   /** Emits one broadcast binary frame with its local relay traffic classification. */
-  private emitBinary(frame: Uint8Array, hint: RelayTrafficHint): void {
+  private emitBinary(options: SessionBinaryMessageOptions): void {
     if (!this.onBinaryMessage) {
       return;
     }
     try {
-      this.onBinaryMessage(frame, hint);
+      this.onBinaryMessage(options);
     } catch (error) {
       this.sessionLogger.error({ err: error }, "Failed to emit binary frame");
     }
@@ -7828,15 +7838,13 @@ export class Session {
 
   /** Emits one file frame to its request source while retaining compression eligibility. */
   private async emitBinaryForFileTransfer(
-    frame: Uint8Array,
-    hint: RelayTrafficHint,
-    source?: object,
+    options: SessionBinaryMessageToSourceOptions,
   ): Promise<void> {
-    if (source && this.onBinaryMessageToSource) {
-      await this.onBinaryMessageToSource(source, frame, hint);
+    if (options.source && this.onBinaryMessageToSource) {
+      await this.onBinaryMessageToSource(options);
       return;
     }
-    this.emitBinary(frame, hint);
+    this.emitBinary(options);
   }
 
   private emitForSource(msg: SessionOutboundMessage, source?: object): void {

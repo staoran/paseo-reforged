@@ -531,11 +531,11 @@ describe("relay external socket reconnect behavior", () => {
     const server = createServer();
     /** Relay socket records semantic hints without changing the observable wire payload. */
     const socket = new MockSocket() as MockSocket & {
-      sendClassified: (data: unknown, hint: RelayTrafficHint) => void;
+      sendClassified: (options: { data: unknown; hint: RelayTrafficHint }) => void;
     };
     /** Classified sends observed after authentication. */
     const classifiedSends: Array<{ data: unknown; hint: RelayTrafficHint }> = [];
-    socket.sendClassified = (data, hint) => {
+    socket.sendClassified = ({ data, hint }) => {
       classifiedSends.push({ data, hint });
       socket.send(data);
     };
@@ -567,11 +567,11 @@ describe("relay external socket reconnect behavior", () => {
     const server = createServer();
     /** Relay socket records the traffic semantics presented at its classified send seam. */
     const socket = new MockSocket() as MockSocket & {
-      sendClassified: (data: unknown, hint: RelayTrafficHint) => void;
+      sendClassified: (options: { data: unknown; hint: RelayTrafficHint }) => void;
     };
     /** Classified binary sends observed after the authenticated session is attached. */
     const classifiedSends: Array<{ data: unknown; hint: RelayTrafficHint }> = [];
-    socket.sendClassified = (data, hint) => {
+    socket.sendClassified = ({ data, hint }) => {
       classifiedSends.push({ data, hint });
       socket.send(data);
     };
@@ -584,14 +584,21 @@ describe("relay external socket reconnect behavior", () => {
     expect(onBinaryMessage).toBeTypeOf("function");
     expect(onBinaryMessageToSource).toBeTypeOf("function");
     if (typeof onBinaryMessage === "function") {
-      onBinaryMessage(new Uint8Array([TerminalStreamOpcode.Snapshot, 0]), {
-        trafficClass: "state-sync",
+      onBinaryMessage({
+        frame: new Uint8Array([TerminalStreamOpcode.Snapshot, 0]),
+        hint: {
+          trafficClass: "state-sync",
+        },
       });
     }
     if (typeof onBinaryMessageToSource === "function") {
-      await onBinaryMessageToSource(socket, new Uint8Array([FileTransferOpcode.FileChunk, 1, 65]), {
-        trafficClass: "bulk",
-        compressible: true,
+      await onBinaryMessageToSource({
+        source: socket,
+        frame: new Uint8Array([FileTransferOpcode.FileChunk, 1, 65]),
+        hint: {
+          trafficClass: "bulk",
+          compressible: true,
+        },
       });
     }
 
@@ -1188,7 +1195,10 @@ describe("relay external socket reconnect behavior", () => {
     const { onBinaryMessage } = session.args;
     expect(onBinaryMessage).toBeTypeOf("function");
     if (typeof onBinaryMessage === "function") {
-      onBinaryMessage(new Uint8Array([TerminalStreamOpcode.Output, 12, 0x6f, 0x6b]));
+      onBinaryMessage({
+        frame: new Uint8Array([TerminalStreamOpcode.Output, 12, 0x6f, 0x6b]),
+        hint: { trafficClass: "realtime" },
+      });
     }
 
     const terminalFrames = sentTerminalFrames(socket);

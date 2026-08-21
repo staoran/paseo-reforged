@@ -531,13 +531,16 @@ async function attachEncryptedSocket(options: AttachEncryptedSocketOptions): Pro
       ...(runtimeMetrics ? { runtimeMetrics } : {}),
       ...(channel.usesFramedCiphertextV1() && frameCompression
         ? {
-            prepareOutboundFrame: async (data: string | ArrayBuffer, hint) => {
+            prepareOutboundFrame: async ({ data, hint }) => {
               // Compression setting is re-read only when a new frame begins preparation.
               const negotiated = channel.getNegotiatedTransport();
               /** Configured snapshot fixed when this frame begins preparation. */
               const configuredForFrame = getConfiguredTransportPolicy();
               /** Per-frame policy combining current compression config with locked negotiation. */
-              const effective = resolveRelayTransportPolicy(configuredForFrame, negotiated);
+              const effective = resolveRelayTransportPolicy({
+                configured: configuredForFrame,
+                negotiated,
+              });
               runtimeMetrics?.setConfiguredPolicy(configuredForFrame);
               if (effective.mode !== "framed-v1" || negotiated.mode !== "framed-v1") {
                 throw new Error("Framed preparation requires a framed relay connection");

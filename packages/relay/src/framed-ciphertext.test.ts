@@ -381,7 +381,7 @@ describe("framed ciphertext v1 contract", () => {
       new Uint8Array([0x50, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x6f, 0x6b]),
     );
 
-    await expect(decodeFramedPayload(prepared.plaintext)).resolves.toEqual({
+    await expect(decodeFramedPayload({ plaintext: prepared.plaintext })).resolves.toEqual({
       data: "ok",
       binary: false,
       codec: "identity",
@@ -403,13 +403,15 @@ describe("framed ciphertext v1 contract", () => {
     // Non-canonical forms forbidden before framed ciphertext allocation or decryption.
     const malformed = ["AQ", " AQ==", "AQ==\n", "-Q==", "_Q==", "AQ==="];
 
-    expect(new Uint8Array(decodeFramedCiphertextWire(canonical, false, "base64"))).toEqual(
-      new Uint8Array([0x01]),
-    );
+    expect(
+      new Uint8Array(
+        decodeFramedCiphertextWire({ data: canonical, isBinary: false, encoding: "base64" }),
+      ),
+    ).toEqual(new Uint8Array([0x01]));
     for (const wire of malformed) {
-      expect(() => decodeFramedCiphertextWire(wire, false, "base64")).toThrow(
-        "canonical padded Base64",
-      );
+      expect(() =>
+        decodeFramedCiphertextWire({ data: wire, isBinary: false, encoding: "base64" }),
+      ).toThrow("canonical padded Base64");
     }
   });
 
@@ -423,13 +425,27 @@ describe("framed ciphertext v1 contract", () => {
     // Canonical Base64 text whose ASCII wire length reaches the forbidden boundary.
     const rejectedBase64 = "AAAA".repeat(MAX_FRAMED_WIRE_BYTES / 4);
 
-    expect(decodeFramedCiphertextWire(acceptedBinary, true, "binary")).toBe(acceptedBinary);
+    expect(
+      decodeFramedCiphertextWire({
+        data: acceptedBinary,
+        isBinary: true,
+        encoding: "binary",
+      }),
+    ).toBe(acceptedBinary);
     expect(() =>
-      decodeFramedCiphertextWire(new ArrayBuffer(MAX_FRAMED_WIRE_BYTES), true, "binary"),
+      decodeFramedCiphertextWire({
+        data: new ArrayBuffer(MAX_FRAMED_WIRE_BYTES),
+        isBinary: true,
+        encoding: "binary",
+      }),
     ).toThrow("wire byte limit");
-    expect(() => decodeFramedCiphertextWire(rejectedBase64, false, "base64")).toThrow(
-      "wire byte limit",
-    );
+    expect(() =>
+      decodeFramedCiphertextWire({
+        data: rejectedBase64,
+        isBinary: false,
+        encoding: "base64",
+      }),
+    ).toThrow("wire byte limit");
   });
 
   it("inflates a safe authenticated deflate envelope through the decoder adapter", async () => {
@@ -444,10 +460,17 @@ describe("framed ciphertext v1 contract", () => {
     // Adapter observation at the public framed parser boundary.
     const inflateRaw = vi.fn(async () => original.buffer);
 
-    const decoded = await decodeFramedPayload(envelope.buffer, { inflateRaw });
+    const decoded = await decodeFramedPayload({
+      plaintext: envelope.buffer,
+      compressionAdapter: { inflateRaw },
+    });
 
     expect(inflateRaw).toHaveBeenCalledOnce();
-    expect(inflateRaw).toHaveBeenCalledWith(encoded.buffer, 4096, 4097);
+    expect(inflateRaw).toHaveBeenCalledWith({
+      input: encoded.buffer,
+      expectedLength: 4096,
+      maxOutputLength: 4097,
+    });
     expect(decoded).toEqual({
       data: original.buffer,
       binary: true,
@@ -478,7 +501,12 @@ describe("framed ciphertext v1 contract", () => {
       // Decoder boundary that must remain untouched for unsafe metadata.
       const inflateRaw = vi.fn(async () => new ArrayBuffer(0));
 
-      await expect(decodeFramedPayload(envelope.buffer, { inflateRaw })).rejects.toThrow();
+      await expect(
+        decodeFramedPayload({
+          plaintext: envelope.buffer,
+          compressionAdapter: { inflateRaw },
+        }),
+      ).rejects.toThrow();
       expect(inflateRaw).not.toHaveBeenCalled();
     },
   );
@@ -491,9 +519,12 @@ describe("framed ciphertext v1 contract", () => {
     // Bounded adapter returns one byte fewer than the authenticated declaration.
     const inflateRaw = vi.fn(async () => new ArrayBuffer(4095));
 
-    await expect(decodeFramedPayload(envelope.buffer, { inflateRaw })).rejects.toThrow(
-      "output length mismatch",
-    );
+    await expect(
+      decodeFramedPayload({
+        plaintext: envelope.buffer,
+        compressionAdapter: { inflateRaw },
+      }),
+    ).rejects.toThrow("output length mismatch");
   });
 
   it.each([
@@ -519,7 +550,7 @@ describe("framed ciphertext v1 contract", () => {
       envelope: new Uint8Array([0x50, 0x01, 0x00, 0x00, 0, 0, 0, 1]).buffer,
     },
   ])("rejects authenticated envelope metadata with $caseName", async ({ envelope }) => {
-    await expect(decodeFramedPayload(envelope)).rejects.toThrow();
+    await expect(decodeFramedPayload({ plaintext: envelope })).rejects.toThrow();
   });
 
   it.each(["identity", "deflate-raw"] as const)(
@@ -540,7 +571,12 @@ describe("framed ciphertext v1 contract", () => {
       const adapter =
         codec === "deflate-raw" ? { inflateRaw: async () => invalidText.buffer } : undefined;
 
-      await expect(decodeFramedPayload(envelope.buffer, adapter)).rejects.toThrow();
+      await expect(
+        decodeFramedPayload({
+          plaintext: envelope.buffer,
+          compressionAdapter: adapter,
+        }),
+      ).rejects.toThrow();
     },
   );
 
@@ -733,7 +769,10 @@ describe("framed ciphertext v1 contract", () => {
       const original =
         payloadKind === "text" ? new TextDecoder().decode(originalBytes) : originalBytes.buffer;
       // Raw DEFLATE bytes generated through the portable adapter.
-      const compressed = await compressionAdapter.deflateRaw(originalBytes.buffer, 1);
+      const compressed = await compressionAdapter.deflateRaw({
+        input: originalBytes.buffer,
+        level: 1,
+      });
       // Authenticated envelope built independently from the channel receive path.
       const prepared = prepareDeflateFramedPayload(original, compressed);
       // Encrypted wire represented exactly as selected for this connection.
@@ -782,13 +821,13 @@ describe("framed ciphertext v1 contract", () => {
     let decodeCount = 0;
     // Decoder whose first operation is deliberately slower than later operations.
     const compressionAdapter: FrameCompressionAdapter = {
-      inflateRaw: async (input, expectedLength, maxOutputLength) => {
+      inflateRaw: async ({ input, expectedLength, maxOutputLength }) => {
         decodeCount += 1;
         if (decodeCount === 1) {
           resolveFirstDecodeStarted?.();
           await firstDecodeReleased;
         }
-        return codec.inflateRaw(input, expectedLength, maxOutputLength);
+        return codec.inflateRaw({ input, expectedLength, maxOutputLength });
       },
     };
     // Application messages observed only through the ordered public callback.
@@ -816,7 +855,7 @@ describe("framed ciphertext v1 contract", () => {
     const wires: ArrayBuffer[] = [];
     for (const payload of payloads) {
       const bytes = new TextEncoder().encode(payload).buffer;
-      const compressed = await codec.deflateRaw(bytes, 1);
+      const compressed = await codec.deflateRaw({ input: bytes, level: 1 });
       const prepared = prepareDeflateFramedPayload(payload, compressed);
       wires.push(encrypt(fixture.sharedKey, prepared.plaintext));
     }
@@ -849,10 +888,10 @@ describe("framed ciphertext v1 contract", () => {
     });
     // Decoder holds exactly one valid frame at the public adapter boundary.
     const compressionAdapter: FrameCompressionAdapter = {
-      inflateRaw: async (input, expectedLength, maxOutputLength) => {
+      inflateRaw: async ({ input, expectedLength, maxOutputLength }) => {
         resolveDecodeStarted?.();
         await decodeReleased;
-        return codec.inflateRaw(input, expectedLength, maxOutputLength);
+        return codec.inflateRaw({ input, expectedLength, maxOutputLength });
       },
     };
     // First physical close request caused by aggregate raw-wire pressure.
@@ -873,7 +912,7 @@ describe("framed ciphertext v1 contract", () => {
     // Small valid compressed frame holds the active reservation.
     const payload = "receive-reservation\n".repeat(256);
     const payloadBytes = new TextEncoder().encode(payload).buffer;
-    const compressed = await codec.deflateRaw(payloadBytes, 1);
+    const compressed = await codec.deflateRaw({ input: payloadBytes, level: 1 });
     const prepared = prepareDeflateFramedPayload(payload, compressed);
     const firstWire = encrypt(fixture.sharedKey, prepared.plaintext);
 
@@ -1037,10 +1076,10 @@ describe("framed ciphertext v1 contract", () => {
     });
     // Framed decoder controlled at the runtime adapter seam.
     const compressionAdapter: FrameCompressionAdapter = {
-      inflateRaw: async (input, expectedLength, maxOutputLength) => {
+      inflateRaw: async ({ input, expectedLength, maxOutputLength }) => {
         resolveDecodeStarted?.();
         await decodeReleased;
-        return codec.inflateRaw(input, expectedLength, maxOutputLength);
+        return codec.inflateRaw({ input, expectedLength, maxOutputLength });
       },
     };
     // Public close signal expected immediately from transport failure.
@@ -1060,7 +1099,7 @@ describe("framed ciphertext v1 contract", () => {
     // Independently prepared valid compressed frame enters asynchronous decode.
     const payload = "transport-error\n".repeat(256);
     const bytes = new TextEncoder().encode(payload).buffer;
-    const compressed = await codec.deflateRaw(bytes, 1);
+    const compressed = await codec.deflateRaw({ input: bytes, level: 1 });
     const prepared = prepareDeflateFramedPayload(payload, compressed);
     fixture.transport.onmessage?.({
       data: encrypt(fixture.sharedKey, prepared.plaintext),

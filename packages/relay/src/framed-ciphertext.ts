@@ -74,20 +74,44 @@ export interface DecodedFramedPayload {
   encodedByteLength: number;
 }
 
+/** Complete bounded input for one raw DEFLATE decode. */
+export interface InflateRawFrameOptions {
+  /** Independent raw DEFLATE bytes. */
+  input: ArrayBuffer;
+  /** Authenticated original application byte length. */
+  expectedLength: number;
+  /** Exclusive decoder output ceiling used to detect expansion. */
+  maxOutputLength: number;
+}
+
 /** Platform decoder used by the framed parser without importing a runtime-specific codec. */
 export interface FrameCompressionAdapter {
   /** Inflates one independent raw DEFLATE frame within the supplied output bound. */
-  inflateRaw(
-    input: ArrayBuffer,
-    expectedLength: number,
-    maxOutputLength: number,
-  ): Promise<ArrayBuffer>;
+  inflateRaw(options: InflateRawFrameOptions): Promise<ArrayBuffer>;
+}
+
+/** Complete input for one raw DEFLATE encode. */
+export interface DeflateRawFrameOptions {
+  /** Original application bytes to encode. */
+  input: ArrayBuffer;
+  /** Private implementation level; never serialized into the wire envelope. */
+  level: number;
 }
 
 /** Platform encoder used by the daemon without exposing its level on wire or config. */
 export interface FrameCompressionEncoder {
   /** Compresses one independent raw DEFLATE frame at the caller's private level. */
-  deflateRaw(input: ArrayBuffer, level: number): Promise<ArrayBuffer>;
+  deflateRaw(options: DeflateRawFrameOptions): Promise<ArrayBuffer>;
+}
+
+/** Locked wire representation and opcode supplied to one framed ciphertext decoder. */
+export interface DecodeFramedCiphertextWireOptions {
+  /** Untrusted WebSocket frame payload. */
+  data: string | ArrayBuffer;
+  /** Whether the transport delivered a binary opcode. */
+  isBinary: boolean;
+  /** Representation fixed by the authenticated handshake. */
+  encoding: FramedCiphertextEncoding;
 }
 
 /** Returns the exact locked WebSocket wire length for an encoded framed payload. */
@@ -105,10 +129,9 @@ export function framedCiphertextWireByteLength(
 
 /** Validates and decodes one ciphertext wire using the connection-locked representation. */
 export function decodeFramedCiphertextWire(
-  data: string | ArrayBuffer,
-  isBinary: boolean,
-  encoding: FramedCiphertextEncoding,
+  options: DecodeFramedCiphertextWireOptions,
 ): ArrayBuffer {
+  const { data, isBinary, encoding } = options;
   if (encoding === "binary") {
     if (!isBinary || !(data instanceof ArrayBuffer)) {
       throw new Error("Framed binary ciphertext requires a binary WebSocket frame");
@@ -158,12 +181,19 @@ function applicationPayloadBytes(data: string | ArrayBuffer): Uint8Array {
   return payload;
 }
 
+/** Inputs for building one authenticated framed envelope. */
+interface PrepareFramedPayloadOptions {
+  /** Original application payload whose type and length are authenticated. */
+  data: string | ArrayBuffer;
+  /** Identity or independently compressed bytes stored after the header. */
+  encodedPayload: ArrayBuffer;
+  /** Authenticated codec identifier for the encoded bytes. */
+  codec: FramedCiphertextCodec;
+}
+
 /** Builds one authenticated framed envelope from validated original and encoded bytes. */
-function prepareFramedPayload(
-  data: string | ArrayBuffer,
-  encodedPayload: ArrayBuffer,
-  codec: FramedCiphertextCodec,
-): PreparedFramedPayload {
+function prepareFramedPayload(options: PrepareFramedPayloadOptions): PreparedFramedPayload {
+  const { data, encodedPayload, codec } = options;
   // Original bytes determine the authenticated type and logical length.
   const originalPayload = applicationPayloadBytes(data);
   // Encoded bytes copied into the contiguous authenticated plaintext.
@@ -193,7 +223,7 @@ export function prepareIdentityFramedPayload(data: string | ArrayBuffer): Prepar
   const payload = applicationPayloadBytes(data);
   // Standalone buffer prevents a view offset from entering the authenticated envelope.
   const encodedPayload = payload.slice().buffer;
-  return prepareFramedPayload(data, encodedPayload, "identity");
+  return prepareFramedPayload({ data, encodedPayload, codec: "identity" });
 }
 
 /** Encodes one safely compressed application payload in a deflate-raw envelope. */
@@ -225,14 +255,22 @@ export function prepareDeflateFramedPayload(
   if (originalByteLength > encodedByteLength * MAX_COMPRESSION_RATIO) {
     throw new Error("Framed ciphertext payload exceeds the compression ratio limit");
   }
-  return prepareFramedPayload(data, encodedPayload, "deflate-raw");
+  return prepareFramedPayload({ data, encodedPayload, codec: "deflate-raw" });
+}
+
+/** Authenticated plaintext and optional decoder supplied to the framed payload parser. */
+export interface DecodeFramedPayloadOptions {
+  /** Decrypted authenticated envelope bytes. */
+  plaintext: ArrayBuffer;
+  /** Runtime decoder required only for deflate-raw frames. */
+  compressionAdapter?: FrameCompressionAdapter;
 }
 
 /** Decodes and validates one authenticated framed envelope. */
 export async function decodeFramedPayload(
-  plaintext: ArrayBuffer,
-  compressionAdapter?: FrameCompressionAdapter,
+  options: DecodeFramedPayloadOptions,
 ): Promise<DecodedFramedPayload> {
+  const { plaintext, compressionAdapter } = options;
   if (plaintext.byteLength < FRAMED_CIPHERTEXT_HEADER_BYTES) {
     throw new Error("Framed ciphertext envelope is truncated");
   }
@@ -295,11 +333,11 @@ export async function decodeFramedPayload(
     throw new Error("Framed ciphertext payload exceeds the compression ratio limit");
   }
   // Bounded raw DEFLATE output supplied by the platform adapter.
-  const payload = await compressionAdapter.inflateRaw(
-    encodedPayload,
-    originalByteLength,
-    originalByteLength + 1,
-  );
+  const payload = await compressionAdapter.inflateRaw({
+    input: encodedPayload,
+    expectedLength: originalByteLength,
+    maxOutputLength: originalByteLength + 1,
+  });
   if (payload.byteLength !== originalByteLength) {
     throw new Error("Framed ciphertext decompressed output length mismatch");
   }

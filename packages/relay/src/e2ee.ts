@@ -49,7 +49,9 @@ export {
 export type {
   FrameCompressionAdapter,
   FrameCompressionEncoder,
+  DeflateRawFrameOptions,
   FramedCiphertextCodec,
   FramedCiphertextEncoding,
+  InflateRawFrameOptions,
   PreparedFramedPayload,
 } from "./framed-ciphertext.js";

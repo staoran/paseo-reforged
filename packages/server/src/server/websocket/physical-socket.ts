@@ -50,6 +50,14 @@ export function outboundFrameByteLength(data: string | Uint8Array | ArrayBuffer)
   return data.byteLength;
 }
 
+/** Inputs for the relay-only classified send extension. */
+export interface PhysicalSendClassifiedOptions {
+  /** Application frame passed to the physical socket. */
+  data: string | Uint8Array | ArrayBuffer;
+  /** Semantic class retained through relay frame preparation. */
+  hint: RelayTrafficHint;
+}
+
 interface BoundedPhysicalSocket {
   readyState: number;
   bufferedAmount?: number;
@@ -58,11 +66,7 @@ interface BoundedPhysicalSocket {
     callback?: (error?: Error) => void,
   ) => void | Promise<void>;
   /** Relay-only extension that retains sender semantics through framed preparation. */
-  sendClassified?: (
-    data: string | Uint8Array | ArrayBuffer,
-    hint: RelayTrafficHint,
-    callback?: (error?: Error) => void,
-  ) => void | Promise<void>;
+  sendClassified?: (options: PhysicalSendClassifiedOptions) => void | Promise<void>;
 }
 
 interface PhysicalSendDispatch {
@@ -86,10 +90,8 @@ function dispatchPhysicalFrame(params: {
   const { socket, frame, trafficHint, callback } = params;
   if (trafficHint && socket.sendClassified) {
     return {
-      result: callback
-        ? socket.sendClassified(frame, trafficHint, callback)
-        : socket.sendClassified(frame, trafficHint),
-      expectsCallback: socket.sendClassified.length >= 3,
+      result: socket.sendClassified({ data: frame, hint: trafficHint }),
+      expectsCallback: false,
     };
   }
   return {
@@ -98,6 +100,7 @@ function dispatchPhysicalFrame(params: {
   };
 }
 
+/** Sends one bounded frame and resolves after the selected transport completes. */
 export async function sendBoundedPhysicalFrameAndWait(params: {
   socket: BoundedPhysicalSocket;
   frame: string | Uint8Array | ArrayBuffer;
@@ -140,6 +143,7 @@ export async function sendBoundedPhysicalFrameAndWait(params: {
   return true;
 }
 
+/** Returns whether a socket can accept one additional frame under the hard byte bound. */
 export function physicalSocketHasCapacity(
   socket: Pick<BoundedPhysicalSocket, "bufferedAmount">,
   frameBytes: number,
@@ -148,6 +152,7 @@ export function physicalSocketHasCapacity(
   return socket.bufferedAmount + frameBytes <= MAX_PHYSICAL_SOCKET_BUFFERED_BYTES;
 }
 
+/** Sends one bounded frame without waiting for transport completion. */
 export function sendBoundedPhysicalFrame(params: {
   socket: BoundedPhysicalSocket;
   frame: string | Uint8Array | ArrayBuffer;

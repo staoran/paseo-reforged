@@ -192,8 +192,8 @@ export class DaemonClientRuntimeMetrics {
   /** Aggregates one decoded relay frame without retaining application bytes. */
   recordRelayInboundFrame(metric: RelayInboundFrameMetric): void {
     const key = relayInboundFrameKey(metric.ciphertextEncoding, metric.codec);
-    addRelayFrameAggregate(this.relayInboundFrames, key, metric);
-    pushDurationSample(this.relayInboundDecodeMs, key, metric.decodeMs);
+    addRelayFrameAggregate({ map: this.relayInboundFrames, key, metric });
+    pushDurationSample({ map: this.relayInboundDecodeMs, key, durationMs: metric.decodeMs });
   }
 
   /** Increments one bounded framed receive failure. */
@@ -455,12 +455,19 @@ function parseRelayInboundFrameKey(key: string): {
   };
 }
 
+/** Inputs for adding one content-free inbound frame to its aggregate row. */
+interface AddRelayFrameAggregateOptions {
+  /** Mutable aggregate map for the current rolling bucket. */
+  map: Map<string, RelayFrameAggregate>;
+  /** Stable encoding and codec tuple key. */
+  key: string;
+  /** Content-free frame measurement to add. */
+  metric: RelayInboundFrameMetric;
+}
+
 /** Adds one content-free inbound frame to its aggregate row. */
-function addRelayFrameAggregate(
-  map: Map<string, RelayFrameAggregate>,
-  key: string,
-  metric: RelayInboundFrameMetric,
-): void {
+function addRelayFrameAggregate(options: AddRelayFrameAggregateOptions): void {
+  const { map, key, metric } = options;
   const aggregate = map.get(key) ?? {
     frameCount: 0,
     originalBytes: 0,
@@ -486,12 +493,19 @@ function cloneDurationSampleMap(map: Map<string, RecentRelayMetricSamples>): Map
   return new Map([...map.entries()].map(([key, value]) => [key, value.values()]));
 }
 
+/** Inputs for adding one normalized duration sample to a bounded label map. */
+interface PushDurationSampleOptions {
+  /** Mutable duration map for the current rolling bucket. */
+  map: Map<string, RecentRelayMetricSamples>;
+  /** Stable encoding and codec tuple key. */
+  key: string;
+  /** Raw duration to normalize and retain. */
+  durationMs: number;
+}
+
 /** Adds one normalized duration sample to a bounded label map. */
-function pushDurationSample(
-  map: Map<string, RecentRelayMetricSamples>,
-  key: string,
-  durationMs: number,
-): void {
+function pushDurationSample(options: PushDurationSampleOptions): void {
+  const { map, key, durationMs } = options;
   const samples = map.get(key) ?? new RecentRelayMetricSamples();
   samples.push(normalizeDuration(durationMs));
   map.set(key, samples);
