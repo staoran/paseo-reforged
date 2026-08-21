@@ -31,6 +31,37 @@ interface RelayTransportClosedOutcome {
 /** First observable application delivery or protocol close after framed decode. */
 type RelayTransportDecodeOutcome = RelayTransportApplicationOutcome | RelayTransportClosedOutcome;
 
+/** Narrows one captured handshake wire to text before JSON parsing. */
+function requireTextWire(wire: string | Uint8Array | ArrayBuffer | undefined): string {
+  if (typeof wire !== "string") throw new Error("Expected a text E2EE handshake");
+  return wire;
+}
+
+/** Parses one captured JSON wire after validating its object boundary. */
+function parseJsonWire(
+  wire: string | Uint8Array | ArrayBuffer | undefined,
+): Record<string, unknown> {
+  const parsed: unknown = JSON.parse(requireTextWire(wire));
+  if (parsed === null) throw new Error("Expected a JSON object handshake");
+  if (typeof parsed !== "object") throw new Error("Expected a JSON object handshake");
+  if (Array.isArray(parsed)) throw new Error("Expected a JSON object handshake");
+  return parsed;
+}
+
+/** Extracts the ephemeral public key from one client hello. */
+function parseHelloWire(wire: string | Uint8Array | ArrayBuffer | undefined): string {
+  const parsed = parseJsonWire(wire);
+  if (typeof parsed.key !== "string") throw new Error("Expected a client hello key");
+  return parsed.key;
+}
+
+/** Extracts the content-free relay metrics object from one runtime log entry. */
+function requireRelayTransportEntry(entry: object | undefined): unknown {
+  if (entry === undefined) throw new Error("Expected relay transport runtime metrics");
+  if (!("relayTransport" in entry)) throw new Error("Expected relay transport runtime metrics");
+  return entry.relayTransport;
+}
+
 describe("daemon client relay E2EE transport", () => {
   test("advertises raw DEFLATE when the client relay transport starts", async () => {
     /** Daemon identity supplied through the pairing result. */
@@ -63,12 +94,12 @@ describe("daemon client relay E2EE transport", () => {
     openHandler?.();
     await vi.waitFor(() => expect(sent).toHaveLength(1));
     /** First relay write containing the client capability advertisement. */
-    const hello = JSON.parse(sent[0] as string) as {
-      capabilities?: { framedCiphertextV1?: { compressionAlgorithms?: unknown } };
-    };
+    const hello = parseJsonWire(sent[0]);
     encrypted.close();
 
-    expect(hello.capabilities?.framedCiphertextV1?.compressionAlgorithms).toEqual(["deflate-raw"]);
+    expect(hello).toMatchObject({
+      capabilities: { framedCiphertextV1: { compressionAlgorithms: ["deflate-raw"] } },
+    });
   });
 
   test("does not advertise raw DEFLATE when no client decoder is available", async () => {
@@ -197,9 +228,9 @@ describe("daemon client relay E2EE transport", () => {
     openHandler?.();
     await vi.waitFor(() => expect(sent).toHaveLength(1));
     /** Client hello carrying the ephemeral key for daemon-side encryption. */
-    const hello = JSON.parse(sent[0] as string) as { key: string };
+    const hello = parseHelloWire(sent[0]);
     /** Shared key independently derived on the synthetic daemon side. */
-    const sharedKey = deriveSharedKey(daemonKeyPair.secretKey, importPublicKey(hello.key));
+    const sharedKey = deriveSharedKey(daemonKeyPair.secretKey, importPublicKey(hello));
     messageHandler?.(
       JSON.stringify({
         type: "e2ee_ready",
@@ -239,7 +270,7 @@ describe("daemon client relay E2EE transport", () => {
     encrypted.close();
 
     expect(firstOutcome).toEqual({ kind: "application", data: original, isBinary: false });
-    const relayTransport = (runtimeEntries[0] as { relayTransport: unknown }).relayTransport;
+    const relayTransport = requireRelayTransportEntry(runtimeEntries[0]);
     expect(relayTransport).toMatchObject({
       negotiatedModeCount: { "framed-v1-binary": 1 },
       inboundFrames: [

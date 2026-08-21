@@ -260,7 +260,9 @@ interface RelayPerformanceReport {
 
 /** Validates and normalizes one relay authority without retaining credentials or paths. */
 function parseRelayEndpoint(value: string): string {
-  if (!value || value.includes("://")) {
+  const isMissing = value.length === 0;
+  const hasScheme = value.includes("://");
+  if (isMissing || hasScheme) {
     throw new Error("--relay-endpoint must be a host or host:port authority");
   }
   /** URL parser used only to validate the authority boundary. */
@@ -299,11 +301,10 @@ function parseCliOptions(args: readonly string[]): RelayPerformanceCliOptions {
     if (argument.startsWith("--runs=")) {
       /** User-supplied independent sample count. */
       const requestedRuns = Number(argument.slice("--runs=".length));
-      if (
-        !Number.isSafeInteger(requestedRuns) ||
-        requestedRuns < 1 ||
-        requestedRuns > MAX_MEASURED_RUNS
-      ) {
+      const isInteger = Number.isSafeInteger(requestedRuns);
+      const isPositive = requestedRuns >= 1;
+      const isWithinLimit = requestedRuns <= MAX_MEASURED_RUNS;
+      if (!isInteger || !isPositive || !isWithinLimit) {
         throw new Error(`--runs must be an integer from 1 to ${MAX_MEASURED_RUNS}`);
       }
       measuredRuns = requestedRuns;
@@ -421,7 +422,9 @@ class ShapedRelayProxy {
       const onListening = (): void => {
         this.server.off("error", onError);
         const address = this.server.address();
-        if (!address || typeof address === "string") {
+        const hasNoAddress = address === null;
+        const isNamedAddress = typeof address === "string";
+        if (hasNoAddress || isNamedAddress) {
           reject(new Error("Relay performance proxy did not bind a TCP port"));
           return;
         }
@@ -472,7 +475,9 @@ class ShapedRelayProxy {
       closed = true;
       this.connections.delete(connection);
       if (downstream.readyState === WebSocket.OPEN) downstream.close();
-      if (upstream.readyState === WebSocket.OPEN || upstream.readyState === WebSocket.CONNECTING) {
+      const upstreamCanClose =
+        upstream.readyState === WebSocket.OPEN || upstream.readyState === WebSocket.CONNECTING;
+      if (upstreamCanClose) {
         upstream.close();
       }
     };
@@ -480,7 +485,8 @@ class ShapedRelayProxy {
       const { target, data, isBinary, availableAt } = frame;
       const send = (): void => {
         this.timers.delete(timer);
-        if (closed || target.readyState !== WebSocket.OPEN) return;
+        const targetIsClosed = target.readyState !== WebSocket.OPEN;
+        if (closed || targetIsClosed) return;
         target.send(data, { binary: isBinary });
       };
       const timer = shouldShape
@@ -534,7 +540,9 @@ class ShapedRelayProxy {
 
 /** Narrows one parsed JSON value to an indexable object after boundary validation. */
 function isJsonRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+  const isObject = value !== null && typeof value === "object";
+  const isArray = Array.isArray(value);
+  return isObject && !isArray;
 }
 
 /** Applies one shared-client listener operation to a supported Node WebSocket event. */
@@ -575,21 +583,31 @@ function createWebSocketFactory(options: RelayWebSocketFactoryOptions): WebSocke
         return socket.readyState;
       },
       send(data) {
-        if (stripFramedCapability && typeof data === "string") {
-          try {
-            const message: unknown = JSON.parse(data);
-            if (
-              isJsonRecord(message) &&
-              message.type === "e2ee_hello" &&
-              isJsonRecord(message.capabilities)
-            ) {
-              const { framedCiphertextV1: _framed, ...capabilities } = message.capabilities;
-              send(JSON.stringify({ ...message, capabilities }));
-              return;
-            }
-          } catch {
-            // Application ciphertext is opaque at this layer; send it unchanged.
+        if (!stripFramedCapability || typeof data !== "string") {
+          send(data);
+          return;
+        }
+        try {
+          const message: unknown = JSON.parse(data);
+          if (!isJsonRecord(message)) {
+            send(data);
+            return;
           }
+          const isHello = message.type === "e2ee_hello";
+          if (!isHello) {
+            send(data);
+            return;
+          }
+          const capabilities = message.capabilities;
+          if (!isJsonRecord(capabilities)) {
+            send(data);
+            return;
+          }
+          const { framedCiphertextV1: _framed, ...legacyCapabilities } = capabilities;
+          send(JSON.stringify({ ...message, capabilities: legacyCapabilities }));
+          return;
+        } catch {
+          // Application ciphertext is opaque at this layer; send it unchanged.
         }
         send(data);
       },
@@ -598,7 +616,9 @@ function createWebSocketFactory(options: RelayWebSocketFactoryOptions): WebSocke
         return socket.binaryType;
       },
       set binaryType(value) {
-        if (value !== "nodebuffer" && value !== "arraybuffer" && value !== "fragments") {
+        const isSupportedBinaryType =
+          value === "nodebuffer" || value === "arraybuffer" || value === "fragments";
+        if (!isSupportedBinaryType) {
           throw new Error(`Unsupported relay measurement binaryType: ${value}`);
         }
         socket.binaryType = value;
@@ -743,7 +763,8 @@ async function measureFile(options: MeasureFileOptions): Promise<number> {
   const { client, cwd, fileName, expectedDigest } = options;
   const startedAt = performance.now();
   const result = await client.readFile(cwd, fileName);
-  if (result.size !== FILE_BYTES || result.bytes.byteLength !== FILE_BYTES) {
+  const hasExpectedSize = result.size === FILE_BYTES && result.bytes.byteLength === FILE_BYTES;
+  if (!hasExpectedSize) {
     throw new Error(
       `Measured relay file returned size=${result.size} bytes=${result.bytes.byteLength}; expected ${FILE_BYTES}`,
     );

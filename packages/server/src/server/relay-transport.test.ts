@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import type pino from "pino";
+import { Writable } from "node:stream";
+import pino from "pino";
 import { createClientChannel, type Transport } from "@getpaseo/relay/e2ee";
 import { exportPublicKey, generateKeyPair } from "@getpaseo/relay";
 import { startRelayTransport, type RelaySocketLike } from "./relay-transport";
@@ -8,20 +9,63 @@ import { createNodeRawDeflateCodec } from "./relay-frame-compression.js";
 import type { EncryptedRelaySocket } from "./websocket/encrypted-relay-socket.js";
 import { RelayTransportRuntimeMetricsWindow } from "./websocket/runtime-metrics.js";
 
-function createMockLogger() {
-  const messages: { level: "debug" | "info" | "warn" | "error"; args: unknown[] }[] = [];
-  const logger = {
-    messages,
-    child: () => logger,
-    debug: (...args: unknown[]) => messages.push({ level: "debug", args }),
-    info: (...args: unknown[]) => messages.push({ level: "info", args }),
-    warn: (...args: unknown[]) => messages.push({ level: "warn", args }),
-    error: (...args: unknown[]) => messages.push({ level: "error", args }),
-  };
-  return logger;
+interface TestLogEntry {
+  /** Pino level retained in the bounded test observer. */
+  level: "debug" | "info" | "warn" | "error";
+  /** Structured message literal emitted by the relay transport. */
+  message: string | undefined;
 }
 
-type TestLogger = ReturnType<typeof createMockLogger>;
+interface TestLogger {
+  /** Real pino logger passed through the production relay seam. */
+  logger: pino.Logger;
+  /** Parsed content-free records observed by the test. */
+  messages: TestLogEntry[];
+}
+
+interface ParsedLogRecord {
+  /** Numeric pino level emitted by the real logger. */
+  level?: number;
+  /** Structured pino message literal. */
+  msg?: string;
+}
+
+/** Parses one pino record at the test-only logging boundary. */
+function parseLogRecord(line: string): ParsedLogRecord {
+  const value: unknown = JSON.parse(line);
+  if (value === null) throw new Error("Expected a pino object record");
+  if (typeof value !== "object") throw new Error("Expected a pino object record");
+  if (Array.isArray(value)) throw new Error("Expected a pino object record");
+  let level: number | undefined;
+  if ("level" in value) {
+    level = typeof value.level === "number" ? value.level : undefined;
+  }
+  let msg: string | undefined;
+  if ("msg" in value) {
+    msg = typeof value.msg === "string" ? value.msg : undefined;
+  }
+  return { level, msg };
+}
+
+/** Creates a real pino logger with a deterministic in-memory observation sink. */
+function createMockLogger(): TestLogger {
+  const messages: TestLogEntry[] = [];
+  const destination = new Writable({
+    write(chunk, _encoding, callback) {
+      const record = parseLogRecord(chunk.toString("utf8"));
+      const levelByNumber: Record<number, TestLogEntry["level"] | undefined> = {
+        20: "debug",
+        30: "info",
+        40: "warn",
+        50: "error",
+      };
+      const level = record.level === undefined ? undefined : levelByNumber[record.level];
+      if (level !== undefined) messages.push({ level, message: record.msg });
+      callback();
+    },
+  });
+  return { logger: pino({ level: "debug" }, destination), messages };
+}
 
 /** Narrows the daemon attachment boundary to the relay-aware encrypted socket contract. */
 function isEncryptedRelaySocket(socket: RelaySocketLike): socket is EncryptedRelaySocket {
@@ -33,8 +77,14 @@ function isEncryptedRelaySocket(socket: RelaySocketLike): socket is EncryptedRel
 
 function hasLogMessage(logger: TestLogger, level: "info" | "warn", message: string): boolean {
   return logger.messages.some((entry) => {
-    return entry.level === level && entry.args.some((arg) => arg === message);
+    return entry.level === level && entry.message === message;
   });
+}
+
+/** Narrows one captured binary WebSocket wire before byte-level assertions. */
+function requireArrayBufferWire(wire: string | Uint8Array | ArrayBuffer | undefined): ArrayBuffer {
+  if (!(wire instanceof ArrayBuffer)) throw new Error("Expected a binary relay wire");
+  return wire;
 }
 
 class FakeRelayWebSocket {
@@ -161,7 +211,7 @@ describe("relay-transport control lifecycle", () => {
   test("logs relay_control_connected only after first valid control message", () => {
     const logger = createMockLogger();
     const controller = startRelayTransport({
-      logger: logger as unknown as pino.Logger,
+      logger: logger.logger,
       attachSocket: async () => {},
       relayEndpoint: "relay.paseo.sh:443",
       relayUseTls: true,
@@ -185,7 +235,7 @@ describe("relay-transport control lifecycle", () => {
     vi.useFakeTimers();
     const logger = createMockLogger();
     const controller = startRelayTransport({
-      logger: logger as unknown as pino.Logger,
+      logger: logger.logger,
       attachSocket: async () => {},
       relayEndpoint: "relay.paseo.sh:443",
       relayUseTls: true,
@@ -209,7 +259,7 @@ describe("relay-transport control lifecycle", () => {
     vi.useFakeTimers();
     const logger = createMockLogger();
     const controller = startRelayTransport({
-      logger: logger as unknown as pino.Logger,
+      logger: logger.logger,
       attachSocket: async () => {},
       relayEndpoint: "relay.paseo.sh:443",
       relayUseTls: true,
@@ -237,7 +287,7 @@ describe("relay-transport control lifecycle", () => {
       attachedMetadata.push(metadata);
     };
     const controller = startRelayTransport({
-      logger: logger as unknown as pino.Logger,
+      logger: logger.logger,
       attachSocket,
       relayEndpoint: "relay.paseo.sh:443",
       relayUseTls: true,
@@ -274,7 +324,7 @@ describe("relay-transport control lifecycle", () => {
     const daemonKeyPair = generateKeyPair();
     // Long-lived transport controller that must not restart during the policy update.
     const controller = startRelayTransport({
-      logger: createMockLogger() as unknown as pino.Logger,
+      logger: createMockLogger().logger,
       attachSocket: async () => undefined,
       relayEndpoint: "relay.paseo.sh:443",
       relayUseTls: true,
@@ -328,7 +378,7 @@ describe("relay-transport control lifecycle", () => {
       resolveAttached = resolve;
     });
     const controller = startRelayTransport({
-      logger: logger as unknown as pino.Logger,
+      logger: logger.logger,
       attachSocket: async (socket) => {
         if (!isEncryptedRelaySocket(socket)) throw new Error("Expected encrypted relay socket");
         resolveAttached?.(socket);
@@ -414,7 +464,7 @@ describe("relay-transport control lifecycle", () => {
     const runtimeMetrics = new RelayTransportRuntimeMetricsWindow();
     /** Long-lived relay controller owning the control and data sockets. */
     const controller = startRelayTransport({
-      logger: createMockLogger() as unknown as pino.Logger,
+      logger: createMockLogger().logger,
       attachSocket: async (socket) => {
         if (!isEncryptedRelaySocket(socket)) throw new Error("Expected encrypted relay socket");
         resolveAttached?.(socket);
@@ -492,10 +542,12 @@ describe("relay-transport control lifecycle", () => {
     const stateSyncWire = dataSocket.sent.at(-1);
     expect(realtimeWire).toBeInstanceOf(ArrayBuffer);
     expect(stateSyncWire).toBeInstanceOf(ArrayBuffer);
-    expect((realtimeWire as ArrayBuffer).byteLength).toBe(
+    const realtimeWireBuffer = requireArrayBufferWire(realtimeWire);
+    const stateSyncWireBuffer = requireArrayBufferWire(stateSyncWire);
+    expect(realtimeWireBuffer.byteLength).toBe(
       new TextEncoder().encode(realtimePayload).byteLength + 48,
     );
-    expect((stateSyncWire as ArrayBuffer).byteLength).toBeLessThan(
+    expect(stateSyncWireBuffer.byteLength).toBeLessThan(
       new TextEncoder().encode(stateSyncPayload).byteLength / 2,
     );
     /** Relay transport aggregates produced by the actual handshake and send path. */
@@ -523,7 +575,7 @@ describe("relay-transport control lifecycle", () => {
         frameCount: 1,
         originalBytes: new TextEncoder().encode(realtimePayload).byteLength,
         encodedBytes: new TextEncoder().encode(realtimePayload).byteLength,
-        wireBytes: (realtimeWire as ArrayBuffer).byteLength,
+        wireBytes: realtimeWireBuffer.byteLength,
       },
       {
         ciphertextEncoding: "binary",
@@ -532,7 +584,7 @@ describe("relay-transport control lifecycle", () => {
         frameCount: 1,
         originalBytes: new TextEncoder().encode(stateSyncPayload).byteLength,
         encodedBytes: expect.any(Number),
-        wireBytes: (stateSyncWire as ArrayBuffer).byteLength,
+        wireBytes: stateSyncWireBuffer.byteLength,
       },
     ]);
     expect(snapshot.outboundFrames[1]?.encodedBytes).toBeLessThan(
@@ -563,8 +615,8 @@ describe("relay-transport control lifecycle", () => {
       },
     ]);
     expect(snapshot.pendingPreparedBytes).toEqual({
-      p95: (realtimeWire as ArrayBuffer).byteLength,
-      max: (realtimeWire as ArrayBuffer).byteLength,
+      p95: realtimeWireBuffer.byteLength,
+      max: realtimeWireBuffer.byteLength,
     });
     expect(snapshot.inboundFrames).toEqual([
       {
@@ -594,7 +646,7 @@ describe("relay-transport control lifecycle", () => {
   test("uses relayUseTls for control and data socket URLs", () => {
     const logger = createMockLogger();
     const controller = startRelayTransport({
-      logger: logger as unknown as pino.Logger,
+      logger: logger.logger,
       attachSocket: async () => {},
       relayEndpoint: "[::1]:443",
       relayUseTls: true,
@@ -633,11 +685,13 @@ function createFramedHello(): string {
 /** Extracts the framed selection from one plaintext daemon ready wire. */
 function parseReadySelection(wire: string | Uint8Array | ArrayBuffer): unknown {
   if (typeof wire !== "string") throw new Error("Expected a plaintext ready frame");
-  // Minimal parsed ready shape needed to observe the public selection.
-  const ready = JSON.parse(wire) as {
-    capabilities?: {
-      framedCiphertextV1?: unknown;
-    };
-  };
-  return ready.capabilities?.framedCiphertextV1;
+  const parsed: unknown = JSON.parse(wire);
+  if (parsed === null) throw new Error("Expected a JSON ready frame");
+  if (typeof parsed !== "object") throw new Error("Expected a JSON ready frame");
+  if (Array.isArray(parsed)) throw new Error("Expected a JSON ready frame");
+  const capabilities = "capabilities" in parsed ? parsed.capabilities : undefined;
+  if (capabilities === null) return undefined;
+  if (typeof capabilities !== "object") return undefined;
+  if (Array.isArray(capabilities)) return undefined;
+  return "framedCiphertextV1" in capabilities ? capabilities.framedCiphertextV1 : undefined;
 }

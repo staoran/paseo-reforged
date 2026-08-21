@@ -239,9 +239,35 @@ function buildIdentityEnvelope(binary: boolean, payload: readonly number[]): Arr
 
 /** Parses an observed plaintext handshake frame after checking its wire representation. */
 function parseTextHandshakeFrame(frame: string | ArrayBuffer | undefined): unknown {
-  if (typeof frame !== "string") throw new Error("Expected a plaintext handshake frame");
-  const message: unknown = JSON.parse(frame);
+  return JSON.parse(requireStringFrame(frame));
+}
+
+/** Narrows one observed text wire to a string before parsing or Base64 decoding. */
+function requireStringFrame(frame: string | ArrayBuffer | undefined): string {
+  if (typeof frame !== "string") throw new Error("Expected a text wire frame");
+  return frame;
+}
+
+/** Narrows one observed binary wire to an ArrayBuffer before decryption. */
+function requireArrayBufferFrame(frame: string | ArrayBuffer | undefined): ArrayBuffer {
+  if (!(frame instanceof ArrayBuffer)) throw new Error("Expected a binary wire frame");
+  return frame;
+}
+
+/** Parses a JSON handshake frame at the public transport boundary. */
+function parseJsonFrame(frame: string | ArrayBuffer | undefined): Record<string, unknown> {
+  const message: unknown = parseTextHandshakeFrame(frame);
+  if (message === null) throw new Error("Expected a JSON object frame");
+  if (typeof message !== "object") throw new Error("Expected a JSON object frame");
+  if (Array.isArray(message)) throw new Error("Expected a JSON object frame");
   return message;
+}
+
+/** Extracts the ephemeral public key from one independently observed hello frame. */
+function parseHelloFrame(frame: string | ArrayBuffer | undefined): { key: string } {
+  const message = parseJsonFrame(frame);
+  if (typeof message.key !== "string") throw new Error("Expected a hello key");
+  return { key: message.key };
 }
 
 /** Observes a public promise after all microtasks in the current transport turn can settle. */
@@ -331,7 +357,7 @@ async function openClientFramedChannel(
     runtimeObserver: args.runtimeObserver,
   });
   // Client hello carrying the ephemeral key for independent key derivation.
-  const hello = JSON.parse(sent[0] as string) as { key: string };
+  const hello = parseHelloFrame(sent[0]);
   // Shared key independently derived on the synthetic daemon side.
   const sharedKey = deriveSharedKey(daemonKeyPair.secretKey, importPublicKey(hello.key));
 
@@ -622,9 +648,7 @@ describe("framed ciphertext v1 contract", () => {
       events: { onopen: () => resolveOpen?.() },
     });
     // First client wire frame is the plaintext capability offer.
-    const hello = JSON.parse(
-      (transport.send as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as string,
-    ) as { capabilities?: unknown };
+    const hello = parseJsonFrame(vi.mocked(transport.send).mock.calls[0]?.[0]);
 
     transport.onmessage?.({ data: JSON.stringify({ type: "e2ee_ready" }), isBinary: false });
     await opened;
@@ -666,9 +690,7 @@ describe("framed ciphertext v1 contract", () => {
       compressionAdapter,
     });
     // First client wire frame is the plaintext capability offer.
-    const hello = JSON.parse(
-      (transport.send as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as string,
-    ) as { capabilities?: unknown };
+    const hello = parseJsonFrame(vi.mocked(transport.send).mock.calls[0]?.[0]);
 
     transport.onmessage?.({ data: JSON.stringify({ type: "e2ee_ready" }), isBinary: false });
     await opened;
@@ -712,7 +734,7 @@ describe("framed ciphertext v1 contract", () => {
       compressionAdapter,
     });
     // Client hello carrying the ephemeral key used for independent confirm inspection.
-    const hello = JSON.parse(sent[0] as string) as { key: string };
+    const hello = parseHelloFrame(sent[0]);
     // Shared key independently derived on the synthetic daemon side.
     const sharedKey = deriveSharedKey(daemonKeyPair.secretKey, importPublicKey(hello.key));
 
@@ -808,7 +830,7 @@ describe("framed ciphertext v1 contract", () => {
           ? { kind: "text", value: received[0] }
           : {
               kind: "binary",
-              value: Array.from(new Uint8Array(received[0] as ArrayBuffer)),
+              value: Array.from(new Uint8Array(requireArrayBufferFrame(received[0]))),
             };
       if (fixture.channel.isOpen()) fixture.channel.close();
 
@@ -1163,8 +1185,8 @@ describe("framed ciphertext v1 contract", () => {
       const wire = fixture.sent[0];
       const ciphertext =
         ciphertextEncoding === "binary"
-          ? (wire as ArrayBuffer)
-          : base64ToArrayBuffer(wire as string);
+          ? requireArrayBufferFrame(wire)
+          : base64ToArrayBuffer(requireStringFrame(wire));
       const authenticatedPlaintext = decrypt(fixture.sharedKey, ciphertext);
       if (channel.isOpen()) channel.close();
 
@@ -1187,7 +1209,7 @@ describe("framed ciphertext v1 contract", () => {
 
     await fixture.channel.send(original);
     // Authenticated application envelope inspected independently at the wire boundary.
-    const plaintext = decrypt(fixture.sharedKey, fixture.sent[0] as ArrayBuffer);
+    const plaintext = decrypt(fixture.sharedKey, requireArrayBufferFrame(fixture.sent[0]));
     if (fixture.channel.isOpen()) fixture.channel.close();
 
     expect(new Uint8Array(plaintext)[3]).toBe(0x00);
@@ -1777,8 +1799,8 @@ describe("framed ciphertext v1 contract", () => {
       expect(outboundWireEncoding).toBe(ciphertextEncoding);
       const outboundCiphertext =
         ciphertextEncoding === "binary"
-          ? (outboundWire as ArrayBuffer)
-          : base64ToArrayBuffer(outboundWire as string);
+          ? requireArrayBufferFrame(outboundWire)
+          : base64ToArrayBuffer(requireStringFrame(outboundWire));
       expect(new Uint8Array(decrypt(fixture.sharedKey, outboundCiphertext))).toEqual(
         new Uint8Array(buildIdentityEnvelope(true, payloadBytes)),
       );
@@ -1801,7 +1823,9 @@ describe("framed ciphertext v1 contract", () => {
         receivedLength: 1,
       });
       expect(received[0]).toBeInstanceOf(ArrayBuffer);
-      expect(new Uint8Array(received[0] as ArrayBuffer)).toEqual(Uint8Array.from(payloadBytes));
+      expect(new Uint8Array(requireArrayBufferFrame(received[0]))).toEqual(
+        Uint8Array.from(payloadBytes),
+      );
       daemonChannel.close();
     },
   );
@@ -1969,7 +1993,7 @@ describe("framed ciphertext v1 contract", () => {
     fixture.transport.onmessage?.({ data: fixture.helloText, isBinary: false });
     await secondReadySent;
     // Both plaintext ready frames must carry the same exact selection.
-    const readyFrames = fixture.sent.slice(0, 2).map((wire) => JSON.parse(wire as string));
+    const readyFrames = fixture.sent.slice(0, 2).map(parseTextHandshakeFrame);
 
     // Exact confirmation completes the pending selection after the retry.
     deliverLegacyEncryptedText(
@@ -2030,7 +2054,7 @@ describe("framed ciphertext v1 contract", () => {
     fixture.releaseReady();
     // Public attach state and transport writes after the backlog has had a full turn to drain.
     const stateBeforeConfirm = await observePromiseState(fixture.channelPromise);
-    const readyFrames = fixture.sent.slice(0, 2).map((wire) => JSON.parse(wire as string));
+    const readyFrames = fixture.sent.slice(0, 2).map(parseTextHandshakeFrame);
 
     // Complete the intended pending selection so either implementation path is cleaned up.
     deliverLegacyEncryptedText(
@@ -2087,7 +2111,7 @@ describe("framed ciphertext v1 contract", () => {
     const applicationWire = fixture.sent[2];
     const payloadBytes = Array.from(new TextEncoder().encode(applicationPayload));
     const observed = {
-      readyFrames: fixture.sent.slice(0, 2).map((wire) => JSON.parse(wire as string)),
+      readyFrames: fixture.sent.slice(0, 2).map(parseTextHandshakeFrame),
       channelOpen: daemonChannel.isOpen(),
       applicationWireIsBinary: applicationWire instanceof ArrayBuffer,
     };
@@ -2108,9 +2132,9 @@ describe("framed ciphertext v1 contract", () => {
       channelOpen: true,
       applicationWireIsBinary: true,
     });
-    expect(new Uint8Array(decrypt(fixture.sharedKey, applicationWire as ArrayBuffer))).toEqual(
-      new Uint8Array(buildIdentityEnvelope(false, payloadBytes)),
-    );
+    expect(
+      new Uint8Array(decrypt(fixture.sharedKey, requireArrayBufferFrame(applicationWire))),
+    ).toEqual(new Uint8Array(buildIdentityEnvelope(false, payloadBytes)));
   });
 
   it.each([
@@ -2358,9 +2382,7 @@ describe("framed ciphertext v1 contract", () => {
       events: { onopen: () => resolveOpen?.() },
     });
     // Client hello supplies the ephemeral key needed for independent decryption.
-    const hello = JSON.parse(
-      (transport.send as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as string,
-    ) as { key: string };
+    const hello = parseHelloFrame(vi.mocked(transport.send).mock.calls[0]?.[0]);
     // Shared key independently derived from the two public handshake inputs.
     const sharedKey = deriveSharedKey(daemonKeyPair.secretKey, importPublicKey(hello.key));
 
@@ -2378,17 +2400,19 @@ describe("framed ciphertext v1 contract", () => {
       isBinary: false,
     });
     await opened;
-    (transport.send as ReturnType<typeof vi.fn>).mockClear();
+    vi.mocked(transport.send).mockClear();
 
     await channel.send("hi");
     channel.close();
 
     // Single application wire frame emitted after clearing hello and confirm traffic.
-    const wire = (transport.send as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+    const wire = vi.mocked(transport.send).mock.calls[0]?.[0];
     expect(wire).toBeInstanceOf(ArrayBuffer);
 
     // Authenticated plaintext must match the independent v1 header vector exactly.
-    const authenticatedPlaintext = new Uint8Array(decrypt(sharedKey, wire as ArrayBuffer));
+    const authenticatedPlaintext = new Uint8Array(
+      decrypt(sharedKey, requireArrayBufferFrame(wire)),
+    );
     expect(authenticatedPlaintext).toEqual(
       new Uint8Array([0x50, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x68, 0x69]),
     );
@@ -2409,7 +2433,7 @@ describe("framed ciphertext v1 contract", () => {
     expect(typeof wire).toBe("string");
     // Independent vector fixes magic, version, binary flag, identity codec, length, and bytes.
     const authenticatedPlaintext = new Uint8Array(
-      decrypt(fixture.sharedKey, base64ToArrayBuffer(wire as string)),
+      decrypt(fixture.sharedKey, base64ToArrayBuffer(requireStringFrame(wire))),
     );
     expect(authenticatedPlaintext).toEqual(
       new Uint8Array([0x50, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x03, 0x62, 0x69, 0x6e]),
@@ -2454,9 +2478,7 @@ describe("framed ciphertext v1 contract", () => {
       },
     });
     // Client hello carrying the ephemeral key for independent daemon encryption.
-    const hello = JSON.parse(
-      (transport.send as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as string,
-    ) as { key: string };
+    const hello = parseHelloFrame(vi.mocked(transport.send).mock.calls[0]?.[0]);
     // Shared key independently derived on the synthetic daemon side.
     const sharedKey = deriveSharedKey(daemonKeyPair.secretKey, importPublicKey(hello.key));
 
@@ -2512,9 +2534,7 @@ describe("framed ciphertext v1 contract", () => {
       },
     });
     // Client hello carrying the ephemeral key for independent daemon encryption.
-    const hello = JSON.parse(
-      (transport.send as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as string,
-    ) as { key: string };
+    const hello = parseHelloFrame(vi.mocked(transport.send).mock.calls[0]?.[0]);
     // Shared key independently derived on the synthetic daemon side.
     const sharedKey = deriveSharedKey(daemonKeyPair.secretKey, importPublicKey(hello.key));
 
@@ -2532,7 +2552,9 @@ describe("framed ciphertext v1 contract", () => {
 
     expect(received).toHaveLength(1);
     expect(received[0]).toBeInstanceOf(ArrayBuffer);
-    expect(new Uint8Array(received[0] as ArrayBuffer)).toEqual(new Uint8Array([0x62, 0x69, 0x6e]));
+    expect(new Uint8Array(requireArrayBufferFrame(received[0]))).toEqual(
+      new Uint8Array([0x62, 0x69, 0x6e]),
+    );
   });
 
   it("closes without opening when the legacy Base64 mode confirm write fails", async () => {
@@ -2619,8 +2641,8 @@ describe("framed ciphertext v1 contract", () => {
       expect(wireEncoding).toBe(ciphertextEncoding);
       const ciphertext =
         ciphertextEncoding === "binary"
-          ? (wire as ArrayBuffer)
-          : base64ToArrayBuffer(wire as string);
+          ? requireArrayBufferFrame(wire)
+          : base64ToArrayBuffer(requireStringFrame(wire));
       expect(new Uint8Array(decrypt(fixture.sharedKey, ciphertext))).toEqual(
         new Uint8Array(buildIdentityEnvelope(binary, payloadBytes)),
       );
@@ -2682,7 +2704,10 @@ describe("framed ciphertext v1 contract", () => {
       const receivedPayload =
         typeof received[0] === "string"
           ? { kind: "text", value: received[0] }
-          : { kind: "binary", value: Array.from(new Uint8Array(received[0] as ArrayBuffer)) };
+          : {
+              kind: "binary",
+              value: Array.from(new Uint8Array(requireArrayBufferFrame(received[0]))),
+            };
       expect(receivedPayload).toEqual(expectedPayload);
       fixture.channel.close();
     },
@@ -2801,9 +2826,7 @@ describe("framed ciphertext v1 contract", () => {
       },
     });
     // Client hello carrying the ephemeral key for independent encryption.
-    const hello = JSON.parse(
-      (transport.send as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as string,
-    ) as { key: string };
+    const hello = parseHelloFrame(vi.mocked(transport.send).mock.calls[0]?.[0]);
     // Shared key independently derived before observing application parsing.
     const sharedKey = deriveSharedKey(daemonKeyPair.secretKey, importPublicKey(hello.key));
 
@@ -2856,7 +2879,7 @@ describe("framed ciphertext v1 contract", () => {
       },
     });
     // Client hello carrying the ephemeral key for independent wire decryption.
-    const hello = JSON.parse(sent[0] as string) as { key: string };
+    const hello = parseHelloFrame(sent[0]);
     // Shared key independently derived from the public handshake values.
     const sharedKey = deriveSharedKey(daemonKeyPair.secretKey, importPublicKey(hello.key));
 
@@ -2867,7 +2890,9 @@ describe("framed ciphertext v1 contract", () => {
 
     // Application payload order decoded independently after the fixed v1 header.
     const applicationPayloads = sent.slice(2).map((wire) => {
-      const authenticatedPlaintext = new Uint8Array(decrypt(sharedKey, wire as ArrayBuffer));
+      const authenticatedPlaintext = new Uint8Array(
+        decrypt(sharedKey, requireArrayBufferFrame(wire)),
+      );
       return new TextDecoder().decode(authenticatedPlaintext.slice(8));
     });
     expect(applicationPayloads).toEqual(["pending-before-ready", "from-onopen"]);
@@ -2931,7 +2956,7 @@ describe("framed ciphertext v1 contract", () => {
       },
     });
     // Client hello carrying the ephemeral key for independent encryption.
-    const hello = JSON.parse(sent[0] as string) as { key: string };
+    const hello = parseHelloFrame(sent[0]);
     // Shared key independently derived before the synthetic daemon frame.
     const sharedKey = deriveSharedKey(daemonKeyPair.secretKey, importPublicKey(hello.key));
 
@@ -3037,7 +3062,7 @@ describe("framed ciphertext v1 contract", () => {
       expect(typeof confirmWire).toBe("string");
       const confirm = JSON.parse(
         new TextDecoder().decode(
-          decrypt(fixture.sharedKey, base64ToArrayBuffer(confirmWire as string)),
+          decrypt(fixture.sharedKey, base64ToArrayBuffer(requireStringFrame(confirmWire))),
         ),
       );
       expect(confirm).toEqual({
