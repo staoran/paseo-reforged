@@ -1,10 +1,11 @@
-import type { WebSocketRoute } from "@playwright/test";
+import { mkdir, rm } from "node:fs/promises";
+import { join } from "node:path";
 import type { RelayTransportConfig, SessionOutboundMessage } from "@getpaseo/protocol/messages";
-import { expect, test, type Page } from "../support/fixtures";
+import { expect, test } from "../support/fixtures";
 import { connectDaemonClient } from "../support/helpers/daemon-client-loader";
-import { wsRoutePatternForPort } from "../support/helpers/daemon-port";
 import { startIsolatedHostDaemon } from "../support/helpers/isolated-host-daemon";
 import {
+  enableRelayAndExpectOffer,
   expectPairingOffer,
   expectRelayConsent,
   openPairDeviceModal,
@@ -18,8 +19,6 @@ type RelayTransportDaemonConfigResponse = Extract<
   { type: "get_daemon_config_response" }
 >["payload"];
 
-type WebSocketMessage = Parameters<Parameters<WebSocketRoute["onMessage"]>[0]>[0];
-
 interface RelayTransportDaemonClient {
   /** Establishes the direct test connection. */
   connect(): Promise<void>;
@@ -31,106 +30,26 @@ interface RelayTransportDaemonClient {
   patchDaemonConfig(config: { relay: { transport: RelayTransportConfig } }): Promise<unknown>;
 }
 
-interface RelayTransportProtocolGateOptions {
-  /** Browser page whose isolated-daemon socket is routed. */
-  page: Page;
-  /** Isolated daemon port targeted by the route. */
-  daemonPort: number;
-  /** Removes the new capability from otherwise real server_info traffic. */
-  stripCapability?: boolean;
-  /** Rejects browser transport-policy mutations with this correlated RPC error. */
-  rejectPatchMessage?: string;
-}
-
-/** Narrows an untrusted JSON value to an indexable object. */
-function isJsonRecord(value: unknown): value is Record<string, unknown> {
-  if (typeof value !== "object") return false;
-  if (value === null) return false;
-  return !Array.isArray(value);
-}
-
-/** Parses one text WebSocket frame as a JSON object. */
-function parseWebSocketJson(message: WebSocketMessage): Record<string, unknown> | null {
-  const raw = typeof message === "string" ? message : message.toString("utf8");
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    return isJsonRecord(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-/** Returns the inner session message carried by one WebSocket envelope. */
-function readSessionMessage(message: WebSocketMessage): Record<string, unknown> | null {
-  const envelope = parseWebSocketJson(message);
-  if (envelope?.type !== "session" || !isJsonRecord(envelope.message)) {
-    return null;
-  }
-  return envelope.message;
-}
-
-/** Removes relayTransportPolicy from one real server_info frame when present. */
-function withoutRelayTransportCapability(message: WebSocketMessage): WebSocketMessage {
-  const envelope = parseWebSocketJson(message);
-  if (envelope?.type !== "session" || !isJsonRecord(envelope.message)) {
-    return message;
-  }
-  const sessionMessage = envelope.message;
-  if (sessionMessage.type !== "status" || !isJsonRecord(sessionMessage.payload)) return message;
-  const payload = sessionMessage.payload;
-  if (payload.status !== "server_info" || !isJsonRecord(payload.features)) return message;
-  const features = payload.features;
-  delete features.relayTransportPolicy;
-  return JSON.stringify(envelope);
-}
-
-/** Routes one browser connection through a narrow mixed-version or RPC-failure gate. */
-async function installRelayTransportProtocolGate(
-  options: RelayTransportProtocolGateOptions,
-): Promise<void> {
-  const { page, daemonPort, stripCapability = false, rejectPatchMessage } = options;
-  await page.routeWebSocket(wsRoutePatternForPort(String(daemonPort)), (browserSocket) => {
-    const daemonSocket = browserSocket.connectToServer();
-    browserSocket.onMessage((message) => {
-      const sessionMessage = readSessionMessage(message);
-      if (
-        rejectPatchMessage &&
-        sessionMessage?.type === "set_daemon_config_request" &&
-        typeof sessionMessage.requestId === "string"
-      ) {
-        browserSocket.send(
-          JSON.stringify({
-            type: "session",
-            message: {
-              type: "rpc_error",
-              payload: {
-                requestId: sessionMessage.requestId,
-                requestType: "set_daemon_config_request",
-                error: rejectPatchMessage,
-                code: "transport",
-              },
-            },
-          }),
-        );
-        return;
-      }
-      daemonSocket.send(message);
-    });
-    daemonSocket.onMessage((message) => {
-      browserSocket.send(stripCapability ? withoutRelayTransportCapability(message) : message);
-    });
-  });
-}
-
-test("opens relay consent in browser web", async ({ page }) => {
+test("enables relay without materializing transport policy defaults", async ({ page }) => {
   const daemon = await startIsolatedHostDaemon("pair-device-browser-relay-off", {
     mutableRelay: { enabled: false },
+  });
+  const client = await connectDaemonClient<RelayTransportDaemonClient>({
+    clientIdPrefix: "pair-device-browser-relay-off",
+    port: daemon.port,
   });
   try {
     await preparePairingHost(page, daemon);
     await openPairDeviceModal(page);
     await expectRelayConsent(page);
+    await enableRelayAndExpectOffer(page);
+    await expect
+      .poll(async () => (await client.getDaemonConfig()).config.relay)
+      .toEqual({
+        enabled: true,
+      });
   } finally {
+    await client.close().catch(() => undefined);
     await daemon.close();
   }
 });
@@ -180,16 +99,15 @@ test("persists relay transport defaults changed through the pairing controls", a
   }
 });
 
-test("hides relay transport controls when the daemon omits the capability", async ({ page }) => {
+test("hides relay transport controls with a published daemon that predates the capability", async ({
+  page,
+}) => {
+  test.setTimeout(360_000);
   const daemon = await startIsolatedHostDaemon("pair-device-browser-relay-legacy-capability", {
     mutableRelay: { enabled: true },
+    publishedVersion: "0.2.5",
   });
   try {
-    await installRelayTransportProtocolGate({
-      page,
-      daemonPort: daemon.port,
-      stripCapability: true,
-    });
     await preparePairingHost(page, daemon);
     await openPairDeviceModal(page);
     await expectPairingOffer(page);
@@ -200,7 +118,7 @@ test("hides relay transport controls when the daemon omits the capability", asyn
   }
 });
 
-test("keeps persisted relay transport values visible when the daemon rejects a patch", async ({
+test("keeps persisted relay transport values visible when config persistence fails", async ({
   page,
 }) => {
   const daemon = await startIsolatedHostDaemon("pair-device-browser-relay-patch-failure", {
@@ -219,11 +137,6 @@ test("keeps persisted relay transport values visible when the daemon rejects a p
         },
       },
     });
-    await installRelayTransportProtocolGate({
-      page,
-      daemonPort: daemon.port,
-      rejectPatchMessage: "relay write rejected",
-    });
     await preparePairingHost(page, daemon);
     await openPairDeviceModal(page);
     await expectPairingOffer(page);
@@ -232,9 +145,13 @@ test("keeps persisted relay transport values visible when the daemon rejects a p
     const encodingBase64 = modal.getByTestId("relay-ciphertext-encoding-base64");
     await expect(encodingBinary).toHaveAttribute("aria-selected", "true");
 
+    const configPath = join(daemon.paseoHome, "config.json");
+    await rm(configPath, { force: true });
+    await mkdir(configPath);
     await encodingBase64.click();
 
-    await expect(modal.getByRole("alert")).toContainText("relay write rejected");
+    await expect(modal.getByRole("alert")).toBeVisible();
+    await expect(encodingBase64).toBeEnabled();
     await expect(encodingBinary).toHaveAttribute("aria-selected", "true");
     await expect(encodingBase64).toHaveAttribute("aria-selected", "false");
     await expect

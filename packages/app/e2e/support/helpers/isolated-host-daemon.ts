@@ -88,6 +88,16 @@ async function stopProcess(child: ChildProcess): Promise<void> {
   }
 }
 
+/** Adds captured npm stderr to a published-daemon installation failure. */
+function describePublishedDaemonInstallFailure(error: unknown): Error {
+  if (error instanceof Error && "stderr" in error) {
+    return new Error(`${error.message}\nnpm stderr:\n${String(error.stderr).trim()}`, {
+      cause: error,
+    });
+  }
+  return error instanceof Error ? error : new Error(String(error), { cause: error });
+}
+
 export async function startIsolatedHostDaemon(
   serverId: string,
   options: IsolatedHostDaemonOptions = {},
@@ -108,22 +118,37 @@ export async function startIsolatedHostDaemon(
       path.join(publishedPackageRoot, "package.json"),
       `${JSON.stringify({ private: true })}\n`,
     );
-    const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+    /** npm CLI entry inherited from the workspace script that launched Playwright. */
+    const npmExecPath = process.env.npm_execpath;
+    /** Fallback npm executable when the test runner did not provide a CLI entry. */
+    const npmExecutable = process.platform === "win32" ? "npm.cmd" : "npm";
+    /** Cross-platform executable and prefix that avoid spawning a Windows command shim. */
+    const npmCommand = npmExecPath ? process.execPath : npmExecutable;
+    const npmArgs = npmExecPath ? [npmExecPath] : [];
+    /** Keeps allow-scripts in the user's npmrc layer instead of inherited lifecycle environment. */
+    const npmInstallEnvironment = { ...process.env };
+    delete npmInstallEnvironment.npm_config_allow_scripts;
     try {
       execFileSync(
         npmCommand,
         [
+          ...npmArgs,
           "install",
           "--no-audit",
           "--no-fund",
           "--no-package-lock",
           `@getpaseo/server@${options.publishedVersion}`,
         ],
-        { cwd: publishedPackageRoot, stdio: "ignore" },
+        {
+          cwd: publishedPackageRoot,
+          encoding: "utf8",
+          env: npmInstallEnvironment,
+          stdio: ["ignore", "pipe", "pipe"],
+        },
       );
     } catch (error) {
       await rm(publishedPackageRoot, { recursive: true, force: true });
-      throw error;
+      throw describePublishedDaemonInstallFailure(error);
     }
   }
   if (options.mutableRelay) {
