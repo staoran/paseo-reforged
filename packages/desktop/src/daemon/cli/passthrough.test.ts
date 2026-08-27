@@ -92,6 +92,19 @@ describe("passthrough CLI", () => {
     ).toBeNull();
   });
 
+  it("keeps electron-builder update relaunches in GUI mode", () => {
+    expect(
+      parsePassthroughCliArgs({
+        argv: [
+          "C:\\Users\\user\\AppData\\Local\\Programs\\Paseo Reforged\\Paseo Reforged.exe",
+          "--updated",
+        ],
+        isDefaultApp: false,
+        forceCli: false,
+      }),
+    ).toBeNull();
+  });
+
   it("preserves CLI flags for direct app invocations", () => {
     expect(
       parsePassthroughCliArgs({
