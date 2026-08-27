@@ -629,7 +629,9 @@ function createBoundedCountRecord<TKey extends string>(
   keys: readonly TKey[],
   counts: ReadonlyMap<TKey, number>,
 ): Record<TKey, number> {
-  return Object.fromEntries(keys.map((key) => [key, counts.get(key) ?? 0])) as Record<TKey, number>;
+  /** Complete fixed-label count entries, including labels absent from the sparse source map. */
+  const countEntries = keys.map((key) => [key, counts.get(key) ?? 0]);
+  return Object.fromEntries(countEntries) as Record<TKey, number>;
 }
 
 /** Returns deterministic p50, p95, and max values for duration samples. */

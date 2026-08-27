@@ -6,6 +6,7 @@ import {
   createDaemonChannel,
   type Transport as RelayTransport,
   type KeyPair,
+  type PreparedEncryptedFrame,
 } from "@getpaseo/relay/e2ee";
 import { buildRelayWebSocketUrl } from "@getpaseo/protocol/daemon-endpoints";
 // Node and emitted ESM run without a TypeScript path-alias resolver.
@@ -21,7 +22,10 @@ import {
   resolveRelayTransportPolicy,
   type ConfiguredRelayTransportPolicy,
 } from "./relay-transport-policy.js";
-import { createEncryptedRelaySocket } from "./websocket/encrypted-relay-socket.js";
+import {
+  createEncryptedRelaySocket,
+  type EncryptedRelayPrepareOutboundFrameOptions,
+} from "./websocket/encrypted-relay-socket.js";
 import type { RelayTransportRuntimeMetricsWindow } from "./websocket/runtime-metrics.js";
 
 export interface RelayTransportOptions {
@@ -522,57 +526,66 @@ async function attachEncryptedSocket(options: AttachEncryptedSocketOptions): Pro
       channel.getNegotiatedTransport(),
     );
     if (closeMetricsConnection) socket.once("close", closeMetricsConnection);
+    /** Optional socket metrics port precomputed before the socket options are assembled. */
+    const encryptedSocketMetricsOptions = runtimeMetrics ? { runtimeMetrics } : {};
+    /** Socket preparation hook populated only for a framed connection with a codec coordinator. */
+    const encryptedSocketPreparationOptions: {
+      prepareOutboundFrame?: (
+        options: EncryptedRelayPrepareOutboundFrameOptions,
+      ) => Promise<PreparedEncryptedFrame>;
+    } = {};
+    /** Compression coordinator available only while this connection uses authenticated framing. */
+    const compressionForConnection = channel.usesFramedCiphertextV1() ? frameCompression : null;
+    if (compressionForConnection) {
+      encryptedSocketPreparationOptions.prepareOutboundFrame = async ({ data, hint }) => {
+        // Compression setting is re-read only when a new frame begins preparation.
+        const negotiated = channel.getNegotiatedTransport();
+        /** Configured snapshot fixed when this frame begins preparation. */
+        const configuredForFrame = getConfiguredTransportPolicy();
+        /** Per-frame policy combining current compression config with locked negotiation. */
+        const effective = resolveRelayTransportPolicy({
+          configured: configuredForFrame,
+          negotiated,
+        });
+        runtimeMetrics?.setConfiguredPolicy(configuredForFrame);
+        if (effective.mode !== "framed-v1" || negotiated.mode !== "framed-v1") {
+          throw new Error("Framed preparation requires a framed relay connection");
+        }
+        /** Authenticated payload prepared once before channel encryption and representation. */
+        const prepared = await compressionForConnection.prepare({
+          data,
+          hint,
+          policy: {
+            compressionEnabled: configuredForFrame.compressionEnabled,
+            negotiatedCompressionAlgorithms: negotiated.compressionAlgorithms,
+            ciphertextEncoding: negotiated.ciphertextEncoding,
+          },
+        });
+        if (prepared.compressionAttempted) {
+          runtimeMetrics?.recordCompressionAttempt(hint.trafficClass);
+        }
+        runtimeMetrics?.recordPreparedFrame({
+          ciphertextEncoding: prepared.ciphertextEncoding,
+          trafficClass: prepared.trafficClass,
+          codec: prepared.codec,
+          originalByteLength: prepared.originalByteLength,
+          encodedByteLength: prepared.encodedByteLength,
+          wireByteLength: prepared.wireByteLength,
+          skipReason: prepared.skipReason,
+          prepareMs: prepared.prepareMs,
+          codecMs: prepared.codecMs,
+        });
+        return channel.prepareOutboundFrame(prepared);
+      };
+    }
     /** WebSocket-compatible encrypted adapter attached to the daemon session. */
     const encryptedSocket = createEncryptedRelaySocket({
       channel,
       emitter,
       getTransportBufferedAmount: () => socket.bufferedAmount,
       terminateTransport: () => socket.terminate(),
-      ...(runtimeMetrics ? { runtimeMetrics } : {}),
-      ...(channel.usesFramedCiphertextV1() && frameCompression
-        ? {
-            prepareOutboundFrame: async ({ data, hint }) => {
-              // Compression setting is re-read only when a new frame begins preparation.
-              const negotiated = channel.getNegotiatedTransport();
-              /** Configured snapshot fixed when this frame begins preparation. */
-              const configuredForFrame = getConfiguredTransportPolicy();
-              /** Per-frame policy combining current compression config with locked negotiation. */
-              const effective = resolveRelayTransportPolicy({
-                configured: configuredForFrame,
-                negotiated,
-              });
-              runtimeMetrics?.setConfiguredPolicy(configuredForFrame);
-              if (effective.mode !== "framed-v1" || negotiated.mode !== "framed-v1") {
-                throw new Error("Framed preparation requires a framed relay connection");
-              }
-              /** Authenticated payload prepared once before channel encryption and representation. */
-              const prepared = await frameCompression.prepare({
-                data,
-                hint,
-                policy: {
-                  compressionEnabled: configuredForFrame.compressionEnabled,
-                  negotiatedCompressionAlgorithms: negotiated.compressionAlgorithms,
-                  ciphertextEncoding: negotiated.ciphertextEncoding,
-                },
-              });
-              if (prepared.compressionAttempted) {
-                runtimeMetrics?.recordCompressionAttempt(hint.trafficClass);
-              }
-              runtimeMetrics?.recordPreparedFrame({
-                ciphertextEncoding: prepared.ciphertextEncoding,
-                trafficClass: prepared.trafficClass,
-                codec: prepared.codec,
-                originalByteLength: prepared.originalByteLength,
-                encodedByteLength: prepared.encodedByteLength,
-                wireByteLength: prepared.wireByteLength,
-                skipReason: prepared.skipReason,
-                prepareMs: prepared.prepareMs,
-                codecMs: prepared.codecMs,
-              });
-              return channel.prepareOutboundFrame(prepared);
-            },
-          }
-        : {}),
+      ...encryptedSocketMetricsOptions,
+      ...encryptedSocketPreparationOptions,
     });
     await attachSocket(encryptedSocket, metadata);
     attached = true;

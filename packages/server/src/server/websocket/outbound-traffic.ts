@@ -34,12 +34,13 @@ export function classifyOutboundMessage(message: WSOutboundMessage): RelayTraffi
   /** Typed session payload carried by the outer WebSocket envelope. */
   const sessionMessage = message.message;
   if (STATE_SYNC_MESSAGE_TYPES.has(sessionMessage.type)) return STATE_SYNC_TRAFFIC_HINT;
-  if (
+  /** Whether this event is a completed timeline tool call eligible for the bulk-live gate. */
+  const isCompletedToolCallTimelineEvent =
     sessionMessage.type === "agent_stream" &&
     sessionMessage.payload.event.type === "timeline" &&
     sessionMessage.payload.event.item.type === "tool_call" &&
-    sessionMessage.payload.event.item.status === "completed"
-  ) {
+    sessionMessage.payload.event.item.status === "completed";
+  if (isCompletedToolCallTimelineEvent) {
     return BULK_LIVE_TRAFFIC_HINT;
   }
   return REALTIME_TRAFFIC_HINT;

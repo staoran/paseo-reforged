@@ -166,12 +166,13 @@ export function createNodeRawDeflateCodec(): DaemonFrameCompressionCodec {
       }),
     inflateRaw: ({ input, expectedLength, maxOutputLength }) =>
       new Promise<ArrayBuffer>((resolve, reject) => {
-        if (
-          !Number.isSafeInteger(expectedLength) ||
-          expectedLength < 0 ||
-          !Number.isSafeInteger(maxOutputLength) ||
-          maxOutputLength <= expectedLength
-        ) {
+        /** Whether the expected output and exclusive limit form a safe inflate bound. */
+        const hasValidBoundedOutputLengths =
+          Number.isSafeInteger(expectedLength) &&
+          expectedLength >= 0 &&
+          Number.isSafeInteger(maxOutputLength) &&
+          maxOutputLength > expectedLength;
+        if (!hasValidBoundedOutputLengths) {
           reject(new Error("Invalid bounded raw DEFLATE output lengths"));
           return;
         }
@@ -200,10 +201,11 @@ function resolvePreCompressionSkipReason(
     return "peer-unsupported";
   }
   if (hint.trafficClass === "realtime") return "traffic-ineligible";
-  if (
+  /** Whether bulk traffic lacks the explicit sender-side compression opt-in. */
+  const requiresExplicitBulkCompressionHint =
     (hint.trafficClass === "bulk" || hint.trafficClass === "bulk-live") &&
-    hint.compressible !== true
-  ) {
+    hint.compressible !== true;
+  if (requiresExplicitBulkCompressionHint) {
     return "traffic-ineligible";
   }
   // Compression floor selected by the authenticated sender-side traffic class.
@@ -302,10 +304,11 @@ export function createDaemonFrameCompression(
             clock,
           });
         }
-        if (
+        /** Whether raw output is empty or expands beyond the accepted compression ratio. */
+        const hasInvalidCompressionRatio =
           compressed.byteLength === 0 ||
-          originalBytes.byteLength > compressed.byteLength * MAX_COMPRESSION_RATIO
-        ) {
+          originalBytes.byteLength > compressed.byteLength * MAX_COMPRESSION_RATIO;
+        if (hasInvalidCompressionRatio) {
           return prepareIdentityFallback({
             data,
             hint,
@@ -382,6 +385,8 @@ interface ElapsedMsOptions {
 
 function elapsedMs(options: ElapsedMsOptions): number {
   const duration = options.endedAt - options.startedAt;
-  if (!Number.isFinite(duration) || duration < 0) return 0;
+  /** Whether the monotonic clock result is usable as a non-negative metric. */
+  const hasFiniteNonNegativeDuration = Number.isFinite(duration) && duration >= 0;
+  if (!hasFiniteNonNegativeDuration) return 0;
   return duration;
 }

@@ -880,7 +880,8 @@ function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
 
 /** Rejects nondeterministic byte accounting while allowing timing variance. */
 function assertStableByteTotals(expected: BenchmarkRunSample, actual: BenchmarkRunSample): void {
-  if (
+  /** Whether deterministic byte totals or individual wire-frame sizes diverge between runs. */
+  const hasMismatchedByteTotals =
     expected.frames !== actual.frames ||
     expected.originalBytes !== actual.originalBytes ||
     expected.candidateBytes !== actual.candidateBytes ||
@@ -888,8 +889,8 @@ function assertStableByteTotals(expected: BenchmarkRunSample, actual: BenchmarkR
     expected.encryptedBytes !== actual.encryptedBytes ||
     expected.wireBytes !== actual.wireBytes ||
     expected.adoptedFrames !== actual.adoptedFrames ||
-    !equalNumbers(expected.wireFrameBytes, actual.wireFrameBytes)
-  ) {
+    !equalNumbers(expected.wireFrameBytes, actual.wireFrameBytes);
+  if (hasMismatchedByteTotals) {
     throw new Error("Relay benchmark byte totals changed between measured runs");
   }
 }

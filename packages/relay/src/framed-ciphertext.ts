@@ -133,7 +133,9 @@ export function decodeFramedCiphertextWire(
 ): ArrayBuffer {
   const { data, isBinary, encoding } = options;
   if (encoding === "binary") {
-    if (!isBinary || !(data instanceof ArrayBuffer)) {
+    /** Whether the locked binary representation matches both WebSocket opcode and payload. */
+    const hasBinaryOpcodeAndPayload = isBinary && data instanceof ArrayBuffer;
+    if (!hasBinaryOpcodeAndPayload) {
       throw new Error("Framed binary ciphertext requires a binary WebSocket frame");
     }
     if (data.byteLength >= MAX_FRAMED_WIRE_BYTES) {
@@ -141,13 +143,17 @@ export function decodeFramedCiphertextWire(
     }
     return data;
   }
-  if (isBinary || typeof data !== "string") {
+  /** Whether the locked Base64 representation matches both WebSocket opcode and payload. */
+  const hasBase64TextOpcodeAndPayload = !isBinary && typeof data === "string";
+  if (!hasBase64TextOpcodeAndPayload) {
     throw new Error("Framed Base64 ciphertext requires a text WebSocket frame");
   }
   if (data.length >= MAX_FRAMED_WIRE_BYTES) {
     throw new Error("Framed ciphertext exceeds the wire byte limit");
   }
-  if (data.length % 4 !== 0 || !CANONICAL_PADDED_BASE64.test(data)) {
+  /** Whether the text is a complete canonical padded Base64 representation. */
+  const hasCanonicalPaddedBase64 = data.length % 4 === 0 && CANONICAL_PADDED_BASE64.test(data);
+  if (!hasCanonicalPaddedBase64) {
     throw new Error("Framed ciphertext requires canonical padded Base64");
   }
 
@@ -277,13 +283,20 @@ export async function decodeFramedPayload(
 
   // Header fields are authenticated because parsing occurs only after decryption.
   const header = new Uint8Array(plaintext, 0, FRAMED_CIPHERTEXT_HEADER_BYTES);
-  if (header[0] !== FRAMED_CIPHERTEXT_MAGIC || header[1] !== FRAMED_CIPHERTEXT_VERSION) {
+  /** Whether authenticated magic and version select the supported envelope version. */
+  const hasSupportedEnvelopeVersion =
+    header[0] === FRAMED_CIPHERTEXT_MAGIC && header[1] === FRAMED_CIPHERTEXT_VERSION;
+  if (!hasSupportedEnvelopeVersion) {
     throw new Error("Unsupported framed ciphertext envelope");
   }
-  if (header[2] !== 0x00 && header[2] !== 0x01) {
+  /** Whether the authenticated original-payload type flag is one of the v1 values. */
+  const hasSupportedPayloadFlag = header[2] === 0x00 || header[2] === 0x01;
+  if (!hasSupportedPayloadFlag) {
     throw new Error("Unsupported framed ciphertext flags");
   }
-  if (header[3] !== 0x00 && header[3] !== 0x01) {
+  /** Whether the authenticated codec flag is one of the v1 values. */
+  const hasSupportedCodecFlag = header[3] === 0x00 || header[3] === 0x01;
+  if (!hasSupportedCodecFlag) {
     throw new Error("Unsupported framed ciphertext codec");
   }
 
