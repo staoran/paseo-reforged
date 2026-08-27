@@ -36,6 +36,7 @@ function workspace(projectKey: string, workspaceId: string): SidebarWorkspaceEnt
     title: null,
     currentBranch: null,
     statusBucket: "done",
+    hasUnreadAttention: false,
     hasLastExitActiveMarker: false,
     statusEnteredAt: null,
     lastActivityAt: null,

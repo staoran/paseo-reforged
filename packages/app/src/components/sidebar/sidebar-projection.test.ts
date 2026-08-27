@@ -24,6 +24,7 @@ function makeWorkspace(id: string, statusBucket: SidebarWorkspaceEntry["statusBu
     title: null,
     currentBranch: null,
     statusBucket,
+    hasUnreadAttention: false,
     hasLastExitActiveMarker: false,
     statusEnteredAt: null,
     lastActivityAt: null,

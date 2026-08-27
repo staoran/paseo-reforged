@@ -84,6 +84,7 @@ const ROW_WORKSPACE: SidebarWorkspaceEntry = {
   title: null,
   currentBranch: null,
   statusBucket: "done",
+  hasUnreadAttention: false,
   hasLastExitActiveMarker: false,
   statusEnteredAt: null,
   lastActivityAt: new Date("2026-08-03T06:55:00.000Z"),

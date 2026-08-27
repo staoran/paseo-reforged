@@ -7,6 +7,8 @@ export interface WorkspaceAgentActivity {
   status: WorkspaceDescriptor["status"];
   enteredAt: Date | null;
   lastActivityAt: Date | null;
+  /** True when any unarchived root agent in the workspace still requires attention. */
+  hasUnreadAttention: boolean;
 }
 
 export function buildWorkspaceResidentAgentCountIndex(
@@ -42,11 +44,16 @@ export function buildWorkspaceAgentActivityIndex(
   const activityByWorkspaceId = new Map<string, WorkspaceAgentActivity>();
   const latestStatusAtByWorkspaceId = new Map<string, Date>();
   const latestMessageAtByWorkspaceId = new Map<string, Date>();
+  const workspaceIdsWithUnreadAttention = new Set<string>();
 
   for (const agent of agents.values()) {
     const parentAgent = agent.parentAgentId ? agents.get(agent.parentAgentId) : undefined;
     if (agent.archivedAt || !agent.workspaceId || !isWorkspaceRootAgent(agent, parentAgent)) {
       continue;
+    }
+
+    if (agent.requiresAttention) {
+      workspaceIdsWithUnreadAttention.add(agent.workspaceId);
     }
 
     const latestMessageAt = latestMessageAtByWorkspaceId.get(agent.workspaceId);
@@ -72,15 +79,18 @@ export function buildWorkspaceAgentActivityIndex(
       status,
       enteredAt,
       lastActivityAt: agent.lastMessageAt,
+      hasUnreadAttention: false,
     });
   }
 
   for (const [workspaceId, activity] of activityByWorkspaceId) {
     const previousActivity = previous?.get(workspaceId);
     const lastActivityAt = latestMessageAtByWorkspaceId.get(workspaceId) ?? null;
+    const hasUnreadAttention = workspaceIdsWithUnreadAttention.has(workspaceId);
+    const nextActivity = hasUnreadAttention ? { ...activity, hasUnreadAttention: true } : activity;
     activityByWorkspaceId.set(
       workspaceId,
-      reconcileWorkspaceAgentActivity(activity, previousActivity, lastActivityAt),
+      reconcileWorkspaceAgentActivity(nextActivity, previousActivity, lastActivityAt),
     );
   }
 
@@ -104,7 +114,10 @@ function reconcileWorkspaceAgentActivity(
       : { ...activity, lastActivityAt };
   }
 
-  if (areActivityTimestampsEqual(previousActivity.lastActivityAt, lastActivityAt)) {
+  if (
+    previousActivity.hasUnreadAttention === activity.hasUnreadAttention &&
+    areActivityTimestampsEqual(previousActivity.lastActivityAt, lastActivityAt)
+  ) {
     return previousActivity;
   }
 

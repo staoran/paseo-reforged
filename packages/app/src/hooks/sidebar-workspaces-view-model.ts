@@ -40,6 +40,8 @@ export interface SidebarStatusWorkspacePlacement extends SidebarWorkspacePlaceme
 
 export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
   lastActivityAt: Date | null;
+  /** Whether a root Agent completion in this workspace is still unread. */
+  hasUnreadAttention: boolean;
   /** Whether this workspace had a running root Agent when the desktop app last exited. */
   hasLastExitActiveMarker: boolean;
   defaultAgentId: string | null;
@@ -175,6 +177,7 @@ export function createSidebarWorkspaceEntry(input: {
 }): SidebarWorkspaceEntry {
   const projectViewKey = input.projectViewKey ?? input.workspace.projectId;
   const effectiveStatus = deriveEffectiveWorkspaceStatus(input);
+  const workspaceAgentActivity = input.workspaceAgentActivity?.get(input.workspace.id);
   return {
     workspaceKey: `${input.serverId}:${input.workspace.id}`,
     serverId: input.serverId,
@@ -193,7 +196,8 @@ export function createSidebarWorkspaceEntry(input: {
     currentBranch: normalizeCurrentBranch(input.workspace.gitRuntime?.currentBranch),
     statusBucket: effectiveStatus.status,
     statusEnteredAt: effectiveStatus.enteredAt,
-    lastActivityAt: input.workspaceAgentActivity?.get(input.workspace.id)?.lastActivityAt ?? null,
+    lastActivityAt: workspaceAgentActivity?.lastActivityAt ?? null,
+    hasUnreadAttention: workspaceAgentActivity?.hasUnreadAttention ?? false,
     hasLastExitActiveMarker:
       input.lastExitActiveWorkspaceStore?.has({
         serverId: input.serverId,

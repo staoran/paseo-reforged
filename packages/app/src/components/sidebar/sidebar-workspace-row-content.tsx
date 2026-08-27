@@ -134,6 +134,8 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   shortcutNumber = null,
   showShortcutBadge = false,
   reserveIdleStatusIndicatorSpace = true,
+  emphasizeTitle = false,
+  suppressProjectStatusBadge = false,
   children,
 }: {
   workspace: SidebarWorkspaceEntry;
@@ -153,6 +155,10 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   showShortcutBadge?: boolean;
   /** Keep the empty leading slot when the workspace has no active status. */
   reserveIdleStatusIndicatorSpace?: boolean;
+  /** Emphasize the workspace title when its current grouping owns an unread treatment. */
+  emphasizeTitle?: boolean;
+  /** Hide the badge on a hoisted project icon without changing the workspace lifecycle bucket. */
+  suppressProjectStatusBadge?: boolean;
   children?: ReactNode;
 }) {
   // Native and compact rows cannot rely on the desktop-only hover card for project identity.
@@ -166,8 +172,9 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
       styles.workspaceBranchText,
       isHovered && styles.workspaceBranchTextHovered,
       isCreating && styles.workspaceBranchTextCreating,
+      emphasizeTitle && styles.workspaceBranchTextEmphasized,
     ],
-    [isHovered, isCreating],
+    [emphasizeTitle, isHovered, isCreating],
   );
 
   return (
@@ -178,7 +185,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
             iconDataUri={leadingProjectIconDataUri}
             displayName={leadingProjectName}
             projectViewKey={workspace.projectViewKey}
-            statusBucket={workspace.statusBucket}
+            statusBucket={suppressProjectStatusBadge ? null : workspace.statusBucket}
             backdrop={backdrop}
             loading={isLoading}
             testID={`sidebar-row-project-icon-${workspace.workspaceKey}`}
@@ -581,6 +588,9 @@ const styles = StyleSheet.create((theme) => ({
   },
   workspaceBranchTextHovered: {
     opacity: 1,
+  },
+  workspaceBranchTextEmphasized: {
+    fontWeight: "600",
   },
   statusDotNeedsInput: {
     backgroundColor: getStatusDotColor({ theme, bucket: "needs_input" }) ?? undefined,

@@ -218,6 +218,7 @@ describe("workspace agent activity index", () => {
             status: "needs_input",
             enteredAt: new Date("2026-06-01T10:01:00.000Z"),
             lastActivityAt: new Date("2026-06-01T10:01:00.000Z"),
+            hasUnreadAttention: false,
           },
         ],
         [
@@ -227,10 +228,49 @@ describe("workspace agent activity index", () => {
             status: "attention",
             enteredAt: new Date("2026-06-01T10:02:00.000Z"),
             lastActivityAt: new Date("2026-06-01T10:00:00.000Z"),
+            hasUnreadAttention: true,
           },
         ],
       ]),
     );
+  });
+
+  it("aggregates unread attention across root agents in one workspace", () => {
+    const index = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "latest-read",
+          agent({
+            id: "latest-read",
+            workspaceId: "workspace-a",
+            updatedAt: "2026-06-01T10:03:00.000Z",
+            requiresAttention: false,
+          }),
+        ],
+        [
+          "older-unread",
+          agent({
+            id: "older-unread",
+            workspaceId: "workspace-a",
+            updatedAt: "2026-06-01T10:02:00.000Z",
+            requiresAttention: true,
+            attentionReason: "finished",
+          }),
+        ],
+        [
+          "child-unread",
+          agent({
+            id: "child-unread",
+            workspaceId: "workspace-a",
+            updatedAt: "2026-06-01T10:04:00.000Z",
+            requiresAttention: true,
+            parentAgentId: "latest-read",
+          }),
+        ],
+      ]),
+    );
+
+    expect(index.get("workspace-a")).toMatchObject({ hasUnreadAttention: true });
   });
 
   it("does not let archived or child agents change root workspace activity", () => {
@@ -274,6 +314,7 @@ describe("workspace agent activity index", () => {
       status: "running",
       enteredAt: new Date("2026-06-01T10:00:00.000Z"),
       lastActivityAt: new Date("2026-06-01T10:00:00.000Z"),
+      hasUnreadAttention: false,
     });
   });
 
@@ -310,6 +351,7 @@ describe("workspace agent activity index", () => {
             status: "attention",
             enteredAt: new Date("2026-06-01T10:00:00.000Z"),
             lastActivityAt: new Date("2026-06-01T10:00:00.000Z"),
+            hasUnreadAttention: false,
           },
         ],
         [
@@ -319,6 +361,7 @@ describe("workspace agent activity index", () => {
             status: "running",
             enteredAt: new Date("2026-06-01T10:03:00.000Z"),
             lastActivityAt: new Date("2026-06-01T10:03:00.000Z"),
+            hasUnreadAttention: false,
           },
         ],
       ]),
@@ -360,6 +403,48 @@ describe("workspace agent activity index", () => {
     expect(next.get("workspace-a")?.enteredAt).toEqual(new Date("2026-06-01T10:00:00.000Z"));
   });
 
+  it("updates unread attention without resetting the current status entry time", () => {
+    const previous = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "root",
+          agent({
+            id: "root",
+            workspaceId: "workspace-a",
+            status: "idle",
+            updatedAt: "2026-06-01T10:00:00.000Z",
+            requiresAttention: true,
+            attentionReason: "finished",
+          }),
+        ],
+      ]),
+    );
+
+    const next = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "root",
+          agent({
+            id: "root",
+            workspaceId: "workspace-a",
+            status: "idle",
+            updatedAt: "2026-06-01T10:05:00.000Z",
+            lastActivityAt: "2026-06-01T10:00:00.000Z",
+            requiresAttention: false,
+          }),
+        ],
+      ]),
+      previous,
+    );
+
+    expect(next).not.toBe(previous);
+    expect(next.get("workspace-a")).toMatchObject({
+      status: "attention",
+      enteredAt: new Date("2026-06-01T10:00:00.000Z"),
+      hasUnreadAttention: false,
+    });
+  });
+
   it("records a new entry time when an agent changes status", () => {
     const previous = buildWorkspaceAgentActivityIndex(
       new Map([
@@ -397,6 +482,7 @@ describe("workspace agent activity index", () => {
       status: "needs_input",
       enteredAt: new Date("2026-06-01T10:05:00.000Z"),
       lastActivityAt: new Date("2026-06-01T10:05:00.000Z"),
+      hasUnreadAttention: false,
     });
   });
 
@@ -437,6 +523,7 @@ describe("workspace agent activity index", () => {
       status: "running",
       enteredAt: new Date("2026-06-01T10:00:00.000Z"),
       lastActivityAt: new Date("2026-06-01T10:05:00.000Z"),
+      hasUnreadAttention: false,
     });
   });
 });

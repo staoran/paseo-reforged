@@ -33,6 +33,7 @@ function workspace(overrides: Partial<SidebarWorkspaceEntry> = {}): SidebarWorks
     hasRunningScripts: false,
     statusEnteredAt: null,
     ...overrides,
+    hasUnreadAttention: overrides.hasUnreadAttention ?? false,
     hasLastExitActiveMarker: overrides.hasLastExitActiveMarker ?? false,
     archivingAt: overrides.archivingAt ?? null,
     lastActivityAt: overrides.lastActivityAt ?? null,

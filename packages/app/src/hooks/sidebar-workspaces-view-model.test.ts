@@ -83,6 +83,7 @@ describe("createSidebarWorkspaceEntry activity threading", () => {
             status: "done",
             enteredAt: new Date("2026-08-03T06:54:00.000Z"),
             lastActivityAt,
+            hasUnreadAttention: false,
           },
         ],
       ]),
@@ -103,12 +104,37 @@ describe("createSidebarWorkspaceEntry activity threading", () => {
             status: "running",
             enteredAt: new Date("2026-08-03T06:54:00.000Z"),
             lastActivityAt: null,
+            hasUnreadAttention: false,
           },
         ],
       ]),
     });
 
     expect(entry.lastActivityAt).toBeNull();
+  });
+
+  it("exposes unread attention independently from the Ready status bucket", () => {
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42"),
+      workspaceAgentActivity: new Map([
+        [
+          "ws-1",
+          {
+            agentId: "agent-1",
+            status: "attention",
+            enteredAt: new Date("2026-08-03T06:54:00.000Z"),
+            lastActivityAt: new Date("2026-08-03T06:55:00.000Z"),
+            hasUnreadAttention: true,
+          },
+        ],
+      ]),
+    });
+
+    expect(entry).toMatchObject({
+      statusBucket: "attention",
+      hasUnreadAttention: true,
+    });
   });
 });
 

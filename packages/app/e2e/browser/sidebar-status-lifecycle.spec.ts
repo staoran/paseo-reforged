@@ -53,6 +53,11 @@ test("an idle session stays ready after reading and becomes done only after runt
     await waitForSidebarHydration(page);
     await selectSidebarStatusGrouping(page);
     await expectWorkspaceBucket(page, "attention", agent.workspaceId);
+    // The Ready row's title and project-icon badge are the user-visible unread treatment.
+    const unreadReadyRow = workspaceRowInBucket(page, "attention", agent.workspaceId);
+    const unreadReadyTitle = unreadReadyRow.getByText(agent.workspaceName, { exact: true });
+    await expect(unreadReadyTitle).toHaveCSS("font-weight", "600");
+    await expect(unreadReadyRow.getByTestId("project-status-dot")).toBeVisible();
 
     await openAgentRoute(page, agent);
     await expect
@@ -63,6 +68,11 @@ test("an idle session stays ready after reading and becomes done only after runt
       )
       .toBe(false);
     await expectWorkspaceBucket(page, "attention", agent.workspaceId);
+    // Reading clears both visual cues without changing the durable lifecycle group.
+    const readReadyRow = workspaceRowInBucket(page, "attention", agent.workspaceId);
+    const readReadyTitle = readReadyRow.getByText(agent.workspaceName, { exact: true });
+    await expect(readReadyTitle).toHaveCSS("font-weight", "400");
+    await expect(readReadyRow.getByTestId("project-status-dot")).toHaveCount(0);
 
     await agent.client.sendAgentMessage(
       agent.agentId,
