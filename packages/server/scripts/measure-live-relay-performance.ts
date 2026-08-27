@@ -583,7 +583,8 @@ function createWebSocketFactory(options: RelayWebSocketFactoryOptions): WebSocke
         return socket.readyState;
       },
       send(data) {
-        if (!stripFramedCapability || typeof data !== "string") {
+        const shouldForwardUnmodified = !stripFramedCapability || typeof data !== "string";
+        if (shouldForwardUnmodified) {
           send(data);
           return;
         }

@@ -77,7 +77,9 @@ function isEncryptedRelaySocket(socket: RelaySocketLike): socket is EncryptedRel
 
 function hasLogMessage(logger: TestLogger, level: "info" | "warn", message: string): boolean {
   return logger.messages.some((entry) => {
-    return entry.level === level && entry.message === message;
+    const hasMatchingLevel = entry.level === level;
+    const hasMatchingMessage = entry.message === message;
+    return hasMatchingLevel && hasMatchingMessage;
   });
 }
 
