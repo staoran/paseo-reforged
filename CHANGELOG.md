@@ -1,10 +1,10 @@
 # Changelog
 
-## 0.4.0-beta.4 - 2026-08-17
+## 0.4.0-beta.5 - 2026-08-29
 
 ### Known limitations
 
-- Clients already running `0.4.0` must install this first Paseo Reforged same-base beta manually
+- Clients already running `0.4.0` must install this Paseo Reforged same-base beta manually
 - Android APKs support `arm64-v8a` devices only
 - macOS beta artifacts are unsigned and not notarized
 
@@ -14,6 +14,10 @@
 
 ### Added
 
+- Added pause, resume, edit, and terminate controls for Codex Goal with live status and usage above the composer ([7870cfc](https://github.com/staoran/paseo-reforged/commit/7870cfc6371886eda1d6fc777160187777767c8f) by [@staoran](https://github.com/staoran))
+- Added a framed binary transport for encrypted relay traffic with compression of state catch-up and large tool output ([5a10302](https://github.com/staoran/paseo-reforged/commit/5a1030240c2938f21676b66f3077d34b75da5230) by [@staoran](https://github.com/staoran))
+- Added a desktop relay setting to choose the encrypted transport policy ([8cef97a](https://github.com/staoran/paseo-reforged/commit/8cef97abdba37b04d2da88cbed86e5659bfab75c) by [@staoran](https://github.com/staoran))
+- Added a one-time sidebar marker for workspaces that were still running when the desktop app quit ([7ab1a91](https://github.com/staoran/paseo-reforged/commit/7ab1a910a5b894e5db04f854902f2368485ef320) by [@staoran](https://github.com/staoran))
 - Added category groups for adjacent tool calls in compact and detailed process views ([b076448](https://github.com/staoran/paseo-reforged/commit/b07644857d1cd6eccbbe144fbf1e5ef166bdc23f) by [@staoran](https://github.com/staoran))
 - Added retry actions for Agent lookup and history-loading errors ([97608c0](https://github.com/staoran/paseo-reforged/commit/97608c0e3dc89fa206a8ea7550ccf6f2720c7d8a) by [@staoran](https://github.com/staoran))
 - Added Windows Terminal as a desktop workspace target and branded icons for VS Code Insiders and DataGrip ([ac56348](https://github.com/staoran/paseo-reforged/commit/ac563489151cd33b46d69bff0521082299951aef) by [@staoran](https://github.com/staoran))
@@ -29,6 +33,10 @@
 
 ### Improved
 
+- Added bold titles and green dots to distinguish unread workspaces in the Ready to review status group ([f0375d0](https://github.com/staoran/paseo-reforged/commit/f0375d07cad713ed7250a32e835fe3375bb692e9) by [@staoran](https://github.com/staoran))
+- Combined consecutive tool call groups into a single outer collapsible group ([309d513](https://github.com/staoran/paseo-reforged/commit/309d513c76e784df4ff8fd0a581d14dd97cd198b) by [@staoran](https://github.com/staoran))
+- Changed closing the last Agent tab to switch to another workspace with active Agents instead of always opening New Workspace ([2054be2](https://github.com/staoran/paseo-reforged/commit/2054be2326d4ff43df94546c0ccaad6c9dddfb4f) by [@staoran](https://github.com/staoran))
+- Cleaned up stale temporary speech downloads on daemon startup ([20072b6](https://github.com/staoran/paseo-reforged/commit/20072b6bfd4c9f7da0de8df17cb23f31eece0a14), [db714c8](https://github.com/staoran/paseo-reforged/commit/db714c8e1497bedec184ba2aa711b6e98f62bbcc) by [@staoran](https://github.com/staoran))
 - Kept Agent indicators right-aligned in sidebar rows and moved desktop project names into hover cards ([2cbf8bc](https://github.com/staoran/paseo-reforged/commit/2cbf8bc90e5f7cd8d1ad76d7a7a3ac119c8cac8e) by [@staoran](https://github.com/staoran))
 - Applied workspace typography and reasoning-detail expansion preferences to tool calls ([c2548f6](https://github.com/staoran/paseo-reforged/commit/c2548f6dbe66d3479195d239321437170109264e) by [@staoran](https://github.com/staoran))
 - Unified Mermaid rendering for streaming chats and Markdown previews while retaining interactive diagram controls ([upstream #2306](https://github.com/getpaseo/paseo/pull/2306) by [@dmeledon](https://github.com/dmeledon))
@@ -40,6 +48,11 @@
 
 ### Fixed
 
+- Fixed the latest user message staying uneditable after manually stopping an Agent ([4ee315d](https://github.com/staoran/paseo-reforged/commit/4ee315dae6065dcde55931c244bda9aede6ab00d) by [@staoran](https://github.com/staoran))
+- Fixed replaced timeline segments accumulating on disk during long-running sessions ([2cf60ff](https://github.com/staoran/paseo-reforged/commit/2cf60ff18c935d8bf6ac09ecbdca50887e8b38ef) by [@staoran](https://github.com/staoran))
+- Fixed the daemon exiting when a durable log stream failed ([20072b6](https://github.com/staoran/paseo-reforged/commit/20072b6bfd4c9f7da0de8df17cb23f31eece0a14) by [@staoran](https://github.com/staoran))
+- Fixed the desktop window not opening after an update-installer relaunch on Windows ([26e2f62](https://github.com/staoran/paseo-reforged/commit/26e2f62dfd213f8a8512e3f2f8cf0b94355f8f04) by [@staoran](https://github.com/staoran))
+- Fixed editor and terminal targets not resolving Windows Store app execution aliases like `wt.exe` ([01900818](https://github.com/staoran/paseo-reforged/commit/019008184250022121852e0b7c966d9c8c9f8c9e) by [@staoran](https://github.com/staoran))
 - Fixed closing the last Agent tab leaving an empty workspace instead of returning to New Workspace ([1a73fe3](https://github.com/staoran/paseo-reforged/commit/1a73fe3b143a80d2ec1d05c0807039e854abc2f0) by [@staoran](https://github.com/staoran))
 - Fixed idle sessions moving to Done after being read ([2e1f49b](https://github.com/staoran/paseo-reforged/commit/2e1f49bfe48ae22ac7c7d8be4a91d6cf3f58b861) by [@staoran](https://github.com/staoran))
 - Fixed editing the latest user message returning an unknown-history error in persisted sessions ([f21eba8e](https://github.com/staoran/paseo-reforged/commit/f21eba8e91968ac1c216784d1e2d4822f5836321) by [@staoran](https://github.com/staoran))
