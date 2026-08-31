@@ -259,6 +259,22 @@ export interface AgentStorageUpsertOptions {
   expectedRecordRevision?: string;
 }
 
+export interface AgentStorageRegistration {
+  /** Agent record visible before registration began. */
+  readonly previousRecord: StoredAgentRecord | null;
+  /** Persists one registration-owned Agent snapshot with revision CAS. */
+  applySnapshot(
+    agent: ManagedAgent,
+    options?: { title?: string | null; internal?: boolean },
+  ): Promise<void>;
+  /** Persists the durable timeline revision with revision CAS. */
+  setTimelineRevision(timelineRevision: string | null): Promise<void>;
+  /** Restores the pre-registration record only while this transaction owns the current revision. */
+  rollback(): Promise<void>;
+  /** Releases the rollback token after registration publishes successfully. */
+  complete(): void;
+}
+
 interface AgentMetadataCatalog {
   version: typeof CATALOG_VERSION;
   generation: number;
@@ -426,6 +442,103 @@ export class AgentStorage {
   async get(agentId: string): Promise<StoredAgentRecord | null> {
     await this.ensureReady();
     return await this.getInternal(agentId);
+  }
+
+  /** Begins a revision-owned storage transaction for one session registration. */
+  async beginSessionRegistration(agentId: string): Promise<AgentStorageRegistration> {
+    await this.ensureReady();
+    const baseline = await this.queueRecordMutation(
+      agentId,
+      async () => {
+        if (this.deleting.has(agentId)) {
+          throw new Error(`Cannot register deleting Agent ${agentId}`);
+        }
+        const record = await this.getInternal(agentId);
+        return {
+          record: record ? structuredClone(record) : null,
+          recordRevision: this.metadataById.get(agentId)?.recordRevision ?? null,
+        };
+      },
+      { allowDeleting: true },
+    );
+    /** Revisions produced or observed by this registration transaction. */
+    const ownedRecordRevisions = new Set<string | null>([baseline.recordRevision]);
+    /** Revision that the next registration write must replace. */
+    let currentRecordRevision = baseline.recordRevision;
+    /** Prevents use after publication or rollback. */
+    let completed = false;
+    /** Fails closed when a released registration token is reused. */
+    const assertActive = () => {
+      if (completed) throw new Error(`Agent registration storage token is closed: ${agentId}`);
+    };
+    /** Commits an exact next record while retaining its revision before fault injection. */
+    const commitOwnedRecord = async (record: StoredAgentRecord): Promise<void> => {
+      assertActive();
+      await this.ensureReady();
+      await this.queueRecordMutation(agentId, async () => {
+        await this.enqueueGlobalMutation(async () => {
+          const actualRecordRevision = this.metadataById.get(agentId)?.recordRevision ?? null;
+          if (actualRecordRevision !== currentRecordRevision) {
+            throw new Error(`Agent registration record revision changed: ${agentId}`);
+          }
+          const nextRecordRevision = serializeStoredAgentRecord(record).recordRevision;
+          ownedRecordRevisions.add(nextRecordRevision);
+          const committed = await this.commitRecord(record, {
+            allowTimelineRevisionChange: true,
+          });
+          currentRecordRevision = committed.recordRevision;
+        });
+      });
+    };
+
+    return {
+      previousRecord: baseline.record,
+      applySnapshot: async (agent, options) => {
+        assertActive();
+        await this.ensureReady();
+        const existing = await this.get(agentId);
+        const record = this.buildSnapshotRecord(agent, options, existing);
+        await commitOwnedRecord(record);
+      },
+      setTimelineRevision: async (timelineRevision) => {
+        assertActive();
+        if (timelineRevision !== null) z.string().uuid().parse(timelineRevision);
+        await this.ensureReady();
+        const record = await this.get(agentId);
+        if (!record) throw new Error(`Agent ${agentId} not found`);
+        const nextRecord = { ...record };
+        if (timelineRevision === null) delete nextRecord.timelineRevision;
+        else nextRecord.timelineRevision = timelineRevision;
+        await commitOwnedRecord(nextRecord);
+      },
+      rollback: async () => {
+        assertActive();
+        await this.ensureReady();
+        await this.queueRecordMutation(
+          agentId,
+          async () => {
+            await this.enqueueGlobalMutation(async () => {
+              const actualRecordRevision = this.metadataById.get(agentId)?.recordRevision ?? null;
+              if (!ownedRecordRevisions.has(actualRecordRevision)) {
+                throw new Error(`Agent registration record revision changed: ${agentId}`);
+              }
+              if (actualRecordRevision === baseline.recordRevision) return;
+              if (baseline.record) {
+                await this.commitRecord(baseline.record, { allowTimelineRevisionChange: true });
+              } else {
+                await this.commitRemove(agentId);
+              }
+            });
+          },
+          { allowDeleting: true },
+        );
+        completed = true;
+      },
+      complete: () => {
+        assertActive();
+        completed = true;
+      },
+    };
   }
 
   async materializeMetadata(
@@ -629,22 +742,11 @@ export class AgentStorage {
     options?: { title?: string | null; internal?: boolean },
   ): Promise<void> {
     await this.ensureReady();
-    const hasTitleOverride =
-      options !== undefined && Object.prototype.hasOwnProperty.call(options, "title");
-    const hasInternalOverride =
-      options !== undefined && Object.prototype.hasOwnProperty.call(options, "internal");
     await this.queueRecordMutation(agent.id, async () => {
       const existing = await this.getInternal(agent.id);
-      const record = toStoredAgentRecord(agent, {
-        title: hasTitleOverride ? (options?.title ?? null) : (existing?.title ?? null),
-        createdAt: existing?.createdAt,
-        internal: hasInternalOverride ? options?.internal : (agent.internal ?? existing?.internal),
-      });
-      if (existing && existing.archivedAt !== undefined) {
-        record.archivedAt = existing.archivedAt;
-      }
+      const record = this.buildSnapshotRecord(agent, options, existing);
       await this.enqueueGlobalMutation(async () => {
-        await this.commitRecord(preserveLatestHubExecutionContract(existing, record), {
+        await this.commitRecord(record, {
           allowTimelineRevisionChange: false,
         });
       });
@@ -979,6 +1081,28 @@ export class AgentStorage {
       if (markerWritten) this.recoveryRequired = true;
       throw error;
     }
+  }
+
+  /** Builds the exact record persisted by ordinary and registration-owned snapshots. */
+  private buildSnapshotRecord(
+    agent: ManagedAgent,
+    options: { title?: string | null; internal?: boolean } | undefined,
+    existing: StoredAgentRecord | null,
+  ): StoredAgentRecord {
+    const hasTitleOverride =
+      options !== undefined && Object.prototype.hasOwnProperty.call(options, "title");
+    const hasInternalOverride =
+      options !== undefined && Object.prototype.hasOwnProperty.call(options, "internal");
+    const record = toStoredAgentRecord(agent, {
+      title: hasTitleOverride ? (options?.title ?? null) : (existing?.title ?? null),
+      createdAt: existing?.createdAt,
+      internal: hasInternalOverride ? options?.internal : (agent.internal ?? existing?.internal),
+    });
+    if (existing?.archivedAt !== undefined) record.archivedAt = existing.archivedAt;
+    if (existing?.timelineRevision !== undefined) {
+      record.timelineRevision = existing.timelineRevision;
+    }
+    return preserveLatestHubExecutionContract(existing, record);
   }
 
   private async commitRemove(agentId: string): Promise<void> {

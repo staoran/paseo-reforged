@@ -263,6 +263,32 @@ describe("AgentStorage", () => {
     await expect(storage.get(agentId)).resolves.toMatchObject({ title: "Newer title" });
   });
 
+  test("registration rollback preserves a newer external record revision", async () => {
+    /** Agent identity shared by the registration and external mutation. */
+    const agentId = "agent-registration-stale-rollback";
+    await storage.applySnapshot(createManagedAgent({ id: agentId }), { title: "Baseline" });
+    /** Registration token whose rollback must remain revision-owned. */
+    const registration = await storage.beginSessionRegistration(agentId);
+    await registration.applySnapshot(
+      createManagedAgent({
+        id: agentId,
+        lifecycle: "running",
+        updatedAt: new Date("2026-08-31T09:00:00.000Z"),
+      }),
+    );
+    /** External record committed after the registration-owned snapshot. */
+    const registrationRecord = (await storage.get(agentId))!;
+    await storage.upsert({ ...registrationRecord, title: "Newer external title" });
+
+    await expect(registration.rollback()).rejects.toThrow(
+      `Agent registration record revision changed: ${agentId}`,
+    );
+    await expect(storage.get(agentId)).resolves.toMatchObject({
+      title: "Newer external title",
+      lastStatus: "running",
+    });
+  });
+
   test("round-trips lastMessageAt while keeping legacy records without the field readable", async () => {
     const agentId = "agent-last-message-at";
     const messageAt = new Date("2026-08-05T07:02:00.000Z");

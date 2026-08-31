@@ -1,10 +1,17 @@
 import { randomUUID } from "node:crypto";
 import type { AgentTimelineItem } from "./agent-sdk-types.js";
+import {
+  isAgentTimelineRegistrationSnapshotOwned,
+  type AgentTimelineGenerationSelection,
+  type AgentTimelineRegistrationOwnership,
+  type AgentTimelineRegistrationSnapshot,
+} from "./agent-timeline-store-types.js";
 import type {
   AgentTimelineCommittedFetchOptions,
   AgentTimelineCoverage,
   AgentTimelineFetchOptions,
   AgentTimelineFetchResult,
+  AgentTimelineGenerationSnapshot,
   AgentTimelineRow,
   AgentTimelineStageInput,
   AgentTimelineStagedRowUpdate,
@@ -357,10 +364,12 @@ export class InMemoryDurableAgentTimelineStore implements AgentTimelineStore {
   private readonly states = new Map<string, InMemoryDurableState>();
 
   async stageRows(agentId: string, input: AgentTimelineStageInput): Promise<void> {
-    const state = this.getOrCreateState(agentId);
+    const existingState = this.states.get(agentId);
+    this.assertExpectedSelection(agentId, existingState, input.expectedCurrent);
+    const state = existingState ?? this.getOrCreateState(agentId);
     let working = state.working;
     if (input.mode === "replace") {
-      working = this.createGeneration(input.epoch);
+      working = this.createGeneration(input.epoch, input.generationId);
       state.working = working;
     } else if (!working) {
       if (state.active) {
@@ -369,15 +378,17 @@ export class InMemoryDurableAgentTimelineStore implements AgentTimelineStore {
         }
         working = {
           ...state.active,
-          generationId: randomUUID(),
+          generationId: input.generationId ?? randomUUID(),
           timelineRevision: randomUUID(),
           rows: state.active.rows.map(cloneRow),
           status: "building",
         };
       } else {
-        working = this.createGeneration(input.epoch);
+        working = this.createGeneration(input.epoch, input.generationId);
       }
       state.working = working;
+    } else if (input.generationId && working.generationId !== input.generationId) {
+      throw new Error(`Timeline generation ownership mismatch for '${agentId}'`);
     }
 
     if (working.epoch !== input.epoch) {
@@ -416,10 +427,23 @@ export class InMemoryDurableAgentTimelineStore implements AgentTimelineStore {
     working.status = "building";
   }
 
-  async commit(agentId: string): Promise<CommittedAgentTimelineGeneration> {
+  async commit(
+    agentId: string,
+    expectedGenerationId?: string,
+    expectedCurrent?: AgentTimelineGenerationSelection,
+  ): Promise<CommittedAgentTimelineGeneration> {
     const state = this.states.get(agentId);
+    this.assertExpectedSelection(agentId, state, expectedCurrent);
     if (!state) {
       throw new Error(`No timeline generation exists for '${agentId}'`);
+    }
+    if (
+      expectedGenerationId &&
+      (state.working
+        ? state.working.generationId !== expectedGenerationId
+        : state.active?.generationId !== expectedGenerationId)
+    ) {
+      throw new Error(`Timeline generation ownership changed for '${agentId}'`);
     }
     if (!state.working) {
       if (!state.active) {
@@ -451,6 +475,54 @@ export class InMemoryDurableAgentTimelineStore implements AgentTimelineStore {
     if (working) {
       working.status = "incomplete";
     }
+  }
+
+  /** Discards only the working generation owned by the failed operation. */
+  async discardWorking(agentId: string, expectedGenerationId: string): Promise<boolean> {
+    const state = this.states.get(agentId);
+    if (!state?.working || state.working.generationId !== expectedGenerationId) {
+      return false;
+    }
+    state.working = null;
+    return true;
+  }
+
+  /** Captures complete generation content before a registration transaction mutates it. */
+  async captureRegistrationSnapshot(agentId: string): Promise<AgentTimelineRegistrationSnapshot> {
+    const state = this.states.get(agentId);
+    return {
+      exists: state !== undefined,
+      active: state?.active ? this.toRegistrationSnapshot(state.active) : null,
+      working: state?.working ? this.toRegistrationSnapshot(state.working) : null,
+      invalidGenerationIds: [],
+    };
+  }
+
+  /** Restores a registration snapshot only while the caller still owns current pointers. */
+  async restoreRegistrationSnapshot(
+    agentId: string,
+    snapshot: AgentTimelineRegistrationSnapshot,
+    ownership: AgentTimelineRegistrationOwnership,
+  ): Promise<void> {
+    const state = this.states.get(agentId);
+    /** Current durable selection compared with the registration baseline. */
+    const currentSelection: AgentTimelineGenerationSelection = {
+      exists: state !== undefined,
+      activeGenerationId: state?.active?.generationId ?? null,
+      workingGenerationId: state?.working?.generationId ?? null,
+      invalidGenerationIds: this.invalidGenerationIds(state),
+    };
+    if (!isAgentTimelineRegistrationSnapshotOwned(currentSelection, snapshot, ownership)) {
+      throw new Error(`Timeline registration ownership changed: ${agentId}`);
+    }
+    if (!snapshot.exists) {
+      this.states.delete(agentId);
+      return;
+    }
+    this.states.set(agentId, {
+      active: snapshot.active ? this.fromRegistrationSnapshot(snapshot.active) : null,
+      working: snapshot.working ? this.fromRegistrationSnapshot(snapshot.working) : null,
+    });
   }
 
   async getCoverage(
@@ -537,9 +609,36 @@ export class InMemoryDurableAgentTimelineStore implements AgentTimelineStore {
     return state;
   }
 
-  private createGeneration(epoch: string): InMemoryDurableGeneration {
+  /** Enforces an optional selection CAS before a staged generation can replace state. */
+  private assertExpectedSelection(
+    agentId: string,
+    state: InMemoryDurableState | undefined,
+    expected: AgentTimelineGenerationSelection | undefined,
+  ): void {
+    if (!expected) return;
+    const activeGenerationId = state?.active?.generationId ?? null;
+    const workingGenerationId = state?.working?.generationId ?? null;
+    if (
+      (state !== undefined) !== expected.exists ||
+      activeGenerationId !== expected.activeGenerationId ||
+      workingGenerationId !== expected.workingGenerationId ||
+      !sameGenerationIds(this.invalidGenerationIds(state), expected.invalidGenerationIds)
+    ) {
+      throw new Error(`Timeline generation selection changed for '${agentId}'`);
+    }
+  }
+
+  /** Returns generation identities represented as invalid by the in-memory state. */
+  private invalidGenerationIds(state: InMemoryDurableState | undefined): string[] {
+    return state?.active && !state.active.valid ? [state.active.generationId] : [];
+  }
+
+  private createGeneration(
+    epoch: string,
+    generationId: string = randomUUID(),
+  ): InMemoryDurableGeneration {
     return {
-      generationId: randomUUID(),
+      generationId,
       timelineRevision: randomUUID(),
       epoch,
       rows: [],
@@ -586,6 +685,36 @@ export class InMemoryDurableAgentTimelineStore implements AgentTimelineStore {
     };
   }
 
+  /** Converts one internal generation into a detached registration snapshot. */
+  private toRegistrationSnapshot(
+    generation: InMemoryDurableGeneration,
+  ): AgentTimelineGenerationSnapshot {
+    return {
+      generationId: generation.generationId,
+      timelineRevision: generation.timelineRevision,
+      epoch: generation.epoch,
+      rows: generation.rows.map(cloneRow),
+      nextSeq: generation.nextSeq,
+      status: generation.status,
+      valid: generation.valid,
+    };
+  }
+
+  /** Rebuilds one internal generation from a detached registration snapshot. */
+  private fromRegistrationSnapshot(
+    snapshot: AgentTimelineGenerationSnapshot,
+  ): InMemoryDurableGeneration {
+    return {
+      generationId: snapshot.generationId,
+      timelineRevision: snapshot.timelineRevision,
+      epoch: snapshot.epoch,
+      rows: snapshot.rows.map(cloneRow),
+      nextSeq: snapshot.nextSeq,
+      status: snapshot.status,
+      valid: snapshot.valid,
+    };
+  }
+
   private toWorkingCoverage(generation: InMemoryDurableGeneration): WorkingAgentTimelineGeneration {
     return {
       generationId: generation.generationId,
@@ -593,6 +722,14 @@ export class InMemoryDurableAgentTimelineStore implements AgentTimelineStore {
       status: generation.status === "incomplete" ? "incomplete" : "building",
     };
   }
+}
+
+/** Compares generation identity collections as deterministic sets. */
+function sameGenerationIds(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false;
+  const sortedLeft = [...left].sort();
+  const sortedRight = [...right].sort();
+  return sortedLeft.every((generationId, index) => generationId === sortedRight[index]);
 }
 
 function normalizeCommittedLimit(limit: number): number {

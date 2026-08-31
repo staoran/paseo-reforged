@@ -64,7 +64,12 @@ import {
 } from "./agent-sdk-types.js";
 import { agentStreamEventLogFields } from "./agent-event-log.js";
 import { buildArchivedAgentRecord, type ArchivedStoredAgentRecord } from "./agent-archive.js";
-import type { StoredAgentRecord, AgentStorage, PreparedAgentRecord } from "./agent-storage.js";
+import type {
+  StoredAgentRecord,
+  AgentStorage,
+  AgentStorageRegistration,
+  PreparedAgentRecord,
+} from "./agent-storage.js";
 import { toStoredAgentRecord } from "./agent-projections.js";
 import type { AgentOwner } from "./agent-owner.js";
 import {
@@ -83,6 +88,7 @@ import type {
   AgentTimelineCoverage,
   AgentTimelineFetchOptions,
   AgentTimelineFetchResult,
+  AgentTimelineRegistrationSnapshot,
   AgentTimelineRow,
   AgentTimelineStore,
   CommittedAgentTimelineGeneration,
@@ -204,6 +210,28 @@ interface RegisterSessionOptions {
   workspaceId?: string;
   owner?: AgentOwner;
   hubExecutionContract?: HubExecutionContract;
+}
+
+interface SessionRegistrationBaseline {
+  /** Revision-owned metadata transaction for this registration. */
+  storageRegistration: AgentStorageRegistration | null;
+  /** Complete in-memory timeline snapshot visible before registration began. */
+  timelineSeed: SeedAgentTimelineOptions | null;
+  /** Complete durable timeline snapshot visible before registration began. */
+  durableTimelineSnapshot: AgentTimelineRegistrationSnapshot | null;
+  /** Generation identities allocated by durable writes in this registration. */
+  durableTimelineOwnedGenerationIds: Set<string>;
+  /** Whether this registration may have changed durable timeline state. */
+  durableTimelineMutationStarted: boolean;
+}
+
+interface SessionRegistrationAttempt {
+  /** Validated Agent identity owned by this attempt. */
+  agentId: string;
+  /** Live Agent installed by this attempt, if installation was reached. */
+  agent: ActiveManagedAgent | null;
+  /** State that must be restored if the attempt fails. */
+  baseline: SessionRegistrationBaseline;
 }
 
 interface NormalizeConfigOptions {
@@ -1007,6 +1035,15 @@ export class AgentManager {
   private readonly timelineStore = new InMemoryAgentTimelineStore();
   private readonly providerSubagents = new ProviderSubagentStore();
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
+  /** Provider child events held until the parent Agent registration is durable. */
+  private readonly registrationProviderSubagentEvents = new Map<
+    string,
+    Array<Extract<AgentStreamEvent, { type: "provider_subagent" }>>
+  >();
+  /** Agents whose registration changed the in-memory timeline before publication. */
+  private readonly registrationTimelineDirtyAgentIds = new Set<string>();
+  /** Provider event versions used to stabilize final registration snapshots. */
+  private readonly registrationEventVersions = new Map<string, number>();
   private readonly sessionEventTails = new Map<string, Promise<void>>();
   private readonly runs = new AgentRunState();
   private readonly subscribers = new Set<SubscriptionRecord>();
@@ -1953,6 +1990,20 @@ export class AgentManager {
     return this.trackAgentRegistrationOperation(this.importProviderSessionInternal(input));
   }
 
+  /** Rejects provider imports whose target identity already owns Agent or timeline state. */
+  private async assertProviderSessionImportTargetAvailable(agentId: string): Promise<void> {
+    /** Persisted Agent record, if the target identity is already registered. */
+    const persistedAgent = await this.registry?.get(agentId);
+    if (this.agents.has(agentId) || persistedAgent) {
+      throw new Error(`Agent with id ${agentId} already exists`);
+    }
+    /** Durable timeline coverage that would conflict with imported history. */
+    const existingTimeline = await this.durableTimelineStore?.getCoverage(agentId);
+    if (existingTimeline?.active || existingTimeline?.working) {
+      throw new Error(`Agent with id ${agentId} already has durable timeline state`);
+    }
+  }
+
   private async importProviderSessionInternal(input: {
     provider: AgentProvider;
     providerHandleId: string;
@@ -1968,6 +2019,7 @@ export class AgentManager {
       input.agentId ?? this.idFactory(),
       "importProviderSession",
     );
+    await this.assertProviderSessionImportTargetAvailable(resolvedAgentId);
     this.requireEnabledProvider(input.provider);
 
     const client = await this.requireAvailableClient({ provider: input.provider });
@@ -4099,13 +4151,16 @@ export class AgentManager {
     agentId: string,
     options?: RegisterSessionOptions,
   ): Promise<ManagedAgent> {
-    let registered = false;
+    // Registration ownership exists before timeline initialization mutates state.
+    let registration: SessionRegistrationAttempt | null = null;
     try {
       this.assertAcceptingAgentRegistrations();
       const resolvedAgentId = validateAgentId(agentId, "registerSession");
       if (this.agents.has(resolvedAgentId)) {
         throw new Error(`Agent with id ${resolvedAgentId} already exists`);
       }
+      const baseline = await this.captureSessionRegistrationBaseline(resolvedAgentId);
+      registration = { agentId: resolvedAgentId, agent: null, baseline };
       const initialPersistedTitle = await this.resolveInitialPersistedTitle(
         resolvedAgentId,
         config,
@@ -4135,48 +4190,175 @@ export class AgentManager {
 
       this.assertAcceptingAgentRegistrations();
       this.agents.set(resolvedAgentId, managed);
-      registered = true;
+      registration.agent = managed;
+      this.agentsAwaitingInitialSnapshotPersist.add(resolvedAgentId);
+      this.registrationProviderSubagentEvents.set(resolvedAgentId, []);
+      this.registrationEventVersions.set(resolvedAgentId, 0);
+      this.unpublishedAgentIds.add(resolvedAgentId);
       const publishWhenReady = options?.publishWhenReady === true;
-      if (publishWhenReady) {
-        this.unpublishedAgentIds.add(resolvedAgentId);
-      }
       // Initialize previousStatus to track transitions
       this.previousStatuses.set(resolvedAgentId, managed.lifecycle);
       await this.refreshRuntimeInfo(managed, { emit: false });
       this.assertAgentRegistrationActive(managed);
       if (!publishWhenReady) {
-        await this.persistSnapshot(managed, {
+        await this.persistRegistrationSnapshot(managed, baseline.storageRegistration, {
           title: initialPersistedTitle,
         });
         this.assertAgentRegistrationActive(managed);
       }
       if (options?.timelineRows) {
-        await this.persistExplicitTimelineSeed(managed.id);
+        await this.stageRegistrationTimelineSeed(managed.id);
       }
-      if (!publishWhenReady) {
-        this.emitState(managed, { persist: false });
-      }
-
       await this.hydrateSessionForRegistration(managed);
       this.touchUpdatedAt(managed);
-      await this.persistSnapshot(
+      await this.persistRegistrationSnapshot(
         managed,
+        baseline.storageRegistration,
         publishWhenReady ? { title: initialPersistedTitle } : undefined,
       );
       this.assertAgentRegistrationActive(managed);
-      if (publishWhenReady) {
-        this.unpublishedAgentIds.delete(managed.id);
-      }
+      await this.drainSessionEvents(managed.id);
+      await this.persistRegistrationTimelineStrict(managed, baseline);
+      this.unpublishedAgentIds.delete(managed.id);
       this.emitState(managed, { persist: false });
+      this.publishRegistrationProviderSubagentEvents(managed.id);
+      baseline.storageRegistration?.complete();
       return { ...managed };
     } catch (error) {
-      if (registered) {
-        this.unpublishedAgentIds.delete(agentId);
-      }
-      if (!registered) {
-        await this.closeUnregisteredSession(session);
-      }
+      await this.handleFailedSessionRegistration({ error, session, registration });
       throw error;
+    }
+  }
+
+  /** Captures state that a failed registration must leave unchanged. */
+  private async captureSessionRegistrationBaseline(
+    agentId: string,
+  ): Promise<SessionRegistrationBaseline> {
+    const storageRegistration = (await this.registry?.beginSessionRegistration(agentId)) ?? null;
+    /** Full live timeline state restored if this registration mutates it. */
+    let timelineSeed: SeedAgentTimelineOptions | null = null;
+    if (this.timelineStore.has(agentId)) {
+      const timeline = this.timelineStore.fetch(agentId, { direction: "tail", limit: 0 });
+      timelineSeed = {
+        epoch: timeline.epoch,
+        rows: timeline.rows,
+        nextSeq: timeline.window.nextSeq,
+      };
+    }
+    try {
+      const durableTimelineSnapshot =
+        (await this.durableTimelineStore?.captureRegistrationSnapshot(agentId)) ?? null;
+      return {
+        storageRegistration,
+        timelineSeed,
+        durableTimelineSnapshot,
+        durableTimelineOwnedGenerationIds: new Set<string>(),
+        durableTimelineMutationStarted: false,
+      };
+    } catch (error) {
+      storageRegistration?.complete();
+      throw error;
+    }
+  }
+
+  /** Releases or rolls back ownership after registration throws. */
+  private async handleFailedSessionRegistration(input: {
+    error: unknown;
+    session: AgentSession;
+    registration: SessionRegistrationAttempt | null;
+  }): Promise<void> {
+    const registration = input.registration;
+    if (!registration) {
+      await this.closeUnregisteredSession(input.session);
+      return;
+    }
+    const installedAgent = registration.agent;
+    if (installedAgent && this.agents.get(installedAgent.id) !== installedAgent) {
+      // A concurrent close already owns the session and durable close snapshot.
+      this.agentsAwaitingInitialSnapshotPersist.delete(installedAgent.id);
+      this.registrationProviderSubagentEvents.delete(installedAgent.id);
+      this.registrationTimelineDirtyAgentIds.delete(installedAgent.id);
+      this.registrationEventVersions.delete(installedAgent.id);
+      this.unpublishedAgentIds.delete(installedAgent.id);
+      registration.baseline.storageRegistration?.complete();
+      return;
+    }
+    try {
+      await this.rollbackFailedSessionRegistration({
+        agentId: registration.agentId,
+        agent: installedAgent,
+        ...registration.baseline,
+      });
+    } catch (cleanupError) {
+      // AggregateError preserves both the registration failure and rollback failure.
+      // eslint-disable-next-line preserve-caught-error
+      throw new AggregateError(
+        [input.error, cleanupError],
+        `Failed to roll back session registration for ${registration.agentId}`,
+        { cause: input.error },
+      );
+    } finally {
+      if (!installedAgent) await this.closeUnregisteredSession(input.session);
+    }
+  }
+
+  /** Removes all state owned by a failed registration and restores its prior snapshot. */
+  private async rollbackFailedSessionRegistration(input: {
+    agentId: string;
+    agent: ActiveManagedAgent | null;
+    storageRegistration: AgentStorageRegistration | null;
+    timelineSeed: SeedAgentTimelineOptions | null;
+    durableTimelineSnapshot: AgentTimelineRegistrationSnapshot | null;
+    durableTimelineOwnedGenerationIds: Set<string>;
+    durableTimelineMutationStarted: boolean;
+  }): Promise<void> {
+    const { agentId, agent } = input;
+    this.unpublishedAgentIds.add(agentId);
+    if (agent) this.prepareAgentForClosure(agent, "agent registration failed");
+    try {
+      await this.drainSessionEvents(agentId);
+      this.sessionEventTails.delete(agentId);
+      this.registrationProviderSubagentEvents.delete(agentId);
+      this.registrationTimelineDirtyAgentIds.delete(agentId);
+      this.registrationEventVersions.delete(agentId);
+      if (input.timelineSeed) {
+        this.timelineStore.initialize(agentId, input.timelineSeed);
+      } else {
+        this.timelineStore.delete(agentId);
+      }
+      await this.drainDurableTimelineTasks(agentId);
+      /** Independent rollback failures retained after both stores are attempted. */
+      const rollbackErrors: unknown[] = [];
+      if (
+        this.durableTimelineStore &&
+        input.durableTimelineSnapshot &&
+        input.durableTimelineMutationStarted
+      ) {
+        try {
+          await this.durableTimelineStore.restoreRegistrationSnapshot(
+            agentId,
+            input.durableTimelineSnapshot,
+            {
+              ownedGenerationIds: [...input.durableTimelineOwnedGenerationIds],
+            },
+          );
+        } catch (error) {
+          rollbackErrors.push(error);
+        }
+      }
+      try {
+        await input.storageRegistration?.rollback();
+      } catch (error) {
+        rollbackErrors.push(error);
+      }
+      if (rollbackErrors.length > 0) {
+        throw new AggregateError(rollbackErrors, `Registration state rollback failed: ${agentId}`);
+      }
+    } finally {
+      this.agentsAwaitingInitialSnapshotPersist.delete(agentId);
+      this.registrationEventVersions.delete(agentId);
+      this.unpublishedAgentIds.delete(agentId);
+      if (agent) await this.closeUnregisteredSession(agent.session);
     }
   }
 
@@ -4456,6 +4638,10 @@ export class AgentManager {
       },
       "agent.manager.enqueue",
     );
+    if (this.agentsAwaitingInitialSnapshotPersist.has(agentId)) {
+      const eventVersion = this.registrationEventVersions.get(agentId) ?? 0;
+      this.registrationEventVersions.set(agentId, eventVersion + 1);
+    }
     const pendingRun = this.runs.getPendingRun(agentId);
     if (pendingRun && !pendingRun.started) {
       pendingRun.stagedEvents.push(event);
@@ -4524,6 +4710,11 @@ export class AgentManager {
     event: AgentStreamEvent,
   ): Promise<void> {
     if (event.type === "provider_subagent") {
+      const deferred = this.registrationProviderSubagentEvents.get(agent.id);
+      if (deferred) {
+        deferred.push(event);
+        return;
+      }
       const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
       this.dispatch({ type: "provider_subagent", event: update });
       return;
@@ -4597,6 +4788,20 @@ export class AgentManager {
       return;
     }
     await this.registry.applySnapshot(agent, options);
+  }
+
+  /** Persists a registration-owned snapshot through its revision token. */
+  private async persistRegistrationSnapshot(
+    agent: ManagedAgent,
+    registration: AgentStorageRegistration | null,
+    options?: { title?: string | null; internal?: boolean },
+  ): Promise<void> {
+    if (agent.internal) return;
+    if (registration) {
+      await registration.applySnapshot(agent, options);
+      return;
+    }
+    await this.persistSnapshot(agent, options);
   }
 
   private requireRegistry(): AgentStorage {
@@ -5501,6 +5706,7 @@ export class AgentManager {
     }
     void this.refreshRuntimeInfo(agent);
     if (options?.fromHistory) return;
+    if (this.agentsAwaitingInitialSnapshotPersist.has(agent.id)) return;
     try {
       await this.commitDurableTimeline(agent.id);
     } catch (error) {
@@ -5548,7 +5754,7 @@ export class AgentManager {
     if (!isForegroundEvent && !agent.activeForegroundTurnId) {
       this.emitState(agent);
     }
-    if (!options?.fromHistory) {
+    if (!options?.fromHistory && !this.agentsAwaitingInitialSnapshotPersist.has(agent.id)) {
       await this.markDurableTimelineIncomplete(agent.id);
     }
   }
@@ -5587,7 +5793,7 @@ export class AgentManager {
     if (!isForegroundEvent && !agent.activeForegroundTurnId) {
       this.emitState(agent);
     }
-    if (!options?.fromHistory) {
+    if (!options?.fromHistory && !this.agentsAwaitingInitialSnapshotPersist.has(agent.id)) {
       await this.markDurableTimelineIncomplete(agent.id);
     }
   }
@@ -5622,7 +5828,11 @@ export class AgentManager {
       return;
     }
     if (!options?.fromHistory) {
-      await this.beginDurableTimelineMutation(agent.id, "append");
+      if (this.agentsAwaitingInitialSnapshotPersist.has(agent.id)) {
+        this.registrationTimelineDirtyAgentIds.add(agent.id);
+      } else {
+        await this.beginDurableTimelineMutation(agent.id, "append");
+      }
     }
     this.runs.trackAutonomousRun(agent.id, eventTurnId ?? null);
     if (eventTurnId) {
@@ -5757,7 +5967,13 @@ export class AgentManager {
         clientMessageId,
         messageId,
       );
-      if (enriched) this.enqueueDurableTimelineUpdate(agent.id, enriched);
+      if (enriched) {
+        if (this.agentsAwaitingInitialSnapshotPersist.has(agent.id)) {
+          this.registrationTimelineDirtyAgentIds.add(agent.id);
+        } else {
+          this.enqueueDurableTimelineUpdate(agent.id, enriched);
+        }
+      }
     }
     return existing;
   }
@@ -5824,7 +6040,9 @@ export class AgentManager {
     item = limitAgentTimelineItemContent(item);
     const row = this.timelineStore.append(agentId, item, options);
     this.updateLastMessageAt(agentId, row);
-    if (!this.durableTimelineReplacements.has(agentId)) {
+    if (this.agentsAwaitingInitialSnapshotPersist.has(agentId)) {
+      this.registrationTimelineDirtyAgentIds.add(agentId);
+    } else if (!this.durableTimelineReplacements.has(agentId)) {
       this.enqueueDurableTimelineAppend(agentId, row);
     }
     return row;
@@ -6019,6 +6237,112 @@ export class AgentManager {
       this.logger.error({ err: error, agentId }, "Failed to persist explicit timeline seed");
       if (options?.strict) throw error;
       return null;
+    }
+  }
+
+  /** Marks an explicit imported timeline for persistence after registration succeeds. */
+  private stageRegistrationTimelineSeed(agentId: string): void {
+    this.registrationTimelineDirtyAgentIds.add(agentId);
+  }
+
+  /** Persists every registration-time timeline mutation before publishing the Agent. */
+  private async persistRegistrationTimelineStrict(
+    agent: ActiveManagedAgent,
+    baseline: SessionRegistrationBaseline,
+  ): Promise<void> {
+    const agentId = agent.id;
+    /** Selection owned by the baseline or the preceding registration commit. */
+    let expectedCurrent = {
+      exists: baseline.durableTimelineSnapshot?.exists ?? false,
+      activeGenerationId: baseline.durableTimelineSnapshot?.active?.generationId ?? null,
+      workingGenerationId: baseline.durableTimelineSnapshot?.working?.generationId ?? null,
+      invalidGenerationIds: baseline.durableTimelineSnapshot?.invalidGenerationIds ?? [],
+    };
+    while (true) {
+      await this.drainSessionEvents(agentId);
+      // Coalesced timeline chunks are synchronous but otherwise outlive the event tail.
+      this.agentStreamCoalescer.flushFor(agentId);
+      const timelineDirty = this.registrationTimelineDirtyAgentIds.delete(agentId);
+      if (timelineDirty && this.durableTimelineStore) {
+        if (baseline.durableTimelineSnapshot?.working) {
+          throw new Error(
+            `Cannot persist registration timeline while a working generation exists: ${agentId}`,
+          );
+        }
+        /** Stable generation identity proving ownership if staging or revision persistence fails. */
+        const generationId = randomUUID();
+        baseline.durableTimelineOwnedGenerationIds.add(generationId);
+        baseline.durableTimelineMutationStarted = true;
+        await this.durableTimelineStore.stageRows(agentId, {
+          generationId,
+          expectedCurrent,
+          epoch: this.timelineStore.getEpoch(agentId),
+          mode: "replace",
+          rows: this.timelineStore.getRows(agentId),
+        });
+        await this.durableTimelineStore.flush(agentId);
+        const commitSelection = {
+          exists: true,
+          activeGenerationId: expectedCurrent.activeGenerationId,
+          workingGenerationId: generationId,
+          invalidGenerationIds: expectedCurrent.invalidGenerationIds,
+        };
+        const committed = await this.durableTimelineStore.commit(
+          agentId,
+          generationId,
+          commitSelection,
+        );
+        await baseline.storageRegistration?.setTimelineRevision(committed.timelineRevision);
+        expectedCurrent = {
+          exists: true,
+          activeGenerationId: generationId,
+          workingGenerationId: null,
+          invalidGenerationIds: [],
+        };
+        await this.durableTimelineStore.cleanup(agentId).catch((error) => {
+          this.logger.warn(
+            { err: error, agentId },
+            "Failed to clean up old timeline generations after registration",
+          );
+        });
+      }
+
+      // Durable I/O can overlap new provider events; fold them into the final metadata snapshot.
+      await this.drainSessionEvents(agentId);
+      this.agentStreamCoalescer.flushFor(agentId);
+      this.assertAgentRegistrationActive(agent);
+      const snapshotEventVersion = this.registrationEventVersions.get(agentId) ?? 0;
+      await this.persistRegistrationSnapshot(agent, baseline.storageRegistration);
+      await this.drainSessionEvents(agentId);
+      this.agentStreamCoalescer.flushFor(agentId);
+      if (
+        this.registrationEventVersions.get(agentId) !== snapshotEventVersion ||
+        this.registrationTimelineDirtyAgentIds.has(agentId)
+      ) {
+        continue;
+      }
+      this.assertAgentRegistrationActive(agent);
+      // No event crossed the final snapshot; this synchronous cutover is the linearization point.
+      this.agentsAwaitingInitialSnapshotPersist.delete(agentId);
+      this.registrationEventVersions.delete(agentId);
+      return;
+    }
+  }
+
+  /** Publishes provider child events only after their parent Agent registration succeeds. */
+  private publishRegistrationProviderSubagentEvents(agentId: string): void {
+    const events = this.registrationProviderSubagentEvents.get(agentId) ?? [];
+    this.registrationProviderSubagentEvents.delete(agentId);
+    for (const event of events) {
+      try {
+        const update = this.providerSubagents.apply(agentId, event.provider, event.event);
+        this.dispatch({ type: "provider_subagent", event: update });
+      } catch (error) {
+        this.logger.warn(
+          { err: error, agentId },
+          "Failed to publish provider subagent event after session registration",
+        );
+      }
     }
   }
 

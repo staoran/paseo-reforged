@@ -751,6 +751,13 @@ function replaceLiveAssistantWithProjectedText(params: {
   if (!current || current.kind !== "assistant_message") {
     return null;
   }
+  if (
+    event.item.messageId !== undefined &&
+    current.messageId !== undefined &&
+    event.item.messageId !== current.messageId
+  ) {
+    return null;
+  }
   if (!event.item.text.startsWith(current.text)) {
     return null;
   }
@@ -880,7 +887,6 @@ function reconcileOverlappingProjectedReasoning(params: {
       ...current,
       text: projectedText,
       timestamp: unit.timestamp,
-      status: "loading",
     };
     return next;
   };

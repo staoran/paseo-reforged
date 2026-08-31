@@ -23,6 +23,11 @@ import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { isTimelineResumeSnapshotAuthoritative } from "@/timeline/timeline-sync-plan";
 import { isTimelineProjectionAgentStateCompatible } from "@/timeline/projection-lane";
 import {
+  createAppTimelineRequestId,
+  createTimelineResponseOwnership,
+  type TimelineResponseOwner,
+} from "@/timeline/timeline-response-ownership";
+import {
   createViewedTimelineSync,
   type TimelineDeliveryMode,
   type ViewedTimelineSync,
@@ -51,17 +56,24 @@ import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import { sendOsNotification } from "@/utils/os-notifications";
 import { getIsAppActivelyVisible, getIsAppVisible } from "@/utils/app-visibility";
 import {
+  claimInitDeferredRequest,
+  type DeferredInit,
   getInitKey,
   getInitDeferred,
   createInitDeferred,
   resolveInitDeferred,
   rejectInitDeferred,
+  rejectInitDeferredForConnection,
 } from "@/utils/agent-initialization";
 import { encodeImages } from "@/utils/encode-images";
 import { derivePendingPermissionKey } from "@/utils/agent-snapshots";
 import { getSendingClientMessageIds } from "@/composer/submission/model";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { patchWorkspaceScripts } from "@/contexts/session-workspace-scripts";
+import {
+  fetchTimelineSummaryWithCanonicalFallback,
+  finalizeInstalledTimelineSummary,
+} from "@/contexts/session-timeline-summary";
 import { useToast } from "@/contexts/toast-context";
 import { toErrorMessage } from "@/utils/error-messages";
 import { showProviderNoticeToast } from "@/utils/provider-notice-toast";
@@ -197,6 +209,46 @@ type WorkspaceSetupProgressPayload = Extract<
 
 type SessionStoreActions = ReturnType<typeof useSessionStore.getState>;
 type SetInitializingAgents = SessionStoreActions["setInitializingAgents"];
+type TimelineResponsePayload = Extract<
+  SessionOutboundMessage,
+  { type: "fetch_agent_timeline_response" }
+>["payload"];
+
+interface TimelineInitializationOwner {
+  /** Deferred captured when this response entered the reducer lane. */
+  deferred: DeferredInit;
+  /** Wire request that is allowed to settle the captured deferred. */
+  requestId: string;
+}
+
+interface CommitCanonicalTimelineResponseInput {
+  /** Canonical response accepted by the response ownership gate. */
+  payload: TimelineResponsePayload;
+  /** Pure reducer output to commit to the session store. */
+  result: ProcessTimelineResponseOutput;
+  /** Timeline state read before invoking the pure reducer. */
+  timeline: ReturnType<typeof selectAgentTimelineState>;
+  /** Canonical cursor read before invoking the pure reducer. */
+  currentCursor: ProcessTimelineResponseOutput["cursor"];
+  /** Host owning the timeline state. */
+  serverId: string;
+  /** Agent owning the timeline state. */
+  agentId: string;
+  /** Whether this page is an authoritative resume snapshot. */
+  shouldMarkAuthoritativeHistoryApplied: boolean;
+  /** Removes projection-only display state superseded by canonical history. */
+  clearAgentTimelineProjectionLane: SessionStoreActions["clearAgentTimelineProjectionLane"];
+  /** Applies acknowledgements when a canonical page is already covered. */
+  setAgentStreamState: SessionStoreActions["setAgentStreamState"];
+  /** Updates newer-page availability for a discarded canonical page. */
+  setAgentTimelineHasNewer: SessionStoreActions["setAgentTimelineHasNewer"];
+  /** Marks covered history as synchronized after a discarded response. */
+  markAgentHistorySynchronized: SessionStoreActions["markAgentHistorySynchronized"];
+  /** Atomically installs an applied canonical response. */
+  applyAgentTimelineResponseState: SessionStoreActions["applyAgentTimelineResponseState"];
+  /** Rechecks response ownership after every synchronous store commit. */
+  isCurrent(): boolean;
+}
 
 function clearAgentInitializingFlag(
   setInitializingAgents: SetInitializingAgents,
@@ -227,13 +279,34 @@ function handleTimelineError(input: {
   initKey: string;
   serverId: string;
   setInitializingAgents: SetInitializingAgents;
+  initializationOwner: TimelineInitializationOwner | null;
+  isCurrent(): boolean;
 }): void {
-  const { result, agentId, initKey, serverId, setInitializingAgents } = input;
-  if (result.clearInitializing) {
-    clearAgentInitializingFlag(setInitializingAgents, serverId, agentId);
+  const {
+    result,
+    agentId,
+    initKey,
+    serverId,
+    setInitializingAgents,
+    initializationOwner,
+    isCurrent,
+  } = input;
+  if (!isCurrent()) return;
+
+  if (result.initResolution === "reject" && result.error && initializationOwner) {
+    const rejected = rejectInitDeferred(
+      initKey,
+      new Error(result.error),
+      initializationOwner.deferred,
+      initializationOwner.requestId,
+    );
+    if (rejected && result.clearInitializing) {
+      clearAgentInitializingFlag(setInitializingAgents, serverId, agentId);
+    }
+    return;
   }
-  if (result.initResolution === "reject" && result.error) {
-    rejectInitDeferred(initKey, new Error(result.error));
+  if (result.clearInitializing && isCurrent()) {
+    clearAgentInitializingFlag(setInitializingAgents, serverId, agentId);
   }
 }
 
@@ -241,13 +314,71 @@ function executeTimelineSideEffects(input: {
   sideEffects: TimelineReducerSideEffect[];
   agentId: string;
   recoverTimelineGap: (agentId: string, cursor: { epoch: string; endSeq: number }) => void;
+  isCurrent(): boolean;
 }): void {
-  const { sideEffects, agentId, recoverTimelineGap } = input;
+  const { sideEffects, agentId, recoverTimelineGap, isCurrent } = input;
   for (const effect of sideEffects) {
+    if (!isCurrent()) return;
     if (effect.type === "catch_up") {
       recoverTimelineGap(agentId, effect.cursor);
     }
   }
+}
+
+/** Commits one accepted canonical timeline response without crossing its ownership boundary. */
+function commitCanonicalTimelineResponse(input: CommitCanonicalTimelineResponseInput): void {
+  const {
+    payload,
+    result,
+    timeline,
+    currentCursor,
+    serverId,
+    agentId,
+    shouldMarkAuthoritativeHistoryApplied,
+    clearAgentTimelineProjectionLane,
+    setAgentStreamState,
+    setAgentTimelineHasNewer,
+    markAgentHistorySynchronized,
+    applyAgentTimelineResponseState,
+    isCurrent,
+  } = input;
+
+  if (result.commit === "discard") {
+    // A successful canonical response supersedes the display lane even
+    // when its page is already covered by the installed canonical range.
+    clearAgentTimelineProjectionLane(serverId, agentId);
+    if (!isCurrent()) return;
+    if (result.acknowledgedClientMessageIds.length > 0) {
+      setAgentStreamState(serverId, agentId, {
+        acknowledgedClientMessageIds: result.acknowledgedClientMessageIds,
+      });
+      if (!isCurrent()) return;
+    }
+    if (payload.direction !== "before") {
+      setAgentTimelineHasNewer(serverId, (current) => {
+        /** Copy retaining newer-page state for every other Agent. */
+        const next = new Map(current);
+        next.set(agentId, payload.hasNewer);
+        return next;
+      });
+      if (!isCurrent()) return;
+    }
+    markAgentHistorySynchronized(serverId, agentId);
+    return;
+  }
+
+  applyAgentTimelineResponseState(serverId, agentId, {
+    items: result.tail,
+    head: result.head,
+    range: result.cursorChanged ? (result.cursor ?? null) : (currentCursor ?? null),
+    older: result.older,
+    newer:
+      payload.direction === "before"
+        ? timeline.status === "synced" && timeline.newer === "available"
+        : payload.hasNewer,
+    synchronized: shouldMarkAuthoritativeHistoryApplied,
+    acknowledgedClientMessageIds: result.acknowledgedClientMessageIds,
+  });
 }
 
 function finalizeTimelineApplication(input: {
@@ -257,6 +388,8 @@ function finalizeTimelineApplication(input: {
   serverId: string;
   shouldMarkAuthoritativeHistoryApplied: boolean;
   setInitializingAgents: SetInitializingAgents;
+  initializationOwner: TimelineInitializationOwner | null;
+  isCurrent(): boolean;
 }): void {
   const {
     result,
@@ -265,21 +398,27 @@ function finalizeTimelineApplication(input: {
     serverId,
     shouldMarkAuthoritativeHistoryApplied,
     setInitializingAgents,
+    initializationOwner,
+    isCurrent,
   } = input;
 
   if (result.clearInitializing) {
+    if (!isCurrent()) return;
     clearAgentInitializingFlag(setInitializingAgents, serverId, agentId);
   }
   if (shouldMarkAuthoritativeHistoryApplied) {
+    if (!isCurrent()) return;
     useCreateFlowStore.getState().clearByAgent({ serverId, agentId });
+    if (!isCurrent()) return;
     const session = useSessionStore.getState().sessions[serverId];
     const agent = session?.agents.get(agentId) ?? session?.agentDetails.get(agentId);
     if (agent && agent.status !== "running") {
       getHostRuntimeStore().drainQueuedAgentMessage(serverId, agentId);
     }
   }
-  if (result.initResolution === "resolve") {
-    resolveInitDeferred(initKey);
+  if (result.initResolution === "resolve" && initializationOwner) {
+    if (!isCurrent()) return;
+    resolveInitDeferred(initKey, initializationOwner.deferred, initializationOwner.requestId);
   }
 }
 
@@ -370,6 +509,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const attentionNotifiedRef = useRef<Map<string, number>>(new Map());
   const appStateRef = useRef(AppState.currentState);
   const viewedTimelineSyncRef = useRef<ViewedTimelineSync | null>(null);
+  const timelineResponseOwnershipRef = useRef(createTimelineResponseOwnership());
   const projectionSummaryGenerationsRef = useRef<Map<string, number>>(new Map());
   const projectionSummaryInFlightRef = useRef<Map<string, number>>(new Map());
   const audioOutputBuffersRef = useRef<Map<string, BufferedAudioChunk[]>>(new Map());
@@ -552,13 +692,28 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   // If the client drops mid-initialization, clear pending flags
   useEffect(() => {
     if (!isConnected) {
+      if (client.getConnectionState().status === "connected") return;
+      const session = useSessionStore.getState().sessions[serverId];
+      for (const [agentId, initializing] of session?.initializingAgents ?? []) {
+        if (!initializing) continue;
+        const initKey = getInitKey(serverId, agentId);
+        if (
+          rejectInitDeferredForConnection(
+            initKey,
+            new Error("Host disconnected during timeline synchronization"),
+            client,
+          )
+        ) {
+          clearAgentInitializingFlag(setInitializingAgents, serverId, agentId);
+        }
+      }
       flushAgentLastActivity();
-      setInitializingAgents(serverId, new Map());
       invalidateProjectionSummaryRequests();
     }
   }, [
     flushAgentLastActivity,
     invalidateProjectionSummaryRequests,
+    client,
     serverId,
     isConnected,
     setInitializingAgents,
@@ -581,12 +736,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   );
 
   const applyTimelineResponse = useCallback(
-    (
-      payload: Extract<
-        SessionOutboundMessage,
-        { type: "fetch_agent_timeline_response" }
-      >["payload"],
-    ) => {
+    (payload: TimelineResponsePayload) => {
       // Projection responses are owned by their initiating await path. They
       // never enter the canonical reducer or cursor state.
       if (payload.projectionPayload) {
@@ -594,6 +744,17 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       }
       const agentId = payload.agentId;
       const initKey = getInitKey(serverId, agentId);
+      const timelineResponseOwnership = timelineResponseOwnershipRef.current;
+      /** Rechecks response ownership after every synchronous reducer side effect. */
+      const isResponseCurrent = () => {
+        const currentDeferred = getInitDeferred(initKey);
+        return timelineResponseOwnership.shouldApply({
+          agentId,
+          requestId: payload.requestId,
+          activeInitializationRequestId: currentDeferred?.requestId ?? null,
+        });
+      };
+      if (!isResponseCurrent()) return;
       const shouldMarkAuthoritativeHistoryApplied = isTimelineResumeSnapshotAuthoritative({
         direction: payload.direction,
         hasNewer: payload.hasNewer,
@@ -604,7 +765,11 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       const session = useSessionStore.getState().sessions[serverId];
       const isInitializing = session?.initializingAgents.get(agentId) === true;
       const activeInitDeferred = getInitDeferred(initKey);
-      const hasActiveInitDeferred = Boolean(activeInitDeferred);
+      const initializationOwner =
+        activeInitDeferred?.requestId === payload.requestId
+          ? { deferred: activeInitDeferred, requestId: payload.requestId }
+          : null;
+      const hasActiveInitDeferred = initializationOwner !== null;
       const timeline = selectAgentTimelineState(session, agentId);
       const currentCursor =
         timeline.status === "synced" ? (timeline.range ?? undefined) : undefined;
@@ -633,46 +798,34 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
           initKey,
           serverId,
           setInitializingAgents,
+          initializationOwner,
+          isCurrent: isResponseCurrent,
         });
         return;
       }
 
-      if (result.commit === "discard") {
-        // A successful canonical response supersedes the display lane even
-        // when its page is already covered by the installed canonical range.
-        clearAgentTimelineProjectionLane(serverId, agentId);
-        if (result.acknowledgedClientMessageIds.length > 0) {
-          setAgentStreamState(serverId, agentId, {
-            acknowledgedClientMessageIds: result.acknowledgedClientMessageIds,
-          });
-        }
-        if (payload.direction !== "before") {
-          setAgentTimelineHasNewer(serverId, (current) => {
-            const next = new Map(current);
-            next.set(agentId, payload.hasNewer);
-            return next;
-          });
-        }
-        markAgentHistorySynchronized(serverId, agentId);
-      } else {
-        applyAgentTimelineResponseState(serverId, agentId, {
-          items: result.tail,
-          head: result.head,
-          range: result.cursorChanged ? (result.cursor ?? null) : (currentCursor ?? null),
-          older: result.older,
-          newer:
-            payload.direction === "before"
-              ? timeline.status === "synced" && timeline.newer === "available"
-              : payload.hasNewer,
-          synchronized: shouldMarkAuthoritativeHistoryApplied,
-          acknowledgedClientMessageIds: result.acknowledgedClientMessageIds,
-        });
-      }
+      if (!isResponseCurrent()) return;
+      commitCanonicalTimelineResponse({
+        payload,
+        result,
+        timeline,
+        currentCursor,
+        serverId,
+        agentId,
+        shouldMarkAuthoritativeHistoryApplied,
+        clearAgentTimelineProjectionLane,
+        setAgentStreamState,
+        setAgentTimelineHasNewer,
+        markAgentHistorySynchronized,
+        applyAgentTimelineResponseState,
+        isCurrent: isResponseCurrent,
+      });
 
       executeTimelineSideEffects({
         sideEffects: result.sideEffects,
         agentId,
         recoverTimelineGap,
+        isCurrent: isResponseCurrent,
       });
 
       finalizeTimelineApplication({
@@ -682,6 +835,8 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         serverId,
         shouldMarkAuthoritativeHistoryApplied,
         setInitializingAgents,
+        initializationOwner,
+        isCurrent: isResponseCurrent,
       });
     },
     [
@@ -698,34 +853,132 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
 
   useEffect(() => {
     const setAgentInitializing = createSetAgentInitializing(serverId, setInitializingAgents);
+    const timelineResponseOwnership = timelineResponseOwnershipRef.current;
     const initialDeliveryMode = getTimelineDeliveryMode(
       client.getLastServerInfoMessage()?.features?.selectiveAgentTimeline,
     );
-    const sync = createViewedTimelineSync({
+    /** Initialization deferreds retained by this viewed-timeline sync instance. */
+    const initializationDeferreds = new Map<
+      NonNullable<ReturnType<typeof getInitDeferred>>,
+      { agentId: string; requestId: string }
+    >();
+    /** Viewed response owners retained until their fetch settles or this sync is disposed. */
+    const responseOwners = new Set<TimelineResponseOwner>();
+    let sync: ViewedTimelineSync;
+    sync = createViewedTimelineSync({
       initialDeliveryMode,
       setSubscription: (agentIds) => client.setAgentTimelineSubscription(agentIds),
       // Initial canonical fetch, summary installation, and race fallback share one request boundary.
       // eslint-disable-next-line complexity
-      fetchPage: async (agentId, request) => {
+      fetchPage: async (agentId, request, requestContext) => {
         const session = useSessionStore.getState().sessions[serverId];
         const initKey = getInitKey(serverId, agentId);
         const shouldInitialize = selectAgentTimelineState(session, agentId).status !== "synced";
-        if (shouldInitialize) {
-          if (!getInitDeferred(initKey)) {
-            const deferred = createInitDeferred(initKey, request.direction ?? "tail");
-            void deferred.promise.catch(() => undefined);
-          }
+        let requestInitDeferred = getInitDeferred(initKey);
+        /** Whether a direct canonical request is already in flight for this initialization. */
+        const inheritsDirectRequest =
+          shouldInitialize && requestInitDeferred?.requestSource === "direct";
+        if (shouldInitialize && !requestInitDeferred) {
+          requestInitDeferred = createInitDeferred(
+            initKey,
+            request.direction ?? "tail",
+            "viewed",
+            client,
+          );
+          void requestInitDeferred.promise.catch(() => undefined);
+        }
+        /** Correlation ID owned by this viewed fetch generation. */
+        let requestId = requestInitDeferred
+          ? claimInitDeferredRequest({
+              key: initKey,
+              deferred: requestInitDeferred,
+              requestDirection: request.direction ?? "tail",
+              reuseCurrentRequest: inheritsDirectRequest,
+              connectionOwner: client,
+            })
+          : createAppTimelineRequestId("viewed");
+        if (!requestId) {
+          throw new Error("Timeline initialization lost ownership before fetch");
+        }
+        /** Creates and tracks the owner of one wire response. */
+        const beginResponseOwner = (nextRequestId: string): TimelineResponseOwner => {
+          const owner = timelineResponseOwnership.begin({
+            agentId,
+            requestId: nextRequestId,
+            isCurrent: () => viewedTimelineSyncRef.current === sync && requestContext.isCurrent(),
+          });
+          responseOwners.add(owner);
+          return owner;
+        };
+        let responseOwner = beginResponseOwner(requestId);
+        /** Reports whether the request still owns its original deferred, when one exists. */
+        const ownsRequestInitialization = () =>
+          requestInitDeferred === undefined ||
+          (getInitDeferred(initKey) === requestInitDeferred &&
+            requestInitDeferred.requestId === responseOwner.requestId);
+        /** Reports whether this request may perform network or initialization side effects. */
+        const ownsRequestLifecycle = () =>
+          timelineResponseOwnership.isCurrent(responseOwner) && ownsRequestInitialization();
+        /** Reports whether this request still owns the current initialization. */
+        const ownsInitialization = () =>
+          ownsRequestLifecycle() && requestInitDeferred !== undefined && shouldInitialize;
+        /** Extends the deadline only while this request still owns initialization. */
+        const refreshInitializationTimeoutIfPending = () => {
+          if (!shouldInitialize || !ownsInitialization()) return;
           refreshAgentInitializationTimeout({
             key: initKey,
             agentId,
+            deferred: requestInitDeferred!,
+            requestId: responseOwner.requestId,
+            setAgentInitializing,
+          });
+        };
+        /** Rejects initialization without leaving a stale loading flag. */
+        const rejectInitialization = (error: Error) => {
+          if (!ownsInitialization()) return;
+          if (rejectInitDeferred(initKey, error, requestInitDeferred, responseOwner.requestId)) {
+            setAgentInitializing(agentId, false);
+          }
+        };
+        /** Moves summary fallback work to a fresh canonical response owner. */
+        const beginCanonicalFallback = () => {
+          const previousOwner = responseOwner;
+          const nextRequestId = requestInitDeferred
+            ? claimInitDeferredRequest({
+                key: initKey,
+                deferred: requestInitDeferred,
+                requestDirection: request.direction ?? "tail",
+                connectionOwner: client,
+              })
+            : createAppTimelineRequestId("viewed");
+          timelineResponseOwnership.finish(previousOwner);
+          responseOwners.delete(previousOwner);
+          if (!nextRequestId) return;
+          requestId = nextRequestId;
+          responseOwner = beginResponseOwner(requestId);
+          if (requestInitDeferred) {
+            initializationDeferreds.set(requestInitDeferred, { agentId, requestId });
+          }
+          refreshInitializationTimeoutIfPending();
+        };
+        if (shouldInitialize) {
+          refreshAgentInitializationTimeout({
+            key: initKey,
+            agentId,
+            deferred: requestInitDeferred!,
+            requestId,
             setAgentInitializing,
           });
           setAgentInitializing(agentId, true);
+        }
+        if (requestInitDeferred) {
+          initializationDeferreds.set(requestInitDeferred, { agentId, requestId });
         }
         try {
           const currentSession = useSessionStore.getState().sessions[serverId];
           const currentLane = currentSession?.agentTimelineProjectionLanes.get(agentId);
           const canTrySummary =
+            !inheritsDirectRequest &&
             request.direction === "tail" &&
             currentLane?.canonicalReplacementPending !== true &&
             !isAgentLiveForProjection(currentSession, agentId);
@@ -737,57 +990,84 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
             generations.set(agentId, generation);
             projectionSummaryInFlightRef.current.set(agentId, generation);
             try {
-              page = await client.fetchAgentTimelineSummary(agentId, { limit: request.limit });
+              const summaryResult = await fetchTimelineSummaryWithCanonicalFallback({
+                fetchSummary: () =>
+                  client.fetchAgentTimelineSummary(agentId, {
+                    limit: request.limit,
+                    requestId: responseOwner.requestId,
+                  }),
+                fetchCanonical: () =>
+                  getHostRuntimeStore().fetchAgentTimeline(serverId, agentId, {
+                    ...request,
+                    requestId: responseOwner.requestId,
+                  }),
+                canInstallSummary: () => {
+                  const latestSession = useSessionStore.getState().sessions[serverId];
+                  return (
+                    generations.get(agentId) === generation &&
+                    !isAgentLiveForProjection(latestSession, agentId) &&
+                    latestSession?.agentTimelineProjectionLanes.get(agentId)
+                      ?.canonicalReplacementPending !== true
+                  );
+                },
+                installSummary: (projection) =>
+                  installAgentTimelineProjectionSummary(serverId, agentId, projection),
+                onCanonicalFallback: beginCanonicalFallback,
+                isRequestCurrent: ownsRequestLifecycle,
+              });
+              page = summaryResult.page;
+              if (summaryResult.outcome === "discarded") {
+                rejectInitialization(new Error("Timeline synchronization was canceled"));
+                return page;
+              }
+              if (summaryResult.outcome === "canonical-page") {
+                refreshInitializationTimeoutIfPending();
+                return page;
+              }
+              finalizeInstalledTimelineSummary({
+                isCurrent: ownsRequestLifecycle,
+                clearInitializing: () =>
+                  clearAgentInitializingFlag(setInitializingAgents, serverId, agentId),
+                markSynchronized: () => markAgentHistorySynchronized(serverId, agentId),
+                clearCreateFlow: () =>
+                  useCreateFlowStore.getState().clearByAgent({ serverId, agentId }),
+                drainQueuedMessage: () => {
+                  const latestSession = useSessionStore.getState().sessions[serverId];
+                  const installedAgent =
+                    latestSession?.agents.get(agentId) ?? latestSession?.agentDetails.get(agentId);
+                  if (installedAgent && installedAgent.status !== "running") {
+                    getHostRuntimeStore().drainQueuedAgentMessage(serverId, agentId);
+                  }
+                },
+                resolveInitialization: () => {
+                  if (requestInitDeferred) {
+                    resolveInitDeferred(initKey, requestInitDeferred, responseOwner.requestId);
+                  }
+                },
+              });
+              return page;
             } finally {
               if (projectionSummaryInFlightRef.current.get(agentId) === generation) {
                 projectionSummaryInFlightRef.current.delete(agentId);
               }
             }
-
-            const projection = page.projectionPayload;
-            if (!projection) {
-              // Capability fallback and summary eligibility misses are normal
-              // timeline pages. The generic listener has already applied them.
-              return page;
-            }
-            if (projection.kind !== "summary") {
-              throw new Error("Timeline summary projection was not returned");
-            }
-            const latestSession = useSessionStore.getState().sessions[serverId];
-            const canInstall =
-              generations.get(agentId) === generation &&
-              !isAgentLiveForProjection(latestSession, agentId) &&
-              latestSession?.agentTimelineProjectionLanes.get(agentId)
-                ?.canonicalReplacementPending !== true;
-            if (!canInstall) {
-              // A live event, newer summary, or superseding canonical request won the race.
-              return page;
-            }
-            const installed = installAgentTimelineProjectionSummary(serverId, agentId, projection);
-            if (!installed) return page;
-            clearAgentInitializingFlag(setInitializingAgents, serverId, agentId);
-            markAgentHistorySynchronized(serverId, agentId);
-            useCreateFlowStore.getState().clearByAgent({ serverId, agentId });
-            const installedAgent =
-              latestSession?.agents.get(agentId) ?? latestSession?.agentDetails.get(agentId);
-            if (installedAgent && installedAgent.status !== "running") {
-              getHostRuntimeStore().drainQueuedAgentMessage(serverId, agentId);
-            }
-            resolveInitDeferred(initKey);
-            return page;
           } else {
-            page = await getHostRuntimeStore().fetchAgentTimeline(serverId, agentId, request);
+            page = await getHostRuntimeStore().fetchAgentTimeline(serverId, agentId, {
+              ...request,
+              requestId: responseOwner.requestId,
+            });
           }
-          if (shouldInitialize && getInitDeferred(initKey)) {
-            refreshAgentInitializationTimeout({ key: initKey, agentId, setAgentInitializing });
-          }
+          refreshInitializationTimeoutIfPending();
           return page;
         } catch (error) {
-          if (shouldInitialize) {
-            setAgentInitializing(agentId, false);
-            rejectInitDeferred(initKey, error instanceof Error ? error : new Error(String(error)));
-          }
+          rejectInitialization(error instanceof Error ? error : new Error(String(error)));
           throw error;
+        } finally {
+          timelineResponseOwnership.finish(responseOwner);
+          responseOwners.delete(responseOwner);
+          if (requestInitDeferred && getInitDeferred(initKey) !== requestInitDeferred) {
+            initializationDeferreds.delete(requestInitDeferred);
+          }
         }
       },
       reportError: (error) => {
@@ -803,7 +1083,27 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     sync.setActive(getIsAppVisible(appStateRef.current));
 
     return () => {
+      const ownedInitializations = [...initializationDeferreds];
       invalidateProjectionSummaryRequests();
+      for (const responseOwner of responseOwners) {
+        timelineResponseOwnership.finish(responseOwner);
+      }
+      responseOwners.clear();
+      for (const [deferred, ownership] of ownedInitializations) {
+        const { agentId, requestId } = ownership;
+        const initKey = getInitKey(serverId, agentId);
+        if (
+          rejectInitDeferred(
+            initKey,
+            new Error("Timeline synchronization was disposed"),
+            deferred,
+            requestId,
+          )
+        ) {
+          setAgentInitializing(agentId, false);
+        }
+      }
+      initializationDeferreds.clear();
       if (viewedTimelineSyncRef.current === sync) {
         viewedTimelineSyncRef.current = null;
       }
@@ -880,6 +1180,16 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     const unsubAgentTimeline = client.on("fetch_agent_timeline_response", (message) => {
       if (message.type !== "fetch_agent_timeline_response") return;
       if (message.payload.projectionPayload) return;
+      const initDeferred = getInitDeferred(getInitKey(serverId, message.payload.agentId));
+      if (
+        !timelineResponseOwnershipRef.current.shouldApply({
+          agentId: message.payload.agentId,
+          requestId: message.payload.requestId,
+          activeInitializationRequestId: initDeferred?.requestId ?? null,
+        })
+      ) {
+        return;
+      }
       agentStreamReducerQueue.flushAgent(message.payload.agentId);
       applyTimelineResponse(message.payload);
     });

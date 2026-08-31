@@ -17,6 +17,35 @@ afterEach(async () => {
 });
 
 describe("FileAgentTimelineStore", () => {
+  it("stages the first registration generation against an absent-state selection", async () => {
+    /** Isolated durable timeline root with no existing Agent state. */
+    const root = await createRoot();
+    /** File-backed store receiving the first registration snapshot. */
+    const store = new FileAgentTimelineStore(root);
+    /** Registration-owned generation written against the captured absent baseline. */
+    const generationId = "00000000-0000-4000-8000-000000000210";
+
+    await expect(
+      store.stageRows("agent-first-registration", {
+        generationId,
+        expectedCurrent: {
+          exists: false,
+          activeGenerationId: null,
+          workingGenerationId: null,
+          invalidGenerationIds: [],
+        },
+        epoch: "epoch-registration",
+        mode: "replace",
+        rows: [row(1, "registration")],
+      }),
+    ).resolves.toBeUndefined();
+    await expect(store.getCoverage("agent-first-registration")).resolves.toMatchObject({
+      active: null,
+      working: { generationId, epoch: "epoch-registration", status: "building" },
+      eligible: false,
+    });
+  });
+
   it("commits and restarts with positive-limit tail, before, and after pages", async () => {
     const root = await createRoot();
     const store = new FileAgentTimelineStore(root, { segmentRowLimit: 2 });
@@ -82,6 +111,223 @@ describe("FileAgentTimelineStore", () => {
 
     await store.markIncomplete("agent-1");
     await expect(store.commit("agent-1")).rejects.toThrow("incomplete");
+  });
+
+  it("discards only the owned working generation across restart", async () => {
+    const root = await createRoot();
+    const store = new FileAgentTimelineStore(root, { segmentRowLimit: 1 });
+    await store.stageRows("agent-1", {
+      epoch: "epoch-1",
+      mode: "replace",
+      rows: rows(1, 1),
+    });
+    const active = await store.commit("agent-1");
+    await store.stageRows("agent-1", {
+      epoch: "epoch-1",
+      mode: "append",
+      rows: rows(2, 2),
+    });
+    const working = (await store.getCoverage("agent-1")).working;
+    expect(working).not.toBeNull();
+
+    await expect(store.discardWorking("agent-1", crypto.randomUUID())).resolves.toBe(false);
+    await expect(store.discardWorking("agent-1", working!.generationId)).resolves.toBe(true);
+
+    const restarted = new FileAgentTimelineStore(root, { segmentRowLimit: 1 });
+    await expect(restarted.getCoverage("agent-1")).resolves.toMatchObject({
+      active,
+      working: null,
+    });
+    await expect(
+      restarted.fetchCommittedPage("agent-1", { direction: "tail", limit: 10 }),
+    ).resolves.toMatchObject({ rows: [{ seq: 1 }] });
+  });
+
+  it("restores complete registration snapshots across restart", async () => {
+    /** Isolated durable timeline root. */
+    const root = await createRoot();
+    /** File-backed store under test. */
+    const store = new FileAgentTimelineStore(root, { segmentRowLimit: 1 });
+    /** Stable Agent identity for the registration snapshot. */
+    const agentId = "agent-registration-snapshot";
+    await store.stageRows(agentId, {
+      epoch: "epoch-1",
+      mode: "replace",
+      rows: rows(1, 2),
+    });
+    /** Active generation visible before registration begins. */
+    const active = await store.commit(agentId);
+    await store.stageRows(agentId, {
+      epoch: "epoch-1",
+      mode: "append",
+      rows: rows(3, 3),
+    });
+    /** Complete active and working state captured before registration mutates it. */
+    const snapshot = await store.captureRegistrationSnapshot(agentId);
+    /** Generation identity owned by the provisional registration write. */
+    const ownedGenerationId = "00000000-0000-4000-8000-000000000211";
+    await store.stageRows(agentId, {
+      generationId: ownedGenerationId,
+      expectedCurrent: {
+        exists: snapshot.exists,
+        activeGenerationId: snapshot.active?.generationId ?? null,
+        workingGenerationId: snapshot.working?.generationId ?? null,
+        invalidGenerationIds: snapshot.invalidGenerationIds,
+      },
+      epoch: "epoch-registration",
+      mode: "replace",
+      rows: [row(1, "registration")],
+    });
+
+    await store.restoreRegistrationSnapshot(agentId, snapshot, {
+      ownedGenerationIds: [ownedGenerationId],
+    });
+    /** Restarted reader proving manifests, segments, and pointers were all restored. */
+    const restarted = new FileAgentTimelineStore(root, { segmentRowLimit: 1 });
+    await expect(restarted.getCoverage(agentId)).resolves.toMatchObject({
+      active,
+      working: { generationId: snapshot.working?.generationId, epoch: "epoch-1" },
+    });
+    await restarted.commit(agentId, snapshot.working!.generationId);
+    await expect(
+      restarted.fetchCommittedPage(agentId, { direction: "tail", limit: 10 }),
+    ).resolves.toMatchObject({ rows: [{ seq: 1 }, { seq: 2 }, { seq: 3 }] });
+  });
+
+  it("rejects stale registration stage, commit, and rollback ownership", async () => {
+    /** Isolated durable timeline root. */
+    const root = await createRoot();
+    /** File-backed store under test. */
+    const store = new FileAgentTimelineStore(root);
+    /** Stable Agent identity for all ownership transitions. */
+    const agentId = "agent-registration-ownership";
+    await store.stageRows(agentId, {
+      epoch: "epoch-1",
+      mode: "replace",
+      rows: rows(1, 1),
+    });
+    /** Baseline active generation captured by registration. */
+    const active = await store.commit(agentId);
+    /** Registration snapshot used by the later stale rollback attempt. */
+    const snapshot = await store.captureRegistrationSnapshot(agentId);
+    /** First registration-owned working generation. */
+    const ownedGenerationId = "00000000-0000-4000-8000-000000000212";
+    await store.stageRows(agentId, {
+      generationId: ownedGenerationId,
+      expectedCurrent: {
+        exists: true,
+        activeGenerationId: active.generationId,
+        workingGenerationId: null,
+        invalidGenerationIds: [],
+      },
+      epoch: "epoch-owned",
+      mode: "replace",
+      rows: [row(1, "owned")],
+    });
+    /** Foreign generation that supersedes the registration-owned pointer. */
+    const foreignGenerationId = "00000000-0000-4000-8000-000000000213";
+    await store.stageRows(agentId, {
+      generationId: foreignGenerationId,
+      epoch: "epoch-foreign",
+      mode: "replace",
+      rows: [row(1, "foreign")],
+    });
+
+    await expect(
+      store.stageRows(agentId, {
+        generationId: "00000000-0000-4000-8000-000000000214",
+        expectedCurrent: {
+          exists: true,
+          activeGenerationId: active.generationId,
+          workingGenerationId: ownedGenerationId,
+          invalidGenerationIds: [],
+        },
+        epoch: "epoch-stale",
+        mode: "replace",
+        rows: [],
+      }),
+    ).rejects.toThrow("selection changed");
+    await expect(store.commit(agentId, ownedGenerationId)).rejects.toThrow("ownership changed");
+    await expect(
+      store.restoreRegistrationSnapshot(agentId, snapshot, {
+        ownedGenerationIds: [ownedGenerationId],
+      }),
+    ).rejects.toThrow("ownership changed");
+    /** Restarted reader proving the foreign pointer was not overwritten. */
+    const restarted = new FileAgentTimelineStore(root);
+    await expect(restarted.getCoverage(agentId)).resolves.toMatchObject({
+      active,
+      working: { generationId: foreignGenerationId, epoch: "epoch-foreign" },
+    });
+  });
+
+  it("preserves a concurrent invalid-generation marker during registration failure", async () => {
+    /** Isolated durable timeline root. */
+    const root = await createRoot();
+    /** File-backed store under test. */
+    const store = new FileAgentTimelineStore(root, { segmentRowLimit: 1 });
+    /** Stable Agent identity for the invalidation race. */
+    const agentId = "agent-registration-invalidation";
+    await store.stageRows(agentId, {
+      epoch: "epoch-1",
+      mode: "replace",
+      rows: rows(1, 1),
+    });
+    /** Baseline active generation captured by registration. */
+    const active = await store.commit(agentId);
+    /** Registration snapshot preceding a concurrent validity change. */
+    const snapshot = await store.captureRegistrationSnapshot(agentId);
+    /** Generation identity owned by the registration attempt. */
+    const ownedGenerationId = "00000000-0000-4000-8000-000000000215";
+    await store.stageRows(agentId, {
+      generationId: ownedGenerationId,
+      expectedCurrent: {
+        exists: true,
+        activeGenerationId: active.generationId,
+        workingGenerationId: null,
+        invalidGenerationIds: [],
+      },
+      epoch: "epoch-registration",
+      mode: "replace",
+      rows: [row(1, "registration")],
+    });
+    /** Active manifest made non-complete to trigger public fail-closed invalidation. */
+    const activeManifestPath = await findCurrentManifest(root, "activeGenerationId");
+    /** Parsed active manifest modified without changing its selected identity. */
+    const activeManifest = JSON.parse(await readFile(activeManifestPath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    activeManifest.status = "incomplete";
+    await writeFile(activeManifestPath, JSON.stringify(activeManifest, null, 2), "utf8");
+    await expect(store.getCoverage(agentId)).resolves.toMatchObject({
+      active: { generationId: active.generationId, valid: false },
+      working: { generationId: ownedGenerationId },
+    });
+    /** Selection expected by registration before the concurrent invalidation. */
+    const staleCommitSelection = {
+      exists: true,
+      activeGenerationId: active.generationId,
+      workingGenerationId: ownedGenerationId,
+      invalidGenerationIds: [],
+    };
+
+    await expect(store.commit(agentId, ownedGenerationId, staleCommitSelection)).rejects.toThrow(
+      "selection changed",
+    );
+    await expect(
+      store.restoreRegistrationSnapshot(agentId, snapshot, {
+        ownedGenerationIds: [ownedGenerationId],
+      }),
+    ).rejects.toThrow("ownership changed");
+    /** Persisted state proving rollback retained the concurrent invalidation marker. */
+    const state = JSON.parse(
+      await readFile(path.join(await findAgentDirectory(root), "state.json"), "utf8"),
+    ) as { invalidGenerationIds: string[]; workingGenerationId: string | null };
+    expect(state).toMatchObject({
+      invalidGenerationIds: [active.generationId],
+      workingGenerationId: ownedGenerationId,
+    });
   });
 
   it("bounds working segment files without deleting the active generation", async () => {

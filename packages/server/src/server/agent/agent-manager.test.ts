@@ -18,6 +18,7 @@ import {
 } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
 import { InMemoryDurableAgentTimelineStore } from "./agent-timeline-store.js";
+import { FileAgentTimelineStore } from "./file-agent-timeline-store.js";
 import { toAgentListItemPayload, toAgentPayload } from "./agent-projections.js";
 import { getOpenAgentTabLabel, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { formatSystemNotificationPrompt, startAgentRun } from "./agent-prompt.js";
@@ -600,6 +601,118 @@ class CloseRecordingTestAgentSession extends TestAgentSession {
   }
 }
 
+class RegistrationCloseRecordingClient extends TestAgentClient {
+  session: CloseRecordingTestAgentSession | null = null;
+
+  /** Creates a session whose registration cleanup is observable. */
+  override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+    this.session = new CloseRecordingTestAgentSession(config);
+    return this.session;
+  }
+
+  /** Resumes a session whose registration cleanup is observable. */
+  override async resumeSession(
+    _handle: AgentPersistenceHandle,
+    config?: Partial<AgentSessionConfig>,
+  ): Promise<AgentSession> {
+    this.session = new CloseRecordingTestAgentSession({
+      ...config,
+      provider: "codex",
+      cwd: config?.cwd ?? process.cwd(),
+    });
+    return this.session;
+  }
+}
+
+class HydrationFailureSession extends CloseRecordingTestAgentSession {
+  unsubscribed = false;
+
+  /** Records whether failed registration releases the provider subscription. */
+  override subscribe(callback: (event: AgentStreamEvent) => void): () => void {
+    const unsubscribe = super.subscribe(callback);
+    return () => {
+      this.unsubscribed = true;
+      unsubscribe();
+    };
+  }
+
+  /** Fails after the session has been subscribed during registration hydration. */
+  flushPreSubscriptionEvents(): void {
+    throw new Error("registration hydration failed");
+  }
+}
+
+class HydrationFailureClient extends TestAgentClient {
+  session: HydrationFailureSession | null = null;
+
+  /** Creates the controlled hydration-failure session. */
+  override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+    this.session = new HydrationFailureSession(config);
+    return this.session;
+  }
+}
+
+class RegistrationTimelineEventSession extends CloseRecordingTestAgentSession {
+  /** Emits one provisional row after registration subscribes to the provider. */
+  flushPreSubscriptionEvents(): void {
+    this.pushEvent({
+      type: "timeline",
+      provider: this.provider,
+      item: { type: "assistant_message", text: "provisional registration row" },
+    });
+  }
+}
+
+class RegistrationTimelineEventClient extends TestAgentClient {
+  session: RegistrationTimelineEventSession | null = null;
+
+  /** Creates a session that emits a provisional registration row. */
+  override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+    this.session = new RegistrationTimelineEventSession(config);
+    return this.session;
+  }
+
+  /** Resumes a session that emits a provisional registration row. */
+  override async resumeSession(
+    _handle: AgentPersistenceHandle,
+    config?: Partial<AgentSessionConfig>,
+  ): Promise<AgentSession> {
+    this.session = new RegistrationTimelineEventSession({
+      ...config,
+      provider: "codex",
+      cwd: config?.cwd ?? process.cwd(),
+    });
+    return this.session;
+  }
+}
+
+class RegistrationProviderSubagentEventSession extends CloseRecordingTestAgentSession {
+  /** Emits one provisional provider child after registration subscribes. */
+  flushPreSubscriptionEvents(): void {
+    this.pushEvent({
+      type: "provider_subagent",
+      provider: this.provider,
+      event: {
+        type: "upsert",
+        id: "provisional-child",
+        title: "Provisional child",
+        status: "running",
+        timestamp: "2026-08-30T12:00:00.000Z",
+      },
+    });
+  }
+}
+
+class RegistrationProviderSubagentEventClient extends TestAgentClient {
+  session: RegistrationProviderSubagentEventSession | null = null;
+
+  /** Creates a session that emits a provider child during registration. */
+  override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+    this.session = new RegistrationProviderSubagentEventSession(config);
+    return this.session;
+  }
+}
+
 class McpCapableTestAgentClient extends TestAgentClient {
   override readonly capabilities = {
     ...TEST_CAPABILITIES,
@@ -1012,6 +1125,730 @@ test("does not persist an initializing session after shutdown closes it", async 
       record: { lastStatus: "closed" },
     });
   } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("rolls back a registered session when its initial snapshot cannot be persisted", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-register-persist-failure-"));
+  const agentId = "00000000-0000-4000-8000-000000000095";
+  const client = new RegistrationCloseRecordingClient();
+  // Only the registration write fails; rollback storage must remain available.
+  let shouldFailRegistrationWrite = true;
+  const storage = new AgentStorage(join(workdir, "agents"), logger, {
+    faultInjector(point) {
+      if (point === "record_write" && shouldFailRegistrationWrite) {
+        shouldFailRegistrationWrite = false;
+        throw new Error("registration snapshot persist failed");
+      }
+    },
+  });
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    await expect(
+      manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      }),
+    ).rejects.toThrow("registration snapshot persist failed");
+
+    expect({ agents: manager.listAgents(), sessionClosed: client.session?.closed }).toEqual({
+      agents: [],
+      sessionClosed: true,
+    });
+    await expect(storage.get(agentId)).resolves.toBeNull();
+  } finally {
+    await manager.flushForShutdown().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("rolls back subscription and snapshot when registration hydration fails", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-register-hydration-failure-"));
+  const agentId = "00000000-0000-4000-8000-000000000094";
+  const client = new HydrationFailureClient();
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => agentId,
+  });
+  const publishedStates: ManagedAgent[] = [];
+  manager.subscribe(
+    (event) => {
+      if (event.type === "agent_state" && event.agent.id === agentId) {
+        publishedStates.push(event.agent);
+      }
+    },
+    { agentId, replayState: false },
+  );
+
+  try {
+    await expect(
+      manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      }),
+    ).rejects.toThrow("registration hydration failed");
+    await storage.flush();
+
+    expect({
+      agents: manager.listAgents(),
+      sessionClosed: client.session?.closed,
+      unsubscribed: client.session?.unsubscribed,
+      record: await storage.get(agentId),
+      publishedStates,
+    }).toEqual({
+      agents: [],
+      sessionClosed: true,
+      unsubscribed: true,
+      record: null,
+      publishedStates: [],
+    });
+  } finally {
+    await manager.flushForShutdown().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("does not publish provider children when the final registration snapshot fails", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-register-child-rollback-"));
+  const agentId = "00000000-0000-4000-8000-000000000091";
+  const client = new RegistrationProviderSubagentEventClient();
+  let recordWriteCount = 0;
+  const storage = new AgentStorage(join(workdir, "agents"), logger, {
+    faultInjector(point) {
+      if (point !== "record_write") return;
+      recordWriteCount += 1;
+      if (recordWriteCount === 2) {
+        throw new Error("final registration snapshot persist failed");
+      }
+    },
+  });
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => agentId,
+  });
+  const providerEvents: AgentManagerEvent[] = [];
+  manager.subscribe(
+    (event) => {
+      if (event.type === "provider_subagent") providerEvents.push(event);
+    },
+    { agentId, replayState: false },
+  );
+
+  try {
+    await expect(
+      manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      }),
+    ).rejects.toThrow("final registration snapshot persist failed");
+
+    expect({
+      agents: manager.listAgents(),
+      providerEvents,
+      sessionClosed: client.session?.closed,
+      record: await storage.get(agentId),
+    }).toEqual({
+      agents: [],
+      providerEvents: [],
+      sessionClosed: true,
+      record: null,
+    });
+  } finally {
+    await manager.flushForShutdown().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("persists registration-time assistant message metadata before publication", async () => {
+  /** Isolated storage root for the registration-time metadata scenario. */
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-register-last-message-at-"));
+  /** Stable Agent identity used across metadata and durable timeline assertions. */
+  const agentId = "00000000-0000-4000-8000-000000000089";
+  /** Registry whose persisted record must match the published Agent snapshot. */
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  /** Durable store that forces registration-time coalesced rows through strict persistence. */
+  const durableTimelineStore = new InMemoryDurableAgentTimelineStore();
+  /** Provider client that emits an assistant chunk during registration hydration. */
+  const client = new RegistrationTimelineEventClient();
+  /** Manager under test. */
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    durableTimelineStore,
+    logger,
+    idFactory: () => agentId,
+  });
+  /** Timestamp expected after the strict registration flush materializes the chunk. */
+  const messageAt = new Date("2026-08-31T09:15:00.000Z");
+
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(messageAt);
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await storage.flush();
+
+    expect(created.lastMessageAt).toEqual(messageAt);
+    await expect(storage.get(agentId)).resolves.toMatchObject({
+      lastMessageAt: messageAt.toISOString(),
+    });
+    await expect(
+      durableTimelineStore.fetchCommittedPage(agentId, { direction: "tail", limit: 10 }),
+    ).resolves.toMatchObject({
+      rows: [{ item: { type: "assistant_message", text: "provisional registration row" } }],
+    });
+  } finally {
+    vi.useRealTimers();
+    await manager.closeAgent(agentId).catch(() => undefined);
+    await manager.flushForShutdown().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("restores the in-memory timeline when registration fails before Agent installation", async () => {
+  /** Isolated working directory for the retained in-memory timeline. */
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-register-pre-install-"));
+  /** Stable Agent identity reused by create, failed import, and successful resume. */
+  const agentId = "00000000-0000-4000-8000-000000000088";
+
+  class PreInstallFailureClient extends TestAgentClient {
+    /** Failed imported session whose closure proves registration retained cleanup ownership. */
+    failingSession: CloseRecordingTestAgentSession | null = null;
+
+    /** Returns an explicit replacement timeline paired with a synchronously failing session. */
+    override async importSession(input: ImportProviderSessionInput) {
+      this.failingSession = new CloseRecordingTestAgentSession({
+        provider: "codex",
+        cwd: workdir,
+      });
+      /** Session facade that fails on the first post-initialization Agent field read. */
+      const failingSession = new Proxy(this.failingSession, {
+        get(target, property, receiver) {
+          if (property === "capabilities") {
+            throw new Error("registration failed before Agent installation");
+          }
+          const value = Reflect.get(target, property, receiver);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+      return {
+        session: failingSession,
+        config: { provider: "codex" as const, cwd: workdir },
+        persistence: {
+          provider: "codex" as const,
+          sessionId: input.providerHandleId,
+          nativeHandle: input.providerHandleId,
+        },
+        timeline: [
+          {
+            timestamp: "2026-08-31T09:30:00.000Z",
+            item: { type: "assistant_message" as const, text: "provisional imported row" },
+          },
+        ],
+      };
+    }
+  }
+
+  /** Client used across all three registration attempts. */
+  const client = new PreInstallFailureClient();
+  /** Manager retaining timeline state after a closed Agent leaves the live map. */
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await manager.appendTimelineItem(agentId, {
+      type: "assistant_message",
+      text: "baseline retained row",
+    });
+    await manager.closeAgent(agentId);
+
+    await expect(
+      manager.importProviderSession({
+        provider: "codex",
+        providerHandleId: "thread-pre-install-failure",
+        cwd: workdir,
+        workspaceId: "workspace-pre-install-failure",
+        agentId,
+      }),
+    ).rejects.toThrow("registration failed before Agent installation");
+    expect(client.failingSession?.closed).toBe(true);
+    expect(manager.listAgents()).toEqual([]);
+
+    await manager.resumeAgentFromPersistence(
+      { provider: "codex", sessionId: "thread-after-pre-install-failure" },
+      { provider: "codex", cwd: workdir },
+      agentId,
+      { workspaceId: "workspace-pre-install-failure" },
+    );
+    expect(manager.fetchTimeline(agentId, { direction: "tail", limit: 20 }).rows).toMatchObject([
+      { item: { type: "assistant_message", text: "baseline retained row" } },
+    ]);
+  } finally {
+    await manager.closeAgent(agentId).catch(() => undefined);
+    await manager.flushForShutdown().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test.each([
+  ["working manifest publication", "working_manifest"],
+  ["active generation publication", "active_pointer"],
+] as const)(
+  "rolls back file-backed registration when %s fails",
+  async (_failureName, faultPoint) => {
+    /** Isolated root containing metadata and file-backed durable timeline state. */
+    const workdir = mkdtempSync(join(tmpdir(), `agent-manager-register-${faultPoint}-`));
+    /** Stable Agent identity selected per injected durable failure. */
+    const agentId =
+      faultPoint === "working_manifest"
+        ? "00000000-0000-4000-8000-000000000087"
+        : "00000000-0000-4000-8000-000000000086";
+    /** Registry whose provisional registration record must be removed. */
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    /** Whether the selected fault still needs to be injected once. */
+    let shouldFail = true;
+    /** Real file store exercising physical manifest and pointer publication. */
+    const durableTimelineStore = new FileAgentTimelineStore(join(workdir, "timelines"), {
+      faultInjector(point) {
+        if (point === faultPoint && shouldFail) {
+          shouldFail = false;
+          throw new Error(`registration ${faultPoint} failed`);
+        }
+      },
+    });
+    /** Provider that makes registration perform a strict durable timeline write. */
+    const client = new RegistrationTimelineEventClient();
+    /** Manager under test. */
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      durableTimelineStore,
+      logger,
+      idFactory: () => agentId,
+    });
+    /** Public Agent state events, which must stay empty before commit. */
+    const publishedStates: ManagedAgent[] = [];
+    manager.subscribe(
+      (event) => {
+        if (event.type === "agent_state" && event.agent.id === agentId) {
+          publishedStates.push(event.agent);
+        }
+      },
+      { agentId, replayState: false },
+    );
+
+    try {
+      await expect(
+        manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+          workspaceId: undefined,
+        }),
+      ).rejects.toThrow(`registration ${faultPoint} failed`);
+      await storage.flush();
+      /** Restarted reader proving rollback removed every provisional file selection. */
+      const restartedTimelineStore = new FileAgentTimelineStore(join(workdir, "timelines"));
+
+      await expect(restartedTimelineStore.captureRegistrationSnapshot(agentId)).resolves.toEqual({
+        exists: false,
+        active: null,
+        working: null,
+        invalidGenerationIds: [],
+      });
+      await expect(
+        restartedTimelineStore.fetchCommittedPage(agentId, { direction: "tail", limit: 20 }),
+      ).resolves.toBeNull();
+      expect({
+        agents: manager.listAgents(),
+        record: await storage.get(agentId),
+        publishedStates,
+        sessionClosed: client.session?.closed,
+      }).toEqual({ agents: [], record: null, publishedStates: [], sessionClosed: true });
+    } finally {
+      await manager.flushForShutdown().catch(() => undefined);
+      await storage.flush().catch(() => undefined);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
+test("preserves a pre-existing file-backed working generation when registration receives a timeline event", async () => {
+  /** Isolated root shared by the seed and resumed managers. */
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-register-existing-working-"));
+  /** Stable Agent identity whose durable selection already contains working state. */
+  const agentId = "00000000-0000-4000-8000-000000000085";
+  /** Metadata registry shared across the closed baseline and failed resume. */
+  const storagePath = join(workdir, "agents");
+  /** Durable timeline root used to prove restart-stable preservation. */
+  const timelinePath = join(workdir, "timelines");
+  /** Initial registry used to create a closed resumable Agent. */
+  const seedStorage = new AgentStorage(storagePath, logger);
+  /** Initial file store used to commit the baseline active generation. */
+  const seedTimelineStore = new FileAgentTimelineStore(timelinePath);
+  /** Initial manager used only to create the persisted baseline. */
+  const seedManager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: seedStorage,
+    durableTimelineStore: seedTimelineStore,
+    logger,
+    idFactory: () => agentId,
+  });
+  /** Failed resumed manager, retained for cleanup after assertions. */
+  let resumedManager: AgentManager | null = null;
+  /** Failed resumed registry, retained for cleanup after assertions. */
+  let resumedStorage: AgentStorage | null = null;
+
+  try {
+    await seedManager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: "workspace-existing-working",
+    });
+    await seedManager.appendTimelineItem(agentId, {
+      type: "assistant_message",
+      text: "committed baseline row",
+    });
+    await seedManager.closeAgent(agentId);
+    await seedManager.flushForShutdown();
+    await seedStorage.flush();
+    /** Metadata record that failed registration must restore byte-for-byte semantically. */
+    const previousRecord = await seedStorage.get(agentId);
+    /** Active generation to which a pre-registration working row is appended. */
+    const active = (await seedTimelineStore.getCoverage(agentId)).active;
+    expect(active).not.toBeNull();
+    await seedTimelineStore.stageRows(agentId, {
+      epoch: active!.epoch,
+      mode: "append",
+      rows: [
+        {
+          seq: 2,
+          timestamp: "2026-08-31T09:20:00.000Z",
+          item: { type: "assistant_message", text: "pre-existing working row" },
+        },
+      ],
+    });
+    await seedTimelineStore.flush(agentId);
+    /** Complete durable baseline, including the still-working generation. */
+    const previousSnapshot = await seedTimelineStore.captureRegistrationSnapshot(agentId);
+    /** Active page that must remain the last committed reader view. */
+    const previousPage = await seedTimelineStore.fetchCommittedPage(agentId, {
+      direction: "tail",
+      limit: 20,
+    });
+    expect(previousSnapshot.working).not.toBeNull();
+
+    resumedStorage = new AgentStorage(storagePath, logger);
+    /** Restarted file store proving the selection is not an in-process artifact. */
+    const resumedTimelineStore = new FileAgentTimelineStore(timelinePath);
+    /** Provider emits a new row that cannot atomically replace foreign working state. */
+    const client = new RegistrationTimelineEventClient();
+    resumedManager = new AgentManager({
+      clients: { codex: client },
+      registry: resumedStorage,
+      durableTimelineStore: resumedTimelineStore,
+      logger,
+    });
+    /** Public Agent state events, which must stay empty on rejection. */
+    const publishedStates: ManagedAgent[] = [];
+    resumedManager.subscribe(
+      (event) => {
+        if (event.type === "agent_state" && event.agent.id === agentId) {
+          publishedStates.push(event.agent);
+        }
+      },
+      { agentId, replayState: false },
+    );
+
+    await expect(
+      resumedManager.resumeAgentFromPersistence(
+        previousRecord!.persistence!,
+        { provider: "codex", cwd: workdir },
+        agentId,
+        {
+          createdAt: new Date(previousRecord!.createdAt),
+          updatedAt: new Date(previousRecord!.updatedAt),
+          workspaceId: previousRecord!.workspaceId,
+        },
+      ),
+    ).rejects.toThrow("Cannot persist registration timeline while a working generation exists");
+    await resumedStorage.flush();
+    /** Second restart proving rollback retained both generations and their physical rows. */
+    const restartedTimelineStore = new FileAgentTimelineStore(timelinePath);
+
+    await expect(restartedTimelineStore.captureRegistrationSnapshot(agentId)).resolves.toEqual(
+      previousSnapshot,
+    );
+    await expect(
+      restartedTimelineStore.fetchCommittedPage(agentId, { direction: "tail", limit: 20 }),
+    ).resolves.toEqual(previousPage);
+    expect({
+      agents: resumedManager.listAgents(),
+      record: await resumedStorage.get(agentId),
+      publishedStates,
+      sessionClosed: client.session?.closed,
+    }).toEqual({
+      agents: [],
+      record: previousRecord,
+      publishedStates: [],
+      sessionClosed: true,
+    });
+  } finally {
+    await resumedManager?.flushForShutdown().catch(() => undefined);
+    await resumedStorage?.flush().catch(() => undefined);
+    await seedManager.flushForShutdown().catch(() => undefined);
+    await seedStorage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("restores the prior durable snapshot when resumed registration persistence fails", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-register-restore-snapshot-"));
+  const storagePath = join(workdir, "agents");
+  const agentId = "00000000-0000-4000-8000-000000000093";
+  const seedStorage = new AgentStorage(storagePath, logger);
+  const seedManager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: seedStorage,
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    await seedManager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: "workspace-before-failed-resume",
+    });
+    await seedManager.closeAgent(agentId);
+    await seedStorage.flush();
+    const previousRecord = await seedStorage.get(agentId);
+    expect(previousRecord?.lastStatus).toBe("closed");
+
+    let shouldFailRegistrationWrite = true;
+    const storage = new AgentStorage(storagePath, logger, {
+      faultInjector(point) {
+        if (point === "record_write" && shouldFailRegistrationWrite) {
+          shouldFailRegistrationWrite = false;
+          throw new Error("resumed registration persist failed");
+        }
+      },
+    });
+    const client = new RegistrationCloseRecordingClient();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      logger,
+    });
+
+    await expect(
+      manager.resumeAgentFromPersistence(
+        previousRecord!.persistence!,
+        { provider: "codex", cwd: workdir },
+        agentId,
+        {
+          createdAt: new Date(previousRecord!.createdAt),
+          updatedAt: new Date(previousRecord!.updatedAt),
+          workspaceId: previousRecord!.workspaceId,
+        },
+      ),
+    ).rejects.toThrow("resumed registration persist failed");
+
+    await storage.flush();
+    expect({
+      agents: manager.listAgents(),
+      sessionClosed: client.session?.closed,
+      record: await storage.get(agentId),
+    }).toEqual({
+      agents: [],
+      sessionClosed: true,
+      record: previousRecord,
+    });
+  } finally {
+    await seedManager.flushForShutdown().catch(() => undefined);
+    await seedStorage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("discards provisional durable timeline work when resumed registration fails", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-register-restore-timeline-"));
+  const storagePath = join(workdir, "agents");
+  const agentId = "00000000-0000-4000-8000-000000000092";
+  const durableTimelineStore = new InMemoryDurableAgentTimelineStore();
+  const seedStorage = new AgentStorage(storagePath, logger);
+  const seedManager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: seedStorage,
+    durableTimelineStore,
+    logger,
+    idFactory: () => agentId,
+  });
+  let resumedManager: AgentManager | null = null;
+  let resumedStorage: AgentStorage | null = null;
+
+  try {
+    await seedManager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: "workspace-before-failed-timeline-resume",
+    });
+    await seedManager.appendTimelineItem(agentId, {
+      type: "assistant_message",
+      text: "committed row",
+    });
+    await seedManager.closeAgent(agentId);
+    await seedStorage.flush();
+    const previousRecord = await seedStorage.get(agentId);
+    const previousCoverage = await durableTimelineStore.getCoverage(agentId);
+    const previousPage = await durableTimelineStore.fetchCommittedPage(agentId, {
+      direction: "tail",
+      limit: 20,
+    });
+    expect(previousCoverage.active).not.toBeNull();
+    expect(previousCoverage.working).toBeNull();
+    expect(previousPage?.rows.map((row) => row.item)).toEqual([
+      { type: "assistant_message", text: "committed row" },
+    ]);
+
+    let shouldFailRegistrationWrite = true;
+    resumedStorage = new AgentStorage(storagePath, logger, {
+      faultInjector(point) {
+        if (point === "record_write" && shouldFailRegistrationWrite) {
+          shouldFailRegistrationWrite = false;
+          throw new Error("timeline registration persist failed");
+        }
+      },
+    });
+    const client = new RegistrationTimelineEventClient();
+    resumedManager = new AgentManager({
+      clients: { codex: client },
+      registry: resumedStorage,
+      durableTimelineStore,
+      logger,
+    });
+
+    await expect(
+      resumedManager.resumeAgentFromPersistence(
+        previousRecord!.persistence!,
+        { provider: "codex", cwd: workdir },
+        agentId,
+        {
+          createdAt: new Date(previousRecord!.createdAt),
+          updatedAt: new Date(previousRecord!.updatedAt),
+          workspaceId: previousRecord!.workspaceId,
+        },
+      ),
+    ).rejects.toThrow("timeline registration persist failed");
+
+    const restoredCoverage = await durableTimelineStore.getCoverage(agentId);
+    const restoredPage = await durableTimelineStore.fetchCommittedPage(agentId, {
+      direction: "tail",
+      limit: 20,
+    });
+    expect(restoredCoverage).toEqual(previousCoverage);
+    expect(restoredPage).toEqual(previousPage);
+    expect(client.session?.closed).toBe(true);
+  } finally {
+    await resumedManager?.flushForShutdown().catch(() => undefined);
+    await resumedStorage?.flush().catch(() => undefined);
+    await seedManager.flushForShutdown().catch(() => undefined);
+    await seedStorage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("restores the active durable timeline when its registration revision write fails", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-register-revision-rollback-"));
+  const storagePath = join(workdir, "agents");
+  const agentId = "00000000-0000-4000-8000-000000000090";
+  const durableTimelineStore = new InMemoryDurableAgentTimelineStore();
+  const seedStorage = new AgentStorage(storagePath, logger);
+  const seedManager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: seedStorage,
+    durableTimelineStore,
+    logger,
+    idFactory: () => agentId,
+  });
+  let resumedManager: AgentManager | null = null;
+  let resumedStorage: AgentStorage | null = null;
+
+  try {
+    await seedManager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: "workspace-before-revision-failure",
+    });
+    await seedManager.appendTimelineItem(agentId, {
+      type: "assistant_message",
+      text: "durable row before failed registration",
+    });
+    await seedManager.closeAgent(agentId);
+    await seedStorage.flush();
+    const previousRecord = await seedStorage.get(agentId);
+    const previousCoverage = await durableTimelineStore.getCoverage(agentId);
+    const previousPage = await durableTimelineStore.fetchCommittedPage(agentId, {
+      direction: "tail",
+      limit: 20,
+    });
+    expect(previousRecord?.timelineRevision).toBe(previousCoverage.active?.timelineRevision);
+
+    let recordWriteCount = 0;
+    resumedStorage = new AgentStorage(storagePath, logger, {
+      faultInjector(point) {
+        if (point !== "record_write") return;
+        recordWriteCount += 1;
+        if (recordWriteCount === 2) {
+          throw new Error("registration timeline revision persist failed");
+        }
+      },
+    });
+    const client = new RegistrationTimelineEventClient();
+    resumedManager = new AgentManager({
+      clients: { codex: client },
+      registry: resumedStorage,
+      durableTimelineStore,
+      logger,
+    });
+
+    await expect(
+      resumedManager.resumeAgentFromPersistence(
+        previousRecord!.persistence!,
+        { provider: "codex", cwd: workdir },
+        agentId,
+        {
+          createdAt: new Date(previousRecord!.createdAt),
+          updatedAt: new Date(previousRecord!.updatedAt),
+          workspaceId: previousRecord!.workspaceId,
+        },
+      ),
+    ).rejects.toThrow("registration timeline revision persist failed");
+
+    await resumedStorage.flush();
+    await expect(durableTimelineStore.getCoverage(agentId)).resolves.toEqual(previousCoverage);
+    await expect(
+      durableTimelineStore.fetchCommittedPage(agentId, { direction: "tail", limit: 20 }),
+    ).resolves.toEqual(previousPage);
+    expect({
+      agents: resumedManager.listAgents(),
+      record: await resumedStorage.get(agentId),
+      sessionClosed: client.session?.closed,
+    }).toEqual({ agents: [], record: previousRecord, sessionClosed: true });
+  } finally {
+    await resumedManager?.flushForShutdown().catch(() => undefined);
+    await resumedStorage?.flush().catch(() => undefined);
+    await seedManager.flushForShutdown().catch(() => undefined);
+    await seedStorage.flush().catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });
   }
 });

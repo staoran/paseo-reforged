@@ -23,13 +23,22 @@ export function createHistorySyncTimeoutError(): Error {
 export function refreshAgentInitializationTimeout(input: {
   key: string;
   agentId: string;
+  deferred: NonNullable<ReturnType<typeof getInitDeferred>>;
+  requestId?: string;
   setAgentInitializing: SetAgentInitializing;
 }): void {
+  /** Request generation whose deadline is being refreshed. */
+  const requestId = input.requestId ?? input.deferred.requestId;
   refreshInitTimeout({
     key: input.key,
+    deferred: input.deferred,
+    requestId,
     onTimeout: () => {
-      input.setAgentInitializing(input.agentId, false);
-      rejectInitDeferred(input.key, createHistorySyncTimeoutError());
+      if (
+        rejectInitDeferred(input.key, createHistorySyncTimeoutError(), input.deferred, requestId)
+      ) {
+        input.setAgentInitializing(input.agentId, false);
+      }
     },
   });
 }
@@ -51,25 +60,48 @@ export function ensureAgentIsInitialized(input: EnsureAgentIsInitializedInput): 
     return existing.promise;
   }
 
-  const timelineRequest = planTimelineTailFetch();
+  const timelinePlan = planTimelineTailFetch();
 
-  const deferred = createInitDeferred(key, timelineRequest.direction);
-  refreshAgentInitializationTimeout({ key, agentId, setAgentInitializing });
+  const deferred = createInitDeferred(key, timelinePlan.direction, "direct", client);
+  /** Wire owner captured before another viewed generation can claim the deferred. */
+  const requestId = deferred.requestId;
+  refreshAgentInitializationTimeout({
+    key,
+    agentId,
+    deferred,
+    requestId,
+    setAgentInitializing,
+  });
+  /** Canonical request correlated with this exact initialization attempt. */
+  const timelineRequest = { ...timelinePlan, requestId };
 
   setAgentInitializing(agentId, true);
 
   if (!client) {
-    setAgentInitializing(agentId, false);
-    rejectInitDeferred(
-      key,
-      new Error(input.hostDisconnectedMessage ?? i18n.t("workspace.terminal.hostDisconnected")),
-    );
+    if (
+      rejectInitDeferred(
+        key,
+        new Error(input.hostDisconnectedMessage ?? i18n.t("workspace.terminal.hostDisconnected")),
+        deferred,
+        requestId,
+      )
+    ) {
+      setAgentInitializing(agentId, false);
+    }
     return deferred.promise;
   }
 
   input.runtime.fetchAgentTimeline(serverId, agentId, timelineRequest).catch((error) => {
-    setAgentInitializing(agentId, false);
-    rejectInitDeferred(key, error instanceof Error ? error : new Error(String(error)));
+    if (
+      rejectInitDeferred(
+        key,
+        error instanceof Error ? error : new Error(String(error)),
+        deferred,
+        requestId,
+      )
+    ) {
+      setAgentInitializing(agentId, false);
+    }
   });
 
   return deferred.promise;

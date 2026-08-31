@@ -1809,6 +1809,48 @@ describe("processTimelineResponse", () => {
     });
   });
 
+  it("keeps distinct assistant messages when their IDs differ despite a shared prefix", () => {
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentHead: [
+        {
+          kind: "assistant_message",
+          id: "live-message-1",
+          messageId: "message-1",
+          text: "Shared prefix",
+          timestamp: new Date(2_000),
+          timelineCursor: { epoch: "epoch-1", seq: 1 },
+        },
+      ],
+      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
+      payload: {
+        ...baseTimelineInput.payload,
+        epoch: "epoch-1",
+        startCursor: { seq: 2 },
+        endCursor: { seq: 2 },
+        entries: [
+          {
+            ...makeTimelineEntry(2, "Shared prefix from another message"),
+            item: {
+              type: "assistant_message",
+              messageId: "message-2",
+              text: "Shared prefix from another message",
+            },
+          },
+        ],
+      },
+    });
+
+    expect(
+      [...result.tail, ...result.head]
+        .filter((item) => item.kind === "assistant_message")
+        .map((item) => ({ messageId: item.messageId, text: item.text })),
+    ).toEqual([
+      { messageId: "message-1", text: "Shared prefix" },
+      { messageId: "message-2", text: "Shared prefix from another message" },
+    ]);
+  });
+
   it("does not replay an assistant prefix when catch-up completes an earlier tool call", () => {
     const live = processAgentStreamEvents({
       events: [
@@ -1977,6 +2019,39 @@ describe("processTimelineResponse", () => {
     const thoughts = [...result.tail, ...result.head].filter((item) => item.kind === "thought");
     expect(thoughts).toHaveLength(1);
     expect(thoughts[0]?.text).toBe("Thinking");
+  });
+
+  it("preserves a ready reasoning thought when overlapping catch-up extends its text", () => {
+    const readyThought: StreamItem = {
+      kind: "thought",
+      id: "ready-thought",
+      text: "Thi",
+      timestamp: new Date(2_000),
+      status: "ready",
+      timelineCursor: { epoch: "epoch-1", seq: 2 },
+    };
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentHead: [readyThought],
+      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 2 },
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "after",
+        epoch: "epoch-1",
+        startCursor: { seq: 3 },
+        endCursor: { seq: 3 },
+        entries: [
+          {
+            ...makeTimelineEntry(2, "Thinking", "reasoning", 3),
+            sourceSeqRanges: [{ startSeq: 2, endSeq: 3 }],
+          },
+        ],
+      },
+    });
+
+    const thought = [...result.tail, ...result.head].find((item) => item.kind === "thought");
+    expect(thought).toMatchObject({ text: "Thinking", status: "ready" });
   });
 
   it("does not move a submitted prompt when catch-up history arrives", () => {

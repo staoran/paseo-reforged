@@ -5,11 +5,18 @@ import { z } from "zod";
 
 import { writeFileAtomic, writeJsonFileAtomic } from "../atomic-file.js";
 import { AgentTimelineItemPayloadSchema } from "../messages.js";
+import {
+  isAgentTimelineRegistrationSnapshotOwned,
+  type AgentTimelineGenerationSelection,
+  type AgentTimelineRegistrationOwnership,
+  type AgentTimelineRegistrationSnapshot,
+} from "./agent-timeline-store-types.js";
 import type {
   AgentTimelineCommittedFetchOptions,
   AgentTimelineCoverage,
   AgentTimelineFetchDirection,
   AgentTimelineFetchResult,
+  AgentTimelineGenerationSnapshot,
   AgentTimelineRow,
   AgentTimelineStageInput,
   AgentTimelineStagedRowUpdate,
@@ -100,7 +107,12 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
   async stageRows(agentId: string, input: AgentTimelineStageInput): Promise<void> {
     await this.enqueueMutation(agentId, async () => {
       const parsedRows = TimelineRowSchema.array().parse(input.rows);
-      let state = (await this.readState(agentId)) ?? this.createState(agentId);
+      const requestedGenerationId = input.generationId
+        ? z.string().uuid().parse(input.generationId)
+        : null;
+      const existingState = await this.readState(agentId);
+      this.assertExpectedSelection(agentId, existingState, input.expectedCurrent);
+      let state = existingState ?? this.createState(agentId);
       let manifest: GenerationManifest | undefined;
       /** Segment files owned by the working generation being replaced. */
       let supersededWorkingSegmentFiles: string[] = [];
@@ -115,7 +127,7 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
             // Replacement may repair a bad working pointer, but cleanup must remain fail closed.
           }
         }
-        const pendingGenerationId = randomUUID();
+        const pendingGenerationId = requestedGenerationId ?? randomUUID();
         try {
           manifest = await this.createWorkingGeneration(agentId, state, input, pendingGenerationId);
           state = {
@@ -139,6 +151,9 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
           throw error;
         }
       } else {
+        if (requestedGenerationId && state.workingGenerationId !== requestedGenerationId) {
+          throw new Error(`Timeline generation ownership mismatch for '${agentId}'`);
+        }
         manifest = await this.readGeneration(agentId, state.workingGenerationId);
         if (manifest.epoch !== input.epoch) {
           await this.writeIncompleteBestEffort(agentId, manifest.generationId);
@@ -216,9 +231,25 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
     });
   }
 
-  async commit(agentId: string): Promise<CommittedAgentTimelineGeneration> {
+  async commit(
+    agentId: string,
+    expectedGenerationId?: string,
+    expectedCurrent?: AgentTimelineGenerationSelection,
+  ): Promise<CommittedAgentTimelineGeneration> {
+    const parsedExpectedGenerationId = expectedGenerationId
+      ? z.string().uuid().parse(expectedGenerationId)
+      : null;
     return await this.enqueueMutation(agentId, async () => {
       const state = await this.requireState(agentId);
+      this.assertExpectedSelection(agentId, state, expectedCurrent);
+      if (
+        parsedExpectedGenerationId &&
+        (state.workingGenerationId
+          ? state.workingGenerationId !== parsedExpectedGenerationId
+          : state.activeGenerationId !== parsedExpectedGenerationId)
+      ) {
+        throw new Error(`Timeline generation ownership changed for '${agentId}'`);
+      }
       if (!state.workingGenerationId) {
         if (!state.activeGenerationId) {
           throw new Error(`No working timeline generation exists for '${agentId}'`);
@@ -265,6 +296,65 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
       if (!state?.workingGenerationId) return;
       await this.writeIncompleteBestEffort(agentId, state.workingGenerationId);
     });
+  }
+
+  /** Discards only the working generation owned by the failed operation. */
+  async discardWorking(agentId: string, expectedGenerationId: string): Promise<boolean> {
+    const parsedExpectedGenerationId = z.string().uuid().parse(expectedGenerationId);
+    return await this.enqueueMutation(agentId, async () => {
+      const state = await this.readState(agentId);
+      if (!state || state.workingGenerationId !== parsedExpectedGenerationId) {
+        return false;
+      }
+      /** Segment files referenced only by the discarded working generation. */
+      let segmentFiles: string[] = [];
+      try {
+        const working = await this.readGeneration(agentId, parsedExpectedGenerationId);
+        segmentFiles = working.segments.map((segment) => segment.file);
+      } catch {
+        // Clearing the working pointer remains authoritative when its manifest is malformed.
+      }
+      await this.writeState(agentId, { ...state, workingGenerationId: null });
+      this.queueSegmentDeletes(agentId, segmentFiles);
+      this.sweptSegmentAgents.delete(agentId);
+      await fs
+        .rm(path.join(this.generationsDir(agentId), `${parsedExpectedGenerationId}.json`), {
+          force: true,
+        })
+        .catch(() => undefined);
+      await this.reclaimSegmentsBestEffort(agentId, []);
+      return true;
+    });
+  }
+
+  /** Captures complete durable generation content before registration mutates it. */
+  async captureRegistrationSnapshot(agentId: string): Promise<AgentTimelineRegistrationSnapshot> {
+    await this.flush(agentId);
+    const state = await this.readState(agentId);
+    if (!state) {
+      return { exists: false, active: null, working: null, invalidGenerationIds: [] };
+    }
+    return {
+      exists: true,
+      active: state.activeGenerationId
+        ? await this.captureGeneration(agentId, state, state.activeGenerationId)
+        : null,
+      working: state.workingGenerationId
+        ? await this.captureGeneration(agentId, state, state.workingGenerationId)
+        : null,
+      invalidGenerationIds: [...state.invalidGenerationIds],
+    };
+  }
+
+  /** Restores a registration snapshot only while the caller still owns current pointers. */
+  async restoreRegistrationSnapshot(
+    agentId: string,
+    snapshot: AgentTimelineRegistrationSnapshot,
+    ownership: AgentTimelineRegistrationOwnership,
+  ): Promise<void> {
+    await this.enqueueMutation(agentId, () =>
+      this.restoreRegistrationSnapshotMutation(agentId, snapshot, ownership),
+    );
   }
 
   async getCoverage(
@@ -416,6 +506,146 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
     await this.injectFault("working_manifest");
     await this.writeGeneration(agentId, manifest);
     return manifest;
+  }
+
+  /** Captures one generation and all canonical rows referenced by its manifest. */
+  private async captureGeneration(
+    agentId: string,
+    state: AgentState,
+    generationId: string,
+  ): Promise<AgentTimelineGenerationSnapshot> {
+    const manifest = await this.readGeneration(agentId, generationId);
+    this.validateManifestRanges(manifest);
+    const rows = (
+      await Promise.all(manifest.segments.map((segment) => this.readSegment(agentId, segment)))
+    ).flat();
+    return {
+      generationId: manifest.generationId,
+      timelineRevision: manifest.timelineRevision,
+      epoch: manifest.epoch,
+      rows,
+      nextSeq: manifest.nextSeq,
+      status: manifest.status,
+      valid: !this.isInvalid(state, manifest.generationId),
+    };
+  }
+
+  /** Recreates one exact generation identity from a detached registration snapshot. */
+  private async writeRegistrationSnapshotGeneration(
+    agentId: string,
+    snapshot: AgentTimelineGenerationSnapshot,
+  ): Promise<void> {
+    const rows = TimelineRowSchema.array().parse(snapshot.rows);
+    assertContiguousRows(rows);
+    const expectedNextSeq = (rows.at(-1)?.seq ?? 0) + 1;
+    if (snapshot.nextSeq !== expectedNextSeq) {
+      throw new Error(`Timeline registration snapshot has invalid nextSeq: ${agentId}`);
+    }
+    const segments: SegmentDescriptor[] = [];
+    for (let offset = 0; offset < rows.length; offset += this.segmentRowLimit) {
+      segments.push(
+        await this.writeSegment(agentId, rows.slice(offset, offset + this.segmentRowLimit)),
+      );
+    }
+    const manifest = GenerationManifestSchema.parse({
+      version: STORE_VERSION,
+      agentId,
+      generationId: snapshot.generationId,
+      timelineRevision: snapshot.timelineRevision,
+      epoch: snapshot.epoch,
+      status: snapshot.status,
+      nextSeq: snapshot.nextSeq,
+      segments,
+    });
+    await this.writeGeneration(agentId, manifest);
+  }
+
+  /** Restores one registration baseline after verifying durable pointer ownership. */
+  private async restoreRegistrationSnapshotMutation(
+    agentId: string,
+    snapshot: AgentTimelineRegistrationSnapshot,
+    ownership: AgentTimelineRegistrationOwnership,
+  ): Promise<void> {
+    /** Durable state selected when rollback enters the serialized mutation lane. */
+    const state = await this.readState(agentId);
+    /** UUID-validated generation identities allocated by the failed registration. */
+    const parsedOwnership: AgentTimelineRegistrationOwnership = {
+      ownedGenerationIds: ownership.ownedGenerationIds.map((generationId) =>
+        z.string().uuid().parse(generationId),
+      ),
+    };
+    /** Current durable selection compared with the captured baseline. */
+    const currentSelection: AgentTimelineGenerationSelection = {
+      exists: state !== null,
+      activeGenerationId: state?.activeGenerationId ?? null,
+      workingGenerationId: state?.workingGenerationId ?? null,
+      invalidGenerationIds: state?.invalidGenerationIds ?? [],
+    };
+    if (!isAgentTimelineRegistrationSnapshotOwned(currentSelection, snapshot, parsedOwnership)) {
+      throw new Error(`Timeline registration ownership changed: ${agentId}`);
+    }
+    if (!snapshot.exists) {
+      await this.removeRegistrationState(agentId);
+      return;
+    }
+    await this.restoreExistingRegistrationSnapshot(agentId, state, snapshot);
+  }
+
+  /** Removes durable state created solely by a failed first registration. */
+  private async removeRegistrationState(agentId: string): Promise<void> {
+    await fs.rm(this.agentDir(agentId), { recursive: true, force: true });
+    this.pendingSegmentDeletes.delete(agentId);
+    this.sweptSegmentAgents.delete(agentId);
+  }
+
+  /** Recreates a captured durable state and queues provisional files for reclamation. */
+  private async restoreExistingRegistrationSnapshot(
+    agentId: string,
+    state: AgentState | null,
+    snapshot: AgentTimelineRegistrationSnapshot,
+  ): Promise<void> {
+    /** Segment files reachable only through generations replaced by rollback. */
+    const supersededSegmentFiles = await this.collectRegistrationSegmentFiles(agentId, state);
+    for (const generation of [snapshot.active, snapshot.working]) {
+      if (generation) {
+        await this.writeRegistrationSnapshotGeneration(agentId, generation);
+      }
+    }
+    /** Durable pointer state captured before registration began. */
+    const restoredState: AgentState = {
+      version: STORE_VERSION,
+      agentId,
+      activeGenerationId: snapshot.active?.generationId ?? null,
+      workingGenerationId: snapshot.working?.generationId ?? null,
+      invalidGenerationIds: [...snapshot.invalidGenerationIds],
+    };
+    await this.writeState(agentId, restoredState);
+    this.queueSegmentDeletes(agentId, supersededSegmentFiles);
+    this.sweptSegmentAgents.delete(agentId);
+    await this.reclaimSegmentsBestEffort(agentId, []);
+  }
+
+  /** Collects segments referenced by the state that registration rollback will replace. */
+  private async collectRegistrationSegmentFiles(
+    agentId: string,
+    state: AgentState | null,
+  ): Promise<string[]> {
+    /** Segment files referenced by the current active and working pointers. */
+    const segmentFiles: string[] = [];
+    for (const generationId of [
+      state?.activeGenerationId ?? null,
+      state?.workingGenerationId ?? null,
+    ]) {
+      if (!generationId) continue;
+      try {
+        /** Current generation manifest inspected before its pointer is replaced. */
+        const manifest = await this.readGeneration(agentId, generationId);
+        segmentFiles.push(...manifest.segments.map((segment) => segment.file));
+      } catch {
+        // Publishing the restored state remains authoritative when provisional data is bad.
+      }
+    }
+    return segmentFiles;
   }
 
   private async appendRows(
@@ -919,6 +1149,32 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
     };
   }
 
+  /** Enforces an optional selection CAS before a staged generation can replace state. */
+  private assertExpectedSelection(
+    agentId: string,
+    state: AgentState | null,
+    expected: AgentTimelineGenerationSelection | undefined,
+  ): void {
+    if (!expected) return;
+    const activeGenerationId = expected.activeGenerationId
+      ? z.string().uuid().parse(expected.activeGenerationId)
+      : null;
+    const workingGenerationId = expected.workingGenerationId
+      ? z.string().uuid().parse(expected.workingGenerationId)
+      : null;
+    const invalidGenerationIds = expected.invalidGenerationIds.map((generationId) =>
+      z.string().uuid().parse(generationId),
+    );
+    if (
+      (state !== null) !== expected.exists ||
+      (state?.activeGenerationId ?? null) !== activeGenerationId ||
+      (state?.workingGenerationId ?? null) !== workingGenerationId ||
+      !sameGenerationIds(state?.invalidGenerationIds ?? [], invalidGenerationIds)
+    ) {
+      throw new Error(`Timeline generation selection changed for '${agentId}'`);
+    }
+  }
+
   private async writeState(agentId: string, state: AgentState): Promise<void> {
     await writeJsonFileAtomic(this.statePath(agentId), AgentStateSchema.parse(state));
   }
@@ -999,6 +1255,14 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
     });
     return run;
   }
+}
+
+/** Compares generation identity collections as deterministic sets. */
+function sameGenerationIds(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false;
+  const sortedLeft = [...left].sort();
+  const sortedRight = [...right].sort();
+  return sortedLeft.every((generationId, index) => generationId === sortedRight[index]);
 }
 
 function selectRows(

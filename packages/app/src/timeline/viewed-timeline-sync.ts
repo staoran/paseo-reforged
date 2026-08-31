@@ -9,12 +9,18 @@ interface TimelinePageResult {
   endCursor: { epoch: string; seq: number } | null;
 }
 
+interface ViewedTimelineFetchContext {
+  /** Reports whether this fetch still owns the current catch-up generation. */
+  isCurrent(): boolean;
+}
+
 interface ViewedTimelineSyncPorts {
   initialDeliveryMode: TimelineDeliveryMode;
   setSubscription(agentIds: string[]): Promise<void>;
   fetchPage(
     agentId: string,
     request: ProjectedTimelineForwardFetchPlan,
+    context: ViewedTimelineFetchContext,
   ): Promise<TimelinePageResult>;
   reportError(error: unknown): void;
   schedule(task: () => void, delayMs: number): () => void;
@@ -170,27 +176,18 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     generation: number,
     request: ProjectedTimelineForwardFetchPlan,
   ): Promise<void> => {
-    if (
-      disposed ||
-      !connected ||
-      !isDesired(agentId) ||
-      !isAcknowledged(agentId) ||
-      catchUps.get(agentId)?.generation !== generation
-    ) {
-      return;
-    }
+    /** Checks ownership before continuations start more network work. */
+    const isCurrent = () =>
+      !disposed &&
+      connected &&
+      isDesired(agentId) &&
+      isAcknowledged(agentId) &&
+      catchUps.get(agentId)?.generation === generation;
+    if (!isCurrent()) return;
 
     try {
-      const page = await ports.fetchPage(agentId, request);
-      if (
-        disposed ||
-        !connected ||
-        !isDesired(agentId) ||
-        !isAcknowledged(agentId) ||
-        catchUps.get(agentId)?.generation !== generation
-      ) {
-        return;
-      }
+      const page = await ports.fetchPage(agentId, request, { isCurrent });
+      if (!isCurrent()) return;
       if (page.hasNewer && page.endCursor) {
         await fetchUntilCurrent(agentId, generation, planTimelineCatchUpAfter(page.endCursor));
         return;

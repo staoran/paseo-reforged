@@ -27,6 +27,7 @@ interface MembershipRequest {
 interface TimelineFetch {
   agentId: string;
   request: ProjectedTimelineForwardFetchPlan;
+  isCurrent(): boolean;
   respond(input: { hasNewer: boolean; seq?: number }): void;
   fail(message: string): void;
 }
@@ -45,7 +46,7 @@ class TimelineWorld {
       this.releaseMembershipWaiter();
       return result.promise;
     },
-    fetchPage: async (agentId, request) => {
+    fetchPage: async (agentId, request, context) => {
       const result = deferred<{
         hasNewer: boolean;
         endCursor: { epoch: string; seq: number } | null;
@@ -53,10 +54,11 @@ class TimelineWorld {
       this.fetches.push({
         agentId,
         request,
+        isCurrent: context.isCurrent,
         respond: ({ hasNewer, seq = 1 }) =>
           result.resolve({
             hasNewer,
-            endCursor: { epoch: `epoch-${agentId}`, seq },
+            endCursor: { epoch: "epoch-" + agentId, seq },
           }),
         fail: (message) => result.reject(new Error(message)),
       });
@@ -184,6 +186,45 @@ test("an explicit Agent refresh supersedes a completed catch-up with one tail re
   refreshed.respond({ hasNewer: false });
 
   expect(refreshed.request).toEqual({ direction: "tail", limit: 40, projection: "projected" });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+});
+
+test("a refresh matching a running tail does not enqueue a duplicate request", async () => {
+  const world = new TimelineWorld();
+  world.sync.setConnected(true);
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
+  const membership = await world.nextMembership();
+  membership.succeed();
+  const summaryTail = await world.nextFetch("agent-a");
+
+  world.sync.refreshAgent("agent-a");
+  world.expectNoPendingFetch();
+  summaryTail.respond({ hasNewer: false });
+
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+  world.expectNoPendingFetch();
+});
+
+test("a disconnected catch-up loses request ownership before reconnect starts a replacement", async () => {
+  const world = new TimelineWorld();
+  world.sync.setConnected(true);
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
+  const initialMembership = await world.nextMembership();
+  initialMembership.succeed();
+  const stale = await world.nextFetch("agent-a");
+  expect(stale.isCurrent()).toBe(true);
+
+  world.sync.setConnected(false);
+  expect(stale.isCurrent()).toBe(false);
+  world.sync.setConnected(true);
+  const replacementMembership = await world.nextMembership();
+  replacementMembership.succeed();
+  const replacement = await world.nextFetch("agent-a");
+
+  expect(stale.isCurrent()).toBe(false);
+  expect(replacement.isCurrent()).toBe(true);
+  stale.respond({ hasNewer: false });
+  replacement.respond({ hasNewer: false });
   await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
 });
 
