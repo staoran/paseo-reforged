@@ -21,6 +21,10 @@
       "types": "./dist/daemon-client-transport-types.d.ts",
       "default": "./dist/daemon-client-transport-types.js"
     },
+    "./internal/daemon-client-relay-e2ee-transport": {
+      "types": "./dist/daemon-client-relay-e2ee-transport.d.ts",
+      "default": "./dist/daemon-client-relay-e2ee-transport.js"
+    },
     "./internal/daemon-client-websocket-transport": {
       "types": "./dist/daemon-client-websocket-transport.d.ts",
       "default": "./dist/daemon-client-websocket-transport.js"

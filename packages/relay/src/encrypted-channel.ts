@@ -78,6 +78,8 @@ export type ConfiguredCiphertextEncoding = "auto" | CiphertextEncoding;
 
 /** Optional daemon-side wire policy supplied when a data connection is created. */
 export interface DaemonChannelOptions {
+  /** Explicitly enables framed-v1 acceptance for isolated protocol validation. */
+  enableFramedCiphertextV1?: boolean;
   /** Selects framed binary, framed Base64, or legacy fallback behavior. */
   ciphertextEncoding?: ConfiguredCiphertextEncoding;
   /** Compression codecs implemented by the daemon runtime for this data connection. */
@@ -107,6 +109,8 @@ export type NegotiatedEncryptedTransport =
 
 /** Optional client runtime capabilities supplied when a data connection is created. */
 export interface ClientChannelOptions {
+  /** Explicitly enables framed-v1 advertisement for isolated protocol validation. */
+  enableFramedCiphertextV1?: boolean;
   /** Enables safe decoding and advertisement of framed raw DEFLATE payloads. */
   compressionAdapter?: FrameCompressionAdapter;
   /** Optional content-free observer for negotiated and inbound framed metrics. */
@@ -585,15 +589,18 @@ export async function createClientChannel(
   const keyPair = generateKeyPair();
   const daemonPublicKey = importPublicKey(daemonPublicKeyB64);
   const sharedKey = deriveSharedKey(keyPair.secretKey, daemonPublicKey);
+  // Framed-v1 stays opt-in until every production relay boundary passes its release gates.
+  const framedCiphertextV1Enabled = options.enableFramedCiphertextV1 === true;
   // Decoder-backed codecs offered for this immutable client connection.
-  const compressionAlgorithms = options.compressionAdapter
-    ? CLIENT_FRAMED_COMPRESSION_ALGORITHMS
-    : [];
+  const compressionAlgorithms =
+    framedCiphertextV1Enabled && options.compressionAdapter
+      ? CLIENT_FRAMED_COMPRESSION_ALGORITHMS
+      : [];
 
   const channel = new EncryptedChannel(transport, sharedKey, events, {
     offeredCompressionAlgorithms: compressionAlgorithms,
     compressionAdapter: options.compressionAdapter,
-    framedCiphertextV1Offered: true,
+    framedCiphertextV1Offered: framedCiphertextV1Enabled,
     runtimeObserver: options.runtimeObserver,
   });
 
@@ -604,10 +611,14 @@ export async function createClientChannel(
     key: ourPublicKeyB64,
     capabilities: {
       binaryCiphertext: true,
-      framedCiphertextV1: {
-        ciphertextEncodings: [...SUPPORTED_FRAMED_CIPHERTEXT_ENCODINGS],
-        compressionAlgorithms: [...compressionAlgorithms],
-      } satisfies FramedCiphertextV1Offer,
+      ...(framedCiphertextV1Enabled
+        ? {
+            framedCiphertextV1: {
+              ciphertextEncodings: [...SUPPORTED_FRAMED_CIPHERTEXT_ENCODINGS],
+              compressionAlgorithms: [...compressionAlgorithms],
+            } satisfies FramedCiphertextV1Offer,
+          }
+        : {}),
     },
   };
   const helloText = JSON.stringify(hello);
@@ -692,6 +703,8 @@ export async function createDaemonChannel(
     input = { transport, daemonKeyPair, events, ...options };
   }
   const { transport, daemonKeyPair, events = {}, ...options } = input;
+  // Framed-v1 stays opt-in until every production relay boundary passes its release gates.
+  const framedCiphertextV1Enabled = options.enableFramedCiphertextV1 === true;
   // Immutable daemon preference captured when this data connection is created.
   const configuredEncoding = options.ciphertextEncoding ?? "auto";
 
@@ -995,7 +1008,7 @@ export async function createDaemonChannel(
         sharedKey = deriveSharedKey(daemonKeyPair.secretKey, clientPublicKey);
 
         framedSelection = resolveDaemonFramedSelection({
-          offer: parseFramedCiphertextV1Offer(msg),
+          offer: framedCiphertextV1Enabled ? parseFramedCiphertextV1Offer(msg) : null,
           configuredEncoding,
           supportedCompressionAlgorithms:
             options.compressionAlgorithms ?? SUPPORTED_FRAMED_COMPRESSION_ALGORITHMS,
@@ -1364,10 +1377,13 @@ export class EncryptedChannel {
   private async transitionFromReady(message: E2EEReadyMessage): Promise<void> {
     // COMPAT(framedCiphertextV1): introduced in v0.4.0-beta.4; remove after
     // 2027-08-18 once the supported peer floor requires framed-v1.
-    const framedSelection = parseFramedCiphertextV1Selection(
-      message,
-      this.options.offeredCompressionAlgorithms ?? SUPPORTED_FRAMED_COMPRESSION_ALGORITHMS,
-    );
+    const framedSelection =
+      this.options.framedCiphertextV1Offered === true
+        ? parseFramedCiphertextV1Selection(
+            message,
+            this.options.offeredCompressionAlgorithms ?? SUPPORTED_FRAMED_COMPRESSION_ALGORITHMS,
+          )
+        : null;
     if (framedSelection) {
       this.framedReceiveExpected = true;
       this.state = "confirming";

@@ -13,6 +13,7 @@ import type { AgentClient, AgentProvider } from "../agent/agent-sdk-types.js";
 import { createTestAgentClients } from "./fake-agent-client.js";
 import type { PushNotificationSender } from "../push/index.js";
 import type { AgentProfile } from "@getpaseo/protocol/messages";
+import type { RelayTransportValidationOptions } from "../relay-transport.js";
 
 interface TestPaseoDaemonOptions {
   daemonVersion?: string;
@@ -30,6 +31,8 @@ interface TestPaseoDaemonOptions {
   relayPublicUseTls?: boolean;
   /** Optional relay transport policy for isolated integration daemons. */
   relayTransport?: PaseoDaemonConfig["relayTransport"];
+  /** Optional framed transport override reserved for isolated integration validation. */
+  relayTransportValidation?: RelayTransportValidationOptions;
   daemonStatusRpcCapability?: boolean;
   relayConfigCapability?: boolean;
   agentClients?: Partial<Record<AgentProvider, AgentClient>>;
@@ -103,6 +106,9 @@ export async function createTestPaseoDaemon(
         daemonStatusRpc: options.daemonStatusRpcCapability,
         relayConfig: options.relayConfigCapability,
       },
+      ...(options.relayTransportValidation
+        ? { relayTransportValidation: options.relayTransportValidation }
+        : {}),
     });
     try {
       await startDaemonWithTimeout(daemon, TEST_DAEMON_START_TIMEOUT_MS);

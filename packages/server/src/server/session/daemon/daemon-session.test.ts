@@ -352,6 +352,95 @@ describe("DaemonSession", () => {
       getWebSocketRuntimeMetrics: () => ({
         collectedAt: "2026-01-02T03:04:05.000Z",
         windowMs: 30_000,
+        relayTransport: {
+          configuredPolicy: {
+            ciphertextEncoding: "auto",
+            compressionEnabled: true,
+          },
+          negotiatedModeCount: {
+            "legacy-base64": 0,
+            "legacy-hybrid": 0,
+            "framed-v1-base64": 0,
+            "framed-v1-binary": 1,
+          },
+          activeConnectionCount: [
+            {
+              mode: "framed-v1",
+              ciphertextEncoding: "binary",
+              codec: "deflate-raw",
+              effectiveReason: null,
+              count: 1,
+            },
+          ],
+          effectiveCompressionCount: [
+            {
+              enabled: true,
+              algorithm: "deflate-raw",
+              reason: null,
+              count: 1,
+            },
+          ],
+          compressionAttemptCount: {
+            realtime: 0,
+            "state-sync": 1,
+            bulk: 0,
+            "bulk-live": 0,
+          },
+          outboundFrames: [
+            {
+              ciphertextEncoding: "binary",
+              trafficClass: "state-sync",
+              codec: "deflate-raw",
+              frameCount: 1,
+              originalBytes: 16_384,
+              encodedBytes: 1_024,
+              wireBytes: 1_072,
+            },
+          ],
+          compressionSkipCount: {
+            "configured-disabled": 0,
+            "legacy-mode": 0,
+            "peer-unsupported": 0,
+            "traffic-ineligible": 1,
+            "too-small": 0,
+            "too-large": 0,
+            "no-gain": 0,
+            ratio: 0,
+            busy: 0,
+            error: 0,
+          },
+          compressionPrepareMs: [{ algorithm: "deflate-raw", p50: 2, p95: 3, max: 4 }],
+          compressionQueueMs: [{ trafficClass: "state-sync", p50: 1, p95: 2, max: 3 }],
+          compressionCodecMs: [{ algorithm: "deflate-raw", p50: 1, p95: 2, max: 2 }],
+          inboundDecodeMs: [
+            {
+              ciphertextEncoding: "binary",
+              codec: "identity",
+              p50: 1,
+              p95: 1,
+              max: 2,
+            },
+          ],
+          inboundFrames: [
+            {
+              ciphertextEncoding: "binary",
+              codec: "identity",
+              frameCount: 1,
+              originalBytes: 256,
+              encodedBytes: 256,
+              wireBytes: 304,
+            },
+          ],
+          framedProtocolErrorCount: {
+            "invalid-wire": 0,
+            "decrypt-failed": 0,
+            "invalid-envelope": 0,
+            "decode-failed": 1,
+            "receive-high-water": 0,
+          },
+          pendingPreparedBytes: { p95: 1_072, max: 1_072 },
+          pendingReceiveWireBytes: { p95: 304, max: 304 },
+        },
         uptimeSeconds: 12.345,
         memory: {
           rss: 1024 * 1024 * 64,
@@ -463,5 +552,18 @@ describe("DaemonSession", () => {
       "Checkout diff: targets=6, subscriptions=7, watchers=8, fallbackRefreshTargets=9",
     );
     expect(message.payload.diagnostic).toContain("Agent lifecycle: idle=8, running=2");
+    expect(message.payload.diagnostic).toContain(
+      "Relay configured: encoding=auto, compression=true",
+    );
+    expect(message.payload.diagnostic).toContain(
+      "Relay active connections: mode=framed-v1 encoding=binary codec=deflate-raw reason=enabled count=1",
+    );
+    expect(message.payload.diagnostic).toContain(
+      "Relay outbound frames: encoding=binary class=state-sync codec=deflate-raw frames=1 original=16.0 KiB encoded=1.0 KiB wire=1.0 KiB",
+    );
+    expect(message.payload.diagnostic).toContain("Relay protocol errors: decode-failed=1");
+    expect(message.payload.diagnostic).not.toMatch(
+      /connectionId|peerKey|payload|pathname|filename|secret/i,
+    );
   });
 });

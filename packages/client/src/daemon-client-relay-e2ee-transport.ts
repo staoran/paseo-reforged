@@ -20,6 +20,9 @@ type CloseHandler = (event?: unknown) => void;
 type ErrorHandler = (event?: unknown) => void;
 type MessageHandler = (data: unknown, isBinary: boolean) => void;
 
+/** Release gate held closed until hosted relay near-limit framing passes. */
+const ENABLE_PRODUCTION_FRAMED_CIPHERTEXT_V1 = false;
+
 /** Content-free metrics port implemented by the owning daemon client. */
 interface RelayE2eeRuntimeMetrics {
   /** Records the authenticated connection-level transport selection. */
@@ -44,6 +47,16 @@ export interface CreateEncryptedTransportOptions {
   runtimeMetrics?: RelayE2eeRuntimeMetrics;
   /** Nullable decoder capability; null deliberately disables compression advertisement. */
   compressionAdapter?: FrameCompressionAdapter | null;
+  /** Isolated validation overrides that never apply to ordinary production callers. */
+  validation?: RelayE2eeValidationOptions;
+}
+
+/** Explicit overrides exposed only to isolated protocol validation and measurement callers. */
+export interface RelayE2eeValidationOptions {
+  /** Enables framed-v1 despite the closed production release gate. */
+  enableFramedCiphertextV1?: boolean;
+  /** Observes the authenticated connection mode before the public open event. */
+  onNegotiatedTransport?: (negotiated: NegotiatedEncryptedTransport) => void;
 }
 
 /** Stateless browser/Node decoder shared by client relay connections when validated. */
@@ -54,14 +67,17 @@ export function createRelayE2eeTransportFactory(args: {
   daemonPublicKeyB64: string;
   logger: TransportLogger;
   runtimeMetrics?: RelayE2eeRuntimeMetrics;
+  /** Isolated validation overrides that never apply to ordinary production callers. */
+  validation?: RelayE2eeValidationOptions;
 }): DaemonTransportFactory {
-  return ({ url, headers }) => {
-    const base = args.baseFactory({ url, headers });
+  return (factoryOptions) => {
+    const base = args.baseFactory(factoryOptions);
     return createEncryptedTransport({
       base,
       daemonPublicKeyB64: args.daemonPublicKeyB64,
       logger: args.logger,
       runtimeMetrics: args.runtimeMetrics,
+      validation: args.validation,
     });
   };
 }
@@ -75,6 +91,9 @@ export function createEncryptedTransport(
   /** Decoder advertised for this connection, including an explicit unavailable state. */
   const compressionAdapter =
     options.compressionAdapter === undefined ? relayCompressionAdapter : options.compressionAdapter;
+  /** Connection-local gate that remains false unless production or validation explicitly enables it. */
+  const enableFramedCiphertextV1 =
+    ENABLE_PRODUCTION_FRAMED_CIPHERTEXT_V1 || options.validation?.enableFramedCiphertextV1 === true;
   let channel: EncryptedChannel | null = null;
   let opened = false;
   let closed = false;
@@ -141,6 +160,7 @@ export function createEncryptedTransport(
       channel = await createClientChannel({
         transport: relayTransport,
         daemonPublicKeyB64,
+        enableFramedCiphertextV1,
         events: {
           onopen: emitOpen,
           onmessage: (data) => emitMessage(data),
@@ -148,16 +168,23 @@ export function createEncryptedTransport(
           onerror: (error) => emitError(error),
         },
         ...(compressionAdapter ? { compressionAdapter } : {}),
-        ...(runtimeMetrics
+        ...(runtimeMetrics || options.validation?.onNegotiatedTransport
           ? {
               runtimeObserver: {
-                onNegotiatedTransport: (negotiated) =>
-                  runtimeMetrics.recordRelayNegotiated(negotiated),
-                onInboundFrame: (metric) => runtimeMetrics.recordRelayInboundFrame(metric),
-                onFramedProtocolError: (reason) =>
-                  runtimeMetrics.recordRelayFramedProtocolError(reason),
-                onPendingReceiveWireBytes: (bytes) =>
-                  runtimeMetrics.recordRelayPendingReceiveWireBytes(bytes),
+                onNegotiatedTransport: (negotiated) => {
+                  options.validation?.onNegotiatedTransport?.(negotiated);
+                  runtimeMetrics?.recordRelayNegotiated(negotiated);
+                },
+                ...(runtimeMetrics
+                  ? {
+                      onInboundFrame: (metric: EncryptedChannelInboundFrameMetric) =>
+                        runtimeMetrics.recordRelayInboundFrame(metric),
+                      onFramedProtocolError: (reason: EncryptedChannelProtocolErrorReason) =>
+                        runtimeMetrics.recordRelayFramedProtocolError(reason),
+                      onPendingReceiveWireBytes: (bytes: number) =>
+                        runtimeMetrics.recordRelayPendingReceiveWireBytes(bytes),
+                    }
+                  : {}),
               },
             }
           : {}),

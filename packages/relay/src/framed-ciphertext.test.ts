@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  createClientChannel,
-  createDaemonChannel,
+  createClientChannel as createClientChannelCore,
+  createDaemonChannel as createDaemonChannelCore,
   type CiphertextEncoding,
   type ConfiguredCiphertextEncoding,
+  type CreateClientChannelOptions,
+  type CreateDaemonChannelOptions,
   type EncryptedChannelEvents,
   type EncryptedChannelRuntimeObserver,
   type Transport,
@@ -28,6 +30,16 @@ import {
   prepareIdentityFramedPayload,
   type FrameCompressionAdapter,
 } from "./framed-ciphertext.js";
+
+/** Creates a client channel with framed-v1 explicitly enabled for protocol tests. */
+function createClientChannel(options: CreateClientChannelOptions) {
+  return createClientChannelCore({ ...options, enableFramedCiphertextV1: true });
+}
+
+/** Creates a daemon channel with framed-v1 explicitly enabled for protocol tests. */
+function createDaemonChannel(options: CreateDaemonChannelOptions) {
+  return createDaemonChannelCore({ ...options, enableFramedCiphertextV1: true });
+}
 
 /** Plaintext ready frame selecting identity-only framed binary ciphertext. */
 const FRAMED_BINARY_READY = JSON.stringify({

@@ -169,6 +169,7 @@ import { createConfiguredTerminalManager } from "../terminal/terminal-manager-fa
 import { applyTerminalAgentHookSetting } from "../terminal/agent-hooks/terminal-agent-hook-setting.js";
 import { loadOrCreateDaemonKeyPair } from "./daemon-keypair.js";
 import { createRelayRuntime, type RelayRuntime } from "./relay-runtime.js";
+import type { RelayTransportValidationOptions } from "./relay-transport.js";
 import { resolveConfiguredRelayTransportPolicy } from "./relay-transport-policy.js";
 import type { PushNotificationSender } from "./push/index.js";
 import { getOrCreateServerId } from "./server-id.js";
@@ -477,6 +478,8 @@ export interface PaseoDaemonDependencies {
     daemonStatusRpc?: boolean;
     relayConfig?: boolean;
   };
+  /** Isolated relay protocol-validation overrides unavailable through daemon config. */
+  relayTransportValidation?: RelayTransportValidationOptions;
 }
 
 function createBootstrapManagedProcessRegistry(
@@ -1613,6 +1616,9 @@ export async function createPaseoDaemon(
               serverId,
               daemonKeyPair: daemonKeyPair.keyPair,
               runtimeMetrics: wsServer.getRelayTransportRuntimeMetrics(),
+              ...(dependencies.relayTransportValidation
+                ? { validation: dependencies.relayTransportValidation }
+                : {}),
             });
             daemonConfigStore.onFieldChange("relay.enabled", (value) => {
               relayRuntime?.setEnabled(value === true);

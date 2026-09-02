@@ -85,6 +85,7 @@ describe("RelayRuntime", () => {
       attachSocket: async () => undefined,
       serverId: "relay-runtime-policy-test",
       daemonKeyPair: generateKeyPair(),
+      validation: { enableFramedCiphertextV1: true },
       runtimeMetrics,
       startTransport: (options) => {
         starts.push(options);
@@ -97,6 +98,7 @@ describe("RelayRuntime", () => {
       compressionEnabled: true,
     });
     expect(starts[0]?.runtimeMetrics).toBe(runtimeMetrics);
+    expect(starts[0]?.validation).toEqual({ enableFramedCiphertextV1: true });
 
     runtime.setTransportPolicy(
       resolveConfiguredRelayTransportPolicy({

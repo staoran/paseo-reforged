@@ -40,6 +40,14 @@ export interface RelayTransportOptions {
   getConfiguredTransportPolicy?: () => ConfiguredRelayTransportPolicy;
   /** Optional content-free runtime metrics recorder owned by WebSocket diagnostics. */
   runtimeMetrics?: RelayTransportRuntimeMetricsWindow;
+  /** Isolated protocol-validation overrides unavailable through production config. */
+  validation?: RelayTransportValidationOptions;
+}
+
+/** Explicit daemon relay overrides reserved for isolated protocol validation. */
+export interface RelayTransportValidationOptions {
+  /** Enables framed-v1 despite the closed production release gate. */
+  enableFramedCiphertextV1?: boolean;
 }
 
 export interface RelayTransportController {
@@ -62,6 +70,8 @@ interface AttachEncryptedSocketOptions {
   frameCompression: DaemonFrameCompression | null;
   /** Optional content-free metrics recorder. */
   runtimeMetrics?: RelayTransportRuntimeMetricsWindow;
+  /** Isolated protocol-validation overrides unavailable through production config. */
+  validation?: RelayTransportValidationOptions;
   /** Optional external-session metadata forwarded to the daemon attachment. */
   metadata?: ExternalSocketMetadata;
 }
@@ -98,6 +108,8 @@ const CONTROL_PING_INTERVAL_MS = 10_000;
 const CONTROL_STALE_TIMEOUT_MS = 30_000;
 const CONTROL_READY_TIMEOUT_MS = 8_000;
 const RELAY_WEBSOCKET_OPTIONS = { handshakeTimeout: 10_000, perMessageDeflate: false } as const;
+/** Release gate held closed until hosted relay near-limit framing passes. */
+const ENABLE_PRODUCTION_FRAMED_CIPHERTEXT_V1 = false;
 
 function createDefaultRelayWebSocket(url: string): RelayWebSocketLike {
   return new WebSocket(url, RELAY_WEBSOCKET_OPTIONS);
@@ -157,6 +169,7 @@ export function startRelayTransport({
   createWebSocket = createDefaultRelayWebSocket,
   getConfiguredTransportPolicy = () => resolveConfiguredRelayTransportPolicy(undefined),
   runtimeMetrics,
+  validation,
 }: RelayTransportOptions): RelayTransportController {
   const relayLogger = logger.child({ module: "relay-transport" });
   /** Shared daemon codec coordinator used by every framed data connection. */
@@ -437,6 +450,7 @@ export function startRelayTransport({
           getConfiguredTransportPolicy,
           frameCompression,
           runtimeMetrics,
+          validation,
           metadata: externalMetadata,
         });
       } else {
@@ -475,6 +489,7 @@ async function attachEncryptedSocket(options: AttachEncryptedSocketOptions): Pro
     getConfiguredTransportPolicy,
     frameCompression,
     runtimeMetrics,
+    validation,
     metadata,
   } = options;
   try {
@@ -500,6 +515,8 @@ async function attachEncryptedSocket(options: AttachEncryptedSocketOptions): Pro
     const channel = await createDaemonChannel({
       transport: relayTransport,
       daemonKeyPair,
+      enableFramedCiphertextV1:
+        ENABLE_PRODUCTION_FRAMED_CIPHERTEXT_V1 || validation?.enableFramedCiphertextV1 === true,
       events: {
         onmessage: emitMessage,
         onclose: (code, reason) => emitter.emit("close", code, reason),

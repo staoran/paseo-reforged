@@ -1,11 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { Writable } from "node:stream";
 import pino from "pino";
-import { createClientChannel, type Transport } from "@getpaseo/relay/e2ee";
+import {
+  createClientChannel,
+  createFflateFrameCompressionAdapter,
+  type Transport,
+} from "@getpaseo/relay/e2ee";
 import { exportPublicKey, generateKeyPair } from "@getpaseo/relay";
 import { startRelayTransport, type RelaySocketLike } from "./relay-transport";
 import { resolveConfiguredRelayTransportPolicy } from "./relay-transport-policy.js";
-import { createNodeRawDeflateCodec } from "./relay-frame-compression.js";
 import type { EncryptedRelaySocket } from "./websocket/encrypted-relay-socket.js";
 import { RelayTransportRuntimeMetricsWindow } from "./websocket/runtime-metrics.js";
 
@@ -81,12 +84,6 @@ function hasLogMessage(logger: TestLogger, level: "info" | "warn", message: stri
     const hasMatchingMessage = entry.message === message;
     return hasMatchingLevel && hasMatchingMessage;
   });
-}
-
-/** Narrows one captured binary WebSocket wire before byte-level assertions. */
-function requireArrayBufferWire(wire: string | Uint8Array | ArrayBuffer | undefined): ArrayBuffer {
-  if (!(wire instanceof ArrayBuffer)) throw new Error("Expected a binary relay wire");
-  return wire;
 }
 
 class FakeRelayWebSocket {
@@ -319,15 +316,17 @@ describe("relay-transport control lifecycle", () => {
     ]);
   });
 
-  test("locks each encrypted data socket to the policy read when its handshake starts", async () => {
+  test("ignores framed offers and applies each policy snapshot to legacy ready", async () => {
     // Mutable configured policy models a hot config update without restarting control transport.
     let configuredPolicy = resolveConfiguredRelayTransportPolicy(undefined);
     // Stable daemon key reused across both independently negotiated data sockets.
     const daemonKeyPair = generateKeyPair();
+    // Public attachment observer proving neither legacy handshake waits for mode confirmation.
+    const attachSocket = vi.fn(async () => undefined);
     // Long-lived transport controller that must not restart during the policy update.
     const controller = startRelayTransport({
       logger: createMockLogger().logger,
-      attachSocket: async () => undefined,
+      attachSocket,
       relayEndpoint: "relay.paseo.sh:443",
       relayUseTls: true,
       serverId: "srv_policy_snapshot",
@@ -342,7 +341,7 @@ describe("relay-transport control lifecycle", () => {
     control.open();
     control.message(JSON.stringify({ type: "sync", connectionIds: [] }), false);
     control.message(JSON.stringify({ type: "connected", connectionId: "clt_binary" }), false);
-    // First physical data socket whose handshake locks the default binary selection.
+    // First physical data socket whose legacy handshake keeps hybrid binary capability.
     const binaryDataSocket = relay.sockets[1];
     binaryDataSocket.open();
     binaryDataSocket.message(createFramedHello(), false);
@@ -354,22 +353,80 @@ describe("relay-transport control lifecycle", () => {
       compression: { enabled: false },
     });
     control.message(JSON.stringify({ type: "connected", connectionId: "clt_base64" }), false);
-    // Second physical data socket whose handshake observes the updated Base64 preference.
+    // Second physical data socket whose legacy handshake observes the Base64 preference.
     const base64DataSocket = relay.sockets[2];
     base64DataSocket.open();
     base64DataSocket.message(createFramedHello(), false);
     await vi.waitFor(() => expect(base64DataSocket.sent).toHaveLength(1));
 
-    expect([binaryDataSocket.sent[0], base64DataSocket.sent[0]].map(parseReadySelection)).toEqual([
-      {
-        ciphertextEncoding: "binary",
-        compressionAlgorithms: ["deflate-raw"],
-      },
-      {
-        ciphertextEncoding: "base64",
-        compressionAlgorithms: ["deflate-raw"],
-      },
+    await vi.waitFor(() => expect(attachSocket).toHaveBeenCalledTimes(2));
+
+    expect([binaryDataSocket.sent[0], base64DataSocket.sent[0]].map(parseReadyWire)).toEqual([
+      { type: "e2ee_ready", capabilities: { binaryCiphertext: true } },
+      { type: "e2ee_ready" },
     ]);
+  });
+
+  test("accepts framed offers only through the isolated validation opt-in", async () => {
+    /** Stable daemon identity used by the real validation handshake. */
+    const daemonKeyPair = generateKeyPair();
+    /** Attachment signal emitted only after the authenticated framed confirm succeeds. */
+    let resolveAttached: (() => void) | undefined;
+    /** Completion promise proving the daemon accepted and attached the framed channel. */
+    const attached = new Promise<void>((resolve) => {
+      resolveAttached = resolve;
+    });
+    /** Long-lived relay controller with the production release gate bypassed for validation. */
+    const controller = startRelayTransport({
+      logger: createMockLogger().logger,
+      attachSocket: async () => resolveAttached?.(),
+      relayEndpoint: "relay.paseo.sh:443",
+      relayUseTls: true,
+      serverId: "srv_validation_framed",
+      daemonKeyPair,
+      createWebSocket: relay.createWebSocket,
+      validation: { enableFramedCiphertextV1: true },
+    });
+    controllers.push(controller);
+
+    /** Control connection announcing one validation data socket. */
+    const control = relay.sockets[0];
+    control.open();
+    control.message(JSON.stringify({ type: "sync", connectionIds: [] }), false);
+    control.message(JSON.stringify({ type: "connected", connectionId: "clt_framed" }), false);
+    /** Physical data socket bridged bidirectionally to a real framed client channel. */
+    const dataSocket = relay.sockets[1];
+    dataSocket.open();
+    /** Client-side channel transport feeding writes into the daemon data socket. */
+    let clientTransport: Transport;
+    clientTransport = {
+      send: (data) => dataSocket.message(data, data instanceof ArrayBuffer),
+      close: () => undefined,
+      onmessage: null,
+      onclose: null,
+      onerror: null,
+    };
+    dataSocket.onSend = (data) => {
+      clientTransport.onmessage?.({
+        data: data instanceof Uint8Array ? data.slice().buffer : data,
+        isBinary: data instanceof ArrayBuffer || data instanceof Uint8Array,
+      });
+    };
+    /** Client channel explicitly advertising framed binary and raw DEFLATE for validation. */
+    const clientChannel = await createClientChannel({
+      transport: clientTransport,
+      daemonPublicKeyB64: exportPublicKey(daemonKeyPair.publicKey),
+      enableFramedCiphertextV1: true,
+      compressionAdapter: createFflateFrameCompressionAdapter(),
+    });
+
+    await attached;
+
+    expect(clientChannel.getNegotiatedTransport()).toEqual({
+      mode: "framed-v1",
+      ciphertextEncoding: "binary",
+      compressionAlgorithms: ["deflate-raw"],
+    });
   });
 
   test("encrypted sends wait for the physical data socket callback", async () => {
@@ -453,10 +510,10 @@ describe("relay-transport control lifecycle", () => {
     expect(completed).toBe(true);
   });
 
-  test("keeps actual realtime sends out of the compressor while compressing state sync", async () => {
-    /** Stable daemon key used by the real authenticated framed handshake. */
+  test("keeps classified production sends on legacy identity without compression", async () => {
+    /** Stable daemon key used by the production legacy handshake. */
     const daemonKeyPair = generateKeyPair();
-    /** Resolver that exposes the attached encrypted socket after exact mode confirmation. */
+    /** Resolver that exposes the attached encrypted socket after legacy ready. */
     let resolveAttached: ((socket: EncryptedRelaySocket) => void) | undefined;
     /** Attached socket is the public daemon send seam under test. */
     const attached = new Promise<EncryptedRelaySocket>((resolve) => {
@@ -507,13 +564,12 @@ describe("relay-transport control lifecycle", () => {
     const clientChannel = await createClientChannel({
       transport: clientTransport,
       daemonPublicKeyB64: exportPublicKey(daemonKeyPair.publicKey),
-      compressionAdapter: createNodeRawDeflateCodec(),
     });
     /** Relay-aware socket shape that retains sender-side traffic semantics. */
     const encryptedSocket = await attached;
-    /** Client-to-daemon framed identity payload observed at the attached socket seam. */
-    const inboundPayload = "client-framed-identity";
-    /** Delivery signal for the daemon-side framed decoder. */
+    /** Client-to-daemon legacy text observed at the attached socket seam. */
+    const inboundPayload = "client-legacy-identity";
+    /** Delivery signal for the daemon-side legacy decoder. */
     const inboundDelivered = new Promise<string | ArrayBuffer>((resolve) => {
       encryptedSocket.on("message", (data) => {
         if (typeof data === "string" || data instanceof ArrayBuffer) resolve(data);
@@ -538,111 +594,62 @@ describe("relay-transport control lifecycle", () => {
     });
 
     expect(dataSocket.sent).toHaveLength(sentBeforeApplication + 2);
-    /** Opaque realtime wire produced through framed identity. */
+    /** Opaque realtime wire produced through legacy Base64 identity. */
     const realtimeWire = dataSocket.sent.at(-2);
-    /** Opaque state-sync wire produced after compression and encryption. */
+    /** Opaque state-sync wire that must also remain legacy Base64 identity. */
     const stateSyncWire = dataSocket.sent.at(-1);
-    expect(realtimeWire).toBeInstanceOf(ArrayBuffer);
-    expect(stateSyncWire).toBeInstanceOf(ArrayBuffer);
-    const realtimeWireBuffer = requireArrayBufferWire(realtimeWire);
-    const stateSyncWireBuffer = requireArrayBufferWire(stateSyncWire);
-    expect(realtimeWireBuffer.byteLength).toBe(
-      new TextEncoder().encode(realtimePayload).byteLength + 48,
-    );
-    expect(stateSyncWireBuffer.byteLength).toBeLessThan(
-      new TextEncoder().encode(stateSyncPayload).byteLength / 2,
+    if (typeof realtimeWire !== "string") throw new Error("Expected legacy Base64 realtime wire");
+    if (typeof stateSyncWire !== "string")
+      throw new Error("Expected legacy Base64 state-sync wire");
+    expect(stateSyncWire.length).toBeGreaterThan(
+      new TextEncoder().encode(stateSyncPayload).byteLength,
     );
     /** Relay transport aggregates produced by the actual handshake and send path. */
     const snapshot = runtimeMetrics.snapshotAndReset();
-    expect(snapshot.negotiatedModeCount["framed-v1-binary"]).toBe(1);
+    expect(snapshot.negotiatedModeCount).toMatchObject({
+      "legacy-hybrid": 1,
+      "framed-v1-binary": 0,
+    });
     expect(snapshot.effectiveCompressionCount).toEqual([
       {
-        enabled: true,
-        algorithm: "deflate-raw",
-        reason: null,
+        enabled: false,
+        algorithm: null,
+        reason: "legacy-mode",
         count: 1,
       },
     ]);
     expect(snapshot.compressionAttemptCount).toEqual({
       realtime: 0,
-      "state-sync": 1,
+      "state-sync": 0,
       bulk: 0,
       "bulk-live": 0,
     });
     expect(snapshot.outboundFrames).toEqual([
       {
-        ciphertextEncoding: "binary",
+        ciphertextEncoding: "base64",
         trafficClass: "realtime",
         codec: "identity",
         frameCount: 1,
         originalBytes: new TextEncoder().encode(realtimePayload).byteLength,
         encodedBytes: new TextEncoder().encode(realtimePayload).byteLength,
-        wireBytes: realtimeWireBuffer.byteLength,
+        wireBytes: realtimeWire.length,
       },
       {
-        ciphertextEncoding: "binary",
+        ciphertextEncoding: "base64",
         trafficClass: "state-sync",
-        codec: "deflate-raw",
+        codec: "identity",
         frameCount: 1,
         originalBytes: new TextEncoder().encode(stateSyncPayload).byteLength,
-        encodedBytes: expect.any(Number),
-        wireBytes: stateSyncWireBuffer.byteLength,
+        encodedBytes: new TextEncoder().encode(stateSyncPayload).byteLength,
+        wireBytes: stateSyncWire.length,
       },
     ]);
-    expect(snapshot.outboundFrames[1]?.encodedBytes).toBeLessThan(
-      snapshot.outboundFrames[1]?.originalBytes ?? 0,
-    );
-    expect(snapshot.compressionSkipCount["traffic-ineligible"]).toBe(1);
-    expect(snapshot.compressionPrepareMs).toEqual([
-      {
-        algorithm: "deflate-raw",
-        p50: expect.any(Number),
-        p95: expect.any(Number),
-        max: expect.any(Number),
-      },
-    ]);
-    expect(snapshot.compressionCodecMs).toHaveLength(1);
-    expect(snapshot.compressionQueueMs).toEqual([
-      {
-        trafficClass: "realtime",
-        p50: expect.any(Number),
-        p95: expect.any(Number),
-        max: expect.any(Number),
-      },
-      {
-        trafficClass: "state-sync",
-        p50: expect.any(Number),
-        p95: expect.any(Number),
-        max: expect.any(Number),
-      },
-    ]);
-    expect(snapshot.pendingPreparedBytes).toEqual({
-      p95: realtimeWireBuffer.byteLength,
-      max: realtimeWireBuffer.byteLength,
-    });
-    expect(snapshot.inboundFrames).toEqual([
-      {
-        ciphertextEncoding: "binary",
-        codec: "identity",
-        frameCount: 1,
-        originalBytes: new TextEncoder().encode(inboundPayload).byteLength,
-        encodedBytes: new TextEncoder().encode(inboundPayload).byteLength,
-        wireBytes: new TextEncoder().encode(inboundPayload).byteLength + 48,
-      },
-    ]);
-    expect(snapshot.inboundDecodeMs).toEqual([
-      {
-        ciphertextEncoding: "binary",
-        codec: "identity",
-        p50: expect.any(Number),
-        p95: expect.any(Number),
-        max: expect.any(Number),
-      },
-    ]);
-    expect(snapshot.pendingReceiveWireBytes).toEqual({
-      p95: new TextEncoder().encode(inboundPayload).byteLength + 48,
-      max: new TextEncoder().encode(inboundPayload).byteLength + 48,
-    });
+    expect(snapshot.compressionSkipCount["legacy-mode"]).toBe(2);
+    expect(snapshot.compressionPrepareMs).toEqual([]);
+    expect(snapshot.compressionCodecMs).toEqual([]);
+    expect(snapshot.compressionQueueMs).toEqual([]);
+    expect(snapshot.inboundFrames).toEqual([]);
+    expect(snapshot.inboundDecodeMs).toEqual([]);
   });
 
   test("uses relayUseTls for control and data socket URLs", () => {
@@ -684,16 +691,8 @@ function createFramedHello(): string {
   });
 }
 
-/** Extracts the framed selection from one plaintext daemon ready wire. */
-function parseReadySelection(wire: string | Uint8Array | ArrayBuffer): unknown {
+/** Parses one plaintext daemon ready wire at the public relay boundary. */
+function parseReadyWire(wire: string | Uint8Array | ArrayBuffer): unknown {
   if (typeof wire !== "string") throw new Error("Expected a plaintext ready frame");
-  const parsed: unknown = JSON.parse(wire);
-  if (parsed === null) throw new Error("Expected a JSON ready frame");
-  if (typeof parsed !== "object") throw new Error("Expected a JSON ready frame");
-  if (Array.isArray(parsed)) throw new Error("Expected a JSON ready frame");
-  const capabilities = "capabilities" in parsed ? parsed.capabilities : undefined;
-  if (capabilities === null) return undefined;
-  if (typeof capabilities !== "object") return undefined;
-  if (Array.isArray(capabilities)) return undefined;
-  return "framedCiphertextV1" in capabilities ? capabilities.framedCiphertextV1 : undefined;
+  return JSON.parse(wire) as unknown;
 }

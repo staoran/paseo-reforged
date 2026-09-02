@@ -5,6 +5,7 @@ import {
   startRelayTransport,
   type RelaySocketLike,
   type RelayTransportController,
+  type RelayTransportValidationOptions,
 } from "./relay-transport.js";
 import type { ConfiguredRelayTransportPolicy } from "./relay-transport-policy.js";
 import type { RelayTransportRuntimeMetricsWindow } from "./websocket/runtime-metrics.js";
@@ -39,6 +40,8 @@ interface RelayRuntimeOptions {
   startTransport?: typeof startRelayTransport;
   /** Content-free recorder shared with the daemon WebSocket diagnostics window. */
   runtimeMetrics?: RelayTransportRuntimeMetricsWindow;
+  /** Isolated protocol-validation overrides unavailable through production config. */
+  validation?: RelayTransportValidationOptions;
 }
 
 export interface RelayRuntime {
@@ -75,6 +78,7 @@ export function createRelayRuntime(options: RelayRuntimeOptions): RelayRuntime {
       daemonKeyPair: options.daemonKeyPair,
       getConfiguredTransportPolicy: () => transportPolicy,
       ...(options.runtimeMetrics ? { runtimeMetrics: options.runtimeMetrics } : {}),
+      ...(options.validation ? { validation: options.validation } : {}),
     });
     options.runtimeMetrics?.setConfiguredPolicy(transportPolicy);
   }

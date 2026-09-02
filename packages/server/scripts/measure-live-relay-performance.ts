@@ -1,12 +1,18 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
+import { resolve as resolvePath } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import pino from "pino";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 
+import type { NegotiatedEncryptedTransport } from "@getpaseo/relay/e2ee";
+import { createRelayE2eeTransportFactory } from "@getpaseo/client/internal/daemon-client-relay-e2ee-transport";
+import { createWebSocketTransportFactory } from "@getpaseo/client/internal/daemon-client-websocket-transport";
 import {
   DaemonClient,
+  type TerminalStreamEvent,
   type WebSocketFactory,
   type WebSocketLike,
 } from "@getpaseo/client/internal/daemon-client";
@@ -16,10 +22,14 @@ import {
   type ConnectionOffer,
 } from "@getpaseo/protocol/connection-offer";
 import { generateLocalPairingOffer } from "@server/server/pairing-offer.js";
+import { resolveDaemonVersion } from "@server/server/daemon-version.js";
 import {
   createTestPaseoDaemon,
   type TestPaseoDaemon,
 } from "@server/server/test-utils/paseo-daemon.js";
+import { MockLoadTestAgentClient } from "@server/server/agent/providers/mock-load-test-agent.js";
+import type { AgentSnapshotPayload, SessionOutboundMessage } from "@getpaseo/protocol/messages";
+import type { WaitForFinishResult } from "@getpaseo/client/internal/daemon-client";
 
 /** Default independent samples collected for each wire representation and profile. */
 const DEFAULT_MEASURED_RUNS = 5;
@@ -31,12 +41,39 @@ const FILE_BYTES = 10 * 1024 * 1024;
 const TIMELINE_PAYLOAD_BYTES = 1_000_000;
 /** Stable operation labels mixed into the synthetic structured text corpus. */
 const CORPUS_OPERATIONS = ["replace", "insert", "delete"] as const;
+/** Stable branch labels for the two large state-sync requests in each realtime probe. */
+const REALTIME_STATE_SYNC_BRANCHES = ["state-sync 1", "state-sync 2"] as const;
+/** Number of large state-sync requests issued before each realtime probe. */
+const REALTIME_STATE_SYNC_REQUESTS = REALTIME_STATE_SYNC_BRANCHES.length;
+/** Number of uniquely identifiable incremental agent-stream rows per probe. */
+const REALTIME_AGENT_STREAM_EVENTS = 32;
+/** Maximum wait for one realtime probe to receive all required observations. */
+const REALTIME_SAMPLE_TIMEOUT_MS = 45_000;
+/** Minimum serialized canonical timeline bytes required for the concurrent sync load. */
+const REALTIME_MIN_TIMELINE_BYTES = 512 * 1024;
+/** Absolute p95 regression allowance required by Spec 0084 section 6.2. */
+const REALTIME_REGRESSION_ABSOLUTE_MS = 2;
+/** Relative p95 regression allowance required by Spec 0084 section 6.2. */
+const REALTIME_REGRESSION_RELATIVE = 0.05;
+/** Current synchronized package version advertised by every relay measurement connection. */
+const MEASUREMENT_CLIENT_APP_VERSION = resolveDaemonVersion(import.meta.url);
+/** Node program run inside the PTY so the marker measures the terminal byte path only. */
+const TERMINAL_ECHO_PROGRAM = [
+  "if (process.stdin.isTTY && process.stdin.setRawMode) process.stdin.setRawMode(true);",
+  "process.stdin.resume();",
+  "process.stdin.on('data', chunk => process.stdout.write(chunk));",
+  "setInterval(() => undefined, 60_000);",
+].join(" ");
+
+type RelayMeasurementMode = "weak-network" | "realtime-only";
 
 interface RelayPerformanceCliOptions {
   /** Hosted relay authority in host or host:port form. */
   relayEndpoint: string;
   /** Independent measurements collected per wire representation and profile. */
   measuredRuns: number;
+  /** Selects the historical weak-network workload or the realtime-only gate. */
+  mode: RelayMeasurementMode;
 }
 
 interface RelayNetworkProfile {
@@ -158,18 +195,46 @@ interface RelayWebSocketListenerOptions {
   operation: "add" | "remove";
 }
 
-interface RelayClientOptions extends RelayWebSocketFactoryOptions {
+interface RelayClientOptions {
   /** Authenticated pairing offer used by the client. */
   offer: ConnectionOffer;
   /** Stable client identifier unique within one measurement profile. */
   clientId: string;
+  /** Authenticated wire representation intentionally selected by this measurement. */
+  wire: "legacy" | "framed";
+}
+
+/** Relay client plus the authenticated mode observation required before sampling. */
+interface RelayMeasurementClient {
+  /** Shared daemon client used by the workload. */
+  client: DaemonClient;
+  /** Wire representation intentionally selected by this measurement. */
+  wire: "legacy" | "framed";
+  /** Authenticated transport selection observed during the E2EE handshake. */
+  negotiated: Promise<NegotiatedEncryptedTransport>;
+}
+
+/** Minimum connected-client seam used by the pre-sampling transport assertion. */
+export interface ConnectRelayMeasurementClientOptions {
+  /** Client whose public connect promise must settle before it can be sampled. */
+  client: Pick<DaemonClient, "connect">;
+  /** Wire representation intentionally selected by this measurement. */
+  wire: "legacy" | "framed";
+  /** Authenticated transport selection observed during the E2EE handshake. */
+  negotiated: Promise<NegotiatedEncryptedTransport>;
 }
 
 interface SeededWorkloads {
   /** Fake agent whose completed timeline is measured. */
   agentId: string;
+  /** Separate fake agent used only for incremental stream pressure. */
+  realtimeAgentId: string;
+  /** Persistent terminal used for the interactive echo measurement. */
+  terminalId: string;
   /** SHA-256 of the exact canonical timeline page seeded through the direct connection. */
   timelineDigest: string;
+  /** Serialized canonical page size used to prove the sync workload is substantial. */
+  timelineBytes: number;
   /** UTF-8 file name relative to the daemon static directory. */
   fileName: string;
   /** SHA-256 of the exact file bytes written before relay measurement. */
@@ -201,6 +266,84 @@ interface RunProfileOptions extends RelayPerformanceCliOptions {
   profile: RelayNetworkProfile;
 }
 
+interface RealtimeMeasurementTarget {
+  /** Connected relay client used for this representation. */
+  client: DaemonClient;
+  /** Sample bucket receiving this representation's observations. */
+  samples: RealtimeLatencySamples;
+  /** Wire representation under measurement. */
+  wire: "legacy" | "framed";
+}
+
+interface RealtimePhaseOptions<TResult> {
+  /** Human-readable operation used only in failure diagnostics. */
+  phase: string;
+  /** Active network profile included in every failure. */
+  profile: string;
+  /** Async operation whose original error remains the cause. */
+  run: () => Promise<TResult>;
+}
+
+/** Content-free relay control readiness observed from the isolated daemon logger. */
+export interface RelayControlReadyProbe {
+  /** Logger passed to the isolated daemon so control lifecycle records remain local. */
+  logger: pino.Logger;
+  /** Waits until the current control socket has received a valid hosted relay message. */
+  waitForReady(timeoutMs: number): Promise<void>;
+  /** Returns a bounded content-free summary of daemon relay control and data sockets. */
+  snapshot(): RelayLifecycleSummary;
+}
+
+/** Bounded lifecycle state retained for the daemon relay control socket. */
+export interface RelayControlLifecycleSummary {
+  /** Whether the latest control socket has received a valid relay message. */
+  ready: boolean;
+  /** Number of control sockets that reached protocol readiness. */
+  connectedCount: number;
+  /** Number of control socket close events observed. */
+  disconnectedCount: number;
+  /** Number of control lifecycle error events observed. */
+  errorCount: number;
+  /** Most recent bounded control lifecycle event. */
+  lastEvent: RelayLifecycleEvent;
+  /** Most recent numeric control close code, cleared by a later ready socket. */
+  lastCloseCode: number | null;
+}
+
+/** Bounded lifecycle state retained for daemon relay data sockets. */
+export interface RelayDataLifecycleSummary {
+  /** Number of data sockets currently known to be connected. */
+  activeCount: number;
+  /** Number of data socket open events observed. */
+  connectedCount: number;
+  /** Number of data socket close events observed. */
+  disconnectedCount: number;
+  /** Number of data socket error events observed. */
+  errorCount: number;
+  /** Most recent bounded data lifecycle event. */
+  lastEvent: RelayLifecycleEvent;
+  /** Most recent numeric data close code, cleared by a later connected socket. */
+  lastCloseCode: number | null;
+}
+
+/** Content-free daemon relay lifecycle snapshot used only in measurement failures. */
+export interface RelayLifecycleSummary {
+  /** Control socket lifecycle summary. */
+  control: RelayControlLifecycleSummary;
+  /** Per-client data socket lifecycle summary. */
+  data: RelayDataLifecycleSummary;
+}
+
+/** Bounded lifecycle event names retained by the measurement logger. */
+export type RelayLifecycleEvent = "none" | "connected" | "disconnected" | "error";
+
+interface RelayControlReadyWaiter {
+  /** Settles one pending readiness wait. */
+  resolve(): void;
+  /** Deadline cleared when readiness is observed. */
+  timeoutHandle: ReturnType<typeof setTimeout>;
+}
+
 interface PercentileOptions {
   /** Independent measurements to summarize. */
   values: readonly number[];
@@ -215,7 +358,7 @@ interface AttachRelaySocketOptions {
   requestPath: string;
 }
 
-interface DirectClientOptions {
+export interface DirectClientOptions {
   /** Isolated daemon reached without relay shaping. */
   daemon: TestPaseoDaemon;
   /** Stable client identifier for the seeding connection. */
@@ -236,6 +379,113 @@ interface MeasureTimelineOptions {
   agentId: string;
   /** Expected SHA-256 proving the returned page matches the seeded timeline. */
   expectedDigest: string;
+  /** Optional request timeout used by the concurrent realtime probe. */
+  timeout?: number;
+  /** Minimum serialized response size required by the caller. */
+  minimumSerializedBytes?: number;
+}
+
+interface RealtimeProbeOptions {
+  /** Relay client whose realtime path is measured. */
+  client: DaemonClient;
+  /** Seeded agent and terminal identifiers shared by all probes. */
+  workloads: SeededWorkloads;
+  /** Wire representation label included in the marker and diagnostics. */
+  wire: "legacy" | "framed";
+  /** Profile label used to make terminal markers unique. */
+  profile: string;
+  /** Per-wire sample ordinal. */
+  run: number;
+  /** Returns the latest bounded daemon relay control/data lifecycle state. */
+  getRelayLifecycle: () => RelayLifecycleSummary;
+}
+
+interface RealtimeProbeResult {
+  /** Terminal marker latency for this probe. */
+  terminalEchoMs: number;
+  /** Incremental agent-stream latencies observed in this probe. */
+  agentStreamMs: number[];
+}
+
+/** Concurrent operation labels retained in realtime probe failure diagnostics. */
+export type RealtimeProbeBranch =
+  | "observation"
+  | (typeof REALTIME_STATE_SYNC_BRANCHES)[number]
+  | "stress turn";
+
+/** Public, content-free state captured when one realtime probe branch fails. */
+export interface RealtimeProbeDiagnostic {
+  /** Shared client state at the time the branch rejected. */
+  connectionState: ReturnType<DaemonClient["getConnectionState"]>;
+  /** Last shared-client transport or liveness error. */
+  lastError: string | null;
+  /** Most recent successful liveness round-trip, when one exists. */
+  lastLivenessRttMs: number | null;
+  /** Bounded daemon relay control/data lifecycle summary. */
+  relayLifecycle: RelayLifecycleSummary;
+}
+
+/** Inputs for attributing one concurrent realtime probe branch failure. */
+export interface RunRealtimeProbeBranchOptions<TResult> {
+  /** Stable branch name included in the failure. */
+  branch: RealtimeProbeBranch;
+  /** Concurrent operation whose original rejection remains the cause. */
+  run: () => Promise<TResult>;
+  /** Captures public client and bounded relay state only after a rejection. */
+  getDiagnostic: () => RealtimeProbeDiagnostic;
+}
+
+/** Attributes one concurrent branch failure and appends bounded runtime diagnostics. */
+export async function runRealtimeProbeBranch<TResult>(
+  options: RunRealtimeProbeBranchOptions<TResult>,
+): Promise<TResult> {
+  try {
+    return await options.run();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const diagnostic = options.getDiagnostic();
+    throw new Error(
+      `Realtime ${options.branch} failed: ${message}; diagnostic=${JSON.stringify(diagnostic)}`,
+      { cause: error },
+    );
+  }
+}
+
+/** Minimal public wait result fields retained when a realtime stress turn fails. */
+export interface RealtimeTurnDiagnosticInput {
+  /** Terminal status returned by the wait-for-finish RPC. */
+  status: WaitForFinishResult["status"];
+  /** RPC or Agent terminal error, when supplied. */
+  error: string | null;
+  /** Last canonical assistant message observed by the daemon. */
+  lastMessage: string | null;
+  /** Public final Agent fields needed to distinguish lifecycle and active-turn failures. */
+  final: Pick<AgentSnapshotPayload, "status" | "lastError" | "activeTurn"> | null;
+}
+
+type AgentStreamMessage = Extract<SessionOutboundMessage, { type: "agent_stream" }>;
+
+interface RealtimeObservation {
+  /** Resolves after the terminal marker and all expected stream events arrive. */
+  promise: Promise<RealtimeProbeResult>;
+  /** Records the exact local send time used by the terminal latency calculation. */
+  markTerminalSent(startedAt: number): void;
+  /** Removes listeners and timers after the probe settles or another operation fails. */
+  dispose(): void;
+}
+
+/** Formats all public terminal fields without retaining the full Agent snapshot. */
+export function formatRealtimeTurnFailure(result: RealtimeTurnDiagnosticInput): string {
+  const diagnostic = {
+    status: result.status,
+    error: result.error,
+    lastMessage: result.lastMessage,
+    finalStatus: result.final?.status ?? null,
+    finalLastError: result.final?.lastError ?? null,
+    activeTurnId: result.final?.activeTurn?.turnId ?? null,
+    activeTurnStartedAt: result.final?.activeTurn?.startedAt ?? null,
+  };
+  return `Realtime mock turn did not finish idle: ${JSON.stringify(diagnostic)}`;
 }
 
 interface RelativeReductionOptions {
@@ -256,6 +506,106 @@ interface RelayPerformanceReport {
   fileBytes: number;
   /** Aggregated profile results. */
   summaries: RelayPerformanceSummary[];
+}
+
+/** Raw terminal and incremental-agent latencies collected for one wire representation. */
+export interface RealtimeLatencySamples {
+  /** Time from terminal marker send until its matching output reaches the client. */
+  terminalEchoMs: number[];
+  /** Time from daemon canonical agent-event timestamp until client receipt. */
+  agentStreamMs: number[];
+}
+
+/** p95 values and threshold verdict for one realtime network profile. */
+export interface RealtimeGateSummary {
+  /** Profile identifier. */
+  profile: string;
+  /** Legacy baseline p95 values. */
+  legacy: RealtimeLatencySummary;
+  /** Framed candidate p95 values. */
+  framed: RealtimeLatencySummary;
+  /** Per-metric maximum candidate p95 accepted by the Spec gate. */
+  allowed: RealtimeLatencySummary;
+  /** Metrics whose candidate p95 exceeded the allowed regression. */
+  failures: RealtimeMetric[];
+  /** Whether both realtime p95 metrics passed. */
+  passed: boolean;
+}
+
+/** Realtime latency metrics compared by the p95 gate. */
+export type RealtimeMetric = "terminalEcho" | "agentStream";
+
+/** Two p95 values used in the realtime report and threshold calculation. */
+export interface RealtimeLatencySummary {
+  /** Terminal echo p95 in milliseconds. */
+  terminalEchoP95Ms: number;
+  /** Incremental agent-stream p95 in milliseconds. */
+  agentStreamP95Ms: number;
+}
+
+/** Inputs for the pure realtime threshold summarizer. */
+export interface SummarizeRealtimeGateOptions {
+  /** Stable network profile label. */
+  profile: string;
+  /** Legacy baseline samples. */
+  legacy: RealtimeLatencySamples;
+  /** Framed candidate samples. */
+  framed: RealtimeLatencySamples;
+}
+
+/** Machine-readable report emitted by the realtime-only measurement mode. */
+export interface RelayRealtimeReport {
+  /** Measurement output schema version. */
+  schemaVersion: 1;
+  /** Explicit mode marker preventing confusion with weak-network summaries. */
+  mode: "realtime-only";
+  /** Samples collected per wire representation and profile. */
+  measuredRuns: number;
+  /** Large state-sync requests issued before each probe. */
+  stateSyncRequestsPerSample: number;
+  /** Incremental stream events expected from each stress turn. */
+  agentStreamEventsPerSample: number;
+  /** Aggregate profile results. */
+  summaries: RealtimeGateSummary[];
+  /** Whether every profile passed both p95 metrics. */
+  passed: boolean;
+}
+
+/** Inputs for the measurement-only authenticated transport assertion. */
+export interface AssertRelayMeasurementNegotiatedTransportOptions {
+  /** Wire representation the measurement intentionally requested. */
+  wire: "legacy" | "framed";
+  /** Mode observed by the authenticated E2EE channel before sampling. */
+  negotiated: NegotiatedEncryptedTransport;
+}
+
+/** Rejects a measurement that silently fell back to a different authenticated mode. */
+export function assertRelayMeasurementNegotiatedTransport(
+  options: AssertRelayMeasurementNegotiatedTransportOptions,
+): void {
+  const { wire, negotiated } = options;
+  let actual: string;
+  if (negotiated.mode === "legacy") {
+    actual = "legacy-" + negotiated.ciphertextEncoding;
+  } else {
+    actual = "framed-v1-" + negotiated.ciphertextEncoding;
+  }
+  const expected = wire === "framed" ? "framed-v1-binary" : "legacy-hybrid";
+  if (actual !== expected) {
+    throw new Error(wire + " measurement negotiated " + actual + "; expected " + expected);
+  }
+  if (wire === "framed" && !negotiated.compressionAlgorithms.includes("deflate-raw")) {
+    throw new Error("framed measurement negotiated without deflate-raw");
+  }
+}
+
+/** Connects one measurement client and verifies its authenticated mode before any workload. */
+export async function connectRelayMeasurementClient(
+  options: ConnectRelayMeasurementClientOptions,
+): Promise<void> {
+  await options.client.connect();
+  const negotiated = await options.negotiated;
+  assertRelayMeasurementNegotiatedTransport({ wire: options.wire, negotiated });
 }
 
 /** Validates and normalizes one relay authority without retaining credentials or paths. */
@@ -288,6 +638,8 @@ function parseCliOptions(args: readonly string[]): RelayPerformanceCliOptions {
   let relayEndpoint: string | null = null;
   /** Requested sample count or the fixed default. */
   let measuredRuns = DEFAULT_MEASURED_RUNS;
+  /** Historical weak-network workload remains the default mode. */
+  let mode: RelayMeasurementMode = "weak-network";
 
   for (const argument of args) {
     if (argument === "--help") {
@@ -310,13 +662,17 @@ function parseCliOptions(args: readonly string[]): RelayPerformanceCliOptions {
       measuredRuns = requestedRuns;
       continue;
     }
+    if (argument === "--realtime-only") {
+      mode = "realtime-only";
+      continue;
+    }
     throw new Error(`Unknown argument: ${argument}`);
   }
 
   if (relayEndpoint === null) {
     throw new Error("--relay-endpoint is required");
   }
-  return { relayEndpoint, measuredRuns };
+  return { relayEndpoint, measuredRuns, mode };
 }
 
 /** Prints the explicit manual-measurement contract. */
@@ -325,11 +681,13 @@ function printHelp(): void {
     .write(`Usage: npm run measure:live-relay-performance -- --relay-endpoint=<host[:port]> [options]
 
 Measures legacy and framed state catch-up through a hosted relay and local weak-network shaper.
-The command validates exact payload integrity and emits one aggregate JSON report; it does not enforce latency thresholds.
+The default mode validates exact payload integrity and emits one aggregate JSON report without enforcing thresholds.
+Realtime-only mode applies the Spec 0084 p95 gate, emits its report, and exits non-zero on regression.
 
 Options:
   --relay-endpoint=<host[:port]>  Required hosted relay authority. The connection uses TLS.
   --runs=<count>                  Samples per wire/profile, 1-${MAX_MEASURED_RUNS}. Defaults to ${DEFAULT_MEASURED_RUNS}.
+  --realtime-only                 Gate terminal echo and incremental agent_stream p95 while state-sync is active.
   --help                          Show this help.
 `);
 }
@@ -353,6 +711,57 @@ function percentile(options: PercentileOptions): number {
   if (sorted.length === 0) return 0;
   const index = Math.min(sorted.length - 1, Math.ceil(sorted.length * fraction) - 1);
   return sorted[index] ?? 0;
+}
+
+/** Computes the maximum candidate p95 accepted by the Spec absolute/relative rule. */
+function allowedRealtimeP95(baseline: number): number {
+  return Math.max(
+    baseline + REALTIME_REGRESSION_ABSOLUTE_MS,
+    baseline * (1 + REALTIME_REGRESSION_RELATIVE),
+  );
+}
+
+/** Summarizes realtime p95 samples and applies the exact Spec 0084 regression gate. */
+export function summarizeRealtimeGate(options: SummarizeRealtimeGateOptions): RealtimeGateSummary {
+  const legacyTerminalEchoP95Ms = percentile({
+    values: options.legacy.terminalEchoMs,
+    fraction: 0.95,
+  });
+  const legacyAgentStreamP95Ms = percentile({
+    values: options.legacy.agentStreamMs,
+    fraction: 0.95,
+  });
+  const framedTerminalEchoP95Ms = percentile({
+    values: options.framed.terminalEchoMs,
+    fraction: 0.95,
+  });
+  const framedAgentStreamP95Ms = percentile({
+    values: options.framed.agentStreamMs,
+    fraction: 0.95,
+  });
+  const legacy = {
+    terminalEchoP95Ms: legacyTerminalEchoP95Ms,
+    agentStreamP95Ms: legacyAgentStreamP95Ms,
+  } satisfies RealtimeLatencySummary;
+  const framed = {
+    terminalEchoP95Ms: framedTerminalEchoP95Ms,
+    agentStreamP95Ms: framedAgentStreamP95Ms,
+  } satisfies RealtimeLatencySummary;
+  const allowed = {
+    terminalEchoP95Ms: allowedRealtimeP95(legacyTerminalEchoP95Ms),
+    agentStreamP95Ms: allowedRealtimeP95(legacyAgentStreamP95Ms),
+  } satisfies RealtimeLatencySummary;
+  const failures: RealtimeMetric[] = [];
+  if (framedTerminalEchoP95Ms > allowed.terminalEchoP95Ms) failures.push("terminalEcho");
+  if (framedAgentStreamP95Ms > allowed.agentStreamP95Ms) failures.push("agentStream");
+  return {
+    profile: options.profile,
+    legacy,
+    framed,
+    allowed,
+    failures,
+    passed: failures.length === 0,
+  };
 }
 
 /** Builds a repeatable structured text corpus with enough variation to avoid ratio-cap skips. */
@@ -545,6 +954,125 @@ function isJsonRecord(value: unknown): value is Record<string, unknown> {
   return isObject && !isArray;
 }
 
+/** Creates a content-free logger probe for the daemon relay control lifecycle. */
+export function createRelayControlReadyProbe(): RelayControlReadyProbe {
+  /** Whether the current control socket has received at least one valid relay message. */
+  let ready = false;
+  /** Mutable bounded control lifecycle counters updated by daemon log records. */
+  const control: RelayControlLifecycleSummary = {
+    ready: false,
+    connectedCount: 0,
+    disconnectedCount: 0,
+    errorCount: 0,
+    lastEvent: "none",
+    lastCloseCode: null,
+  };
+  /** Mutable bounded data lifecycle counters updated by daemon log records. */
+  const data: RelayDataLifecycleSummary = {
+    activeCount: 0,
+    connectedCount: 0,
+    disconnectedCount: 0,
+    errorCount: 0,
+    lastEvent: "none",
+    lastCloseCode: null,
+  };
+  /** Pending callers waiting for the next ready control socket. */
+  const waiters = new Set<RelayControlReadyWaiter>();
+  /** Resolves all callers waiting for the current control socket. */
+  const resolveWaiters = (): void => {
+    for (const waiter of waiters) {
+      clearTimeout(waiter.timeoutHandle);
+      waiter.resolve();
+    }
+    waiters.clear();
+  };
+  /** Local sink that observes only stable content-free relay lifecycle messages. */
+  const logger = pino(
+    { level: "info" },
+    {
+      write(serialized: string): void {
+        try {
+          /** Parsed pino record before its message field is narrowed. */
+          const record: unknown = JSON.parse(serialized);
+          if (!isJsonRecord(record) || typeof record.msg !== "string") return;
+          if (record.msg === "relay_control_connected") {
+            ready = true;
+            control.ready = true;
+            control.connectedCount += 1;
+            control.lastEvent = "connected";
+            control.lastCloseCode = null;
+            resolveWaiters();
+            return;
+          }
+          if (record.msg === "relay_control_disconnected") {
+            ready = false;
+            control.ready = false;
+            control.disconnectedCount += 1;
+            control.lastEvent = "disconnected";
+            control.lastCloseCode = typeof record.code === "number" ? record.code : null;
+            return;
+          }
+          if (
+            record.msg === "relay_error" ||
+            (record.msg.startsWith("relay_control_") && record.msg.endsWith("_failed"))
+          ) {
+            control.errorCount += 1;
+            control.lastEvent = "error";
+            return;
+          }
+          if (record.msg === "relay_data_connected") {
+            data.activeCount += 1;
+            data.connectedCount += 1;
+            data.lastEvent = "connected";
+            data.lastCloseCode = null;
+            return;
+          }
+          if (record.msg === "relay_data_disconnected") {
+            data.activeCount = Math.max(0, data.activeCount - 1);
+            data.disconnectedCount += 1;
+            data.lastEvent = "disconnected";
+            data.lastCloseCode = typeof record.code === "number" ? record.code : null;
+            return;
+          }
+          if (
+            record.msg === "relay_data_error" ||
+            record.msg === "relay_data_open_timeout_terminating"
+          ) {
+            data.errorCount += 1;
+            data.lastEvent = "error";
+          }
+        } catch {
+          // The daemon owns logger payload construction; malformed diagnostics do not imply ready.
+        }
+      },
+    },
+  );
+
+  return {
+    logger,
+    waitForReady(timeoutMs) {
+      if (ready) return Promise.resolve();
+      return new Promise<void>((resolve, reject) => {
+        /** Waiter retained until a valid control message or the explicit deadline. */
+        const waiter: RelayControlReadyWaiter = {
+          resolve,
+          timeoutHandle: setTimeout(() => {
+            waiters.delete(waiter);
+            reject(new Error("Relay control did not become ready after " + timeoutMs + "ms"));
+          }, timeoutMs),
+        };
+        waiters.add(waiter);
+      });
+    },
+    snapshot() {
+      return {
+        control: { ...control, ready },
+        data: { ...data },
+      };
+    },
+  };
+}
+
 /** Applies one shared-client listener operation to a supported Node WebSocket event. */
 function updateWebSocketListener(options: RelayWebSocketListenerOptions): void {
   const { socket, event, listener, operation } = options;
@@ -571,7 +1099,7 @@ function updateWebSocketListener(options: RelayWebSocketListenerOptions): void {
 }
 
 /** Creates a Node WebSocket factory that optionally emulates a pre-framed legacy client hello. */
-function createWebSocketFactory(options: RelayWebSocketFactoryOptions): WebSocketFactory {
+export function createWebSocketFactory(options: RelayWebSocketFactoryOptions): WebSocketFactory {
   const { stripFramedCapability } = options;
   return (url, socketOptions) => {
     const socket = new WebSocket(url, socketOptions?.protocols, {
@@ -624,6 +1152,12 @@ function createWebSocketFactory(options: RelayWebSocketFactoryOptions): WebSocke
         }
         socket.binaryType = value;
       },
+      addEventListener: (event, listener) => {
+        socket.addEventListener(event as keyof WebSocket.WebSocketEventMap, listener as never);
+      },
+      removeEventListener: (event, listener) => {
+        socket.removeEventListener(event as keyof WebSocket.WebSocketEventMap, listener as never);
+      },
       on: (event, listener) => {
         updateWebSocketListener({ socket, event, listener, operation: "add" });
       },
@@ -638,10 +1172,32 @@ function createWebSocketFactory(options: RelayWebSocketFactoryOptions): WebSocke
   };
 }
 
-/** Creates one client for a relay offer through either the legacy or framed wire. */
-function createRelayClient(options: RelayClientOptions): DaemonClient {
-  const { offer, clientId, stripFramedCapability } = options;
-  return new DaemonClient({
+/** Creates one validation-only relay client and its authenticated mode observation. */
+function createRelayClient(options: RelayClientOptions): RelayMeasurementClient {
+  const { offer, clientId, wire } = options;
+  /** Shared logger used by both the physical and encrypted transports. */
+  const logger = pino({ level: "silent" });
+  /** Promise callbacks assigned before the E2EE transport can begin its handshake. */
+  let resolveNegotiated!: (negotiated: NegotiatedEncryptedTransport) => void;
+  /** Authenticated selection emitted before the encrypted transport opens publicly. */
+  const negotiated = new Promise<NegotiatedEncryptedTransport>((resolve) => {
+    resolveNegotiated = resolve;
+  });
+  /** Physical WebSocket transport kept separate so DaemonClient does not wrap E2EE twice. */
+  const baseFactory = createWebSocketTransportFactory(
+    createWebSocketFactory({ stripFramedCapability: false }),
+  );
+  /** Validation-only E2EE wrapper; ordinary DaemonClient configuration cannot enable this gate. */
+  const transportFactory = createRelayE2eeTransportFactory({
+    baseFactory,
+    daemonPublicKeyB64: offer.daemonPublicKeyB64,
+    logger,
+    validation: {
+      enableFramedCiphertextV1: wire === "framed",
+      onNegotiatedTransport: resolveNegotiated,
+    },
+  });
+  const client = new DaemonClient({
     url: buildRelayWebSocketUrl({
       endpoint: offer.relay.endpoint,
       useTls: false,
@@ -650,21 +1206,23 @@ function createRelayClient(options: RelayClientOptions): DaemonClient {
     }),
     clientId,
     clientType: "cli",
+    appVersion: MEASUREMENT_CLIENT_APP_VERSION,
     connectTimeoutMs: 30_000,
-    e2ee: { enabled: true, daemonPublicKeyB64: offer.daemonPublicKeyB64 },
     reconnect: { enabled: false },
-    logger: pino({ level: "silent" }),
-    webSocketFactory: createWebSocketFactory({ stripFramedCapability }),
+    logger,
+    transportFactory,
   });
+  return { client, wire, negotiated };
 }
 
 /** Creates a direct client used only to seed isolated daemon state before relay measurements. */
-function createDirectClient(options: DirectClientOptions): DaemonClient {
+export function createDirectClient(options: DirectClientOptions): DaemonClient {
   const { daemon, clientId } = options;
   return new DaemonClient({
     url: `ws://127.0.0.1:${daemon.port}/ws`,
     clientId,
     clientType: "cli",
+    appVersion: MEASUREMENT_CLIENT_APP_VERSION,
     reconnect: { enabled: false },
     logger: pino({ level: "silent" }),
     webSocketFactory: createWebSocketFactory({ stripFramedCapability: false }),
@@ -689,7 +1247,14 @@ async function pairingOfferFor(options: PairingOfferOptions): Promise<Connection
   return offer;
 }
 
-/** Seeds one 40-item fake timeline and a 10 MiB UTF-8 file through the isolated daemon. */
+/** Rejects any mock turn that lacks a client-visible idle terminal snapshot. */
+function assertRealtimeTurnCompleted(result: WaitForFinishResult): void {
+  if (result.status !== "idle" || result.final === null) {
+    throw new Error(formatRealtimeTurnFailure(result));
+  }
+}
+
+/** Seeds the canonical state page, realtime agent and PTY used by every profile. */
 async function seedWorkloads(daemon: TestPaseoDaemon): Promise<SeededWorkloads> {
   const seedClient = createDirectClient({
     daemon,
@@ -701,19 +1266,28 @@ async function seedWorkloads(daemon: TestPaseoDaemon): Promise<SeededWorkloads> 
   await writeFile(`${daemon.staticDir}/${fileName}`, filePayload);
   try {
     await seedClient.connect();
+    const workspace = await seedClient.openProject(daemon.staticDir);
+    if (!workspace.workspace) {
+      throw new Error(workspace.error ?? "Relay performance seed workspace was not created");
+    }
     const agent = await seedClient.createAgent({
-      provider: "codex",
+      provider: "mock",
       cwd: daemon.staticDir,
       title: "Live relay performance seed",
-      modeId: "full-access",
+      modeId: "load-test",
+      model: "five-minute-stream",
     });
     await seedClient.sendMessage(agent.id, "emit 40 agent stream updates");
-    await seedClient.waitForFinish(agent.id, 30_000);
+    /** First seed turn result proving the mock Agent remains client-visible. */
+    const firstSeedResult = await seedClient.waitForFinish(agent.id, 30_000);
+    assertRealtimeTurnCompleted(firstSeedResult);
     await seedClient.sendMessage(
       agent.id,
       `emit ${TIMELINE_PAYLOAD_BYTES} byte large file agent stream update`,
     );
-    await seedClient.waitForFinish(agent.id, 30_000);
+    /** Large-payload seed result checked before its canonical timeline is measured. */
+    const largePayloadSeedResult = await seedClient.waitForFinish(agent.id, 30_000);
+    assertRealtimeTurnCompleted(largePayloadSeedResult);
     const timeline = await seedClient.fetchAgentTimeline(agent.id, {
       direction: "tail",
       limit: 40,
@@ -722,9 +1296,41 @@ async function seedWorkloads(daemon: TestPaseoDaemon): Promise<SeededWorkloads> 
     if (timeline.entries.length < 40) {
       throw new Error(`Relay performance seed timeline was ${timeline.entries.length} items`);
     }
+    const timelineSerialized = JSON.stringify(timeline.entries);
+    const timelineBytes = Buffer.byteLength(timelineSerialized, "utf8");
+    if (timelineBytes < REALTIME_MIN_TIMELINE_BYTES) {
+      throw new Error(
+        `Realtime state-sync seed was only ${timelineBytes} bytes; expected at least ${REALTIME_MIN_TIMELINE_BYTES}`,
+      );
+    }
+
+    const realtimeAgent = await seedClient.createAgent({
+      provider: "mock",
+      cwd: daemon.staticDir,
+      title: "Live relay realtime stream seed",
+      modeId: "load-test",
+      model: "five-minute-stream",
+    });
+    const terminalResponse = await seedClient.createTerminal(
+      daemon.staticDir,
+      "Live relay realtime echo",
+      undefined,
+      {
+        workspaceId: workspace.workspace.id,
+        command: process.execPath,
+        args: ["-e", TERMINAL_ECHO_PROGRAM],
+        size: { rows: 24, cols: 80 },
+      },
+    );
+    if (terminalResponse.error || !terminalResponse.terminal) {
+      throw new Error(terminalResponse.error ?? "Realtime terminal seed was not created");
+    }
     return {
       agentId: agent.id,
-      timelineDigest: payloadDigest(JSON.stringify(timeline.entries)),
+      realtimeAgentId: realtimeAgent.id,
+      terminalId: terminalResponse.terminal.id,
+      timelineDigest: payloadDigest(timelineSerialized),
+      timelineBytes,
       fileName,
       fileDigest: payloadDigest(filePayload),
     };
@@ -735,22 +1341,203 @@ async function seedWorkloads(daemon: TestPaseoDaemon): Promise<SeededWorkloads> 
 
 /** Measures one timeline catch-up without retaining its payload. */
 async function measureTimeline(options: MeasureTimelineOptions): Promise<number> {
-  const { client, agentId, expectedDigest } = options;
+  const { client, agentId, expectedDigest, timeout, minimumSerializedBytes } = options;
   const startedAt = performance.now();
   const result = await client.fetchAgentTimeline(agentId, {
     direction: "tail",
     limit: 40,
     projection: "canonical",
+    ...(timeout === undefined ? {} : { timeout }),
   });
   if (result.entries.length < 40) {
     throw new Error(`Measured relay timeline returned ${result.entries.length} items; expected 40`);
   }
   const durationMs = performance.now() - startedAt;
-  const actualDigest = payloadDigest(JSON.stringify(result.entries));
+  const serialized = JSON.stringify(result.entries);
+  const serializedBytes = Buffer.byteLength(serialized, "utf8");
+  if (minimumSerializedBytes !== undefined && serializedBytes < minimumSerializedBytes) {
+    throw new Error(
+      `Measured relay timeline was only ${serializedBytes} bytes; expected at least ${minimumSerializedBytes}`,
+    );
+  }
+  const actualDigest = payloadDigest(serialized);
   if (actualDigest !== expectedDigest) {
     throw new Error("Measured relay timeline did not match the seeded payload");
   }
   return durationMs;
+}
+
+/** Extracts one uniquely indexed mock activity event and its daemon timestamp. */
+function parseRealtimeAgentSample(
+  message: AgentStreamMessage,
+  agentId: string,
+): { index: number; timestampMs: number; messageId: string } | null {
+  if (message.payload.agentId !== agentId) return null;
+  const event = message.payload.event;
+  if (event.type !== "timeline" || event.item.type !== "assistant_message") return null;
+  if (event.item.phase !== "commentary" || !event.item.messageId) return null;
+  const match = /^stress-update-(\d+)$/.exec(event.item.text);
+  const index = Number(match?.[1]);
+  const isExpectedIndex = Number.isSafeInteger(index) && index < REALTIME_AGENT_STREAM_EVENTS;
+  if (!isExpectedIndex) return null;
+  const timestampMs = Date.parse(message.payload.timestamp);
+  if (!Number.isFinite(timestampMs)) return null;
+  return { index, timestampMs, messageId: event.item.messageId };
+}
+
+/** Installs terminal and agent listeners before a realtime probe sends any work. */
+function createRealtimeObservation(options: {
+  client: DaemonClient;
+  workloads: SeededWorkloads;
+  marker: string;
+}): RealtimeObservation {
+  const { client, workloads, marker } = options;
+  /** Incremental event latencies retained for this probe only. */
+  const agentStreamMs: number[] = [];
+  /** Event indexes already counted, preventing duplicate delivery from skewing p95. */
+  const seenIndexes = new Set<number>();
+  /** Canonical message ids already counted, independently guarding duplicate delivery. */
+  const seenMessageIds = new Set<string>();
+  /** Streaming decoder preserving a marker split across terminal output frames. */
+  const terminalDecoder = new TextDecoder();
+  /** Small rolling terminal suffix used only to locate this probe's marker. */
+  let terminalSuffix = "";
+  /** Local monotonic send time, assigned immediately before the terminal input call. */
+  let terminalStartedAt: number | null = null;
+  /** Terminal echo duration once the marker is observed. */
+  let terminalEchoMs: number | null = null;
+  /** Prevents timeout and listeners from settling the observation twice. */
+  let settled = false;
+  /** Promise callbacks assigned synchronously below. */
+  let resolveObservation!: (result: RealtimeProbeResult) => void;
+  let rejectObservation!: (error: Error) => void;
+  const promise = new Promise<RealtimeProbeResult>((resolve, reject) => {
+    resolveObservation = resolve;
+    rejectObservation = reject;
+  });
+
+  /** Completes only after both realtime paths have produced the required evidence. */
+  const maybeComplete = (): void => {
+    if (settled || terminalEchoMs === null || seenIndexes.size !== REALTIME_AGENT_STREAM_EVENTS) {
+      return;
+    }
+    settled = true;
+    resolveObservation({ terminalEchoMs, agentStreamMs: [...agentStreamMs] });
+  };
+  /** Fails the observation with a single diagnostic. */
+  const fail = (error: Error): void => {
+    if (settled) return;
+    settled = true;
+    rejectObservation(error);
+  };
+  /** Handles only output for the shared marker terminal. */
+  const onTerminalEvent = (event: TerminalStreamEvent): void => {
+    if (settled || event.terminalId !== workloads.terminalId || event.type !== "output") return;
+    terminalSuffix += terminalDecoder.decode(event.data, { stream: true });
+    terminalSuffix = terminalSuffix.slice(-Math.max(marker.length * 2, 256));
+    if (!terminalSuffix.includes(marker) || terminalStartedAt === null) return;
+    terminalEchoMs = performance.now() - terminalStartedAt;
+    maybeComplete();
+  };
+  /** Handles the 32 unique activity rows emitted by the mock provider. */
+  const onAgentStream = (message: AgentStreamMessage): void => {
+    if (settled) return;
+    const sample = parseRealtimeAgentSample(message, workloads.realtimeAgentId);
+    if (!sample) return;
+    if (seenIndexes.has(sample.index) || seenMessageIds.has(sample.messageId)) return;
+    seenIndexes.add(sample.index);
+    seenMessageIds.add(sample.messageId);
+    agentStreamMs.push(Math.max(0, Date.now() - sample.timestampMs));
+    maybeComplete();
+  };
+  /** Listener cleanup callbacks owned by this observation. */
+  const unsubscribeTerminal = client.onTerminalStreamEvent(onTerminalEvent);
+  const unsubscribeAgent = client.on("agent_stream", onAgentStream);
+  /** Hard timeout preventing a lost event from hanging a manual gate indefinitely. */
+  const timeoutHandle = setTimeout(() => {
+    fail(
+      new Error(
+        `Realtime probe timed out: terminal=${terminalEchoMs !== null} agentEvents=${seenIndexes.size}/${REALTIME_AGENT_STREAM_EVENTS}`,
+      ),
+    );
+  }, REALTIME_SAMPLE_TIMEOUT_MS);
+
+  return {
+    promise,
+    markTerminalSent(startedAt) {
+      terminalStartedAt = startedAt;
+    },
+    dispose() {
+      clearTimeout(timeoutHandle);
+      unsubscribeTerminal();
+      unsubscribeAgent();
+      settled = true;
+    },
+  };
+}
+
+/** Runs one terminal/agent probe after placing two canonical responses ahead of it. */
+async function measureRealtimeProbe(options: RealtimeProbeOptions): Promise<RealtimeProbeResult> {
+  const { client, workloads, wire, profile, run, getRelayLifecycle } = options;
+  /** Unique marker preventing delayed output from an earlier sample from matching. */
+  const marker = `paseo_echo_${profile.replaceAll(/[^a-zA-Z0-9]/g, "_")}_${wire}_${run}_${randomUUID()}`;
+  /** Listeners installed before any request or terminal input is sent. */
+  const observation = createRealtimeObservation({ client, workloads, marker });
+  /** Public, content-free diagnostic captured independently by each failing branch. */
+  const getDiagnostic = (): RealtimeProbeDiagnostic => ({
+    connectionState: client.getConnectionState(),
+    lastError: client.lastError,
+    lastLivenessRttMs: client.getLastLivenessRttMs(),
+    relayLifecycle: getRelayLifecycle(),
+  });
+  /** Observation result labeled independently from the concurrent load operations. */
+  const observationResult = runRealtimeProbeBranch({
+    branch: "observation",
+    run: () => observation.promise,
+    getDiagnostic,
+  });
+  /** Concurrent state-sync requests deliberately sent before both realtime triggers. */
+  const stateSyncRequests = REALTIME_STATE_SYNC_BRANCHES.map((branch) =>
+    runRealtimeProbeBranch({
+      branch,
+      run: () =>
+        measureTimeline({
+          client,
+          agentId: workloads.agentId,
+          expectedDigest: workloads.timelineDigest,
+          timeout: REALTIME_SAMPLE_TIMEOUT_MS,
+          minimumSerializedBytes: workloads.timelineBytes,
+        }),
+      getDiagnostic,
+    }),
+  );
+
+  try {
+    const terminalStartedAt = performance.now();
+    observation.markTerminalSent(terminalStartedAt);
+    client.sendTerminalInput(workloads.terminalId, { type: "input", data: marker });
+    /** Mock turn whose 32 uniquely identified activity rows exercise incremental delivery. */
+    const stressTurn = runRealtimeProbeBranch({
+      branch: "stress turn",
+      run: async () => {
+        await client.sendMessage(
+          workloads.realtimeAgentId,
+          `emit ${REALTIME_AGENT_STREAM_EVENTS} activity agent stream updates`,
+        );
+        const result = await client.waitForFinish(
+          workloads.realtimeAgentId,
+          REALTIME_SAMPLE_TIMEOUT_MS,
+        );
+        assertRealtimeTurnCompleted(result);
+        return undefined;
+      },
+      getDiagnostic,
+    });
+    const [result] = await Promise.all([observationResult, ...stateSyncRequests, stressTurn]);
+    return result;
+  } finally {
+    observation.dispose();
+  }
 }
 
 /** Computes the relative duration reduction from legacy to framed transport. */
@@ -833,11 +1620,14 @@ async function runProfile(options: RunProfileOptions): Promise<RelayPerformanceS
     /** Running daemon retained separately so later calls remain non-nullable. */
     const runningDaemon = await createTestPaseoDaemon({
       listen: "127.0.0.1",
+      agentClients: { mock: new MockLoadTestAgentClient() },
+      isDev: true,
       relayEnabled: true,
       relayEndpoint: proxy.endpoint,
       relayUseTls: false,
       relayPublicUseTls: false,
       logger: pino({ level: "silent" }),
+      relayTransportValidation: { enableFramedCiphertextV1: true },
     });
     daemon = runningDaemon;
     /** Seed identifiers reused by both wire representations. */
@@ -847,17 +1637,22 @@ async function runProfile(options: RunProfileOptions): Promise<RelayPerformanceS
       daemon: runningDaemon,
       proxyEndpoint: proxy.endpoint,
     });
-    legacyClient = createRelayClient({
+    const legacyMeasurement = createRelayClient({
       offer,
       clientId: `clid_legacy_${profile.label}`,
-      stripFramedCapability: true,
+      wire: "legacy",
     });
-    framedClient = createRelayClient({
+    legacyClient = legacyMeasurement.client;
+    const framedMeasurement = createRelayClient({
       offer,
       clientId: `clid_framed_${profile.label}`,
-      stripFramedCapability: false,
+      wire: "framed",
     });
-    await Promise.all([legacyClient.connect(), framedClient.connect()]);
+    framedClient = framedMeasurement.client;
+    await Promise.all([
+      connectRelayMeasurementClient(legacyMeasurement),
+      connectRelayMeasurementClient(framedMeasurement),
+    ]);
     await Promise.all([legacyClient.fetchAgents(), framedClient.fetchAgents()]);
 
     /** Legacy Base64 measurements for this profile. */
@@ -914,6 +1709,199 @@ async function runProfile(options: RunProfileOptions): Promise<RelayPerformanceS
   }
 }
 
+/** Subscribes one relay client to both realtime paths and validates terminal setup. */
+async function subscribeRealtimeWorkloads(
+  client: DaemonClient,
+  workloads: SeededWorkloads,
+): Promise<void> {
+  await client.setAgentTimelineSubscription([workloads.realtimeAgentId]);
+  /** Correlated terminal subscription response proving the stream slot is installed. */
+  const terminalSubscription = await client.subscribeTerminal(workloads.terminalId);
+  if (terminalSubscription.error !== null) {
+    throw new Error(`Realtime terminal subscription failed: ${terminalSubscription.error}`);
+  }
+}
+
+/** Appends one complete realtime probe to the selected wire representation. */
+function appendRealtimeProbe(samples: RealtimeLatencySamples, result: RealtimeProbeResult): void {
+  samples.terminalEchoMs.push(result.terminalEchoMs);
+  samples.agentStreamMs.push(...result.agentStreamMs);
+}
+
+/** Adds stable profile and phase context without changing the underlying failure. */
+async function runRealtimePhase<TResult>(options: RealtimePhaseOptions<TResult>): Promise<TResult> {
+  try {
+    return await options.run();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Realtime ${options.profile} ${options.phase} failed: ${message}`, {
+      cause: error,
+    });
+  }
+}
+
+/** Measures one realtime profile and always releases its isolated daemon and sockets. */
+async function runRealtimeProfile(options: RunProfileOptions): Promise<RealtimeGateSummary> {
+  const { profile, relayEndpoint, measuredRuns } = options;
+  /** Local transparent proxy applying the selected weak-network profile. */
+  const proxy = new ShapedRelayProxy({ profile, relayEndpoint });
+  /** Isolated daemon owned by this profile run. */
+  let daemon: TestPaseoDaemon | null = null;
+  /** Legacy client owned by this profile run. */
+  let legacyClient: DaemonClient | null = null;
+  /** Framed client owned by this profile run. */
+  let framedClient: DaemonClient | null = null;
+  /** Content-free probe proving the daemon control socket is registered with the hosted relay. */
+  const relayControlReady = createRelayControlReadyProbe();
+  try {
+    await runRealtimePhase({
+      profile: profile.label,
+      phase: "proxy start",
+      run: () => proxy.start(),
+    });
+    /** Running daemon retained separately so later calls remain non-nullable. */
+    const runningDaemon = await runRealtimePhase({
+      profile: profile.label,
+      phase: "daemon start",
+      run: () =>
+        createTestPaseoDaemon({
+          listen: "127.0.0.1",
+          agentClients: { mock: new MockLoadTestAgentClient() },
+          isDev: true,
+          relayEnabled: true,
+          relayEndpoint: proxy.endpoint,
+          relayUseTls: false,
+          relayPublicUseTls: false,
+          logger: relayControlReady.logger,
+          relayTransportValidation: { enableFramedCiphertextV1: true },
+        }),
+    });
+    daemon = runningDaemon;
+    /** Seed identifiers reused by both wire representations. */
+    const workloads = await runRealtimePhase({
+      profile: profile.label,
+      phase: "workload seed",
+      run: () => seedWorkloads(runningDaemon),
+    });
+    /** Authenticated offer routed through the local shaping proxy. */
+    const offer = await pairingOfferFor({
+      daemon: runningDaemon,
+      proxyEndpoint: proxy.endpoint,
+    });
+    await runRealtimePhase({
+      profile: profile.label,
+      phase: "relay control ready",
+      run: () => relayControlReady.waitForReady(30_000),
+    });
+    /** Non-null legacy client used by measurement closures. */
+    const legacyMeasurement = createRelayClient({
+      offer,
+      clientId: `clid_realtime_legacy_${profile.label}`,
+      wire: "legacy",
+    });
+    const connectedLegacyClient = legacyMeasurement.client;
+    legacyClient = connectedLegacyClient;
+    /** Non-null framed client used by measurement closures. */
+    const framedMeasurement = createRelayClient({
+      offer,
+      clientId: `clid_realtime_framed_${profile.label}`,
+      wire: "framed",
+    });
+    const connectedFramedClient = framedMeasurement.client;
+    framedClient = connectedFramedClient;
+    await runRealtimePhase({
+      profile: profile.label,
+      phase: "legacy relay client connect",
+      run: () => connectRelayMeasurementClient(legacyMeasurement),
+    });
+    await runRealtimePhase({
+      profile: profile.label,
+      phase: "framed relay client connect",
+      run: () => connectRelayMeasurementClient(framedMeasurement),
+    });
+    await runRealtimePhase({
+      profile: profile.label,
+      phase: "agent inventory",
+      run: () =>
+        Promise.all([connectedLegacyClient.fetchAgents(), connectedFramedClient.fetchAgents()]),
+    });
+    await runRealtimePhase({
+      profile: profile.label,
+      phase: "realtime subscription",
+      run: () =>
+        Promise.all([
+          subscribeRealtimeWorkloads(connectedLegacyClient, workloads),
+          subscribeRealtimeWorkloads(connectedFramedClient, workloads),
+        ]),
+    });
+
+    /** Legacy Base64 realtime measurements for this profile. */
+    const legacy: RealtimeLatencySamples = { terminalEchoMs: [], agentStreamMs: [] };
+    /** Framed realtime measurements for this profile. */
+    const framed: RealtimeLatencySamples = { terminalEchoMs: [], agentStreamMs: [] };
+    for (let run = 0; run < measuredRuns; run += 1) {
+      /** Legacy target for this sample. */
+      const legacyTarget: RealtimeMeasurementTarget = {
+        client: connectedLegacyClient,
+        samples: legacy,
+        wire: "legacy",
+      };
+      /** Framed target for this sample. */
+      const framedTarget: RealtimeMeasurementTarget = {
+        client: connectedFramedClient,
+        samples: framed,
+        wire: "framed",
+      };
+      /** Alternating first representation limits systematic ordering bias. */
+      const targets = run % 2 === 0 ? [legacyTarget, framedTarget] : [framedTarget, legacyTarget];
+      for (const target of targets) {
+        /** One terminal observation plus all unique agent-stream observations. */
+        const result = await runRealtimePhase({
+          profile: profile.label,
+          phase: `${target.wire} probe ${run + 1}`,
+          run: () =>
+            measureRealtimeProbe({
+              client: target.client,
+              workloads,
+              wire: target.wire,
+              profile: profile.label,
+              run,
+              getRelayLifecycle: () => relayControlReady.snapshot(),
+            }),
+        });
+        appendRealtimeProbe(target.samples, result);
+      }
+    }
+
+    return summarizeRealtimeGate({ profile: profile.label, legacy, framed });
+  } finally {
+    await legacyClient?.close().catch(() => undefined);
+    await framedClient?.close().catch(() => undefined);
+    await daemon?.close();
+    await proxy.close();
+  }
+}
+
+/** Runs every fixed profile and builds one machine-readable realtime gate report. */
+async function measureRealtimePerformance(
+  options: RelayPerformanceCliOptions,
+): Promise<RelayRealtimeReport> {
+  /** Profile summaries emitted together after every run completes. */
+  const summaries: RealtimeGateSummary[] = [];
+  for (const profile of RELAY_NETWORK_PROFILES) {
+    summaries.push(await runRealtimeProfile({ ...options, profile }));
+  }
+  return {
+    schemaVersion: 1,
+    mode: "realtime-only",
+    measuredRuns: options.measuredRuns,
+    stateSyncRequestsPerSample: REALTIME_STATE_SYNC_REQUESTS,
+    agentStreamEventsPerSample: REALTIME_AGENT_STREAM_EVENTS,
+    summaries,
+    passed: summaries.every((summary) => summary.passed),
+  };
+}
+
 /** Runs every fixed profile and builds one machine-readable aggregate report. */
 async function measureRelayPerformance(
   options: RelayPerformanceCliOptions,
@@ -936,13 +1924,29 @@ async function measureRelayPerformance(
 async function main(): Promise<void> {
   /** Validated manual-measurement options. */
   const options = parseCliOptions(process.argv.slice(2));
+  if (options.mode === "realtime-only") {
+    /** Completed realtime report including the aggregate threshold verdict. */
+    const realtimeReport = await measureRealtimePerformance(options);
+    process.stdout.write(`${JSON.stringify(realtimeReport, null, 2)}\n`);
+    if (!realtimeReport.passed) process.exitCode = 1;
+    return;
+  }
   /** Completed aggregate report without payload contents or relay credentials. */
   const report = await measureRelayPerformance(options);
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
 }
 
-void main().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error);
-  process.stderr.write(`${message}\n`);
-  process.exitCode = 1;
-});
+/** Returns whether this module is the process entrypoint rather than a test import. */
+function isMainModule(): boolean {
+  /** Executed script path supplied by Node or tsx. */
+  const entry = process.argv[1];
+  return Boolean(entry && pathToFileURL(resolvePath(entry)).href === import.meta.url);
+}
+
+if (isMainModule()) {
+  void main().catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`${message}\n`);
+    process.exitCode = 1;
+  });
+}
