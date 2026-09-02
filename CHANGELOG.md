@@ -1,12 +1,13 @@
 # Changelog
 
-## 0.4.0-beta.5 - 2026-08-29
+## 0.4.0-beta.5 - 2026-09-02
 
 ### Known limitations
 
 - Clients already running `0.4.0` must install this Paseo Reforged same-base beta manually
 - Android APKs support `arm64-v8a` devices only
 - macOS beta artifacts are unsigned and not notarized
+- Framed encrypted relay transport and transport compression remain disabled in production pending hosted near-limit and Hermes release-device validation
 
 ### Breaking
 
@@ -15,8 +16,7 @@
 ### Added
 
 - Added pause, resume, edit, and terminate controls for Codex Goal with live status and usage above the composer ([7870cfc](https://github.com/staoran/paseo-reforged/commit/7870cfc6371886eda1d6fc777160187777767c8f) by [@staoran](https://github.com/staoran))
-- Added a framed binary transport for encrypted relay traffic with compression of state catch-up and large tool output ([5a10302](https://github.com/staoran/paseo-reforged/commit/5a1030240c2938f21676b66f3077d34b75da5230) by [@staoran](https://github.com/staoran))
-- Added a desktop relay setting to choose the encrypted transport policy ([8cef97a](https://github.com/staoran/paseo-reforged/commit/8cef97abdba37b04d2da88cbed86e5659bfab75c) by [@staoran](https://github.com/staoran))
+- Added provider-reported input, cached input, output token, and cost details to the Context Window tooltip ([6004fb5](https://github.com/staoran/paseo-reforged/commit/6004fb55b2ff1968f05833dfb4655c6ce692e3d5) by [@staoran](https://github.com/staoran))
 - Added a one-time sidebar marker for workspaces that were still running when the desktop app quit ([7ab1a91](https://github.com/staoran/paseo-reforged/commit/7ab1a910a5b894e5db04f854902f2368485ef320) by [@staoran](https://github.com/staoran))
 - Added category groups for adjacent tool calls in compact and detailed process views ([b076448](https://github.com/staoran/paseo-reforged/commit/b07644857d1cd6eccbbe144fbf1e5ef166bdc23f) by [@staoran](https://github.com/staoran))
 - Added retry actions for Agent lookup and history-loading errors ([97608c0](https://github.com/staoran/paseo-reforged/commit/97608c0e3dc89fa206a8ea7550ccf6f2720c7d8a) by [@staoran](https://github.com/staoran))
@@ -39,6 +39,7 @@
 - Cleaned up stale temporary speech downloads on daemon startup ([20072b6](https://github.com/staoran/paseo-reforged/commit/20072b6bfd4c9f7da0de8df17cb23f31eece0a14), [db714c8](https://github.com/staoran/paseo-reforged/commit/db714c8e1497bedec184ba2aa711b6e98f62bbcc) by [@staoran](https://github.com/staoran))
 - Kept Agent indicators right-aligned in sidebar rows and moved desktop project names into hover cards ([2cbf8bc](https://github.com/staoran/paseo-reforged/commit/2cbf8bc90e5f7cd8d1ad76d7a7a3ac119c8cac8e) by [@staoran](https://github.com/staoran))
 - Applied workspace typography and reasoning-detail expansion preferences to tool calls ([c2548f6](https://github.com/staoran/paseo-reforged/commit/c2548f6dbe66d3479195d239321437170109264e) by [@staoran](https://github.com/staoran))
+- Provider Usage now hides unavailable or errored providers and shows an empty state when none are available ([6004fb5](https://github.com/staoran/paseo-reforged/commit/6004fb55b2ff1968f05833dfb4655c6ce692e3d5) by [@staoran](https://github.com/staoran))
 - Unified Mermaid rendering for streaming chats and Markdown previews while retaining interactive diagram controls ([upstream #2306](https://github.com/getpaseo/paseo/pull/2306) by [@dmeledon](https://github.com/dmeledon))
 - Added a centered reading layout and formatted YAML front matter to Markdown previews ([upstream #3240](https://github.com/getpaseo/paseo/pull/3240))
 - Added sidebar grouping to the Command Center ([upstream #3063](https://github.com/getpaseo/paseo/pull/3063) by [@cleiter](https://github.com/cleiter))
@@ -48,6 +49,9 @@
 
 ### Fixed
 
+- Fixed conversations reopened after background activity showing messages out of order ([c9fb237](https://github.com/staoran/paseo-reforged/commit/c9fb237019f9e4e975d9e7ab97b0dd2274d25473) by [@staoran](https://github.com/staoran))
+- Fixed completed conversations remaining in Working with a loading indicator and Stop button ([c9fb237](https://github.com/staoran/paseo-reforged/commit/c9fb237019f9e4e975d9e7ab97b0dd2274d25473) by [@staoran](https://github.com/staoran))
+- Fixed failed Agent initialization leaving a partially registered session until retry ([c9fb237](https://github.com/staoran/paseo-reforged/commit/c9fb237019f9e4e975d9e7ab97b0dd2274d25473) by [@staoran](https://github.com/staoran))
 - Fixed the latest user message staying uneditable after manually stopping an Agent ([4ee315d](https://github.com/staoran/paseo-reforged/commit/4ee315dae6065dcde55931c244bda9aede6ab00d) by [@staoran](https://github.com/staoran))
 - Fixed replaced timeline segments accumulating on disk during long-running sessions ([2cf60ff](https://github.com/staoran/paseo-reforged/commit/2cf60ff18c935d8bf6ac09ecbdca50887e8b38ef) by [@staoran](https://github.com/staoran))
 - Fixed the daemon exiting when a durable log stream failed ([20072b6](https://github.com/staoran/paseo-reforged/commit/20072b6bfd4c9f7da0de8df17cb23f31eece0a14) by [@staoran](https://github.com/staoran))
