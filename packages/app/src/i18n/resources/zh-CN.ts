@@ -1807,8 +1807,12 @@ export const zhCN: TranslationResources = {
     title: "上下文窗口",
     used: "已使用 {{percentage}}%",
     tokens: "{{used}} / {{max}} tokens",
+    inputTokens: "输入 token {{count}}",
+    cachedInputTokens: "缓存输入 token {{count}}",
+    outputTokens: "输出 token {{count}}",
     sessionCost: "会话费用 {{cost}}",
     accessibility: "上下文窗口已使用 {{percentage}}%",
+    accessibilityUsage: "会话使用情况可用",
   },
   review: {
     comment: {

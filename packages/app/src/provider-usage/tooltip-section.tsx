@@ -1,7 +1,7 @@
-import { Text, View } from "react-native";
+import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { ProviderUsageCard } from "./card";
-import { providerUsageCopy } from "./copy";
+import { isProviderUsageDisplayable } from "./display";
 import type { ProviderUsage, ProviderUsageView } from "./types";
 
 function matchProvider(
@@ -10,7 +10,11 @@ function matchProvider(
 ): ProviderUsage | null {
   if (!activeProviderId) return null;
   const target = activeProviderId.toLowerCase();
-  return providers.find((usage) => usage.providerId.toLowerCase() === target) ?? null;
+  return (
+    providers.find(
+      (usage) => usage.providerId.toLowerCase() === target && isProviderUsageDisplayable(usage),
+    ) ?? null
+  );
 }
 
 // Renders the active agent's provider usage inside the context-meter tooltip.
@@ -23,23 +27,7 @@ export function ProviderUsageTooltipSection({
   view: ProviderUsageView;
   activeProviderId: string | null | undefined;
 }) {
-  if (view.kind === "loading") {
-    return (
-      <>
-        <View style={styles.divider} />
-        <Text style={styles.detail}>{providerUsageCopy.tooltipLoading}</Text>
-      </>
-    );
-  }
-
-  if (view.kind === "error") {
-    return (
-      <>
-        <View style={styles.divider} />
-        <Text style={styles.error}>{view.message}</Text>
-      </>
-    );
-  }
+  if (view.kind !== "ready") return null;
 
   const usage = matchProvider(view.payload.providers, activeProviderId);
   if (!usage) return null;
@@ -61,15 +49,5 @@ const styles = StyleSheet.create((theme) => ({
     marginVertical: theme.spacing[2],
     // Cancel the tooltip content's horizontal padding so the rule spans edge to edge.
     marginHorizontal: -theme.spacing[2],
-  },
-  detail: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-    lineHeight: theme.fontSize.xs * 1.4,
-  },
-  error: {
-    color: theme.colors.palette.red[300],
-    fontSize: theme.fontSize.xs,
-    lineHeight: theme.fontSize.xs * 1.4,
   },
 }));

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { settingsStyles } from "@/styles/settings";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { providerUsageCopy } from "./copy";
+import { filterDisplayableProviderUsages } from "./display";
 import { ProviderUsageList } from "./list";
 import type { ProviderUsageView } from "./types";
 
@@ -71,7 +72,8 @@ function ProviderUsageBody({
     );
   }
 
-  if (view.payload.providers.length === 0) {
+  const providers = filterDisplayableProviderUsages(view.payload.providers);
+  if (providers.length === 0) {
     return (
       <View style={[settingsStyles.card, styles.emptyCard]}>
         <Text style={styles.emptyText}>{providerUsageCopy.empty}</Text>
@@ -79,7 +81,7 @@ function ProviderUsageBody({
     );
   }
 
-  return <ProviderUsageList providers={view.payload.providers} />;
+  return <ProviderUsageList providers={providers} />;
 }
 
 const styles = StyleSheet.create((theme) => ({

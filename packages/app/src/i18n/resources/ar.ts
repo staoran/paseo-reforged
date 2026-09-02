@@ -1829,8 +1829,12 @@ export const ar: TranslationResources = {
     title: "نافذة السياق",
     used: "تم استخدام{{percentage}}%",
     tokens: "رموز{{used}}/{{max}}",
+    inputTokens: "رموز الإدخال {{count}}",
+    cachedInputTokens: "رموز الإدخال المخزنة مؤقتًا {{count}}",
+    outputTokens: "رموز الإخراج {{count}}",
     sessionCost: "تكلفة الجلسة{{cost}}",
     accessibility: "تم استخدام نافذة السياق{{percentage}}%",
+    accessibilityUsage: "استخدام الجلسة متاح",
   },
   review: {
     comment: {

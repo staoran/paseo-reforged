@@ -1863,8 +1863,12 @@ export const ptBR: TranslationResources = {
     title: "Janela de contexto",
     used: "{{percentage}}% usado",
     tokens: "{{used}} / {{max}} tokens",
+    inputTokens: "Tokens de entrada {{count}}",
+    cachedInputTokens: "Tokens de entrada em cache {{count}}",
+    outputTokens: "Tokens de saída {{count}}",
     sessionCost: "Custo da sessão {{cost}}",
     accessibility: "Janela de contexto {{percentage}}% usada",
+    accessibilityUsage: "Uso da sessão disponível",
   },
   review: {
     comment: {

@@ -1878,8 +1878,12 @@ export const es: TranslationResources = {
     title: "ventana contextual",
     used: "{{percentage}}% utilizado",
     tokens: "Fichas{{used}}/{{max}}",
+    inputTokens: "Fichas de entrada {{count}}",
+    cachedInputTokens: "Fichas de entrada en caché {{count}}",
+    outputTokens: "Fichas de salida {{count}}",
     sessionCost: "Costo de la sesión{{cost}}",
     accessibility: "Ventana de contexto{{percentage}}% utilizada",
+    accessibilityUsage: "Uso de sesión disponible",
   },
   review: {
     comment: {

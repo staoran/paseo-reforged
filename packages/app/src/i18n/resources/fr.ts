@@ -1882,8 +1882,12 @@ export const fr: TranslationResources = {
     title: "Fenêtre contextuelle",
     used: "{{percentage}}% utilisé",
     tokens: "Jetons{{used}}/{{max}}",
+    inputTokens: "Jetons d'entrée {{count}}",
+    cachedInputTokens: "Jetons d'entrée mis en cache {{count}}",
+    outputTokens: "Jetons de sortie {{count}}",
     sessionCost: "Coût de la séance{{cost}}",
     accessibility: "Fenêtre contextuelle{{percentage}}% utilisé",
+    accessibilityUsage: "Utilisation de la session disponible",
   },
   review: {
     comment: {

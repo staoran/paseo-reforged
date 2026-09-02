@@ -43,7 +43,7 @@ import {
 } from "@/composer/agent-controls";
 import { ContextWindowMeter } from "@/components/context-window-meter";
 import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
-import { selectAgentTurnPresentation, useSessionStore } from "@/stores/session-store";
+import { selectAgentTurnPresentation, useSessionStore, type Agent } from "@/stores/session-store";
 import { useFilePicker } from "@/hooks/use-file-picker";
 import { useFileDrop } from "@/components/file-drop/use-file-drop";
 import type { DroppedItem } from "@/components/file-drop/types";
@@ -241,23 +241,82 @@ function buildRealtimeVoiceButtonStyle(
   );
 }
 
-function buildAgentStateSelector(serverId: string, agentId: string) {
-  return (state: ReturnType<typeof useSessionStore.getState>) => {
-    const agent = state.sessions[serverId]?.agents?.get(agentId) ?? null;
-    return {
-      status: agent?.status ?? null,
-      contextWindowMaxTokens: agent?.lastUsage?.contextWindowMaxTokens ?? null,
-      contextWindowUsedTokens: agent?.lastUsage?.contextWindowUsedTokens ?? null,
-      totalCostUsd: agent?.lastUsage?.totalCostUsd ?? null,
-      model: agent?.model ?? null,
-      provider: agent?.provider ?? null,
-    };
+interface ComposerAgentState {
+  status: Agent["status"] | null;
+  contextWindowMaxTokens: number | null;
+  contextWindowUsedTokens: number | null;
+  inputTokens: number | null;
+  cachedInputTokens: number | null;
+  outputTokens: number | null;
+  totalCostUsd: number | null;
+  model: Agent["model"] | null;
+  provider: Agent["provider"] | null;
+}
+
+const EMPTY_COMPOSER_AGENT_STATE: ComposerAgentState = {
+  status: null,
+  contextWindowMaxTokens: null,
+  contextWindowUsedTokens: null,
+  inputTokens: null,
+  cachedInputTokens: null,
+  outputTokens: null,
+  totalCostUsd: null,
+  model: null,
+  provider: null,
+};
+
+/** Projects provider-reported usage into the composer selector's stable shape. */
+function selectComposerAgentUsage(
+  agent: Agent | null,
+): Pick<
+  ComposerAgentState,
+  | "contextWindowMaxTokens"
+  | "contextWindowUsedTokens"
+  | "inputTokens"
+  | "cachedInputTokens"
+  | "outputTokens"
+  | "totalCostUsd"
+> {
+  const usage = agent?.lastUsage;
+  return {
+    contextWindowMaxTokens: usage?.contextWindowMaxTokens ?? null,
+    contextWindowUsedTokens: usage?.contextWindowUsedTokens ?? null,
+    inputTokens: usage?.inputTokens ?? null,
+    cachedInputTokens: usage?.cachedInputTokens ?? null,
+    outputTokens: usage?.outputTokens ?? null,
+    totalCostUsd: usage?.totalCostUsd ?? null,
   };
+}
+
+/** Selects the active agent state needed by the composer without changing its subscription shape. */
+function selectComposerAgentState(
+  state: ReturnType<typeof useSessionStore.getState>,
+  serverId: string,
+  agentId: string,
+): ComposerAgentState {
+  const agent = state.sessions[serverId]?.agents?.get(agentId) ?? null;
+  if (!agent) {
+    return EMPTY_COMPOSER_AGENT_STATE;
+  }
+  return {
+    status: agent.status,
+    ...selectComposerAgentUsage(agent),
+    model: agent.model,
+    provider: agent.provider,
+  };
+}
+
+function buildAgentStateSelector(serverId: string, agentId: string) {
+  return (state: ReturnType<typeof useSessionStore.getState>) =>
+    selectComposerAgentState(state, serverId, agentId);
 }
 
 function renderContextWindowMeter(
   contextWindowMaxTokens: number | null,
   contextWindowUsedTokens: number | null,
+  inputTokens: number | null,
+  cachedInputTokens: number | null,
+  outputTokens: number | null,
   totalCostUsd: number | null,
   showPercentage: boolean,
   serverId: string,
@@ -265,7 +324,12 @@ function renderContextWindowMeter(
   pending: boolean,
   glyphSize: number,
 ): ReactElement | null {
-  const hasData = contextWindowMaxTokens !== null && contextWindowUsedTokens !== null;
+  const hasData =
+    (contextWindowMaxTokens !== null && contextWindowUsedTokens !== null) ||
+    inputTokens !== null ||
+    cachedInputTokens !== null ||
+    outputTokens !== null ||
+    totalCostUsd !== null;
   if (!hasData && !pending) {
     return null;
   }
@@ -273,6 +337,9 @@ function renderContextWindowMeter(
     <ContextWindowMeter
       maxTokens={contextWindowMaxTokens}
       usedTokens={contextWindowUsedTokens}
+      inputTokens={inputTokens}
+      cachedInputTokens={cachedInputTokens}
+      outputTokens={outputTokens}
       totalCostUsd={totalCostUsd}
       showPercentage={showPercentage}
       serverId={serverId}
@@ -1837,6 +1904,7 @@ export function Composer({
     agentState.contextWindowMaxTokens,
     agentState.contextWindowUsedTokens,
   );
+  const { inputTokens, cachedInputTokens, outputTokens } = agentState;
 
   const contextWindowPending = agentState.status === "initializing" || isAgentRunning;
   const contextWindowMeterGlyphSize = isCompactLayout ? ICON_SIZE.md : buttonIconSize;
@@ -1846,6 +1914,9 @@ export function Composer({
       renderContextWindowMeter(
         contextWindowMaxTokens,
         contextWindowUsedTokens,
+        inputTokens,
+        cachedInputTokens,
+        outputTokens,
         agentState.totalCostUsd,
         false,
         serverId,
@@ -1856,6 +1927,9 @@ export function Composer({
     [
       contextWindowMaxTokens,
       contextWindowUsedTokens,
+      inputTokens,
+      cachedInputTokens,
+      outputTokens,
       agentState.totalCostUsd,
       serverId,
       agentState.provider,

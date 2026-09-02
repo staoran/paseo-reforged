@@ -1866,8 +1866,12 @@ export const ru: TranslationResources = {
     title: "Контекстное окно",
     used: "{{percentage}}% использовано",
     tokens: "Токены{{used}}/{{max}}",
+    inputTokens: "Входные токены {{count}}",
+    cachedInputTokens: "Кэшированные входные токены {{count}}",
+    outputTokens: "Выходные токены {{count}}",
     sessionCost: "Стоимость сеанса{{cost}}",
     accessibility: "Контекстное окно{{percentage}}% использовано",
+    accessibilityUsage: "Использование сеанса доступно",
   },
   review: {
     comment: {

@@ -1847,8 +1847,12 @@ export const ja: TranslationResources = {
     title: "コンテキストウィンドウ",
     used: "{{percentage}}%使用",
     tokens: "{{used}} / {{max}}トークン",
+    inputTokens: "入力トークン {{count}}",
+    cachedInputTokens: "キャッシュ済み入力トークン {{count}}",
+    outputTokens: "出力トークン {{count}}",
     sessionCost: "セッションコスト: {{cost}}",
     accessibility: "コンテキストウィンドウ{{percentage}}%使用",
+    accessibilityUsage: "セッション使用量を表示できます",
   },
   review: {
     comment: {

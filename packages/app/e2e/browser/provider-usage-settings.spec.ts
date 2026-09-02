@@ -112,7 +112,7 @@ test.describe("provider usage settings", () => {
     await expect(page.getByText("64%")).toBeVisible();
   });
 
-  test("one provider error does not collapse the usage list", async ({ page }) => {
+  test("filters provider errors while preserving available usage", async ({ page }) => {
     test.setTimeout(120_000);
     const serverId = getServerId();
     await installProviderUsageFixture(page, [
@@ -144,9 +144,45 @@ test.describe("provider usage settings", () => {
 
     const card = page.getByTestId("provider-usage-card");
     await expect(card).toBeVisible({ timeout: 10_000 });
-    await expect(card.getByText("Error", { exact: true })).toBeVisible();
-    await expect(card.getByText("Claude auth expired", { exact: true })).toBeVisible();
+    await expect(card.getByText("Error", { exact: true })).toHaveCount(0);
+    await expect(card.getByText("Claude auth expired", { exact: true })).toHaveCount(0);
     await expect(card.getByText("Codex", { exact: true })).toBeVisible();
     await expect(card.getByText("71%")).toBeVisible();
+  });
+
+  test("shows the empty state when every provider is unavailable", async ({ page }) => {
+    test.setTimeout(120_000);
+    const serverId = getServerId();
+    await installProviderUsageFixture(page, [
+      {
+        fetchedAt: "2026-06-19T00:00:00.000Z",
+        providers: [
+          {
+            providerId: "claude",
+            displayName: "Claude",
+            status: "unavailable",
+            planLabel: null,
+            windows: [],
+          },
+          {
+            providerId: "codex",
+            displayName: "Codex",
+            status: "unavailable",
+            planLabel: null,
+            windows: [],
+          },
+        ],
+      },
+    ]);
+
+    await gotoAppShell(page);
+    await openSettings(page);
+    await openSettingsHostSection(page, serverId, "usage");
+
+    const card = page.getByTestId("provider-usage-card");
+    await expect(card.getByText("No usage data", { exact: true })).toBeVisible({ timeout: 10_000 });
+    await expect(card.getByText("Unavailable", { exact: true })).toHaveCount(0);
+    await expect(card.getByText("Claude", { exact: true })).toHaveCount(0);
+    await expect(card.getByText("Codex", { exact: true })).toHaveCount(0);
   });
 });

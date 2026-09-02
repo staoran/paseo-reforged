@@ -1842,8 +1842,12 @@ export const en = {
     title: "Context window",
     used: "{{percentage}}% used",
     tokens: "{{used}} / {{max}} tokens",
+    inputTokens: "Input tokens {{count}}",
+    cachedInputTokens: "Cached input tokens {{count}}",
+    outputTokens: "Output tokens {{count}}",
     sessionCost: "Session cost {{cost}}",
     accessibility: "Context window {{percentage}}% used",
+    accessibilityUsage: "Session usage available",
   },
   review: {
     comment: {

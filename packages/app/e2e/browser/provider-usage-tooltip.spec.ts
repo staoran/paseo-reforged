@@ -58,6 +58,8 @@ test.describe("provider usage tooltip", () => {
       await expect(page.getByText("Test plan")).toBeVisible();
       await expect(page.getByText("Session", { exact: true })).toBeVisible();
       await expect(page.getByText("42%")).toBeVisible();
+      await expect(page.getByText(/Input tokens/)).toBeVisible();
+      await expect(page.getByText(/Output tokens/)).toBeVisible();
     } finally {
       await session.cleanup();
     }
