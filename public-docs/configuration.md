@@ -207,7 +207,7 @@ Set the persisted value in `config.json`:
 
 ### Relay transport
 
-New peers can carry authenticated framed ciphertext as Base64 text or raw binary WebSocket frames. The default `auto` policy prefers binary when the peer supports it and falls back automatically for older peers. Eligible daemon-to-client state synchronization and UTF-8 bulk data use bounded compression before encryption by default; realtime terminal and agent-stream deltas are never compressed.
+Paseo includes an authenticated framed transport implementation that can carry ciphertext as Base64 text or raw binary WebSocket frames and can compress eligible daemon-to-client state synchronization and UTF-8 bulk data. That implementation is currently behind a closed production release gate: hosted relay frames near the local 32 MiB boundary were rejected with close code `1009`, and the target Hermes release-device gate is not complete. Production relay connections therefore continue to use the legacy Base64/hybrid encrypted wire without transport compression.
 
 ```json
 {
@@ -223,11 +223,11 @@ New peers can carry authenticated framed ciphertext as Base64 text or raw binary
 }
 ```
 
-`ciphertextEncoding` accepts `auto`, `base64`, or `binary`. `compression.enabled` is the only compression setting: the v1 codec and level are internal and there are no `algorithm`, `strategy`, or `level` fields.
+`ciphertextEncoding` accepts `auto`, `base64`, or `binary`. `compression.enabled` is the only compression setting: the v1 codec and level are internal and there are no `algorithm`, `strategy`, or `level` fields. While the release gate is closed, these values persist as future transport preferences but do not change the actual production wire.
 
-Changing compression takes effect for eligible frames on active framed connections. Changing `ciphertextEncoding` does not interrupt an active data connection; the new representation is selected on the next relay data connection. Both settings persist across daemon restarts, and neither requires restarting the relay control connection.
+There is no config field, CLI flag, environment variable, or ordinary client option that bypasses the release gate. In isolated protocol validation only, changing compression takes effect for eligible frames on active framed connections, while changing `ciphertextEncoding` applies to the next relay data connection. Both settings persist across daemon restarts.
 
-The transport fields require a daemon that advertises the relay transport policy capability. If you later run an older daemon binary whose persisted relay schema does not recognize `transport`, remove `daemon.relay.transport` from `config.json` before starting that binary. Wire compatibility itself is automatic: either mixed-version direction uses the legacy representation.
+The transport fields require a daemon that advertises the relay transport policy capability. If you later run an older daemon binary whose persisted relay schema does not recognize `transport`, remove `daemon.relay.transport` from `config.json` before starting that binary. Current production and either mixed-version direction use the legacy representation.
 
 ## Common env vars
 
