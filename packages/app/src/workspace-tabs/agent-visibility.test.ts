@@ -335,6 +335,7 @@ describe("workspace agent visibility", () => {
         terminalsHydrated: true,
         knownTerminalIds: ["terminal-1", "script-terminal"],
         standaloneTerminalIds: ["terminal-1"],
+        hasActivePendingTerminalCreate: false,
         hasActivePendingDraftCreate: false,
       }),
     ).toEqual({
@@ -345,6 +346,7 @@ describe("workspace agent visibility", () => {
       knownAgentIds: agentVisibility.knownAgentIds,
       knownTerminalIds: ["terminal-1", "script-terminal"],
       standaloneTerminalIds: ["terminal-1"],
+      hasActivePendingTerminalCreate: false,
       hasActivePendingDraftCreate: false,
     });
   });

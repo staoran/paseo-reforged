@@ -9,6 +9,7 @@ import {
 } from "@getpaseo/client/internal/daemon-client";
 import {
   connectionFromListen,
+  createRemoteSshHostConnection,
   normalizeStoredHostProfile,
   upsertHostConnectionInProfiles,
   registryHasConnection,
@@ -38,8 +39,8 @@ import {
   type ConnectionProbeState,
 } from "@/utils/connection-selection";
 import {
-  buildLocalDaemonTransportUrl,
-  createDesktopLocalDaemonTransportFactory,
+  buildDesktopDaemonTransportUrl,
+  createDesktopDaemonTransportFactory,
   createDesktopWebSocketTransportFactory,
 } from "@/desktop/daemon/desktop-daemon-transport";
 import { getDesktopHost } from "@/desktop/host";
@@ -60,7 +61,15 @@ import { createMessageSubmissionWriter } from "@/composer/submission/writer";
 import { resolveComposerAttachmentSubmitFormat } from "@/composer/attachments/submit";
 import { encodeImages } from "@/utils/encode-images";
 import { DirectorySync, type RefreshAgentDirectoryResult } from "@/runtime/directory-sync";
+import { projectIconCache } from "@/projects/icon-cache";
 import { ReplicaCache, type ReplicaCacheFinalSource } from "@/runtime/replica-cache";
+import {
+  createTimelineReplica,
+  createViewedTimelineOwner,
+  type TimelineReplica,
+  type ViewedTimelineOwner,
+  type ViewedTimelineOwnerPorts,
+} from "@/timeline/viewed-timeline-sync";
 import { nativePerformanceTrace } from "@/performance/native-trace";
 import { revokePushNotifications } from "@/push-notifications";
 import { createAppWebSocketFactory } from "./websocket-factory";
@@ -72,6 +81,7 @@ export type ActiveConnection =
   | { type: "directTcp"; endpoint: string; display: string }
   | { type: "directSocket"; endpoint: string; display: "socket" }
   | { type: "directPipe"; endpoint: string; display: "pipe" }
+  | { type: "remoteSsh"; endpoint: string; display: string }
   | { type: "relay"; endpoint: string; display: "relay" };
 
 export type HostRuntimeAgentDirectoryStatus =
@@ -185,7 +195,6 @@ const PROBE_MAX_BACKOFF_MS = 30_000;
 const PROBE_INACTIVE_WHILE_ONLINE_MS = 120_000;
 const ADAPTIVE_SWITCH_THRESHOLD_MS = 40;
 const ADAPTIVE_SWITCH_CONSECUTIVE_PROBES = 3;
-const DEFAULT_AGENT_DIRECTORY_PAGE_LIMIT = 200;
 const CONFIGURED_OVERRIDE_BOOTSTRAP_RETRY_MS = 1_000;
 
 function toActiveConnection(connection: HostConnection): ActiveConnection {
@@ -201,6 +210,13 @@ function toActiveConnection(connection: HostConnection): ActiveConnection {
       type: "directPipe",
       endpoint: connection.path,
       display: "pipe",
+    };
+  }
+  if (connection.type === "remoteSsh") {
+    return {
+      type: "remoteSsh",
+      endpoint: connection.host,
+      display: connection.host,
     };
   }
   if (connection.type === "directTcp") {
@@ -479,13 +495,14 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
     : undefined;
   const appCapabilities = {
     [CLIENT_CAPS.selectiveAgentTimeline]: true,
+    [CLIENT_CAPS.timelineReplacementInvalidation]: true,
     ...browserAutomationCapabilities,
   };
 
   return {
     createClient: ({ host, connection, clientId, runtimeGeneration }) => {
-      const localTransportFactory = createDesktopLocalDaemonTransportFactory();
-      const appWebSocketConfig = { webSocketFactory: createAppWebSocketFactory() };
+      const desktopTransportFactory = createDesktopDaemonTransportFactory();
+      const webSocketConfig = { webSocketFactory: createAppWebSocketFactory() };
       const base = {
         suppressSendErrors: true,
         clientId,
@@ -498,10 +515,25 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
       if (connection.type === "directSocket" || connection.type === "directPipe") {
         return new DaemonClient({
           ...base,
-          ...(localTransportFactory ? { transportFactory: localTransportFactory } : {}),
-          url: buildLocalDaemonTransportUrl({
+          ...(desktopTransportFactory ? { transportFactory: desktopTransportFactory } : {}),
+          url: buildDesktopDaemonTransportUrl({
             transportType: connection.type === "directSocket" ? "socket" : "pipe",
             transportPath: connection.path,
+          }),
+        });
+      }
+      if (connection.type === "remoteSsh") {
+        if (!desktopTransportFactory) {
+          throw new Error("Remote SSH is only available in the desktop app.");
+        }
+        return new DaemonClient({
+          ...base,
+          transportFactory: desktopTransportFactory,
+          url: buildDesktopDaemonTransportUrl({
+            transportType: "ssh",
+            host: connection.host,
+            ...(connection.sshPort !== undefined ? { sshPort: connection.sshPort } : {}),
+            ...(connection.daemonPort !== undefined ? { daemonPort: connection.daemonPort } : {}),
           }),
         });
       }
@@ -514,7 +546,7 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
           ...base,
           ...(desktopWebSocketTransportFactory
             ? { transportFactory: desktopWebSocketTransportFactory }
-            : appWebSocketConfig),
+            : webSocketConfig),
           url: buildDaemonWebSocketUrl(connection.endpoint, {
             useTls: connection.useTls ?? false,
           }),
@@ -524,7 +556,7 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
       }
       return new DaemonClient({
         ...base,
-        ...appWebSocketConfig,
+        ...webSocketConfig,
         url: buildRelayWebSocketUrl({
           endpoint: connection.relayEndpoint,
           useTls: connection.useTls ?? shouldUseTlsForDefaultHostedRelay(connection.relayEndpoint),
@@ -1403,9 +1435,9 @@ export class HostRuntimeStore {
   private deps: HostRuntimeControllerDeps;
   private lastConnectionStatusByServer = new Map<string, HostRuntimeConnectionStatus>();
   private connectionStatusStartedAtByServer = new Map<string, number>();
-  private directoryBootstrapInFlight = new Map<string, Promise<void>>();
   private queuedAgentDrainInFlight = new Set<string>();
   private directorySyncByServer = new Map<string, DirectorySync>();
+  private timelineReplicaByServer = new Map<string, TimelineReplica>();
   private configuredOverrideBootstrapInFlight: Promise<void> | null = null;
   private bootPromise: Promise<void> | null = null;
   private storage: HostRuntimeStorage;
@@ -1419,7 +1451,7 @@ export class HostRuntimeStore {
   }) {
     this.deps = input?.deps ?? createDefaultDeps();
     this.storage = input?.storage ?? AsyncStorage;
-    this.replicaCache = new ReplicaCache(this.storage);
+    this.replicaCache = new ReplicaCache(AsyncStorage);
     this.revokePushNotifications = input?.revokePushNotifications ?? revokePushNotifications;
   }
 
@@ -1518,12 +1550,12 @@ export class HostRuntimeStore {
       }
       this.hosts = profiles;
       this.replicaCache.setHosts(profiles.map((profile) => profile.serverId));
-      await this.replicaCache.restore();
+      projectIconCache.setHosts(profiles.map((profile) => profile.serverId));
+      await projectIconCache.restore();
       this.syncHosts(profiles);
     } catch (error) {
       console.error("[HostRuntime] Failed to load host registry from storage", error);
     } finally {
-      this.replicaCache.start();
       this.hostRegistryStatus = "ready";
       this.emitHostList();
       if (shouldPersistHosts) {
@@ -1653,20 +1685,32 @@ export class HostRuntimeStore {
     rekeyMap(this.controllers, oldServerId, newServerId);
     rekeyMap(this.lastConnectionStatusByServer, oldServerId, newServerId);
     rekeyMap(this.connectionStatusStartedAtByServer, oldServerId, newServerId);
-    rekeyMap(this.directoryBootstrapInFlight, oldServerId, newServerId);
     this.replicaCache.reconcileServerId(oldServerId, newServerId);
+    projectIconCache.reconcileServerId(oldServerId, newServerId);
     this.directorySyncByServer.get(oldServerId)?.dispose();
     this.directorySyncByServer.delete(oldServerId);
-    const directory = new DirectorySync(newServerId, {
-      onAgentStoppedRunning: (agentId) => {
-        this.notifyReplicaCacheFinal(newServerId, agentId, "status");
-        this.drainQueuedAgentMessage(newServerId, agentId);
+    const directory = new DirectorySync(
+      newServerId,
+      {
+        onAgentStoppedRunning: (agentId) => {
+          this.notifyReplicaCacheFinal(newServerId, agentId, "status");
+          this.drainQueuedAgentMessage(newServerId, agentId);
+        },
+        markAgentLoading: () => controller.markAgentDirectorySyncLoading(),
+        markAgentReady: () => controller.markAgentDirectorySyncReady(),
+        markAgentError: (error) => controller.markAgentDirectorySyncError(error),
       },
-      markAgentLoading: () => controller.markAgentDirectorySyncLoading(),
-      markAgentReady: () => controller.markAgentDirectorySyncReady(),
-      markAgentError: (error) => controller.markAgentDirectorySyncError(error),
-    });
+      this.replicaCache,
+    );
     this.directorySyncByServer.set(newServerId, directory);
+    this.timelineReplicaByServer.set(
+      newServerId,
+      createTimelineReplica({
+        serverId: newServerId,
+        storage: this.replicaCache,
+        prepareAgent: (agentId) => directory.prepareAgentRoute(agentId),
+      }),
+    );
     controller.adoptReconciledServerId(newServerId);
     const snapshot = controller.getSnapshot();
     this.clearHostReplica(oldServerId);
@@ -1779,6 +1823,18 @@ export class HostRuntimeStore {
         ...(password ? { password } : {}),
         ...(input.headers ? { headers: input.headers } : {}),
       },
+    });
+  }
+
+  async probeAndUpsertRemoteSshConnection(input: {
+    host: string;
+    sshPort?: number;
+    daemonPort?: number;
+    label?: string;
+  }): Promise<{ profile: HostProfile; serverId: string; hostname: string | null }> {
+    return this.probeAndUpsertConnection({
+      label: input.label,
+      connection: createRemoteSshHostConnection(input),
     });
   }
 
@@ -2022,6 +2078,7 @@ export class HostRuntimeStore {
     },
   ): void {
     this.replicaCache.setHosts(hosts.map((host) => host.serverId));
+    projectIconCache.setHosts(hosts.map((host) => host.serverId));
     const nextIds = new Set(hosts.map((host) => host.serverId));
     for (const [serverId, controller] of this.controllers) {
       if (nextIds.has(serverId)) {
@@ -2030,9 +2087,9 @@ export class HostRuntimeStore {
       this.controllers.delete(serverId);
       this.lastConnectionStatusByServer.delete(serverId);
       this.connectionStatusStartedAtByServer.delete(serverId);
-      this.directoryBootstrapInFlight.delete(serverId);
       this.directorySyncByServer.get(serverId)?.dispose();
       this.directorySyncByServer.delete(serverId);
+      this.timelineReplicaByServer.delete(serverId);
       this.clearHostReplica(serverId);
       void controller.stop();
       this.emit(serverId);
@@ -2056,9 +2113,10 @@ export class HostRuntimeStore {
         onReconcileServerId: (oldId, newId) => this.reconcileServerId(oldId, newId),
       });
       this.controllers.set(host.serverId, controller);
-      this.directorySyncByServer.set(
+      useSessionStore.getState().initializeSession(host.serverId, null);
+      const directory = new DirectorySync(
         host.serverId,
-        new DirectorySync(host.serverId, {
+        {
           onAgentStoppedRunning: (agentId) => {
             this.notifyReplicaCacheFinal(host.serverId, agentId, "status");
             this.drainQueuedAgentMessage(host.serverId, agentId);
@@ -2066,6 +2124,16 @@ export class HostRuntimeStore {
           markAgentLoading: () => controller.markAgentDirectorySyncLoading(),
           markAgentReady: () => controller.markAgentDirectorySyncReady(),
           markAgentError: (error) => controller.markAgentDirectorySyncError(error),
+        },
+        this.replicaCache,
+      );
+      this.directorySyncByServer.set(host.serverId, directory);
+      this.timelineReplicaByServer.set(
+        host.serverId,
+        createTimelineReplica({
+          serverId: host.serverId,
+          storage: this.replicaCache,
+          prepareAgent: (agentId) => directory.prepareAgentRoute(agentId),
         }),
       );
       const initialSnapshot = controller.getSnapshot();
@@ -2074,7 +2142,7 @@ export class HostRuntimeStore {
       controller.subscribe(() => {
         const snapshot = controller.getSnapshot();
         this.syncSessionReplica(snapshot.serverId, snapshot);
-        this.maybeAutoBootstrapDirectories(snapshot.serverId);
+        this.syncDirectoryConnection(snapshot.serverId);
         this.emit(snapshot.serverId);
       });
       void controller
@@ -2107,24 +2175,23 @@ export class HostRuntimeStore {
     useWorkspaceSetupStore.getState().clearServer(serverId);
   }
 
-  private maybeAutoBootstrapDirectories(serverId: string): void {
+  private syncDirectoryConnection(serverId: string): void {
     const controller = this.controllers.get(serverId);
     if (!controller) {
       this.lastConnectionStatusByServer.delete(serverId);
       this.connectionStatusStartedAtByServer.delete(serverId);
-      this.directoryBootstrapInFlight.delete(serverId);
       return;
     }
     const snapshot = controller.getSnapshot();
-    const directorySourceChanged =
-      this.directorySyncByServer.get(serverId)?.connectionChanged({
-        client: snapshot.client,
-        status: snapshot.connectionStatus === "online" ? "online" : "offline",
-        source: {
-          clientGeneration: snapshot.clientGeneration,
-          connectionEpoch: snapshot.connectionEpoch,
-        },
-      }) ?? false;
+    const directory = this.directorySyncByServer.get(serverId);
+    directory?.connectionChanged({
+      client: snapshot.client,
+      status: snapshot.connectionStatus === "online" ? "online" : "offline",
+      source: {
+        clientGeneration: snapshot.clientGeneration,
+        connectionEpoch: snapshot.connectionEpoch,
+      },
+    });
     const previousStatus = this.lastConnectionStatusByServer.get(serverId);
     const statusChanged = previousStatus !== snapshot.connectionStatus;
     const isUnavailable =
@@ -2146,48 +2213,6 @@ export class HostRuntimeStore {
       invalidateServerDataQueriesAfterReconnect({ queryClient, serverId });
       void queryClient.invalidateQueries({ queryKey: schedulesQueryBaseKey });
     }
-
-    // Runtime owns directory bootstrap policy, including reconnect and delayed
-    // session initialization races.
-    if (snapshot.connectionStatus !== "online") {
-      return;
-    }
-    if (!didTransitionOnline && snapshot.hasEverLoadedAgentDirectory) {
-      return;
-    }
-    if (this.directoryBootstrapInFlight.has(serverId) && !directorySourceChanged) {
-      return;
-    }
-
-    const bootstrap = Promise.resolve()
-      .then(() =>
-        Promise.all([
-          this.refreshAgentDirectory({
-            serverId,
-            subscribe: { subscriptionId: `app:${serverId}` },
-            page: { limit: DEFAULT_AGENT_DIRECTORY_PAGE_LIMIT },
-          }).catch((error) => {
-            console.error("[HostRuntime] agent directory bootstrap failed", {
-              serverId,
-              error: toErrorMessage(error),
-            });
-          }),
-          this.refreshWorkspaceDirectory({ serverId, subscribe: true }).catch((error) => {
-            console.error("[HostRuntime] workspace directory bootstrap failed", {
-              serverId,
-              error: toErrorMessage(error),
-            });
-          }),
-        ]).then(() => undefined),
-      )
-      .finally(() => {
-        const inFlight = this.directoryBootstrapInFlight.get(serverId);
-        if (inFlight === bootstrap) {
-          this.directoryBootstrapInFlight.delete(serverId);
-        }
-      });
-
-    this.directoryBootstrapInFlight.set(serverId, bootstrap);
   }
 
   drainQueuedAgentMessage(serverId: string, agentId: string): void {
@@ -2359,7 +2384,33 @@ export class HostRuntimeStore {
   async refreshDirectories(serverId: string): Promise<void> {
     const directory = this.directorySyncByServer.get(serverId);
     if (!directory) throw new Error(`Unknown host runtime for serverId ${serverId}`);
-    await directory.refreshAll();
+    await directory.refreshDemand();
+  }
+
+  acquireDirectoryDemand(serverId: string): () => void {
+    const directory = this.directorySyncByServer.get(serverId);
+    if (!directory) return () => undefined;
+    const source = {};
+    directory.setDemand(source, true);
+    return () => directory.setDemand(source, false);
+  }
+
+  async prepareAgentRoute(serverId: string, agentId: string): Promise<void> {
+    const directory = this.directorySyncByServer.get(serverId);
+    if (!directory) throw new Error(`Unknown host runtime for serverId ${serverId}`);
+    await directory.prepareAgentRoute(agentId);
+  }
+
+  async prepareWorkspaceRoute(serverId: string, workspaceId: string): Promise<void> {
+    const directory = this.directorySyncByServer.get(serverId);
+    if (!directory) throw new Error(`Unknown host runtime for serverId ${serverId}`);
+    await directory.prepareWorkspaceRoute(workspaceId);
+  }
+
+  async prepareAgentTimeline(serverId: string, agentId: string): Promise<void> {
+    const replica = this.timelineReplicaByServer.get(serverId);
+    if (!replica) throw new Error(`Unknown host runtime for serverId ${serverId}`);
+    await replica.prepare(agentId);
   }
 
   fetchAgentTimeline(
@@ -2372,30 +2423,21 @@ export class HostRuntimeStore {
     return directory.fetchTimeline(agentId, request);
   }
 
-  refreshAllAgentDirectories(input?: { serverIds?: string[] }): void {
-    const targetServerIds = input?.serverIds ? new Set(input.serverIds) : null;
-    for (const [serverId] of this.controllers) {
-      if (targetServerIds && !targetServerIds.has(serverId)) {
-        continue;
-      }
-      void this.refreshAgentDirectory({ serverId }).catch(() => undefined);
-    }
-  }
-
-  markAgentDirectorySyncLoading(serverId: string): void {
-    this.controllers.get(serverId)?.markAgentDirectorySyncLoading();
-  }
-
-  markAgentDirectorySyncReady(serverId: string): void {
-    this.controllers.get(serverId)?.markAgentDirectorySyncReady();
-  }
-
-  markAgentDirectorySyncError(serverId: string, error: string): void {
-    this.controllers.get(serverId)?.markAgentDirectorySyncError(error);
-  }
-
-  markAgentDirectorySyncIdle(serverId: string): void {
-    this.controllers.get(serverId)?.markAgentDirectorySyncIdle();
+  createViewedTimelineOwner(
+    serverId: string,
+    ports: ViewedTimelineOwnerPorts,
+  ): ViewedTimelineOwner {
+    const directory = this.directorySyncByServer.get(serverId);
+    if (!directory) throw new Error(`Unknown host runtime for serverId ${serverId}`);
+    const replica = this.timelineReplicaByServer.get(serverId);
+    if (!replica) throw new Error(`Unknown host runtime for serverId ${serverId}`);
+    return createViewedTimelineOwner({
+      serverId,
+      replica,
+      replaceDemandedAgentIds: (agentIds) => directory.setAgentRouteDemand(agentIds),
+      drainQueuedAgentMessage: (agentId) => this.drainQueuedAgentMessage(serverId, agentId),
+      ports,
+    });
   }
 
   private emit(serverId: string): void {
@@ -2568,6 +2610,12 @@ export interface HostMutations {
     headers?: Record<string, string>;
     label?: string;
   }) => Promise<{ profile: HostProfile; serverId: string; hostname: string | null }>;
+  probeAndUpsertRemoteSshConnection: (input: {
+    host: string;
+    sshPort?: number;
+    daemonPort?: number;
+    label?: string;
+  }) => Promise<{ profile: HostProfile; serverId: string; hostname: string | null }>;
   upsertRelayConnection: (input: {
     serverId: string;
     relayEndpoint: string;
@@ -2593,6 +2641,7 @@ export function useHostMutations(): HostMutations {
     () => ({
       upsertDirectConnection: (input) => store.upsertDirectConnection(input),
       probeAndUpsertDirectConnection: (input) => store.probeAndUpsertDirectConnection(input),
+      probeAndUpsertRemoteSshConnection: (input) => store.probeAndUpsertRemoteSshConnection(input),
       upsertRelayConnection: (input) => store.upsertRelayConnection(input),
       upsertConnectionFromOffer: (offer, label) => store.upsertConnectionFromOffer(offer, label),
       upsertConnectionFromOfferUrl: (url, label) => store.upsertConnectionFromOfferUrl(url, label),

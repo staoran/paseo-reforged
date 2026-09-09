@@ -23,9 +23,22 @@ export function openSeededDraftWindow(input: {
   if (input.splitRight) {
     const focusedPaneId = layout.layoutByWorkspace[workspaceKey]?.focusedPaneId ?? null;
     if (focusedPaneId) {
-      layout.splitPaneEmpty(workspaceKey, { targetPaneId: focusedPaneId, position: "right" });
+      const paneId = layout.splitPaneEmpty(workspaceKey, {
+        targetPaneId: focusedPaneId,
+        position: "right",
+      });
+      return (
+        layout.openTab({
+          workspaceKey,
+          target: { kind: "draft", draftId },
+          intent: "reveal",
+          ...(paneId ? { placement: { mode: "pane", paneId } } : {}),
+        }) !== null
+      );
     }
   }
 
-  return layout.openTabFocused(workspaceKey, { kind: "draft", draftId }) !== null;
+  return (
+    layout.openTab({ workspaceKey, target: { kind: "draft", draftId }, intent: "reveal" }) !== null
+  );
 }

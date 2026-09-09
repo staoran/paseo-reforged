@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactElement } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactElement,
+  type RefObject,
+} from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import {
@@ -17,6 +26,7 @@ import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { FloatingScrollView, FloatingSurface } from "@/components/ui/floating";
 import { getIsElectronRuntime, HEADER_INNER_HEIGHT } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
+import type { KeyboardFocusScope } from "@/keyboard/actions";
 import {
   getOverlayRoot,
   OverlayLayerProvider,
@@ -232,6 +242,7 @@ export interface AnchoredSurfaceProps {
   onPointerEnter?: () => void;
   onPointerLeave?: () => void;
   testID?: string;
+  keyboardFocusScope?: KeyboardFocusScope;
   children: ReactElement;
 }
 
@@ -291,6 +302,7 @@ export function AnchoredSurface({
   onPointerEnter,
   onPointerLeave,
   testID,
+  keyboardFocusScope,
   children,
 }: AnchoredSurfaceProps): ReactElement | null {
   const surfaceNativeID = useId();
@@ -312,6 +324,17 @@ export function AnchoredSurface({
     surfaceNativeID,
     revision,
   });
+
+  useEffect(() => {
+    if (!isWeb || !open || !contentSize || typeof document === "undefined") return undefined;
+    const frame = requestAnimationFrame(() => {
+      document
+        .getElementById(surfaceNativeID)
+        ?.querySelector<HTMLElement>('[data-menu-item="true"]:not([data-menu-disabled="true"])')
+        ?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [contentSize, open, surfaceNativeID]);
 
   const frameStyle = useMemo<StyleProp<ViewStyle>>(() => {
     const { width: screenWidth } = Dimensions.get("window");
@@ -347,6 +370,13 @@ export function AnchoredSurface({
     () => [visibleContentSize ? { height: visibleContentSize.height } : null],
     [visibleContentSize],
   );
+  const surfaceDataSet = useMemo(
+    () => ({
+      menuSurface: "true",
+      ...(keyboardFocusScope ? { keyboardScope: keyboardFocusScope } : null),
+    }),
+    [keyboardFocusScope],
+  );
 
   if (!open) return null;
 
@@ -369,6 +399,7 @@ export function AnchoredSurface({
         tabIndex={-1}
         nativeID={surfaceNativeID}
         testID={testID}
+        dataSet={surfaceDataSet}
         style={styles.content}
         frameStyle={frameStyle}
         entering={contentEntering}
@@ -409,11 +440,13 @@ export function MenuOverlay({
   visible,
   onClose,
   allowWebContextMenuPassthrough = false,
+  restoreFocusRef,
   children,
 }: {
   visible: boolean;
   onClose: () => void;
   allowWebContextMenuPassthrough?: boolean;
+  restoreFocusRef?: RefObject<View | null>;
   children: ReactElement | null;
 }): ReactElement | null {
   const floatingLayer = useOverlayLayer("floating");
@@ -421,11 +454,44 @@ export function MenuOverlay({
 
   const handleWebOverlayKeyDown = useCallback(
     (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return false;
-      event.preventDefault();
-      event.stopPropagation();
-      onClose();
-      return true;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+        return true;
+      }
+
+      const target = event.target instanceof Element ? event.target : null;
+      const surface = target?.closest<HTMLElement>('[data-menu-surface="true"]');
+      if (!surface) return false;
+      const items = Array.from(
+        surface.querySelectorAll<HTMLElement>(
+          '[data-menu-item="true"]:not([data-menu-disabled="true"])',
+        ),
+      );
+      if (items.length === 0) return false;
+      const currentIndex = items.findIndex((item) => item === document.activeElement);
+      let nextIndex: number | null = null;
+      if (event.key === "ArrowDown")
+        nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % items.length;
+      if (event.key === "ArrowUp")
+        nextIndex =
+          currentIndex < 0 ? items.length - 1 : (currentIndex - 1 + items.length) % items.length;
+      if (event.key === "Home") nextIndex = 0;
+      if (event.key === "End") nextIndex = items.length - 1;
+      if (nextIndex !== null) {
+        event.preventDefault();
+        event.stopPropagation();
+        items[nextIndex]?.focus();
+        return true;
+      }
+      if ((event.key === "Enter" || event.key === " ") && currentIndex >= 0) {
+        event.preventDefault();
+        event.stopPropagation();
+        items[currentIndex]?.click();
+        return true;
+      }
+      return false;
     },
     [onClose],
   );
@@ -433,6 +499,7 @@ export function MenuOverlay({
     active: isWeb && visible,
     layer: floatingLayer,
     onKeyDown: handleWebOverlayKeyDown,
+    restoreFocusRef,
   });
   const setWebOverlayNode = useCallback(
     (node: View | null) => {

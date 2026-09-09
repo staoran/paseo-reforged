@@ -1,8 +1,9 @@
 import React, { memo, useCallback } from "react";
-import { Text, TextInput, View, type PressableStateCallbackType } from "react-native";
+import { Text, View, type PressableStateCallbackType } from "react-native";
 import { Check, Pencil, X } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { EditingTextInput } from "@/components/ui/text-input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Theme } from "@/styles/theme";
 
@@ -109,7 +110,7 @@ export const LastUserMessageEditor = memo(function LastUserMessageEditor({
 }: LastUserMessageEditorProps) {
   return (
     <View style={styles.editor} testID="edit-last-user-message-editor">
-      <TextInput
+      <EditingTextInput
         accessibilityLabel={labels.input}
         autoFocus
         editable={controls.canEdit}

@@ -13,6 +13,10 @@ const patchedPackages = [
     patchPrefix: "react-native-markdown-display+",
   },
   {
+    nodeModulesPath: "node_modules/react-native",
+    patchPrefix: "react-native+",
+  },
+  {
     nodeModulesPath: "node_modules/react-native-draggable-flatlist",
     patchPrefix: "react-native-draggable-flatlist+",
   },
@@ -23,6 +27,14 @@ const patchedPackages = [
   {
     nodeModulesPath: "node_modules/react-native-unistyles",
     patchPrefix: "react-native-unistyles+",
+  },
+  {
+    nodeModulesPath: "node_modules/react-native-svg",
+    patchPrefix: "react-native-svg+",
+  },
+  {
+    nodeModulesPath: "node_modules/@mattermost/react-native-paste-input",
+    patchPrefix: "@mattermost+react-native-paste-input+",
   },
   {
     nodeModulesPath: "packages/server/node_modules/@opencode-ai/sdk",

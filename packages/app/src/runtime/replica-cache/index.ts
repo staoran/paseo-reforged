@@ -14,6 +14,7 @@ import {
   selectAgentTimelineState,
   useSessionStore,
   type Agent,
+  type AgentTimelineCursorState,
   type SessionReplica,
   type SessionState,
   type ProjectDescriptor,
@@ -54,7 +55,7 @@ const TodoEntrySchema = z.strictObject({
 const TaskActivitySchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("created"), count: z.number().int().nonnegative() }),
   z.strictObject({
-    type: z.enum(["added", "started", "completed", "reopened"]),
+    type: z.enum(["added", "started", "completed"]),
     task: z.string(),
   }),
 ]);
@@ -283,6 +284,36 @@ interface ReplicaCacheOptions {
   maxBytes?: number;
 }
 
+export interface CachedDirectory {
+  agents: Map<string, Agent>;
+  workspaces: Map<string, WorkspaceDescriptor>;
+  projects: Map<string, ProjectDescriptor>;
+  checkpoint?: DirectoryCheckpoint;
+}
+
+export interface CachedWorkspace {
+  workspace: WorkspaceDescriptor;
+  project?: ProjectDescriptor;
+}
+
+export interface DirectoryCursor {
+  generation: string;
+  afterSeq: number;
+}
+
+export interface DirectoryCheckpoint {
+  projects?: DirectoryCursor;
+  workspaces?: DirectoryCursor;
+  agents?: DirectoryCursor;
+}
+
+export interface CachedTimeline {
+  agentId: string;
+  items: StreamItem[];
+  range: AgentTimelineCursorState | null;
+  hasOlder: boolean;
+}
+
 function deserializeTimeline(stored: StoredHost["timeline"]): SessionReplica["timeline"] {
   if (!stored) {
     return null;
@@ -347,6 +378,8 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
         ...(item.preTokens !== undefined ? { preTokens: item.preTokens } : {}),
       };
     case "tool_call":
+      return null;
+    case "plugin":
       return null;
   }
 }
@@ -719,7 +752,67 @@ export class ReplicaCache {
     this.markHostDirty(newServerId, REPLICA_DIRTY_DOMAINS);
   }
 
+  async readAgent(serverId: string, agentId: string): Promise<Agent | undefined> {
+    if (!this.activeServerIds.has(serverId)) return undefined;
+    const stored = this.storedHosts.get(serverId);
+    return stored ? deserializeHost(stored).agents.get(agentId) : undefined;
+  }
+
+  async readWorkspace(serverId: string, workspaceId: string): Promise<CachedWorkspace | undefined> {
+    if (!this.activeServerIds.has(serverId)) return undefined;
+    const stored = this.storedHosts.get(serverId);
+    if (!stored) return undefined;
+    const replica = deserializeHost(stored);
+    const workspace = replica.workspaces.get(workspaceId);
+    if (!workspace) return undefined;
+    const project = replica.projects.get(workspace.projectId);
+    return project ? { workspace, project } : { workspace };
+  }
+
+  async readDirectory(serverId: string): Promise<CachedDirectory> {
+    if (!this.activeServerIds.has(serverId)) {
+      return { agents: new Map(), workspaces: new Map(), projects: new Map() };
+    }
+    const stored = this.storedHosts.get(serverId);
+    if (!stored) return { agents: new Map(), workspaces: new Map(), projects: new Map() };
+    const replica = deserializeHost(stored);
+    return {
+      agents: replica.agents,
+      workspaces: replica.workspaces,
+      projects: replica.projects,
+    };
+  }
+
+  commitDirectory(
+    _serverId: string,
+    _directory: {
+      agents: Map<string, Agent>;
+      workspaces: Map<string, WorkspaceDescriptor>;
+      projects: Map<string, ProjectDescriptor>;
+      checkpoint?: DirectoryCheckpoint;
+    },
+  ): void {
+    // The session store remains the cache's sole source. DirectorySync commits already update it.
+  }
+
   /** Writes the current active-host projection even when no domain is dirty */
+  async readTimeline(serverId: string, agentId: string): Promise<CachedTimeline | undefined> {
+    const session = useSessionStore.getState().sessions[serverId];
+    const timeline = selectAgentTimelineState(session, agentId);
+    if (timeline.status === "cold") return undefined;
+    return {
+      agentId,
+      items: timeline.items,
+      range: timeline.status === "synced" ? timeline.range : null,
+      hasOlder: timeline.status === "synced" && timeline.older === "available",
+    };
+  }
+
+  commitTimeline(_serverId: string, _agentId: string, _timeline: CachedTimeline): void {
+    // Fork(0102): session-store 是时间线唯一事实源,本缓存的投影经
+    // handleStoreChange 自动跟进;上游 timelineReplica 的提交在此降级为 no-op。
+  }
+
   async flush(): Promise<void> {
     this.clearAllPersistTimers();
     this.pendingForceFlush = true;

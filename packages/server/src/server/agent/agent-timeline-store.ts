@@ -278,13 +278,14 @@ export class InMemoryAgentTimelineStore {
   append(
     agentId: string,
     item: AgentTimelineItem,
-    options?: { timestamp?: string; providerMessageId?: string },
+    options?: { timestamp?: string; providerMessageId?: string; turnId?: string },
   ): AgentTimelineRow {
     const state = this.requireState(agentId);
     const row: AgentTimelineRow = {
       seq: state.nextSeq,
       timestamp: options?.timestamp ?? new Date().toISOString(),
       item,
+      ...(options?.turnId ? { turnId: options.turnId } : {}),
       ...(options?.providerMessageId ? { providerMessageId: options.providerMessageId } : {}),
     };
     state.nextSeq += 1;
@@ -591,6 +592,31 @@ export class InMemoryDurableAgentTimelineStore implements AgentTimelineStore {
     if (ctx.direction === "tail") return fetchTail(ctx);
     if (ctx.direction === "after") return fetchAfter(ctx);
     return fetchBefore(ctx);
+  }
+
+  /** Returns the last item in the committed generation. */
+  async getLastItem(agentId: string): Promise<AgentTimelineItem | null> {
+    return this.states.get(agentId)?.active?.rows.at(-1)?.item ?? null;
+  }
+
+  /** Returns the last contiguous assistant message in the committed generation. */
+  async getLastAssistantMessage(agentId: string): Promise<string | null> {
+    const rows = this.states.get(agentId)?.active?.rows ?? [];
+    const chunks: string[] = [];
+    for (let index = rows.length - 1; index >= 0; index -= 1) {
+      const item = rows[index]?.item;
+      if (item?.type !== "assistant_message") {
+        if (chunks.length > 0) break;
+        continue;
+      }
+      chunks.push(item.text);
+    }
+    return chunks.length > 0 ? chunks.toReversed().join("") : null;
+  }
+
+  /** Returns the last sequence number in the committed generation. */
+  async getLatestCommittedSeq(agentId: string): Promise<number> {
+    return this.states.get(agentId)?.active?.rows.at(-1)?.seq ?? 0;
   }
 
   async flush(_agentId?: string): Promise<void> {}

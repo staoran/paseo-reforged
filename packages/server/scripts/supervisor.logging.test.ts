@@ -433,6 +433,9 @@ describe("supervisor durable logging", () => {
       releaseWorkerAfterStderr: logFailureMarker,
       workerSource: `
         process.on("disconnect", () => process.exit(90));
+        process.on("message", (message) => {
+          if (message?.type === "paseo:graceful-shutdown") process.exit(0);
+        });
         process.stdin.setEncoding("utf8");
         process.stdin.once("data", () => {
           process.stdout.write("worker stdout after log failure\\n");
@@ -470,6 +473,9 @@ describe("supervisor durable logging", () => {
         appendFileSync(registryPath, descendant.pid + "\\n");
         process.stdout.write("fixture-descendant-pid:" + descendant.pid + "\\n");
         process.send?.({ type: "paseo:shutdown", reason: "descendant_cleanup_complete" });
+        process.on("message", (message) => {
+          if (message?.type === "paseo:graceful-shutdown") process.exit(0);
+        });
         setInterval(() => {}, 1000);
       `,
     });
@@ -484,9 +490,12 @@ describe("supervisor durable logging", () => {
     }
   });
 
-  test("logs the worker shutdown reason before signaling the worker", async () => {
+  test("logs the worker shutdown reason before requesting graceful shutdown", async () => {
     const result = await runSupervisorFixture({
       workerSource: `
+        process.on("message", (message) => {
+          if (message?.type === "paseo:graceful-shutdown") process.exit(0);
+        });
         process.send?.({ type: "paseo:shutdown", reason: "client_shutdown_rpc" });
         setInterval(() => {}, 1000);
       `,
@@ -496,9 +505,50 @@ describe("supervisor durable logging", () => {
     expect(result.signal).toBeNull();
     expect(result.log).toContain('"msg":"Worker requested shutdown"');
     expect(result.log).toContain('"reason":"client_shutdown_rpc"');
-    expect(result.log).toContain('"msg":"Supervisor sending signal to worker"');
-    expect(result.log).toContain('"signal":"SIGTERM"');
+    expect(result.log).toContain('"msg":"Supervisor requesting graceful worker shutdown"');
     expect(result.log).toContain('"workerPid":');
+  });
+
+  test("lets the worker clean up its descendant before supervised shutdown", async () => {
+    const result = await runSupervisorFixture({
+      workerSource: `
+        import { spawn } from "node:child_process";
+
+        const descendant = spawn(
+          process.execPath,
+          ["-e", "setInterval(() => {}, 1000)"],
+          { detached: true, stdio: "ignore" },
+        );
+        descendant.unref();
+        process.stdout.write(\`DESCENDANT_PID=\${descendant.pid}\\n\`);
+
+        process.on("message", (message) => {
+          if (message?.type !== "paseo:graceful-shutdown") return;
+          descendant.once("exit", () => {
+            process.stdout.write("GRACEFUL_CLEANUP_RAN\\n");
+            process.exit(0);
+          });
+          descendant.kill("SIGTERM");
+        });
+
+        process.send?.({ type: "paseo:shutdown", reason: "descendant_cleanup_probe" });
+        setInterval(() => {}, 1000);
+      `,
+    });
+
+    const descendantPid = Number.parseInt(
+      result.stdout.match(/DESCENDANT_PID=(\d+)/)?.[1] ?? "",
+      10,
+    );
+    expect(Number.isInteger(descendantPid)).toBe(true);
+
+    const descendantSurvived = isFixtureProcessRunning(descendantPid);
+    if (descendantSurvived) {
+      process.kill(descendantPid, "SIGKILL");
+    }
+
+    expect.soft(result.stdout).toContain("GRACEFUL_CLEANUP_RAN");
+    expect(descendantSurvived).toBe(false);
   });
 
   test("does not restart a worker based on heartbeat absence", async () => {
@@ -507,6 +557,9 @@ describe("supervisor durable logging", () => {
       workerSource: `
         import { existsSync, writeFileSync } from "node:fs";
 
+        process.on("message", (message) => {
+          if (message?.type === "paseo:graceful-shutdown") process.exit(0);
+        });
         const marker = process.argv[1] + ".started";
         if (!existsSync(marker)) {
           writeFileSync(marker, "started");
@@ -528,26 +581,22 @@ describe("supervisor durable logging", () => {
     expect(result.log).not.toContain('"msg":"Worker heartbeat timed out; restarting worker"');
   }, 25_000);
 
-  test.skipIf(isPlatform("win32"))(
-    "forces shutdown when a worker ignores SIGTERM",
-    async () => {
-      const result = await runSupervisorFixture({
-        timeoutMs: 15_000,
-        workerSource: `
-          process.on("SIGTERM", () => {});
+  test("forces shutdown when a worker ignores the graceful shutdown request", async () => {
+    const result = await runSupervisorFixture({
+      timeoutMs: 15_000,
+      workerSource: `
           process.send?.({ type: "paseo:shutdown", reason: "stalled_worker_shutdown" });
           setInterval(() => {}, 1_000);
         `,
-      });
+    });
 
-      expect(result.code).toBe(0);
-      expect(result.signal).toBeNull();
-      expect(result.log).toContain('"reason":"stalled_worker_shutdown"');
-      expect(result.log).toContain('"msg":"Worker did not exit after SIGTERM; forcing SIGKILL"');
-      expect(result.log).toContain('"signal":"SIGKILL"');
-    },
-    20_000,
-  );
+    expect(result.code).toBe(0);
+    expect(result.signal).toBeNull();
+    expect(result.log).toContain('"reason":"stalled_worker_shutdown"');
+    expect(result.log).toContain(
+      '"msg":"Worker did not exit after graceful shutdown request; forcing process tree kill"',
+    );
+  }, 20_000);
 
   test.skipIf(isPlatform("win32"))(
     "restarts after worker exit while a descendant retains the worker stdio",
@@ -558,6 +607,9 @@ describe("supervisor durable logging", () => {
           import { spawn } from "node:child_process";
           import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 
+          process.on("message", (message) => {
+            if (message?.type === "paseo:graceful-shutdown") process.exit(0);
+          });
           const marker = process.argv[1] + ".started";
           if (!existsSync(marker)) {
             writeFileSync(marker, "started");
@@ -573,7 +625,6 @@ describe("supervisor durable logging", () => {
             }
             appendFileSync(registryPath, descendant.pid + "\\n");
             process.stdout.write("fixture-descendant-pid:" + descendant.pid + "\\n");
-            process.on("SIGTERM", () => process.exit(0));
             process.send?.({ type: "paseo:restart", reason: "stdio_descendant" });
             setInterval(() => {}, 1000);
           } else {

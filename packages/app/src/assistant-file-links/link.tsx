@@ -5,7 +5,6 @@ import { isNative, isWeb } from "@/constants/platform";
 import { MarkdownTextSpan } from "@/components/markdown-text";
 import { MarkdownLinkText } from "@/components/markdown/link-text";
 import { AssistantLinkPressProvider, type AssistantLinkPress } from "./link-press-context";
-import { Shortcut } from "@/components/ui/shortcut";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
@@ -247,8 +246,6 @@ const FILE_LINK_TOOLTIP_TRIGGER_STYLE: ViewStyle = {
   display: "inline-flex" as ViewStyle["display"],
 };
 
-const FILE_LINK_TOOLTIP_MOD_KEYS = ["mod"];
-
 function FileLinkHoverTooltip({
   filePath,
   children,
@@ -266,17 +263,9 @@ function FileLinkHoverTooltip({
       </TooltipTrigger>
       {filePath ? (
         <TooltipContent side="top" align="start" maxWidth={520}>
-          <View style={styles.tooltipBody}>
-            <Text selectable={false} style={styles.tooltipPath}>
-              {filePath}
-            </Text>
-            <View style={styles.tooltipHintRow}>
-              <Shortcut keys={FILE_LINK_TOOLTIP_MOD_KEYS} />
-              <Text selectable={false} style={styles.tooltipHintText}>
-                click for side pane
-              </Text>
-            </View>
-          </View>
+          <Text selectable={false} style={styles.tooltipPath}>
+            {filePath}
+          </Text>
         </TooltipContent>
       ) : null}
     </Tooltip>
@@ -298,22 +287,9 @@ function isModifiedOpenEvent(event: MouseEvent<HTMLElement>): boolean {
 }
 
 const styles = StyleSheet.create((theme) => ({
-  tooltipBody: {
-    gap: theme.spacing[1],
-  },
   tooltipPath: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.normal,
-  },
-  tooltipHintRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-  },
-  tooltipHintText: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
   },
 }));

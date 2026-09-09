@@ -4,6 +4,7 @@ export interface AgentTimelineRow {
   seq: number;
   timestamp: string;
   item: AgentTimelineItem;
+  readonly turnId?: string;
   readonly providerMessageId?: string;
 }
 
@@ -198,6 +199,9 @@ export interface AgentTimelineStore {
     agentId: string,
     options: AgentTimelineCommittedFetchOptions,
   ): Promise<AgentTimelineFetchResult | null>;
+  getLastItem(agentId: string): Promise<AgentTimelineItem | null>;
+  getLastAssistantMessage(agentId: string): Promise<string | null>;
+  getLatestCommittedSeq(agentId: string): Promise<number>;
   flush(agentId?: string): Promise<void>;
   cleanup(agentId: string): Promise<void>;
   deleteAgent(agentId: string): Promise<void>;

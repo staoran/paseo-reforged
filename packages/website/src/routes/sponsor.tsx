@@ -30,6 +30,12 @@ function Sponsor() {
           </a>
           .
         </p>
+
+        <p>
+          Paseo started as a personal project: I wanted to run coding agents from anywhere without
+          giving up control of my code, my keys, or my workflow.
+        </p>
+
         <p>
           The links below support the upstream maintainers. They are retained for attribution and do
           not fund Paseo Reforged.

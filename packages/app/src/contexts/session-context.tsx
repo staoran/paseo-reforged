@@ -11,14 +11,15 @@ import {
   refreshAgentInitializationTimeout,
 } from "@/hooks/use-agent-initialization";
 import type { StreamItem } from "@/types/stream";
+import { deriveAgentStreamTurnLiveness } from "@/timeline/session-stream-reducers";
+import { planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
+import { requestTimelineReplacement } from "@/timeline/timeline-replacement";
 import {
-  createSessionAgentStreamReducerQueue,
-  deriveAgentStreamTurnLiveness,
-  enqueueAgentStreamEventAndNotifyTerminal,
   processTimelineResponse,
   type ProcessTimelineResponseOutput,
   type TimelineReducerSideEffect,
 } from "@/timeline/session-stream-reducers";
+import { getSendingClientMessageIds } from "@/composer/submission/model";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { isTimelineResumeSnapshotAuthoritative } from "@/timeline/timeline-sync-plan";
 import { isTimelineProjectionAgentStateCompatible } from "@/timeline/projection-lane";
@@ -28,9 +29,8 @@ import {
   type TimelineResponseOwner,
 } from "@/timeline/timeline-response-ownership";
 import {
-  createViewedTimelineSync,
   type TimelineDeliveryMode,
-  type ViewedTimelineSync,
+  type ViewedTimelineOwner,
 } from "@/timeline/viewed-timeline-sync";
 import type { AgentAttachment, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { parseServerInfoStatusPayload } from "@getpaseo/protocol/messages";
@@ -40,6 +40,7 @@ import {
   type AgentAttentionNotificationPayload,
   type NotificationPermissionRequest,
 } from "@getpaseo/protocol/agent-attention-notification";
+
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { AgentSessionConfig } from "@getpaseo/protocol/agent-types";
 import type { GitSetupOptions } from "@getpaseo/protocol/messages";
@@ -67,19 +68,17 @@ import {
 } from "@/utils/agent-initialization";
 import { encodeImages } from "@/utils/encode-images";
 import { derivePendingPermissionKey } from "@/utils/agent-snapshots";
-import { getSendingClientMessageIds } from "@/composer/submission/model";
 import type { AttachmentMetadata } from "@/attachments/types";
-import { patchWorkspaceScripts } from "@/contexts/session-workspace-scripts";
-import {
-  fetchTimelineSummaryWithCanonicalFallback,
-  finalizeInstalledTimelineSummary,
-} from "@/contexts/session-timeline-summary";
 import { useToast } from "@/contexts/toast-context";
 import { toErrorMessage } from "@/utils/error-messages";
 import { showProviderNoticeToast } from "@/utils/provider-notice-toast";
 import { applyCheckoutStatusUpdateFromEvent } from "@/git/checkout-status-cache";
 import { useProviderSubagentStore } from "@/subagents/provider-store";
 import { revalidateSessionAfterResume } from "@/contexts/session-resume-revalidation";
+import {
+  fetchTimelineSummaryWithCanonicalFallback,
+  finalizeInstalledTimelineSummary,
+} from "@/contexts/session-timeline-summary";
 
 // Re-export types from session-store and draft-store for backward compatibility
 export type { DraftInput } from "@/stores/draft-store";
@@ -465,14 +464,8 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
 
   // Zustand store actions
   const setIsPlayingAudio = useSessionStore((state) => state.setIsPlayingAudio);
-  const setAgentStreamTail = useSessionStore((state) => state.setAgentStreamTail);
-  const setAgentStreamHead = useSessionStore((state) => state.setAgentStreamHead);
-  const setAgentStreamState = useSessionStore((state) => state.setAgentStreamState);
   const applyAgentTurnLiveness = useSessionStore((state) => state.applyAgentTurnLiveness);
   const clearAgentTurnLiveness = useSessionStore((state) => state.clearAgentTurnLiveness);
-  const clearAgentStreamHead = useSessionStore((state) => state.clearAgentStreamHead);
-  const setAgentTimelineCursor = useSessionStore((state) => state.setAgentTimelineCursor);
-  const setAgentTimelineHasNewer = useSessionStore((state) => state.setAgentTimelineHasNewer);
   const setInitializingAgents = useSessionStore((state) => state.setInitializingAgents);
   const bumpHistorySyncGeneration = useSessionStore((state) => state.bumpHistorySyncGeneration);
   const markAgentHistorySynchronized = useSessionStore(
@@ -490,8 +483,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const clearAgentTimelineProjectionLane = useSessionStore(
     (state) => state.clearAgentTimelineProjectionLane,
   );
-  const setAgents = useSessionStore((state) => state.setAgents);
-  const setWorkspaces = useSessionStore((state) => state.setWorkspaces);
   const flushAgentLastActivity = useSessionStore((state) => state.flushAgentLastActivity);
   const setPendingPermissions = useSessionStore((state) => state.setPendingPermissions);
   const updateSessionServerInfo = useSessionStore((state) => state.updateSessionServerInfo);
@@ -505,13 +496,16 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const focusedTerminalId = useSessionStore(
     (state) => state.sessions[serverId]?.focusedTerminalId ?? null,
   );
+  const setAgentStreamState = useSessionStore((state) => state.setAgentStreamState);
+  const setAgentTimelineHasNewer = useSessionStore((state) => state.setAgentTimelineHasNewer);
   const _sessionStateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const attentionNotifiedRef = useRef<Map<string, number>>(new Map());
   const appStateRef = useRef(AppState.currentState);
-  const viewedTimelineSyncRef = useRef<ViewedTimelineSync | null>(null);
-  const timelineResponseOwnershipRef = useRef(createTimelineResponseOwnership());
   const projectionSummaryGenerationsRef = useRef<Map<string, number>>(new Map());
   const projectionSummaryInFlightRef = useRef<Map<string, number>>(new Map());
+  const forcedTimelineTailReplacements = useRef(new Set<string>());
+  const viewedTimelineSyncRef = useRef<ViewedTimelineOwner | null>(null);
+  const timelineResponseOwnershipRef = useRef(createTimelineResponseOwnership());
   const audioOutputBuffersRef = useRef<Map<string, BufferedAudioChunk[]>>(new Map());
   const activeAudioGroupsRef = useRef<Set<string>>(new Set());
   const isAppVisible = useAppVisible();
@@ -568,14 +562,18 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         awayMs,
         serverId,
         bumpHistorySyncGeneration,
-        refreshDirectories: () => getHostRuntimeStore().refreshDirectories(serverId),
       });
     },
     [bumpHistorySyncGeneration, serverId],
   );
 
   // Client activity tracking (heartbeat, push token registration)
-  useClientActivity({ client, focusedAgentId, focusedTerminalId, onAppResumed: handleAppResumed });
+  useClientActivity({
+    client,
+    focusedAgentId,
+    focusedTerminalId,
+    onAppResumed: handleAppResumed,
+  });
   useEffect(() => startPushNotifications({ client, serverId }), [client, serverId]);
 
   const notifyAgentAttention = useCallback(
@@ -857,20 +855,28 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     const initialDeliveryMode = getTimelineDeliveryMode(
       client.getLastServerInfoMessage()?.features?.selectiveAgentTimeline,
     );
-    /** Initialization deferreds retained by this viewed-timeline sync instance. */
     const initializationDeferreds = new Map<
       NonNullable<ReturnType<typeof getInitDeferred>>,
       { agentId: string; requestId: string }
     >();
-    /** Viewed response owners retained until their fetch settles or this sync is disposed. */
     const responseOwners = new Set<TimelineResponseOwner>();
-    let sync: ViewedTimelineSync;
-    sync = createViewedTimelineSync({
+    let sync: ViewedTimelineOwner;
+    sync = getHostRuntimeStore().createViewedTimelineOwner(serverId, {
       initialDeliveryMode,
       setSubscription: (agentIds) => client.setAgentTimelineSubscription(agentIds),
       // Initial canonical fetch, summary installation, and race fallback share one request boundary.
       // eslint-disable-next-line complexity
-      fetchPage: async (agentId, request, requestContext) => {
+      readCursor: (agentId) => {
+        const timeline = selectAgentTimelineState(
+          useSessionStore.getState().sessions[serverId],
+          agentId,
+        );
+        return timeline.status === "synced" && timeline.range
+          ? { epoch: timeline.range.epoch, endSeq: timeline.range.endSeq }
+          : undefined;
+      },
+      // oxlint-disable-next-line complexity -- Timeline recovery keeps its compatibility branches together
+      fetchPage: async (agentId, request) => {
         const session = useSessionStore.getState().sessions[serverId];
         const initKey = getInitKey(serverId, agentId);
         const shouldInitialize = selectAgentTimelineState(session, agentId).status !== "synced";
@@ -905,7 +911,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
           const owner = timelineResponseOwnership.begin({
             agentId,
             requestId: nextRequestId,
-            isCurrent: () => viewedTimelineSyncRef.current === sync && requestContext.isCurrent(),
+            isCurrent: () => viewedTimelineSyncRef.current === sync,
           });
           responseOwners.add(owner);
           return owner;
@@ -1070,6 +1076,18 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
           }
         }
       },
+      fetchLatestTail: async (agentId) => {
+        forcedTimelineTailReplacements.current.add(agentId);
+        try {
+          return await getHostRuntimeStore().fetchAgentTimeline(
+            serverId,
+            agentId,
+            planTimelineTailFetch(),
+          );
+        } finally {
+          forcedTimelineTailReplacements.current.delete(agentId);
+        }
+      },
       reportError: (error) => {
         console.warn("[Session] viewed timeline synchronization failed", { serverId, error });
       },
@@ -1126,12 +1144,8 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
 
   // Daemon message handlers - directly update Zustand store
   useEffect(() => {
-    const agentStreamReducerQueue = createSessionAgentStreamReducerQueue({
-      serverId,
-      setAgentStreamState,
-      setAgentTimelineCursor,
-      recoverTimelineGap,
-    });
+    const owner = viewedTimelineSyncRef.current;
+    if (!owner) throw new Error("Viewed timeline owner is unavailable");
 
     const unsubAgentStream = client.on("agent_stream", (message) => {
       if (message.type !== "agent_stream") return;
@@ -1153,17 +1167,11 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       if (turnLiveness.length > 0) {
         applyAgentTurnLiveness(serverId, agentId, turnLiveness);
       }
-      enqueueAgentStreamEventAndNotifyTerminal({
-        queue: agentStreamReducerQueue,
-        agentId,
-        event: {
-          event: streamEvent,
-          seq,
-          epoch,
-          timestamp: parsedTimestamp,
-        },
-        notifyTerminal: () =>
-          getHostRuntimeStore().notifyReplicaCacheFinal(serverId, agentId, "stream"),
+      owner.enqueueStreamEvent(agentId, {
+        event: streamEvent,
+        seq,
+        epoch,
+        timestamp: parsedTimestamp,
       });
 
       // NOTE: We don't update lastActivityAt on every stream event to prevent
@@ -1190,7 +1198,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       ) {
         return;
       }
-      agentStreamReducerQueue.flushAgent(message.payload.agentId);
+      owner.flushStreamAgent(message.payload.agentId);
       applyTimelineResponse(message.payload);
     });
 
@@ -1204,14 +1212,22 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       }
     });
 
+    const unsubTimelineReplacement = client.on("agent.timeline.replacement", (message) => {
+      if (message.type !== "agent.timeline.replacement") return;
+      void requestTimelineReplacement(
+        {
+          fetchAgentTimeline: (agentId, request) =>
+            getHostRuntimeStore().fetchAgentTimeline(serverId, agentId, request),
+        },
+        message.payload.agentId,
+      ).catch((error: unknown) => {
+        console.warn("[Session] timeline replacement refresh failed", { serverId, error });
+      });
+    });
+
     const unsubProviderSubagentUpdate = client.on("agent.provider_subagents.update", (message) => {
       if (message.type !== "agent.provider_subagents.update") return;
       useProviderSubagentStore.getState().applyUpdate(serverId, message.payload);
-    });
-
-    const unsubScriptStatusUpdate = client.on("script_status_update", (message) => {
-      if (message.type !== "script_status_update") return;
-      setWorkspaces(serverId, (prev) => patchWorkspaceScripts(prev, message.payload));
     });
 
     const unsubCheckoutStatusUpdate = client.on("checkout_status_update", (message) => {
@@ -1399,12 +1415,12 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     });
 
     return () => {
+      unsubTimelineReplacement();
       unsubAgentStream();
       unsubAgentTimeline();
       unsubAgentUpdate();
       unsubProviderSubagentUpdate();
       unsubAgentAttention();
-      unsubScriptStatusUpdate();
       unsubCheckoutStatusUpdate();
       unsubWorkspaceSetupProgress();
       unsubWorkspaceSetupStatusResponse();
@@ -1416,22 +1432,14 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       unsubTranscription();
       unsubVoiceInputState();
       unsubTerminalAttention();
-      agentStreamReducerQueue.dispose({ flush: true });
     };
   }, [
     client,
     queryClient,
     serverId,
     setIsPlayingAudio,
-    setAgentStreamTail,
-    setAgentStreamHead,
-    setAgentStreamState,
     applyAgentTurnLiveness,
-    clearAgentStreamHead,
-    setAgentTimelineCursor,
     setInitializingAgents,
-    setAgents,
-    setWorkspaces,
     setPendingPermissions,
     notifyAgentAttention,
     recoverTimelineGap,

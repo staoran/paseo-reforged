@@ -8,6 +8,12 @@ import { createMarkdownStyles } from "@/styles/markdown-styles";
 import type { Theme } from "@/styles/theme";
 import { WORKSPACE_SURFACE_DATASET } from "@/styles/workspace-surface";
 import { getMarkdownListMarker } from "@/utils/markdown-list";
+import { createMarkdownParser } from "@/utils/markdown-parser";
+
+// Without this prop react-native-markdown-display builds its own parser with
+// `typographer: true`, which would render a plan's literal `(c)` as ©. Its
+// default also leaves linkify off, so this one keeps bare URLs as plain text.
+const _planMarkdownParser = createMarkdownParser({ linkify: false });
 
 type MarkdownRuleStyles = Record<string, TextStyle & ViewStyle & { [key: string]: unknown }>;
 

@@ -271,7 +271,7 @@ test("reserved Paseo MCP input cannot bypass preflight during replay", async () 
     type: "hub.execution.agent.create.response",
     payload: { success: true, executionId: "replayed-execution" },
   });
-  const providerCreations = hub.providerCreations();
+  const executionProviderCreations = hub.executionProviderCreations();
 
   hub.beginOwnedCreate("replay-create", "replayed-execution", {
     mcpServers: {
@@ -291,7 +291,7 @@ test("reserved Paseo MCP input cannot bypass preflight during replay", async () 
     },
   });
   expect(replay.payload).not.toHaveProperty("errorDetails");
-  expect(hub.providerCreations()).toBe(providerCreations);
+  expect(hub.executionProviderCreations()).toBe(executionProviderCreations);
   expect(await hub.durableOwnedAgentIds()).toEqual([original.payload.agentId]);
 }, 20_000);
 

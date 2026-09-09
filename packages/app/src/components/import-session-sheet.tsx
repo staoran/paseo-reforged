@@ -586,7 +586,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   filterTriggerText: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.medium,
   },
   list: {
@@ -632,16 +632,16 @@ const styles = StyleSheet.create((theme) => ({
   },
   rowMeta: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   rowPreview: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     lineHeight: 20,
   },
   rowCwd: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   statusRow: {
     flexDirection: "row",
@@ -651,7 +651,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   statusText: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   emptyState: {
     alignItems: "center",

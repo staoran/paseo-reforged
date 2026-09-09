@@ -119,6 +119,7 @@ export function DraggableList<T>({
       scrollEnabled={scrollEnabled}
       extraData={extraData}
       simultaneousHandlers={simultaneousHandlers}
+      // @ts-ignore - supplied by this repository's react-native-draggable-flatlist patch
       dragGestureHostPresented={gestureHostPresented}
       // Higher activation distance reduces accidental drag capture while nested
       // lists are inside a scroll container.

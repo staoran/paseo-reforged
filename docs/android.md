@@ -25,7 +25,9 @@ missing. Keep the profile and repository-variable values identical.
 
 ## Version codes
 
-`packages/app/app.config.js` derives Android `versionCode` from the package version with:
+`packages/app/native-release-version.js` is the single definition of native and F-Droid version-code math. Do not re-derive these numbers anywhere else — a drifted copy produces changelog files that match no published APK, and nothing fails loudly.
+
+The base version code comes from the package version:
 
 ```text
 major * 1_000_000 + minor * 1_000 + patch
@@ -92,11 +94,11 @@ Or from `packages/app`:
 
 ```bash
 # Debug
-npx cross-env APP_VARIANT=development expo prebuild --platform android --non-interactive
+npx cross-env APP_VARIANT=development expo prebuild --platform android --clean --non-interactive
 npx cross-env APP_VARIANT=development expo run:android --variant=debug
 
 # Release
-npx cross-env APP_VARIANT=production expo prebuild --platform android --non-interactive
+npx cross-env APP_VARIANT=production expo prebuild --platform android --clean --non-interactive
 npx cross-env APP_VARIANT=production expo run:android --variant=release
 
 # Clear generated Android project
@@ -154,6 +156,37 @@ Supported values are `armeabi-v7a`, `arm64-v8a`, `x86`, and `x86_64`. The F-Droi
 Keep the excluded npm packages installed. Normal builds use them, while the F-Droid profile removes only their Android native modules and config plugins. Paseo always applies `expo-gradle-jvmargs` with `-Xmx4096m` and `-XX:MaxMetaspaceSize=1024m` so local Expo prebuilds have enough Gradle heap whether they use precompiled AARs or source-built Expo modules.
 
 The GitHub APK workflow runs `eas build --local` on its Ubuntu runner with the EAS `production-apk` profile. The build still authenticates with `EXPO_TOKEN` and uses the EAS-managed Android keystore for the Reforged project, but Gradle and Hermes run on GitHub Actions instead of an EAS remote worker, so the build does not consume EAS build quota or a paid resource class. It builds only `arm64-v8a`, so the GitHub prerelease APK supports 64-bit ARM devices but not 32-bit ARM devices or x86/x86_64 emulators. Before upload, the workflow verifies the APK signature, package ID, version name, and sole native ABI.
+
+### F-Droid store metadata
+
+F-Droid reads the store listing from `fastlane/metadata/android/<locale>/` **at the repo root**. This location provides the best compatibility with the F-Droid release process.
+
+```text
+fastlane/metadata/android/
+├── en-US/                      (F-Droid fallback locale, mandatory)
+│   ├── title.txt               (<=50 chars)
+│   ├── short_description.txt   (<=80 chars)
+│   ├── full_description.txt    (<=4000 chars, limited HTML)
+│   ├── images/
+│   │   ├── icon.png            (512x512)
+│   │   ├── featureGraphic.png  (1024x500)
+│   │   └── phoneScreenshots/   (1.png, 2.png, ...)
+│   └── changelogs/             (generated — see below)
+├── ja/
+└── zh-CN/
+```
+
+Locale directories generally match `packages/app/src/i18n/locales.ts`, but note that `en` becomes `en-US`.
+
+F-Droid changelogs are generated from `CHANGELOG.md`. Run `npm run fdroid:changelogs`; `npm run fdroid:changelogs:check` verifies without writing. It is wired into the npm `version` lifecycle, so a release picks it up automatically and `git add -A` stages the result.
+
+One changelog must be generated per-ABI-split, so each version will create **four** identical version-coded entries. F-Droid caps changelogs at 500 characters, so the generator strips some content and adds a link to the full notes.
+
+Stable sync fails loudly if `CHANGELOG.md` has no entry for the version being cut. That is intentional — the release checklist requires the entry to be committed first, so an abort here means the checklist was skipped.
+
+Because the generator runs off the version in `package.json`, it must run **before** the tag is created: fdroidserver only reads metadata from the tag it builds, so the file for version N has to exist in the commit N points at.
+
+Beta releases are an explicit no-op: they do not create or rewrite F-Droid changelog files. Stable releases and promotions generate the four ABI entries from their final changelog.
 
 ### React version lockstep
 

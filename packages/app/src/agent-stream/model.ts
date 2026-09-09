@@ -1,11 +1,8 @@
 import type { ReactNode } from "react";
 import { deriveStreamTurnTiming, type StreamTurnTiming } from "@/timeline/turn-time";
 import type { StreamItem } from "@/types/stream";
-import {
-  findMountedWindowStart,
-  getWebMountedRecentStreamItems,
-  getWebPartialVirtualizationThreshold,
-} from "./web-virtualization";
+import { findMountedWindowStart, getMountedRecentStreamItems } from "./history-window";
+import { getWebPartialVirtualizationThreshold } from "./web-virtualization";
 import { orderHeadForStreamRenderStrategy, orderTailForStreamRenderStrategy } from "./strategy";
 import { resolveStreamRenderStrategy } from "./strategy-resolver";
 
@@ -68,6 +65,7 @@ export interface BuildAgentStreamRenderModelInput {
   platform: "web" | "native";
   isMobileBreakpoint: boolean;
   activityFolds?: readonly ActivityFold[];
+  historyStart?: number;
 }
 
 interface ActivityTurn {
@@ -156,7 +154,7 @@ function createActivityFold(input: {
     hostItemId: host.id,
     memberIds: members.map((item) => item.id),
     members,
-    ...(durationMs === undefined ? {} : { durationMs }),
+    ...(typeof durationMs === "number" ? { durationMs } : {}),
   };
 }
 
@@ -262,7 +260,7 @@ function splitOrderedTail(params: {
     platform === "web" &&
     !isMobileBreakpoint &&
     orderedTail.length > getWebPartialVirtualizationThreshold();
-  const cacheKey = `${platform}:${isMobileBreakpoint}:${getWebMountedRecentStreamItems()}:${shouldSplitHistory}`;
+  const cacheKey = `${platform}:${isMobileBreakpoint}:${getMountedRecentStreamItems()}:${shouldSplitHistory}`;
   let cachedByKey = splitHistoryCache.get(orderedTail);
   if (!cachedByKey) {
     cachedByKey = new Map();
@@ -287,8 +285,8 @@ function splitOrderedTail(params: {
   }
 
   const mountedWindowStart = findMountedWindowStart({
-    rows: orderedTail,
-    minMountedCount: getWebMountedRecentStreamItems(),
+    items: orderedTail.map((row) => row.item),
+    minMountedCount: getMountedRecentStreamItems(),
   });
   const split = {
     history: orderedTail,
@@ -332,14 +330,15 @@ function getTurnTiming(params: {
 export function buildAgentStreamRenderModel(
   input: BuildAgentStreamRenderModelInput,
 ): AgentStreamRenderModel {
+  const renderedTail = input.historyStart ? input.tail.slice(input.historyStart) : input.tail;
   const turnTiming = getTurnTiming({
     isTurnActive: input.isTurnActive,
     activeTurnStartedAt: input.activeTurnStartedAt,
-    tail: input.tail,
+    tail: renderedTail,
     head: input.head,
   });
   const projected = projectActivityRows({
-    tail: input.tail,
+    tail: renderedTail,
     head: input.head,
     isTurnActive: input.isTurnActive,
     turnTiming,

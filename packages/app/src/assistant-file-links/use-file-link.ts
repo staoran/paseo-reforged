@@ -118,7 +118,7 @@ export function useFileLink(source: AssistantFileLinkSource): UseFileLinkResult 
   });
 
   const onPress = useStableEvent(() => {
-    open(stableSource, "main");
+    open(stableSource, "preferred");
   });
   const onAuxPress = useStableEvent(() => {
     open(stableSource, "side");

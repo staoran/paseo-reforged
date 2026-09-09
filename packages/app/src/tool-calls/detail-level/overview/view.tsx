@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useRef, type ReactNode } from "react";
+import React, { memo, useCallback, useMemo, useRef, type ReactNode } from "react";
 import { ScrollView, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { Wrench } from "lucide-react-native";
@@ -9,6 +9,8 @@ import {
   type OverviewToolCallGroup,
   type OverviewToolCallSequence,
 } from "./model";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import { OverviewToolCallGroupSheet } from "./sheet";
 
 interface OverviewGroupProps {
   group: OverviewToolCallGroup | OverviewToolCallSequence;
@@ -67,6 +69,7 @@ export const OverviewToolCallGroupView = memo(function OverviewToolCallGroupView
   children,
 }: OverviewGroupProps) {
   const scrollRef = useRef<ScrollView>(null);
+  const isCompact = useIsCompactFormFactor();
   const aggregateSummary = useOverviewSummary(group.summary);
   const testID = "groups" in group ? "tool-call-sequence" : "tool-call-group";
   const scrollToLatest = useCallback(() => {
@@ -93,6 +96,25 @@ export const OverviewToolCallGroupView = memo(function OverviewToolCallGroupView
       ),
     [children, constrainDetails, scrollToLatest],
   );
+
+  if (isCompact) {
+    return (
+      <>
+        <ExpandableBadge
+          testID="tool-call-group"
+          label={aggregateSummary}
+          icon={Wrench}
+          isLoading={group.isLoading}
+          isExpanded={false}
+          isLastInSequence={isLastInSequence}
+          onToggle={toggle}
+        />
+        <OverviewToolCallGroupSheet visible={expanded} summary={aggregateSummary} onClose={close}>
+          {children}
+        </OverviewToolCallGroupSheet>
+      </>
+    );
+  }
 
   return (
     <ExpandableBadge

@@ -168,4 +168,4 @@ npm run typecheck
 
 ## 라이선스
 
-AGPL-3.0
+Apache-2.0

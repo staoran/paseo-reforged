@@ -14,7 +14,7 @@ A self-hosted daemon manages agent lifecycle, exposes a WebSocket API, and ships
 
 Paseo Reforged supports every major coding agent: Claude Code, Codex, GitHub Copilot, OpenCode, Cursor, Gemini, Cline, Goose, Amp, Aider, and 30+ others. Each agent runs as its own process; Paseo Reforged handles I/O, persistence, git worktree isolation, schedules, and skills.
 
-Distribution: Reforged GitHub release assets for Mac, Windows, Linux, and Android; Nix for the daemon and CLI; self-hosted browser UI. Reforged does not currently publish npm, Docker, app-store, or hosted web-app releases. Source: AGPL-3.0 at https://github.com/staoran/paseo-reforged.
+Distribution: Reforged GitHub release assets for Mac, Windows, Linux, and Android; Nix for the daemon and CLI; self-hosted browser UI. Reforged does not currently publish npm, Docker, app-store, or hosted web-app releases. Source: Apache-2.0 at https://github.com/staoran/paseo-reforged.
 `;
 
 function docLine(doc: Doc): string {

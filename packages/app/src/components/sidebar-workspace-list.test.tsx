@@ -1,10 +1,9 @@
 /**
  * @vitest-environment jsdom
  */
-import { act, fireEvent } from "@testing-library/react";
+import { act } from "@testing-library/react";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { WorkspaceScriptPayload } from "@getpaseo/protocol/messages";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import React from "react";
@@ -13,26 +12,10 @@ import { createProjectViewKey } from "@/projects/workspace-structure";
 
 vi.hoisted(() => {
   (globalThis as unknown as { __DEV__: boolean }).__DEV__ = false;
-  Object.defineProperty(window, "matchMedia", {
-    configurable: true,
-    value: () => ({
-      addEventListener: () => {},
-      addListener: () => {},
-      dispatchEvent: () => false,
-      matches: false,
-      media: "",
-      onchange: null,
-      removeEventListener: () => {},
-      removeListener: () => {},
-    }),
-  });
 });
 
 const pathnameState = vi.hoisted(() => ({
   value: "/",
-}));
-const navigationMocks = vi.hoisted(() => ({
-  navigateToWorkspace: vi.fn(),
 }));
 
 vi.mock("expo-router", () => ({
@@ -43,149 +26,18 @@ vi.mock("expo-router", () => ({
   usePathname: () => pathnameState.value,
 }));
 
-vi.mock("@/stores/navigation-active-workspace-store", () => ({
-  navigateToWorkspace: navigationMocks.navigateToWorkspace,
-  useActiveWorkspaceSelection: () => {
-    const match = pathnameState.value.match(/^\/h\/([^/]+)\/workspace\/([^/?]+)/);
-    return match?.[1] && match[2]
-      ? { serverId: decodeURIComponent(match[1]), workspaceId: decodeURIComponent(match[2]) }
-      : null;
-  },
-}));
-
-vi.mock("react-native-draggable-flatlist", async () => {
-  const ReactModule = await import("react");
-  return {
-    NestableScrollContainer: ({ children }: { children: React.ReactNode }) =>
-      ReactModule.createElement("div", null, children),
-  };
-});
-
-vi.mock("@/components/draggable-list", async () => {
-  const ReactModule = await import("react");
-  return {
-    DraggableList: ({
-      data,
-      keyExtractor,
-      renderItem,
-    }: {
-      data: unknown[];
-      keyExtractor: (item: unknown, index: number) => string;
-      renderItem: (input: {
-        item: unknown;
-        index: number;
-        drag: () => void;
-        isActive: boolean;
-      }) => React.ReactNode;
-    }) =>
-      ReactModule.createElement(
-        ReactModule.Fragment,
-        null,
-        data.map((item, index) =>
-          ReactModule.createElement(
-            ReactModule.Fragment,
-            { key: keyExtractor(item, index) },
-            renderItem({ item, index, drag: () => {}, isActive: false }),
-          ),
-        ),
-      ),
-  };
-});
-
-vi.mock("@/components/rename-modal", () => ({
-  AdaptiveRenameModal: () => null,
-}));
-
-vi.mock("@/components/workspace-hover-card", () => ({
-  WorkspaceHoverCard: ({ children }: { children: React.ReactNode }) => children,
-}));
-
-vi.mock("@/components/synced-loader", () => ({
-  SyncedLoader: () => null,
-}));
-
-vi.mock("@/components/ui/context-menu", () => ({
-  ContextMenu: ({ children }: { children: React.ReactNode }) => children,
-  ContextMenuContent: () => null,
-  ContextMenuItem: () => null,
-  ContextMenuTrigger: ({
-    children,
-    onPress,
-    testID,
-  }: {
-    children: React.ReactNode;
-    onPress?: () => void;
-    testID?: string;
-  }) =>
-    React.createElement(
-      "button",
-      { "data-testid": testID, onClick: onPress, type: "button" },
-      children,
-    ),
-}));
-
-vi.mock("@/components/ui/dropdown-menu", () => ({
-  DropdownMenu: ({ children }: { children: React.ReactNode }) => children,
-  DropdownMenuContent: () => null,
-  DropdownMenuItem: () => null,
-  DropdownMenuTrigger: ({
-    children,
-  }: {
-    children:
-      | React.ReactNode
-      | ((state: { hovered: boolean; pressed: boolean }) => React.ReactNode);
-  }) => (typeof children === "function" ? children({ hovered: false, pressed: false }) : children),
-}));
-
-vi.mock("@/components/ui/tooltip", () => ({
-  Tooltip: ({ children }: { children: React.ReactNode }) => children,
-  TooltipContent: () => null,
-  TooltipTrigger: ({ children }: { children: React.ReactNode }) => children,
-}));
-
-vi.mock("@/components/sidebar/sidebar-workspace-menu", () => ({
-  SidebarWorkspaceContextMenuContent: () => null,
-  SidebarWorkspaceContextMenu: ({
-    children,
-    testID,
-    onPress,
-  }: {
-    children: React.ReactNode;
-    testID?: string;
-    onPress?: () => void;
-  }) => (
-    <button type="button" data-testid={testID} onClick={onPress}>
-      {children}
-    </button>
-  ),
-  SidebarWorkspaceMenu: () => null,
-}));
-
-vi.mock("@/components/ui/button", () => ({
-  Button: () => null,
-}));
-
-vi.mock("@/workspace/open-in-file-manager/menu-item", () => ({
-  OpenInFileManagerMenuItem: () => null,
-}));
-
 import {
   createSidebarWorkspaceEntry,
   type SidebarProjectEntry,
 } from "@/hooks/use-sidebar-workspaces-list";
 import { useSidebarWorkspacesList } from "@/hooks/use-sidebar-workspaces-list";
-import { useSidebarWorkspaceEntries } from "@/hooks/use-sidebar-workspace-entries";
-import { SidebarWorkspaceList } from "@/components/sidebar-workspace-list";
-import { buildStatusGroups } from "@/hooks/sidebar-status-view-model";
-import type { PinnedSidebarGroups } from "@/hooks/use-sidebar-pins";
-import { patchWorkspaceScripts } from "@/contexts/session-workspace-scripts";
 import {
   getHostRuntimeStore,
   type HostRuntimeController,
   type HostRuntimeSnapshot,
 } from "@/runtime/host-runtime";
 import type { HostProfile } from "@/types/host-connection";
-import { useSessionStore, type Agent, type WorkspaceDescriptor } from "@/stores/session-store";
+import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
 import { seedSessionWorkspaces } from "@/test/seed-session";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
@@ -200,19 +52,7 @@ vi.mock("@react-native-async-storage/async-storage", () => ({
   },
 }));
 
-vi.mock("expo-clipboard", () => ({
-  setStringAsync: vi.fn().mockResolvedValue(undefined),
-}));
-
-vi.mock("@/contexts/toast-context", () => ({
-  useToast: () => ({
-    copied: vi.fn(),
-    error: vi.fn(),
-  }),
-}));
-
 const SERVER_ID = "sidebar-render-count";
-const onToggleProjectCollapsed = () => undefined;
 
 interface RenderCounts {
   frame: number;
@@ -241,9 +81,6 @@ function workspace(input: {
   name: string;
   status?: WorkspaceDescriptor["status"];
   scripts?: WorkspaceDescriptor["scripts"];
-  diffStat?: WorkspaceDescriptor["diffStat"];
-  defaultAgentId?: string | null;
-  archivingAt?: string | null;
 }): WorkspaceDescriptor {
   return {
     id: input.id,
@@ -256,54 +93,10 @@ function workspace(input: {
     name: input.name,
     status: input.status ?? "done",
     statusEnteredAt: null,
-    archivingAt: input.archivingAt ?? null,
-    diffStat: input.diffStat ?? null,
-    defaultAgentId: input.defaultAgentId ?? null,
+    archivingAt: null,
+    diffStat: null,
     scripts: input.scripts ?? [],
   };
-}
-
-function agent(input: { id: string; workspaceId: string; status?: Agent["status"] }): Agent {
-  const timestamp = new Date("2026-08-03T12:00:00.000Z");
-  return {
-    serverId: SERVER_ID,
-    id: input.id,
-    provider: "codex",
-    status: input.status ?? "closed",
-    activeTurn: null,
-    createdAt: timestamp,
-    updatedAt: timestamp,
-    lastUserMessageAt: null,
-    lastMessageAt: null,
-    lastActivityAt: timestamp,
-    capabilities: {
-      supportsStreaming: true,
-      supportsSessionPersistence: true,
-      supportsDynamicModes: true,
-      supportsMcpServers: true,
-      supportsReasoningStream: true,
-      supportsToolInvocations: true,
-    },
-    currentModeId: null,
-    availableModes: [],
-    pendingPermissions: [],
-    persistence: null,
-    title: null,
-    cwd: "/repo",
-    workspaceId: input.workspaceId,
-    model: null,
-    providerRetryMessage: null,
-    requiresAttention: false,
-    attentionReason: null,
-    attentionTimestamp: null,
-    archivedAt: null,
-    parentAgentId: null,
-    labels: {},
-  };
-}
-
-function pinnedGroupsFor(project: SidebarProjectEntry): PinnedSidebarGroups {
-  return { pinnedChats: [], unpinnedProjects: [project] };
 }
 
 function createWorkspaces(): WorkspaceDescriptor[] {
@@ -532,49 +325,11 @@ function renderSidebarFrame(root: Root, counts: RenderCounts) {
   root.render(<SidebarFrameProbe counts={counts} />);
 }
 
-function SidebarWorkspaceListProbe({
-  groupMode = "project",
-}: {
-  groupMode?: "project" | "status";
-}): ReactElement {
-  const { projects, projectNamesByViewKey } = useSidebarWorkspacesList({
-    hostFilters: [SERVER_ID],
-  });
-  const placements = React.useMemo(
-    () => projects.flatMap((project) => project.workspaces),
-    [projects],
-  );
-  const workspaceEntriesByKey = useSidebarWorkspaceEntries(placements);
-  const pinnedGroups = React.useMemo(
-    () => ({ pinnedChats: [], unpinnedProjects: projects }),
-    [projects],
-  );
-  const handleToggleProjectCollapsed = React.useCallback(() => undefined, []);
-  const statusGroups = React.useMemo(
-    () => buildStatusGroups(Array.from(workspaceEntriesByKey.values()), projectNamesByViewKey),
-    [projectNamesByViewKey, workspaceEntriesByKey],
-  );
-
-  return (
-    <SidebarWorkspaceList
-      statusGroups={statusGroups}
-      pinnedGroups={pinnedGroups}
-      projects={projects}
-      workspaceEntriesByKey={workspaceEntriesByKey}
-      collapsedProjectKeys={new Set()}
-      onToggleProjectCollapsed={handleToggleProjectCollapsed}
-      shortcutIndexByWorkspaceKey={new Map()}
-      groupMode={groupMode}
-    />
-  );
-}
-
 describe("sidebar workspace render isolation", () => {
   let root: Root | null = null;
   let container: HTMLElement | null = null;
 
   beforeEach(async () => {
-    navigationMocks.navigateToWorkspace.mockReset();
     initializeSidebarState(createWorkspaces());
   });
 
@@ -648,59 +403,6 @@ describe("sidebar workspace render isolation", () => {
     });
   });
 
-  it("does not re-render for a deep-equal scripts patch", async () => {
-    const counts: RenderCounts = {
-      frame: 0,
-      headers: {},
-      rows: {},
-      projectSelection: {},
-      rowSelection: {},
-    };
-    ({ root, container } = await renderProbe(counts));
-
-    const applyRunningScript = (current: Parameters<typeof patchWorkspaceScripts>[0]) =>
-      patchWorkspaceScripts(current, {
-        workspaceId: "a-main",
-        scripts: [{ ...runningScript }],
-      });
-
-    act(() => {
-      useSessionStore.getState().setWorkspaces(SERVER_ID, applyRunningScript);
-    });
-
-    expect(counts).toEqual({
-      frame: 0,
-      headers: {},
-      rows: {},
-      projectSelection: {},
-      rowSelection: {},
-    });
-  });
-
-  it("does not show checkout diff stats in workspace rows", async () => {
-    const workspaces = createWorkspaces();
-    workspaces[0] = { ...workspaces[0], diffStat: { additions: 17, deletions: 9 } };
-    initializeSidebarState(workspaces);
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-    });
-    container = document.createElement("div");
-    document.body.appendChild(container);
-    root = createRoot(container);
-
-    await act(async () => {
-      root?.render(
-        <QueryClientProvider client={queryClient}>
-          <SidebarWorkspaceListProbe />
-        </QueryClientProvider>,
-      );
-    });
-
-    expect(container.textContent).toContain("main");
-    expect(container.textContent).not.toContain("+17");
-    expect(container.textContent).not.toContain("-9");
-  });
-
   it("updates active selection probes from the active workspace route", async () => {
     const counts: RenderCounts = {
       frame: 0,
@@ -736,178 +438,4 @@ describe("sidebar workspace render isolation", () => {
       "b-two": 1,
     });
   });
-
-  it("shows resident agent counts independently from workspace activity", async () => {
-    const workspaces = [
-      workspace({
-        id: "closed",
-        projectId: "project-a",
-        projectDisplayName: "Project A",
-        name: "closed",
-        status: "done",
-        defaultAgentId: "agent-closed",
-      }),
-      workspace({
-        id: "single",
-        projectId: "project-a",
-        projectDisplayName: "Project A",
-        name: "single",
-        status: "done",
-        defaultAgentId: "agent-single",
-      }),
-      workspace({
-        id: "running",
-        projectId: "project-a",
-        projectDisplayName: "Project A",
-        name: "running",
-        status: "running",
-        defaultAgentId: "agent-running",
-      }),
-    ];
-    const workspaceAgents = new Map<string, Agent>([
-      ["agent-closed", agent({ id: "agent-closed", workspaceId: "closed", status: "closed" })],
-      ["agent-single", agent({ id: "agent-single", workspaceId: "single", status: "idle" })],
-      ["agent-running", agent({ id: "agent-running", workspaceId: "running", status: "running" })],
-      [
-        "agent-running-second",
-        agent({ id: "agent-running-second", workspaceId: "running", status: "idle" }),
-      ],
-    ]);
-    initializeSidebarState(workspaces);
-    act(() => {
-      useSessionStore.getState().setAgents(SERVER_ID, workspaceAgents);
-    });
-
-    const queryClient = new QueryClient();
-    container = document.createElement("div");
-    document.body.appendChild(container);
-    root = createRoot(container);
-    await act(async () => {
-      root?.render(
-        <QueryClientProvider client={queryClient}>
-          <SidebarWorkspaceListProbe />
-        </QueryClientProvider>,
-      );
-    });
-
-    const closedRow = container.querySelector(
-      `[data-testid="sidebar-workspace-row-${SERVER_ID}:closed"]`,
-    );
-    expect(closedRow).not.toBeNull();
-    expect(
-      closedRow?.querySelector('[data-testid="workspace-runtime-resident-indicator"]'),
-    ).toBeNull();
-    expect(
-      closedRow?.querySelector('[data-testid^="workspace-status-indicator-runtime-"]'),
-    ).toBeNull();
-
-    const singleRow = container.querySelector(
-      `[data-testid="sidebar-workspace-row-${SERVER_ID}:single"]`,
-    );
-    const singleResidentIndicator = singleRow?.querySelector(
-      '[data-testid="workspace-runtime-resident-indicator"]',
-    );
-    expect(singleResidentIndicator?.getAttribute("aria-label")).toBe(
-      "Resident Agent runtime count: 1",
-    );
-    expect(
-      singleResidentIndicator?.querySelector('[data-testid="workspace-runtime-resident-count"]'),
-    ).toBeNull();
-
-    const runningRow = container.querySelector(
-      `[data-testid="sidebar-workspace-row-${SERVER_ID}:running"]`,
-    );
-    expect(
-      runningRow?.querySelector('[data-testid="workspace-status-indicator-running"]'),
-    ).not.toBeNull();
-    const runningResidentIndicator = runningRow?.querySelector(
-      '[data-testid="workspace-runtime-resident-indicator"]',
-    );
-    expect(runningResidentIndicator?.getAttribute("aria-label")).toBe(
-      "Resident Agent runtime count: 2",
-    );
-    expect(
-      runningResidentIndicator?.querySelector('[data-testid="workspace-runtime-resident-count"]')
-        ?.textContent,
-    ).toBe("2");
-  });
-
-  it.each(["project", "status"] as const)(
-    "opens the persisted default agent from the %s sidebar entry",
-    async (groupMode) => {
-      const defaultWorkspace = workspace({
-        id: "default-workspace",
-        projectId: "project-a",
-        projectDisplayName: "Project A",
-        name: "default-workspace",
-        defaultAgentId: "initial-agent",
-      });
-      const workspaceEntry = createSidebarWorkspaceEntry({
-        serverId: SERVER_ID,
-        workspace: defaultWorkspace,
-        workspaceAgents: new Map([
-          ["initial-agent", { workspaceId: defaultWorkspace.id, archivedAt: null }],
-        ]),
-        workspaceResidentAgentCounts: new Map(),
-      });
-      const project: SidebarProjectEntry = {
-        viewKey: "project-a",
-        projectName: "Project A",
-        projectKind: "git",
-        iconWorkingDir: "/repo/project-a",
-        hosts: [
-          {
-            serverId: SERVER_ID,
-            projectId: "project-a",
-            iconWorkingDir: "/repo/project-a",
-            worktreeSupport: "supported",
-          },
-        ],
-        workspaces: [workspaceEntry],
-      };
-      const workspaceEntriesByKey = new Map([[workspaceEntry.workspaceKey, workspaceEntry]]);
-      const projectNamesByViewKey = new Map([[project.viewKey, project.projectName]]);
-      const statusGroups = buildStatusGroups([workspaceEntry], projectNamesByViewKey);
-      const pinnedGroups = pinnedGroupsFor(project);
-      const collapsedProjectKeys = new Set<string>();
-      const shortcutIndexByWorkspaceKey = new Map<string, number>();
-
-      const queryClient = new QueryClient();
-      container = document.createElement("div");
-      document.body.appendChild(container);
-      root = createRoot(container);
-      await act(async () => {
-        root?.render(
-          <QueryClientProvider client={queryClient}>
-            <SidebarWorkspaceList
-              statusGroups={statusGroups}
-              pinnedGroups={pinnedGroups}
-              projects={[project]}
-              workspaceEntriesByKey={workspaceEntriesByKey}
-              collapsedProjectKeys={collapsedProjectKeys}
-              onToggleProjectCollapsed={onToggleProjectCollapsed}
-              shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
-              groupMode={groupMode}
-            />
-          </QueryClientProvider>,
-        );
-      });
-
-      const expectedRowTestId = `sidebar-workspace-row-${SERVER_ID}:default-workspace`;
-      const rows = Array.from(
-        container.querySelectorAll('[data-testid^="sidebar-workspace-row-"]'),
-      );
-      const rowTestIds = rows.map((row) => row.getAttribute("data-testid"));
-      expect(rowTestIds).toContain(expectedRowTestId);
-      const row = rows.find(
-        (candidate) => candidate.getAttribute("data-testid") === expectedRowTestId,
-      );
-      fireEvent.click(row as Element);
-      expect(navigationMocks.navigateToWorkspace).toHaveBeenCalledWith({
-        serverId: SERVER_ID,
-        workspaceId: "default-workspace",
-        target: { kind: "agent", agentId: "initial-agent" },
-      });
-    },
-  );
 });

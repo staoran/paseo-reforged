@@ -110,20 +110,15 @@ function MermaidIframeRuntime({
     },
     [iframeRef, interactive],
   );
-
   useEffect(() => {
     sendRequest(driverRef.current?.update(request) ?? null);
   }, [request, sendRequest]);
 
   useEffect(() => {
     function receiveMessage(event: MessageEvent): void {
-      if (event.source !== iframeRef.current?.contentWindow) {
-        return;
-      }
+      if (event.source !== iframeRef.current?.contentWindow) return;
       const message = parseMermaidRuntimeMessage(event.data);
-      if (!message) {
-        return;
-      }
+      if (!message) return;
       if (message.type === "bridgeReady") {
         sendRequest(driverRef.current?.ready() ?? null);
         return;
@@ -161,7 +156,6 @@ interface DiagramActionProps {
 }
 
 type WebPressableState = PressableStateCallbackType & { hovered?: boolean };
-
 function actionStyle({ hovered, pressed }: WebPressableState) {
   return [styles.action, (hovered || pressed) && styles.actionHovered];
 }

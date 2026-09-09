@@ -1,14 +1,26 @@
-import type { Theme } from "./theme";
+import { FONT_SIZE, type Theme } from "./theme";
 import { isWeb } from "@/constants/platform";
 
 const webSelectableTextStyle = isWeb ? { userSelect: "text" as const } : {};
+
+function contentHeadingSize(contentSize: number, tier: keyof typeof FONT_SIZE): number {
+  return Math.round(contentSize * (FONT_SIZE[tier] / FONT_SIZE.base));
+}
+
+function _contentHeadingLineHeight(contentSize: number, tier: keyof typeof FONT_SIZE): number {
+  return Math.round(contentHeadingSize(contentSize, tier) * 1.3);
+}
 
 /**
  * Creates comprehensive markdown styles for react-native-markdown-display.
  *
  * Usage:
  *   const markdownStyles = useMemo(() => createMarkdownStyles(theme), [theme]);
- *   <Markdown style={markdownStyles}>{content}</Markdown>
+ *   <Markdown style={markdownStyles} markdownit={parser}>{content}</Markdown>
+ *
+ * Always pass `markdownit` from `@/utils/markdown-parser`. Omit it and
+ * react-native-markdown-display builds its own parser with `typographer: true`,
+ * which rewrites a literal `(c)` as ©.
  */
 export function createMarkdownStyles(theme: Theme) {
   return {
@@ -327,13 +339,17 @@ export function createMarkdownStyles(theme: Theme) {
     // =========================================================================
 
     blockquote: {
-      backgroundColor: theme.colors.surface2,
+      backgroundColor: theme.colors.surface1,
+      color: `${theme.colors.foreground}cc`,
       borderLeftWidth: 4,
-      borderLeftColor: theme.colors.primary,
+      borderLeftColor: theme.colors.surface2,
       paddingHorizontal: theme.spacing[4],
-      paddingVertical: theme.spacing[3],
+      paddingTop: theme.spacing[3],
+      paddingBottom: 0,
       marginVertical: theme.spacing[3],
       borderRadius: theme.borderRadius.md,
+      borderTopLeftRadius: 0,
+      borderBottomLeftRadius: 0,
     },
 
     // =========================================================================
@@ -343,7 +359,7 @@ export function createMarkdownStyles(theme: Theme) {
     hr: {
       backgroundColor: theme.colors.border,
       height: 1,
-      marginVertical: theme.spacing[6],
+      marginVertical: 10,
     },
 
     // =========================================================================

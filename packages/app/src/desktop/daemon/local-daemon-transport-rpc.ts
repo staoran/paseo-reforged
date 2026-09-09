@@ -4,8 +4,7 @@ import {
   openLocalTransportSession,
   openWebSocketTransportSession,
   sendLocalTransportMessage,
-  type DesktopDaemonTransportTarget,
-  type WebSocketTransportTarget,
+  type OpenLocalTransportSessionInput,
 } from "./desktop-daemon";
 
 export interface LocalDaemonTransportEvent {
@@ -19,7 +18,7 @@ export interface LocalDaemonTransportEvent {
 }
 
 export interface LocalDaemonTransportRpc {
-  openSession(target: DesktopDaemonTransportTarget): Promise<string>;
+  openSession(input: OpenLocalTransportSessionInput): Promise<void>;
   listenToEvents(handler: (event: LocalDaemonTransportEvent) => void): Promise<() => void>;
   sendMessage(input: { sessionId: string; text?: string; binaryBase64?: string }): Promise<void>;
   closeSession(sessionId: string): Promise<void>;
@@ -33,7 +32,7 @@ export const defaultLocalDaemonTransportRpc: LocalDaemonTransportRpc = {
 };
 
 export const defaultWebSocketDaemonTransportRpc: LocalDaemonTransportRpc = {
-  openSession: (target) => openWebSocketTransportSession(target as WebSocketTransportTarget),
+  openSession: (input) => openWebSocketTransportSession(input),
   listenToEvents: listenToLocalTransportEvents,
   sendMessage: sendLocalTransportMessage,
   closeSession: closeLocalTransportSession,

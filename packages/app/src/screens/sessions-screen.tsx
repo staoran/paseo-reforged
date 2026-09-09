@@ -410,7 +410,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   emptyText: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.lg,
+    fontSize: theme.fontSize.base,
   },
   loadErrorText: {
     color: theme.colors.statusDanger,
@@ -428,7 +428,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   footerHint: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   errorsBannerWrap: {
     paddingHorizontal: {
@@ -445,7 +445,7 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[1],
   },
   errorsBannerText: {
-    color: theme.colors.statusDanger,
-    fontSize: theme.fontSize.xs,
+    color: theme.colors.palette.red[300],
+    fontSize: theme.fontSize.sm,
   },
 }));

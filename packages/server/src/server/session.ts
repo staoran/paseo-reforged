@@ -4,6 +4,7 @@ import { lstat, mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
 import { basename, join, resolve, sep } from "path";
 import { homedir } from "node:os";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
+import { formatPluginSourceReference } from "@getpaseo/protocol/plugin-source-reference";
 import {
   serializeAgentStreamEvent,
   type AgentSnapshotPayload,
@@ -72,6 +73,12 @@ import {
   CLIENT_SHUTDOWN_RPC_REASON,
   normalizeClientRestartRpcReason,
 } from "./lifecycle-reasons.js";
+import { DirectorySyncService } from "./directory-sync/index.js";
+import {
+  WorkspaceLabelError,
+  WorkspaceLabelStorageUncertainError,
+  type WorkspaceLabelService,
+} from "./workspace-labels/index.js";
 
 import { AgentManager, AgentRunCancellationError } from "./agent/agent-manager.js";
 import { buildTimelinePromptIndex } from "./agent/timeline-prompt-index.js";
@@ -158,7 +165,7 @@ import {
 import { wrapSpokenInput } from "./voice-config.js";
 import { isVoicePermissionAllowed } from "./voice-permission-policy.js";
 import {
-  readProjectIcon,
+  ProjectIconReader,
   removeProjectCustomIcon,
   setProjectCustomIcon,
 } from "../utils/project-custom-icon.js";
@@ -254,6 +261,7 @@ import {
 } from "./worktree-session.js";
 import { archiveByScope, type ActiveWorkspaceRef } from "./workspace-archive-service.js";
 import { WorkspaceSetupRuntime } from "./workspace-setup-runtime.js";
+import { SessionAuthorization, type DaemonPermission } from "./authorization/index.js";
 
 function resolveWorkspaceSetupRuntime(
   runtime: WorkspaceSetupRuntime | undefined,
@@ -444,6 +452,7 @@ type WorkspaceUpdatePayload = Extract<
 >["payload"];
 interface WorkspaceUpdatesSubscriptionState {
   subscriptionId: string;
+  syncEnabled?: boolean;
   filter?: WorkspaceUpdatesFilter;
   isBootstrapping: boolean;
   pendingUpdatesByWorkspaceId: Map<string, WorkspaceUpdatePayload>;
@@ -491,7 +500,7 @@ export interface SessionBinaryMessageToSourceOptions extends SessionBinaryMessag
 
 export interface SessionOptions {
   clientId: string;
-  scopes: readonly string[];
+  permissions: readonly DaemonPermission[];
   appVersion?: string | null;
   clientCapabilities?: Record<string, unknown> | null;
   onMessage: (msg: SessionOutboundMessage) => void;
@@ -510,6 +519,8 @@ export interface SessionOptions {
   agentStorage: AgentStorage;
   projectRegistry: ProjectRegistry;
   workspaceRegistry: WorkspaceRegistry;
+  directorySync?: DirectorySyncService;
+  workspaceLabelService?: WorkspaceLabelService;
   filesystem?: SessionFileSystem;
   scheduleService: ScheduleService;
   checkoutDiffManager: CheckoutDiffManager;
@@ -521,6 +532,34 @@ export interface SessionOptions {
   workspaceGitService: WorkspaceGitService;
   workspaceAutoName: WorkspaceAutoName;
   daemonConfigStore: DaemonConfigStore;
+  pluginRuntime?: {
+    listPlugins(): import("@getpaseo/protocol/messages").PluginListItem[];
+    getLogs(pluginId: string): import("@getpaseo/protocol/messages").PluginLogEntry[];
+    installDirectory(input: {
+      path: string;
+      id?: string;
+    }): Promise<import("@getpaseo/protocol/messages").PluginListItem>;
+    inspectDirectory(path: string): Promise<{ id: string }>;
+    installSource(input: {
+      source: string;
+      id?: string;
+      ref?: string;
+    }): Promise<import("@getpaseo/protocol/messages").PluginListItem>;
+    statusSources(
+      pluginId?: string,
+    ): Promise<import("@getpaseo/protocol/messages").PluginSourceStatusItem[]>;
+    updateSources(
+      pluginId?: string,
+    ): Promise<import("@getpaseo/protocol/messages").PluginSourceUpdateItem[]>;
+    reloadPlugin(pluginId: string): Promise<import("@getpaseo/protocol/messages").PluginListItem>;
+    enablePlugin(pluginId: string): Promise<import("@getpaseo/protocol/messages").PluginListItem>;
+    disablePlugin(pluginId: string): Promise<import("@getpaseo/protocol/messages").PluginListItem>;
+    removePlugin(pluginId: string): Promise<void>;
+    subscribe(listener: (pluginId: string) => void): () => void;
+    catalog(): Array<{ id: string; clientBundle: string }>;
+    invokePluginRpc(pluginId: string, method: string, input: unknown): Promise<unknown>;
+  };
+  orchestrationSkills?: import("./orchestration-skills/index.js").OrchestrationSkills;
   mcpBaseUrl?: string | null;
   stt: Resolvable<SpeechToTextProvider | null>;
   sttLanguage?: string;
@@ -595,18 +634,6 @@ function parseClientCapabilities(
   return new Set(result);
 }
 
-export function isSessionRpcAllowed(scopes: readonly string[], rpcName: string): boolean {
-  return scopes.some((scope) => {
-    if (scope === "*" || scope === rpcName) {
-      return true;
-    }
-    if (!scope.endsWith(".*")) {
-      return false;
-    }
-    return rpcName.startsWith(scope.slice(0, -1));
-  });
-}
-
 function sessionRequestId(message: SessionInboundMessage): string | null {
   if ("requestId" in message && typeof message.requestId === "string") {
     return message.requestId;
@@ -668,6 +695,10 @@ interface WorkspaceUpdateOptions {
   optimisticStatus?: WorkspaceDescriptorPayload["status"];
 }
 
+function resolveDirectorySync(service: DirectorySyncService | undefined): DirectorySyncService {
+  return service ?? new DirectorySyncService();
+}
+
 function describeRegistryTransition(record: ArchivedRecordSnapshot | null): RegistryTransition {
   if (!record) {
     return "created";
@@ -680,9 +711,26 @@ function describeRegistryTransition(record: ArchivedRecordSnapshot | null): Regi
  * It owns all state management, orchestration logic, and message processing.
  * Session has no knowledge of WebSockets - it only emits and receives messages.
  */
+function resolveWorkspaceLabelService(
+  service: WorkspaceLabelService | undefined,
+): WorkspaceLabelService | null {
+  return service ?? null;
+}
+
+function workspaceLabelErrorCode(error: unknown): string {
+  if (
+    error instanceof WorkspaceLabelError ||
+    error instanceof WorkspaceLabelStorageUncertainError ||
+    error instanceof SessionRequestError
+  ) {
+    return error.code;
+  }
+  return "workspace_label_failed";
+}
+
 export class Session {
   private readonly clientId: string;
-  private scopes: readonly string[];
+  private readonly authorization: SessionAuthorization;
   private appVersion: string | null;
   private clientCapabilities: ReadonlySet<ClientCapability>;
   private readonly sessionId: string;
@@ -703,12 +751,15 @@ export class Session {
     | null;
   private readonly sessionLogger: pino.Logger;
   private readonly paseoHome: string;
+  private readonly projectIcons: ProjectIconReader;
   private readonly worktreesRoot: string | undefined;
+  private readonly rewindInitiators = new Map<string, object | undefined>();
 
   private agentManager: AgentManager;
   private readonly agentStorage: AgentStorage;
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
+  private readonly directorySync: DirectorySyncService;
   private readonly filesystem: SessionFileSystem;
   private readonly github: ForgeService;
   private readonly renameCurrentBranch: typeof renameCurrentBranchDefault;
@@ -719,10 +770,14 @@ export class Session {
   private readonly workspaceRecovery: WorkspaceRecoveryService;
   private readonly daemonConfigStore: DaemonConfigStore;
   private readonly pushNotifications: PushNotifications;
+  private readonly pluginRuntime: SessionOptions["pluginRuntime"];
+  private readonly orchestrationSkills: SessionOptions["orchestrationSkills"];
   private unsubscribeAgentEvents: (() => void) | null = null;
   private unsubscribeProjectMutations: (() => void) | null = null;
+  private unsubscribePluginChanges: (() => void) | null = null;
   private unsubscribeWorkspaceMutations: (() => void) | null = null;
   private registryMutationQueue: Promise<void> = Promise.resolve();
+  private projectUpdateQueue: Promise<void> = Promise.resolve();
   private isCleanedUp = false;
   private viewedTimelineAgentIds = new Set<string>();
   private readonly viewedTimelineAgentIdsBySource = new Map<object, Set<string>>();
@@ -731,6 +786,13 @@ export class Session {
   private unsubscribeTerminalWorkspaceContributionEvents: (() => void) | null = null;
   private readonly agentUpdates: AgentUpdatesService;
   private workspaceUpdatesSubscription: WorkspaceUpdatesSubscriptionState | null = null;
+  private readonly workspaceLabelService: WorkspaceLabelService | null;
+  private workspaceLabelSubscription: {
+    owner: object;
+    id: string;
+    unsubscribe: () => void;
+  } | null = null;
+  private projectSyncEnabled = false;
   private readonly workspaceUpdateTails = new Map<string, Promise<void>>();
   private clientActivity: {
     deviceType: "web" | "mobile";
@@ -774,7 +836,7 @@ export class Session {
   constructor(options: SessionOptions) {
     const {
       clientId,
-      scopes,
+      permissions,
       appVersion,
       clientCapabilities,
       onMessage,
@@ -793,6 +855,8 @@ export class Session {
       agentStorage,
       projectRegistry,
       workspaceRegistry,
+      directorySync,
+      workspaceLabelService,
       filesystem,
       scheduleService,
       checkoutDiffManager,
@@ -801,6 +865,8 @@ export class Session {
       workspaceGitService,
       workspaceAutoName,
       daemonConfigStore,
+      pluginRuntime,
+      orchestrationSkills,
       stt,
       sttLanguage,
       tts,
@@ -826,7 +892,7 @@ export class Session {
       getWebSocketRuntimeMetrics,
     } = options;
     this.clientId = clientId;
-    this.scopes = [...scopes];
+    this.authorization = new SessionAuthorization(permissions);
     this.appVersion = appVersion ?? null;
     this.clientCapabilities = parseClientCapabilities(clientCapabilities);
     this.sessionId = uuidv4();
@@ -839,7 +905,11 @@ export class Session {
     this.onWorkspaceRecovered = onWorkspaceRecovered ?? null;
     this.pushNotifications = pushNotifications;
     this.paseoHome = paseoHome;
+    this.projectIcons = new ProjectIconReader(paseoHome);
     this.worktreesRoot = worktreesRoot;
+    this.pluginRuntime = pluginRuntime;
+    this.orchestrationSkills = orchestrationSkills;
+    this.unsubscribePluginChanges = this.subscribeToPluginChanges(pluginRuntime);
     this.sessionLogger = logger.child({
       module: "session",
       clientId: this.clientId,
@@ -862,6 +932,8 @@ export class Session {
       new FileProviderSessionImportTransactionStore(join(paseoHome, "provider-session-imports"));
     this.projectRegistry = projectRegistry;
     this.workspaceRegistry = workspaceRegistry;
+    this.directorySync = resolveDirectorySync(directorySync);
+    this.workspaceLabelService = resolveWorkspaceLabelService(workspaceLabelService);
     this.filesystem = filesystem ?? nodeSessionFileSystem;
     this.github = github ?? createGitHubService();
     this.renameCurrentBranch = renameCurrentBranch ?? renameCurrentBranchDefault;
@@ -989,6 +1061,7 @@ export class Session {
       listWorkspaces: () => this.workspaceRegistry.list(),
       logger: this.sessionLogger,
       hubRelationships: options.hubRelationships,
+      reloadConfig: () => daemonConfigStore.reload(),
     });
     this.hubExecutionController = options.hubExecutionAgents
       ? new HubExecutionController({
@@ -1021,6 +1094,13 @@ export class Session {
         this.buildProjectPlacementForWorkspaceId(workspaceId),
       emitWorkspaceUpdateForWorkspaceId: (workspaceId) =>
         this.emitWorkspaceUpdateForWorkspaceId(workspaceId),
+      sequenceAgentUpdate: (payload, agent, project, agentId, includeSequence) =>
+        this.directorySync.sequenceAgentUpdate(
+          payload,
+          agent && project ? { agent, project } : null,
+          agentId,
+          includeSequence,
+        ),
       logger: this.sessionLogger,
     });
     this.createAgentLifecycleDispatch = new CreateAgentLifecycleDispatch({
@@ -1240,13 +1320,22 @@ export class Session {
     );
   }
 
-  emitProjectUpdate(update: ProjectUpdate): void {
+  emitProjectUpdate(update: ProjectUpdate): Promise<void> {
+    const queued = this.projectUpdateQueue
+      .catch(() => undefined)
+      .then(() => this.publishProjectUpdate(update));
+    this.projectUpdateQueue = queued;
+    return queued;
+  }
+
+  private async publishProjectUpdate(update: ProjectUpdate): Promise<void> {
+    const projectedPayload =
+      update.kind === "upsert"
+        ? { kind: "upsert" as const, project: await this.buildProjectDescriptor(update.project) }
+        : update;
     const message: SessionOutboundMessage = {
       type: "project.update",
-      payload:
-        update.kind === "upsert"
-          ? { kind: "upsert", project: this.buildProjectDescriptor(update.project) }
-          : update,
+      payload: this.directorySync.sequenceProjectUpdate(projectedPayload, this.projectSyncEnabled),
     };
     if (this.clientCapabilitiesBySource.size === 0 || !this.onMessageToSource) {
       if (this.supports(CLIENT_CAPS.projectUpdates)) this.emit(message);
@@ -1632,6 +1721,11 @@ export class Session {
 
     this.unsubscribeAgentEvents = this.agentManager.subscribe(
       (event) => {
+        if (event.type === "timeline_replacement") {
+          this.deliverTimelineReplacement(event.agentId, this.rewindInitiators.get(event.agentId));
+          return;
+        }
+
         if (event.type === "agent_state") {
           this.sessionLogger.trace(
             {
@@ -1885,7 +1979,7 @@ export class Session {
         },
         "agent.session.inbound",
       );
-      if (!isSessionRpcAllowed(this.scopes, msg.type)) {
+      if (!this.authorization.allowsInbound(msg)) {
         const requestId = sessionRequestId(msg);
         if (requestId) {
           this.emit({
@@ -1939,14 +2033,42 @@ export class Session {
     }
   }
 
-  public setScopes(scopes: readonly string[]): void {
-    this.scopes = [...scopes];
+  public setPermissions(permissions: readonly DaemonPermission[]): void {
+    this.authorization.replacePermissions(permissions);
   }
 
+  public getPermissions(): DaemonPermission[] {
+    return this.authorization.listPermissions();
+  }
+
+  public allowsInbound(message: SessionInboundMessage): boolean {
+    return this.authorization.allowsInbound(message);
+  }
+
+  public allowsPermission(permission: DaemonPermission): boolean {
+    return this.authorization.allowsPermission(permission);
+  }
+
+  public subscribesToAgent(agent: ManagedAgent): Promise<boolean> {
+    return this.agentUpdates.includesLiveAgent(agent);
+  }
+
+  public subscribesToTerminalDirectory(input: {
+    cwd: string;
+    workspaceId?: string;
+  }): Promise<boolean> {
+    return this.terminalController.hasDirectorySubscription(input);
+  }
+
+  public publish(message: SessionOutboundMessage): void {
+    this.emit(message);
+  }
+
+  // oxlint-disable-next-line complexity -- Dispatch keeps all inbound message variants in one owner
   private async dispatchInboundMessage(msg: SessionInboundMessage, source?: object): Promise<void> {
     const promise =
       this.dispatchVoiceAndControlMessage(msg) ??
-      this.dispatchAgentRewindMessage(msg) ??
+      this.dispatchAgentRewindMessage(msg, source) ??
       this.dispatchAgentGoalMessage(msg) ??
       this.dispatchAgentRelationshipMessage(msg) ??
       this.dispatchAgentTimelineMessage(msg, source) ??
@@ -1955,13 +2077,229 @@ export class Session {
       this.dispatchAgentConfigMessage(msg) ??
       this.dispatchCheckoutMessage(msg) ??
       this.dispatchWorkspaceRecoveryMessage(msg) ??
+      this.dispatchWorkspaceLabelMessage(msg) ??
       this.dispatchWorkspaceAndProjectMessage(msg) ??
       this.dispatchWorkspaceFileMessage(msg, source) ??
       this.dispatchProviderMessage(msg) ??
+      this.dispatchOrchestrationSkillsMessage(msg) ??
+      this.dispatchPluginDirectoryMessage(msg) ??
+      this.dispatchPluginMessage(msg) ??
       this.dispatchTerminalMessage(msg) ??
       this.dispatchScheduleMessage(msg) ??
       this.dispatchMiscMessage(msg);
     if (promise) await promise;
+  }
+
+  private dispatchOrchestrationSkillsMessage(
+    msg: SessionInboundMessage,
+  ): Promise<void> | undefined {
+    if (!this.orchestrationSkills || !msg.type.startsWith("agent.skills.")) return undefined;
+    const emitStatus = (
+      type:
+        | "agent.skills.get_status.response"
+        | "agent.skills.reconcile.response"
+        | "agent.skills.uninstall.response",
+      requestId: string,
+      operation: Promise<import("./orchestration-skills/index.js").SkillsSnapshot>,
+    ) =>
+      operation.then((status) => {
+        this.emit({ type, payload: { requestId, ...status } });
+        return undefined;
+      });
+    switch (msg.type) {
+      case "agent.skills.get_status.request":
+        return emitStatus(
+          "agent.skills.get_status.response",
+          msg.requestId,
+          this.orchestrationSkills.getStatus(),
+        );
+      case "agent.skills.reconcile.request":
+        return emitStatus(
+          "agent.skills.reconcile.response",
+          msg.requestId,
+          this.orchestrationSkills.reconcile(),
+        );
+      case "agent.skills.uninstall.request":
+        return emitStatus(
+          "agent.skills.uninstall.response",
+          msg.requestId,
+          this.orchestrationSkills.uninstall(),
+        );
+      case "agent.skills.save_selection.request":
+        return this.orchestrationSkills
+          .saveSelection(msg.selection, msg.confirmedRemovals)
+          .then((result) => {
+            this.emit({
+              type: "agent.skills.save_selection.response",
+              payload: { requestId: msg.requestId, ...result },
+            });
+            return undefined;
+          });
+      case "agent.skills.import_legacy_selection.request":
+        return this.orchestrationSkills
+          .importLegacySelectionIfUnset(msg.selection)
+          .then((result) => {
+            this.emit({
+              type: "agent.skills.import_legacy_selection.response",
+              payload: { requestId: msg.requestId, ...result },
+            });
+            return undefined;
+          });
+      default:
+        return undefined;
+    }
+  }
+
+  private dispatchPluginMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    if (msg.type === "plugin.list.request") {
+      this.emit({
+        type: "plugin.list.response",
+        payload: { requestId: msg.requestId, plugins: this.pluginRuntime?.listPlugins() ?? [] },
+      });
+      return undefined;
+    }
+    if (msg.type === "plugin.logs.get.request") {
+      if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
+      this.emit({
+        type: "plugin.logs.get.response",
+        payload: {
+          requestId: msg.requestId,
+          pluginId: msg.pluginId,
+          entries: this.pluginRuntime.getLogs(msg.pluginId),
+        },
+      });
+      return undefined;
+    }
+    if (msg.type === "plugin.reload.request") {
+      if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
+      return this.pluginRuntime.reloadPlugin(msg.pluginId).then((plugin) => {
+        this.emit({
+          type: "plugin.reload.response",
+          payload: { requestId: msg.requestId, plugin },
+        });
+        return undefined;
+      });
+    }
+    if (msg.type === "plugin.enable.request") {
+      if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
+      return this.pluginRuntime.enablePlugin(msg.pluginId).then((plugin) => {
+        this.emit({
+          type: "plugin.enable.response",
+          payload: { requestId: msg.requestId, plugin },
+        });
+        return undefined;
+      });
+    }
+    if (msg.type === "plugin.disable.request") {
+      if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
+      return this.pluginRuntime.disablePlugin(msg.pluginId).then((plugin) => {
+        this.emit({
+          type: "plugin.disable.response",
+          payload: { requestId: msg.requestId, plugin },
+        });
+        return undefined;
+      });
+    }
+    if (msg.type === "plugin.remove.request") {
+      if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
+      return this.pluginRuntime.removePlugin(msg.pluginId).then(() => {
+        this.emit({ type: "plugin.remove.response", payload: { requestId: msg.requestId } });
+        return undefined;
+      });
+    }
+    if (msg.type === "plugin.catalog.get.request") {
+      this.emit({
+        type: "plugin.catalog.get.response",
+        payload: {
+          requestId: msg.requestId,
+          plugins: this.pluginRuntime?.catalog() ?? [],
+        },
+      });
+      return undefined;
+    }
+    if (msg.type === "plugin.rpc.invoke.request") {
+      if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
+      return this.pluginRuntime
+        .invokePluginRpc(msg.pluginId, msg.method, msg.input)
+        .then((output) => {
+          this.emit({
+            type: "plugin.rpc.invoke.response",
+            payload: { requestId: msg.requestId, output },
+          });
+          return undefined;
+        });
+    }
+    return undefined;
+  }
+
+  private dispatchPluginDirectoryMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    if (msg.type === "plugin.source.install.request") {
+      if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
+      return this.pluginRuntime
+        .installSource({
+          // COMPAT(plugin-source-path): accepted for v0.7 clients; remove after 2027-09-01.
+          source: formatPluginSourceReference(msg.source, msg.pluginPath),
+          ...(msg.id ? { id: msg.id } : {}),
+          ...(msg.ref ? { ref: msg.ref } : {}),
+        })
+        .then((plugin) => {
+          this.emit({
+            type: "plugin.source.install.response",
+            payload: { requestId: msg.requestId, plugin },
+          });
+          return undefined;
+        });
+    }
+    if (msg.type === "plugin.source.status.request") {
+      if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
+      return this.pluginRuntime.statusSources(msg.pluginId).then((plugins) => {
+        this.emit({
+          type: "plugin.source.status.response",
+          payload: { requestId: msg.requestId, plugins },
+        });
+        return undefined;
+      });
+    }
+    if (msg.type === "plugin.source.update.request") {
+      if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
+      return this.pluginRuntime.updateSources(msg.pluginId).then((plugins) => {
+        this.emit({
+          type: "plugin.source.update.response",
+          payload: { requestId: msg.requestId, plugins },
+        });
+        return undefined;
+      });
+    }
+    if (msg.type === "plugin.directory.install.request") {
+      if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
+      return this.pluginRuntime.installDirectory({ path: msg.path, id: msg.id }).then((plugin) => {
+        this.emit({
+          type: "plugin.directory.install.response",
+          payload: { requestId: msg.requestId, plugin },
+        });
+        return undefined;
+      });
+    }
+    if (msg.type === "plugin.directory.inspect.request") {
+      if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
+      return this.pluginRuntime.inspectDirectory(msg.path).then(({ id }) => {
+        this.emit({
+          type: "plugin.directory.inspect.response",
+          payload: { requestId: msg.requestId, id },
+        });
+        return undefined;
+      });
+    }
+    return undefined;
+  }
+
+  private subscribeToPluginChanges(
+    pluginRuntime: SessionOptions["pluginRuntime"],
+  ): (() => void) | null {
+    if (!pluginRuntime) return null;
+    return pluginRuntime.subscribe((pluginId) => {
+      this.emit({ type: "status", payload: { status: "plugin_catalog_changed", pluginId } });
+    });
   }
 
   private dispatchVoiceAndControlMessage(msg: SessionInboundMessage): Promise<void> | undefined {
@@ -2014,10 +2352,13 @@ export class Session {
     }
   }
 
-  private dispatchAgentRewindMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+  private dispatchAgentRewindMessage(
+    msg: SessionInboundMessage,
+    source?: object,
+  ): Promise<void> | undefined {
     switch (msg.type) {
       case "agent.rewind.request":
-        return this.handleAgentRewindRequest(msg);
+        return this.handleAgentRewindRequest(msg, source);
       case "agent.edit_last_user_message.request":
         return this.handleAgentEditLastUserMessageRequest(msg);
       default:
@@ -2174,9 +2515,13 @@ export class Session {
         return this.daemonSession.handleGetStatusRequest(msg);
       case "daemon.get_pairing_offer.request":
         return this.daemonSession.handleGetPairingOfferRequest(msg);
+      case "daemon.config.reload.request":
+        this.daemonSession.handleConfigReloadRequest(msg);
+        return undefined;
       case "hub.management.daemon.connect.request":
       case "hub.management.daemon.get_status.request":
       case "hub.management.daemon.disconnect.request":
+      case "hub.management.daemon.permissions.update.request":
         return this.daemonSession.handleHubRelationshipRequest(msg);
       case "diagnostics.request":
         return this.daemonSession.handleDiagnosticsRequest(msg);
@@ -2273,7 +2618,7 @@ export class Session {
       case "fetch_workspaces_request":
         return this.handleFetchWorkspacesRequest(msg);
       case "project.list.request":
-        return this.handleProjectListRequest(msg.requestId);
+        return this.handleProjectListRequest(msg);
       case "paseo_worktree_list_request":
         return this.handlePaseoWorktreeListRequest(msg);
       case "paseo_worktree_archive_request":
@@ -2309,6 +2654,23 @@ export class Session {
         return this.handleWorkspaceTitleSetRequest(msg.workspaceId, msg.title, msg.requestId);
       case "workspace.pin.set.request":
         return this.handleWorkspacePinSetRequest(msg.workspaceId, msg.pinned, msg.requestId);
+      default:
+        return undefined;
+    }
+  }
+
+  private dispatchWorkspaceLabelMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
+      case "workspace.label.list.request":
+        return this.handleWorkspaceLabelList(msg);
+      case "workspace.label.assignment.set.request":
+        return this.handleWorkspaceLabelAssignment(msg);
+      case "workspace.label.update.request":
+        return this.handleWorkspaceLabelUpdate(msg);
+      case "workspace.label.delete.request":
+        return this.handleWorkspaceLabelDelete(msg);
+      case "workspace.label.delete.inspect.request":
+        return this.handleWorkspaceLabelDeleteInspection(msg);
       default:
         return undefined;
     }
@@ -2454,6 +2816,9 @@ export class Session {
   }
 
   public async handleBinaryFrame(binaryFrame: BinaryFrame): Promise<void> {
+    if (!this.authorization.allowsPermission("workspace.write")) {
+      return;
+    }
     if (binaryFrame.kind === "file_transfer") {
       await this.workspaceFilesSession.handleFileTransferFrame(binaryFrame.frame);
       return;
@@ -2933,7 +3298,7 @@ export class Session {
 
       // Emit a project.update so clients that track the project as an empty
       // project (no workspaces yet) receive the resolved name immediately.
-      this.emitProjectUpdate({ kind: "upsert", project: updated });
+      await this.emitProjectUpdate({ kind: "upsert", project: updated });
 
       // Re-emit descriptors for every workspace under this project so the new
       // resolved name lands in the UI immediately.
@@ -2987,7 +3352,7 @@ export class Session {
         type: "project.icon.set.response",
         payload: { requestId, projectId, accepted: true, error: null },
       });
-      this.emitProjectUpdate({ kind: "upsert", project: updated });
+      await this.emitProjectUpdate({ kind: "upsert", project: updated });
 
       const affectedWorkspaceIds = (await this.workspaceRegistry.list())
         .filter((workspace) => workspace.projectId === projectId)
@@ -3013,7 +3378,7 @@ export class Session {
       const project = await this.projectRegistry.get(projectId);
       if (!project) throw new Error("Project not found");
 
-      const icon = await readProjectIcon({ paseoHome: this.paseoHome, project });
+      const icon = await this.projectIcons.read(project);
       this.emit({
         type: "project.icon.get.response",
         payload: { projectId, icon, error: null, requestId },
@@ -3331,6 +3696,9 @@ export class Session {
         prompt,
         messageId,
         runOptions: canonicalRunOptions,
+        // A typed or spoken message from the human answers any permission the
+        // agent is blocked on.
+        clearPendingPermissions: true,
         logger: this.sessionLogger,
       });
       return { ok: true };
@@ -3860,28 +4228,96 @@ export class Session {
 
   private async handleAgentRewindRequest(
     msg: Extract<SessionInboundMessage, { type: "agent.rewind.request" }>,
+    source?: object,
   ): Promise<void> {
     try {
+      this.rewindInitiators.set(msg.agentId, source);
       await this.agentManager.rewind(msg.agentId, msg.messageId, msg.mode);
-      this.emit({
-        type: "agent.rewind.response",
-        payload: {
-          requestId: msg.requestId,
-          agentId: msg.agentId,
-          ok: true,
-          error: null,
+      this.emitForSource(
+        {
+          type: "agent.rewind.response",
+          payload: {
+            requestId: msg.requestId,
+            agentId: msg.agentId,
+            ok: true,
+            error: null,
+          },
         },
-      });
+        source,
+      );
     } catch (error) {
-      this.emit({
-        type: "agent.rewind.response",
-        payload: {
-          requestId: msg.requestId,
-          agentId: msg.agentId,
-          ok: false,
-          error: error instanceof Error ? error.message : "Failed to rewind agent",
+      this.emitForSource(
+        {
+          type: "agent.rewind.response",
+          payload: {
+            requestId: msg.requestId,
+            agentId: msg.agentId,
+            ok: false,
+            error: error instanceof Error ? error.message : "Failed to rewind agent",
+          },
         },
+        source,
+      );
+    } finally {
+      this.rewindInitiators.delete(msg.agentId);
+    }
+  }
+
+  private deliverTimelineReplacement(agentId: string, initiatingSource?: object): void {
+    const agent = this.agentManager.getAgent(agentId);
+    if (!agent) return;
+    const timeline = this.agentManager.fetchTimeline(agentId, { limit: 0 });
+    const epoch = timeline.epoch;
+
+    if (this.clientCapabilitiesBySource.size === 0 || !this.onMessageToSource) {
+      if (!this.supports(CLIENT_CAPS.timelineReplacementInvalidation)) {
+        this.emitReconstructedTimelineRows(agentId, agent.provider, timeline.rows, epoch);
+      }
+      return;
+    }
+
+    for (const [source, capabilities] of this.clientCapabilitiesBySource) {
+      const isInitiator = source === initiatingSource;
+      const supportsReplacement = capabilities.has(CLIENT_CAPS.timelineReplacementInvalidation);
+      const isSubscribed = this.viewedTimelineAgentIdsBySource.get(source)?.has(agentId) === true;
+      if (supportsReplacement) {
+        if (isSubscribed && !isInitiator) {
+          this.onMessageToSource(source, {
+            type: "agent.timeline.replacement",
+            payload: { agentId, epoch },
+          });
+        }
+        continue;
+      }
+      // COMPAT(timelineReplacementInvalidation): added in v0.5.0, replay reconstructed
+      // rows to legacy clients until the supported client floor is >= v0.5.0 after 2027-02-21.
+      this.emitReconstructedTimelineRows(agentId, agent.provider, timeline.rows, epoch, source);
+    }
+  }
+
+  private emitReconstructedTimelineRows(
+    agentId: string,
+    provider: ManagedAgent["provider"],
+    rows: AgentTimelineFetchResult["rows"],
+    epoch: string,
+    source?: object,
+  ): void {
+    for (const row of rows) {
+      const event = serializeAgentStreamEvent({
+        type: "timeline",
+        provider,
+        item: row.item,
+        ...(row.turnId ? { turnId: row.turnId } : {}),
+        timestamp: row.timestamp,
       });
+      if (!event) continue;
+      this.emitForSource(
+        {
+          type: "agent_stream",
+          payload: { agentId, event, timestamp: row.timestamp, seq: row.seq, epoch },
+        },
+        source,
+      );
     }
   }
 
@@ -5048,6 +5484,7 @@ export class Session {
       name: resolveWorkspaceDisplayName(workspace),
       title: workspace.title,
       pinnedAt: workspace.pinnedAt,
+      ...(workspace.labels && workspace.labels.length > 0 ? { labels: workspace.labels } : {}),
       archivingAt: null,
       status: "done",
       statusEnteredAt: null,
@@ -5139,6 +5576,9 @@ export class Session {
       }),
       title: result.workspace.title,
       pinnedAt: result.workspace.pinnedAt,
+      ...(result.workspace.labels && result.workspace.labels.length > 0
+        ? { labels: result.workspace.labels }
+        : {}),
       archivingAt: null,
       status: "done",
       statusEnteredAt: result.workspace.createdAt,
@@ -5292,15 +5732,17 @@ export class Session {
     }
   }
 
-  private buildProjectDescriptor(
+  private async buildProjectDescriptor(
     project: PersistedProjectRecord,
-  ): WorkspaceProjectDescriptorPayload {
+  ): Promise<WorkspaceProjectDescriptorPayload> {
+    const icon = await this.projectIcons.snapshot(project);
     return {
       projectId: project.projectId,
       ...(project.projectKey ? { projectKey: project.projectKey } : {}),
       projectDisplayName: resolveProjectDisplayName(project),
       projectCustomName: project.customName ?? null,
       projectCustomIconRevision: project.customIconRevision ?? null,
+      projectIconRevision: icon.revision,
       projectRootPath: project.rootPath,
       projectKind: project.kind,
     };
@@ -5498,7 +5940,6 @@ export class Session {
         continue;
       }
       this.workspaceGitObserver.recordDescriptorState(workspaceId, nextWorkspace);
-
       if (!nextWorkspace) {
         if (this.shouldSkipWorkspaceRemoval(lastEmitted, options?.removedProjectId)) {
           continue;
@@ -5507,17 +5948,28 @@ export class Session {
           return;
         }
         subscription.lastEmittedByWorkspaceId.delete(workspaceId);
+        const removePayload = await this.buildWorkspaceRemoveUpdatePayload(
+          workspaceId,
+          options?.removedProjectId,
+        );
         this.bufferOrEmitWorkspaceUpdate(
           subscription,
-          await this.buildWorkspaceRemoveUpdatePayload(workspaceId, options?.removedProjectId),
+          this.directorySync.sequenceWorkspaceUpdate(
+            removePayload,
+            workspace ?? null,
+            workspaceId,
+            subscription.syncEnabled === true,
+          ),
         );
         continue;
       }
 
-      const nextPayload: WorkspaceUpdatePayload = {
-        kind: "upsert",
-        workspace: nextWorkspace,
-      };
+      const nextPayload: WorkspaceUpdatePayload = this.directorySync.sequenceWorkspaceUpdate(
+        { kind: "upsert", workspace: nextWorkspace },
+        workspace ?? null,
+        workspaceId,
+        subscription.syncEnabled === true,
+      );
 
       if (
         lastEmitted &&
@@ -5621,10 +6073,13 @@ export class Session {
         this.agentUpdates.beginSubscription({
           subscriptionId,
           filter: request.filter,
+          syncEnabled: Boolean(request.sync),
         });
       }
 
-      const payload = await this.listFetchAgentsEntries(request);
+      const payload = request.sync
+        ? await this.readAgentDirectorySync(request)
+        : await this.listFetchAgentsEntries(request);
       const snapshotUpdatedAtByAgentId = new Map<string, number>();
       for (const entry of payload.entries) {
         const parsedUpdatedAt = Date.parse(entry.agent.updatedAt);
@@ -5755,6 +6210,7 @@ export class Session {
       if (subscriptionId) {
         this.workspaceUpdatesSubscription = {
           subscriptionId,
+          syncEnabled: Boolean(request.sync),
           filter: request.filter,
           isBootstrapping: true,
           pendingUpdatesByWorkspaceId: new Map(),
@@ -5763,7 +6219,9 @@ export class Session {
         };
       }
 
-      const payload = await this.listFetchWorkspacesEntries(request);
+      const payload = request.sync
+        ? await this.readWorkspaceDirectorySync(request)
+        : await this.listFetchWorkspacesEntries(request);
       this.workspaceGitObserver.syncObservers(payload.entries);
       this.sessionLogger.debug(
         {
@@ -5813,27 +6271,220 @@ export class Session {
     }
   }
 
-  private async handleProjectListRequest(requestId: string): Promise<void> {
+  private async handleProjectListRequest(
+    request: Extract<SessionInboundMessage, { type: "project.list.request" }>,
+  ): Promise<void> {
     try {
-      const projects = (await this.projectRegistry.list())
-        .filter((project) => !project.archivedAt)
-        .map((project) => this.buildProjectDescriptor(project));
+      const projects = await Promise.all(
+        (await this.projectRegistry.list())
+          .filter((project) => !project.archivedAt)
+          .map((project) => this.buildProjectDescriptor(project)),
+      );
+      const synchronized = request.sync
+        ? this.directorySync.synchronizeProjects(projects, request.sync)
+        : null;
+      if (synchronized) this.projectSyncEnabled = true;
       this.emit({
         type: "project.list.response",
-        payload: { requestId, projects },
+        payload: {
+          requestId: request.requestId,
+          ...(synchronized ?? { projects }),
+        },
       });
     } catch (error) {
       this.sessionLogger.error({ err: error }, "Failed to handle project.list.request");
       this.emit({
         type: "rpc_error",
         payload: {
-          requestId,
+          requestId: request.requestId,
           requestType: "project.list.request",
           error: error instanceof Error ? error.message : "Failed to list projects",
           code: "project_list_failed",
         },
       });
     }
+  }
+
+  private requireWorkspaceLabels(): WorkspaceLabelService {
+    if (!this.workspaceLabelService) {
+      throw new SessionRequestError("workspace_labels_unavailable", "Workspace labels unavailable");
+    }
+    return this.workspaceLabelService;
+  }
+
+  private emitWorkspaceLabelError(
+    request: { requestId: string; type: string },
+    error: unknown,
+  ): void {
+    this.emit({
+      type: "rpc_error",
+      payload: {
+        requestId: request.requestId,
+        requestType: request.type,
+        code: workspaceLabelErrorCode(error),
+        error: error instanceof Error ? error.message : "Workspace label operation failed",
+      },
+    });
+  }
+
+  private async handleWorkspaceLabelList(
+    request: Extract<SessionInboundMessage, { type: "workspace.label.list.request" }>,
+  ): Promise<void> {
+    const owner = {};
+    try {
+      this.workspaceLabelSubscription?.unsubscribe();
+      this.workspaceLabelSubscription = {
+        owner,
+        id: request.subscribe.subscriptionId,
+        unsubscribe: () => undefined,
+      };
+      const service = this.requireWorkspaceLabels();
+      type LiveChange = Parameters<Parameters<typeof service.subscribe>[0]["onChange"]>[0];
+      const pending: LiveChange[] = [];
+      let ready = false;
+      const emitChange = (change: LiveChange): void => {
+        this.emit({
+          type: "workspace.label.update",
+          payload:
+            change.kind === "upsert"
+              ? {
+                  kind: "upsert",
+                  label: change.label,
+                  ...(change.previousName ? { previousName: change.previousName } : {}),
+                  generation: change.generation,
+                  seq: change.seq,
+                }
+              : {
+                  kind: "remove",
+                  name: change.name,
+                  generation: change.generation,
+                  seq: change.seq,
+                },
+        });
+      };
+      const subscription = await service.subscribe({
+        cursor: request.sync,
+        onChange: (change) => {
+          if (this.workspaceLabelSubscription?.owner !== owner) return;
+          if (!ready) pending.push(change);
+          else emitChange(change);
+        },
+      });
+      const ownsSubscription = this.workspaceLabelSubscription?.owner === owner;
+      if (ownsSubscription) {
+        this.workspaceLabelSubscription = {
+          owner,
+          id: request.subscribe.subscriptionId,
+          unsubscribe: subscription.unsubscribe,
+        };
+      } else {
+        subscription.unsubscribe();
+      }
+      this.emit({
+        type: "workspace.label.list.response",
+        payload: { requestId: request.requestId, ...subscription.snapshot },
+      });
+      ready = true;
+      if (ownsSubscription) {
+        for (const change of pending) {
+          if (change.seq > subscription.snapshot.sync.headSeq) emitChange(change);
+        }
+      }
+    } catch (error) {
+      if (this.workspaceLabelSubscription?.owner === owner) {
+        this.workspaceLabelSubscription = null;
+      }
+      this.emitWorkspaceLabelError(request, error);
+    }
+  }
+
+  private async handleWorkspaceLabelAssignment(
+    request: Extract<SessionInboundMessage, { type: "workspace.label.assignment.set.request" }>,
+  ): Promise<void> {
+    try {
+      const result = await this.requireWorkspaceLabels().setAssignment(request);
+      this.emit({
+        type: "workspace.label.assignment.set.response",
+        payload: { requestId: request.requestId, ...result },
+      });
+    } catch (error) {
+      this.emitWorkspaceLabelError(request, error);
+    }
+  }
+
+  private async handleWorkspaceLabelUpdate(
+    request: Extract<SessionInboundMessage, { type: "workspace.label.update.request" }>,
+  ): Promise<void> {
+    try {
+      const result = await this.requireWorkspaceLabels().update(request);
+      this.emit({
+        type: "workspace.label.update.response",
+        payload: { requestId: request.requestId, ...result },
+      });
+    } catch (error) {
+      this.emitWorkspaceLabelError(request, error);
+    }
+  }
+
+  private async handleWorkspaceLabelDelete(
+    request: Extract<SessionInboundMessage, { type: "workspace.label.delete.request" }>,
+  ): Promise<void> {
+    try {
+      const result = await this.requireWorkspaceLabels().delete(request.name);
+      this.emit({
+        type: "workspace.label.delete.response",
+        payload: { requestId: request.requestId, ...result },
+      });
+    } catch (error) {
+      this.emitWorkspaceLabelError(request, error);
+    }
+  }
+
+  private async handleWorkspaceLabelDeleteInspection(
+    request: Extract<SessionInboundMessage, { type: "workspace.label.delete.inspect.request" }>,
+  ): Promise<void> {
+    try {
+      const affectedWorkspaceCount = await this.requireWorkspaceLabels().countAffectedWorkspaces(
+        request.name,
+      );
+      this.emit({
+        type: "workspace.label.delete.inspect.response",
+        payload: { requestId: request.requestId, affectedWorkspaceCount },
+      });
+    } catch (error) {
+      this.emitWorkspaceLabelError(request, error);
+    }
+  }
+
+  private async readAgentDirectorySync(
+    request: Extract<SessionInboundMessage, { type: "fetch_agents_request" }>,
+  ) {
+    if (request.scope !== "active" || request.filter) {
+      throw new SessionRequestError(
+        "invalid_request",
+        "Sequenced agent directory reads require scope=active and no filter.",
+      );
+    }
+    const snapshot = await this.listFetchAgentsEntries({
+      ...request,
+      page: { limit: Number.MAX_SAFE_INTEGER },
+    });
+    return this.directorySync.synchronizeAgents(snapshot.entries, request.sync ?? {});
+  }
+
+  private async readWorkspaceDirectorySync(
+    request: Extract<SessionInboundMessage, { type: "fetch_workspaces_request" }>,
+  ) {
+    if (request.filter) {
+      throw new SessionRequestError(
+        "invalid_request",
+        "Sequenced workspace directory reads do not support filters.",
+      );
+    }
+    return this.directorySync.synchronizeWorkspaces(
+      await this.workspaceDirectory.listDescriptors(),
+      request.sync ?? {},
+    );
   }
 
   // Build the bootstrap snapshot used by `flushBootstrappedWorkspaceUpdates`
@@ -6188,7 +6839,7 @@ export class Session {
         type: "project.add.response",
         payload: {
           requestId: request.requestId,
-          project: this.buildProjectDescriptor(project),
+          project: await this.buildProjectDescriptor(project),
           error: null,
         },
       });
@@ -6222,7 +6873,7 @@ export class Session {
         payload: {
           requestId: request.requestId,
           directoryPath: result.directoryPath,
-          project: this.buildProjectDescriptor(result.project),
+          project: await this.buildProjectDescriptor(result.project),
           error: null,
           errorCode: null,
         },
@@ -6387,7 +7038,7 @@ export class Session {
           requestId: request.requestId,
           repo: repo.displayName,
           checkoutPath,
-          project: this.buildProjectDescriptor(project),
+          project: await this.buildProjectDescriptor(project),
           error: null,
         },
       });
@@ -6950,6 +7601,7 @@ export class Session {
       seqStart: entry.seqStart,
       seqEnd: entry.seqEnd,
       sourceSeqRanges: entry.sourceSeqRanges,
+      turnId: entry.turnId,
       collapsed: supportsReasoningMerge
         ? entry.collapsed
         : entry.collapsed.filter((value) => value !== "reasoning_merge"),
@@ -7597,11 +8249,12 @@ export class Session {
         {
           agentId,
           messageId: msg.messageId,
+          activeTurnBehavior: msg.activeTurnBehavior,
           textPrefix: msg.text.slice(0, 80),
         },
         "agent.session.send_agent_message",
       );
-      let dispatchResult: { outOfBand: boolean };
+      let dispatchResult: { disposition: "out_of_band" | "steered" | "turn_started" };
       try {
         dispatchResult = await sendPromptToAgent({
           agentManager: this.agentManager,
@@ -7613,6 +8266,8 @@ export class Session {
             typeof prompt === "string" && prompt.trim().length > 0
               ? { replayKind: "text_only" }
               : undefined,
+          activeTurnBehavior: msg.activeTurnBehavior ?? "interrupt",
+          clearPendingPermissions: true,
           logger: this.sessionLogger,
         });
       } catch (error) {
@@ -7630,7 +8285,7 @@ export class Session {
         return;
       }
 
-      if (dispatchResult.outOfBand) {
+      if (dispatchResult.disposition !== "turn_started") {
         this.emit({
           type: "send_agent_message_response",
           payload: {
@@ -7806,7 +8461,7 @@ export class Session {
    * Emit a message to the client
    */
   private emit(msg: SessionOutboundMessage): void {
-    if (msg.type !== "rpc_error" && !isSessionRpcAllowed(this.scopes, msg.type)) {
+    if (!this.authorization.allowsOutbound(msg)) {
       return;
     }
     // JSON.stringify(msg) is only computed when trace is enabled — it runs for
@@ -7868,8 +8523,12 @@ export class Session {
     }
     this.unsubscribeProjectMutations?.();
     this.unsubscribeProjectMutations = null;
+    this.unsubscribePluginChanges?.();
+    this.unsubscribePluginChanges = null;
     this.unsubscribeWorkspaceMutations?.();
     this.unsubscribeWorkspaceMutations = null;
+    this.workspaceLabelSubscription?.unsubscribe();
+    this.workspaceLabelSubscription = null;
     this.agentUpdates.dispose();
     await this.hubExecutionController?.cleanup();
     if (this.unsubscribeTerminalWorkspaceContributionEvents) {

@@ -61,9 +61,7 @@ export function ensureAgentIsInitialized(input: EnsureAgentIsInitializedInput): 
   }
 
   const timelinePlan = planTimelineTailFetch();
-
   const deferred = createInitDeferred(key, timelinePlan.direction, "direct", client);
-  /** Wire owner captured before another viewed generation can claim the deferred. */
   const requestId = deferred.requestId;
   refreshAgentInitializationTimeout({
     key,
@@ -72,9 +70,7 @@ export function ensureAgentIsInitialized(input: EnsureAgentIsInitializedInput): 
     requestId,
     setAgentInitializing,
   });
-  /** Canonical request correlated with this exact initialization attempt. */
   const timelineRequest = { ...timelinePlan, requestId };
-
   setAgentInitializing(agentId, true);
 
   if (!client) {

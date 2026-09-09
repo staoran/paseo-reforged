@@ -16,8 +16,10 @@ export interface PendingForegroundRun {
   purpose: "turn" | "edit_last_user_message";
   replayKind?: "text_only";
   stagedEvents: AgentStreamEvent[];
-  turnId: string | null;
-  started: boolean;
+  start:
+    | { status: "pending" }
+    | { status: "started"; turnId: string }
+    | { status: "failed"; error: string };
   settled: boolean;
   settledPromise: Promise<void>;
   resolveSettled: () => void;
@@ -75,6 +77,13 @@ export class AgentRunState {
     return this.runs.has(agentId);
   }
 
+  getTurnId(agentId: string): string | null {
+    const run = this.runs.get(agentId);
+    if (!run) return null;
+    if (run.kind === "autonomous") return run.turnId;
+    return run.start.status === "started" ? run.start.turnId : null;
+  }
+
   trackAutonomousRun(agentId: string, turnId: string | null): TrackedAgentRun {
     const current = this.runs.get(agentId);
     if (current) {
@@ -96,7 +105,10 @@ export class AgentRunState {
     if (!run) {
       return;
     }
-    if (run.kind === "foreground" && (run.turnId === null || run.turnId !== turnId)) {
+    if (
+      run.kind === "foreground" &&
+      (run.start.status !== "started" || run.start.turnId !== turnId)
+    ) {
       return;
     }
     if (
@@ -284,8 +296,7 @@ function createPendingForegroundRun(options?: {
     kind: "foreground",
     purpose: options?.purpose ?? "turn",
     ...(options?.replayKind ? { replayKind: options.replayKind } : {}),
-    turnId: null,
-    started: false,
+    start: { status: "pending" },
     stagedEvents: [],
   };
 }

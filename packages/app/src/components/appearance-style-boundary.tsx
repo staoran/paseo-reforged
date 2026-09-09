@@ -11,12 +11,11 @@ function AppearanceStyleBoundaryBase({ appearanceKey, children }: AppearanceStyl
   return <Fragment key={appearanceKey}>{children}</Fragment>;
 }
 
-const appearanceStyleBoundaryMapping = (theme: Theme): Partial<AppearanceStyleBoundaryProps> => ({
-  appearanceKey: [
+export function appearanceStyleBoundaryKey(theme: Theme): string {
+  return [
     theme.fontFamily.ui,
     theme.fontFamily.workspace,
     theme.fontFamily.mono,
-    theme.fontSize.xs,
     theme.fontSize.sm,
     theme.fontSize.base,
     theme.fontSize.lg,
@@ -32,6 +31,7 @@ const appearanceStyleBoundaryMapping = (theme: Theme): Partial<AppearanceStyleBo
     theme.workspaceFontSize["2xl"],
     theme.workspaceFontSize["3xl"],
     theme.workspaceFontSize["4xl"],
+    theme.fontSize.content,
     theme.fontSize.code,
     theme.lineHeight.diff,
     theme.colors.foreground,
@@ -61,8 +61,12 @@ const appearanceStyleBoundaryMapping = (theme: Theme): Partial<AppearanceStyleBo
     theme.colors.syntax.meta,
     theme.colors.syntax.heading,
     theme.colors.syntax.link,
-  ].join("\u0000"),
-});
+  ].join("\u0000");
+}
+
+function appearanceStyleBoundaryMapping(theme: Theme): Partial<AppearanceStyleBoundaryProps> {
+  return { appearanceKey: appearanceStyleBoundaryKey(theme) };
+}
 
 const ThemedAppearanceStyleBoundary = withUnistyles(AppearanceStyleBoundaryBase);
 

@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { writeFileAtomic, writeJsonFileAtomic } from "../atomic-file.js";
 import { AgentTimelineItemPayloadSchema } from "../messages.js";
+import type { AgentTimelineItem } from "./agent-sdk-types.js";
 import {
   isAgentTimelineRegistrationSnapshotOwned,
   type AgentTimelineGenerationSelection,
@@ -431,6 +432,40 @@ export class FileAgentTimelineStore implements AgentTimelineStore {
       );
       throw error;
     }
+  }
+
+  /** Returns the last item in the committed generation. */
+  async getLastItem(agentId: string): Promise<AgentTimelineItem | null> {
+    const page = await this.fetchCommittedPage(agentId, { direction: "tail", limit: 1 });
+    return page?.rows.at(-1)?.item ?? null;
+  }
+
+  /** Returns the last assistant message found while walking committed pages backward. */
+  async getLastAssistantMessage(agentId: string): Promise<string | null> {
+    let cursor: AgentTimelineCommittedFetchOptions["cursor"];
+    for (let pagesRead = 0; pagesRead < 20; pagesRead += 1) {
+      const page = await this.fetchCommittedPage(agentId, {
+        direction: cursor ? "before" : "tail",
+        ...(cursor ? { cursor } : {}),
+        limit: 200,
+      });
+      if (!page || page.rows.length === 0) break;
+      for (let index = page.rows.length - 1; index >= 0; index -= 1) {
+        const item = page.rows[index]?.item;
+        if (item?.type === "assistant_message") return item.text;
+      }
+      if (!page.hasOlder) break;
+      const firstSeq = page.rows[0]?.seq;
+      if (firstSeq === undefined || (cursor && firstSeq >= cursor.seq)) break;
+      cursor = { epoch: page.epoch, seq: firstSeq };
+    }
+    return null;
+  }
+
+  /** Returns the last sequence number in the committed generation. */
+  async getLatestCommittedSeq(agentId: string): Promise<number> {
+    const page = await this.fetchCommittedPage(agentId, { direction: "tail", limit: 1 });
+    return page?.rows.at(-1)?.seq ?? 0;
   }
 
   async flush(agentId?: string): Promise<void> {

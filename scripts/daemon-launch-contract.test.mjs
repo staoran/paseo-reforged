@@ -63,7 +63,7 @@ test("every executable daemon entrypoint enters the supervisor", async () => {
   assert.match(appIsolatedHostDaemon, /spawn\(\s*process\.execPath,/);
   assert.match(
     appIsolatedHostDaemon,
-    /\["--import", "tsx", "scripts\/supervisor-entrypoint\.ts", "--dev"\]/,
+    /spawnTsx\("scripts\/supervisor-entrypoint\.ts", \["--dev"\]/,
   );
   assertNoSpawnedWorkerEntrypoint("app e2e isolated host daemon", appIsolatedHostDaemon);
 

@@ -50,4 +50,14 @@ const styles = StyleSheet.create((theme) => ({
     // Cancel the tooltip content's horizontal padding so the rule spans edge to edge.
     marginHorizontal: -theme.spacing[2],
   },
+  detail: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    lineHeight: theme.fontSize.sm * 1.4,
+  },
+  error: {
+    color: theme.colors.palette.red[300],
+    fontSize: theme.fontSize.sm,
+    lineHeight: theme.fontSize.sm * 1.4,
+  },
 }));

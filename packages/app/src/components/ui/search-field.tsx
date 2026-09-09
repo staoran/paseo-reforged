@@ -1,13 +1,14 @@
 import { useCallback, useState, type ReactElement } from "react";
-import { Pressable, TextInput, View, type StyleProp, type ViewStyle } from "react-native";
+import { Pressable, View, type StyleProp, type ViewStyle } from "react-native";
 import { Search, X } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
 import { createControlGeometry } from "@/components/ui/control-geometry";
+import { EditingTextInput } from "@/components/ui/text-input";
 
 const ThemedSearch = withUnistyles(Search);
 const ThemedX = withUnistyles(X);
-const ThemedTextInput = withUnistyles(TextInput, (theme: Theme) => ({
+const ThemedTextInput = withUnistyles(EditingTextInput, (theme: Theme) => ({
   // Placeholders sit at foregroundMuted and no dimmer — see docs/design.md §14.
   placeholderTextColor: theme.colors.foregroundMuted,
   selectionColor: theme.colors.foreground,

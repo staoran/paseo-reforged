@@ -18,7 +18,7 @@ interface JsonRpcRequest {
 interface JsonRpcResponse {
   id: number;
   result?: unknown;
-  error?: { message?: string };
+  error?: { message?: string; code?: string | number; data?: unknown };
 }
 
 interface JsonRpcNotification {
@@ -41,6 +41,16 @@ const CODEX_GOAL_LOG_STATUSES = new Set([
   "budgetLimited",
   "complete",
 ]);
+export class CodexAppServerRpcError extends Error {
+  constructor(
+    message: string,
+    readonly code: string | number | undefined,
+    readonly data: unknown,
+  ) {
+    super(message);
+    this.name = "CodexAppServerRpcError";
+  }
+}
 
 type RequestHandler = (params: unknown, requestId: number) => unknown;
 type NotificationHandler = (method: string, params: unknown) => void;
@@ -107,6 +117,7 @@ interface CodexGoalNotificationLogFields {
 
 export interface CodexThreadForkParams {
   threadId: string;
+  beforeTurnId?: string | null;
   path?: string | null;
   model?: string | null;
   modelProvider?: string | null;
@@ -457,7 +468,13 @@ export class CodexAppServerClient {
         clearTimeout(pending.timer);
         this.pending.delete(id);
         if (raw.error) {
-          pending.reject(new Error(raw.error.message ?? "Unknown error"));
+          pending.reject(
+            new CodexAppServerRpcError(
+              raw.error.message ?? "Unknown error",
+              raw.error.code,
+              raw.error.data,
+            ),
+          );
         } else {
           pending.resolve(raw.result);
         }

@@ -20,6 +20,9 @@ interface ClientRequest {
   payload?: unknown;
   mode?: unknown;
   path?: unknown;
+  agentId?: unknown;
+  text?: unknown;
+  activeTurnBehavior?: unknown;
 }
 
 interface ServerMessage {
@@ -48,18 +51,9 @@ interface HeldServerMessage {
   blockedAgentId?: string;
 }
 
-/** Retains one held message per key and reports whether a new key was inserted */
-export function upsertLatestHeldMessage<T extends { key: string }>(
-  heldMessages: T[],
-  latestMessage: T,
-): boolean {
-  const index = heldMessages.findIndex((message) => message.key === latestMessage.key);
-  if (index >= 0) {
-    heldMessages[index] = latestMessage;
-    return false;
-  }
-  heldMessages.push(latestMessage);
-  return true;
+interface PendingServerMessageHold {
+  matches: (message: ClientRequest | null) => boolean;
+  blockAgentStreamFollowers?: boolean;
 }
 
 function readSessionMessage(message: string | Buffer): ClientRequest | null {
@@ -126,24 +120,6 @@ function stripCanonicalSubmittedPrompts(
   return JSON.stringify(envelope);
 }
 
-function applyServerFeatureOverrides(
-  message: string | Buffer,
-  overrides: ReadonlyMap<string, boolean>,
-  messageType: unknown,
-): string | Buffer {
-  if (overrides.size === 0 || messageType !== "status" || typeof message !== "string") {
-    return message;
-  }
-  const envelope = JSON.parse(message) as {
-    message?: { payload?: { status?: unknown; features?: Record<string, unknown> } };
-    payload?: { status?: unknown; features?: Record<string, unknown> };
-  };
-  const payload = envelope.message?.payload ?? envelope.payload;
-  if (payload?.status !== "server_info" || !payload.features) return message;
-  for (const [feature, value] of overrides) payload.features[feature] = value;
-  return JSON.stringify(envelope);
-}
-
 function forceTimelineReset(message: string | Buffer, enabled: boolean): string | Buffer {
   if (!enabled || typeof message !== "string") return message;
   const envelope = JSON.parse(message) as {
@@ -154,6 +130,42 @@ function forceTimelineReset(message: string | Buffer, enabled: boolean): string 
   if (!payload) return message;
   payload.epoch = `playwright-reset-${Date.now()}`;
   payload.reset = true;
+  return JSON.stringify(envelope);
+}
+
+// The daemon refusal this reproduces: a Codex thread that already has an active writer.
+const TIMELINE_WRITER_CONFLICT_ERROR =
+  "Failed to resume Codex thread playwright-thread: thread playwright-thread already has an active writer";
+
+function failTimelineResponse(message: string | Buffer, agentId: string | null): string | Buffer {
+  if (!agentId || typeof message !== "string") return message;
+  const envelope = JSON.parse(message) as {
+    message?: { payload?: Record<string, unknown> };
+    payload?: Record<string, unknown>;
+  };
+  const payload = envelope.message?.payload ?? envelope.payload;
+  if (!payload || payload.agentId !== agentId) return message;
+  payload.error = TIMELINE_WRITER_CONFLICT_ERROR;
+  payload.entries = [];
+  return JSON.stringify(envelope);
+}
+
+function rewriteShellToolCommand(
+  message: string | Buffer,
+  command: string | null,
+): string | Buffer {
+  if (!command || typeof message !== "string") return message;
+  const envelope = JSON.parse(message) as {
+    message?: { payload?: { event?: { type?: unknown; item?: Record<string, unknown> } } };
+    payload?: { event?: { type?: unknown; item?: Record<string, unknown> } };
+  };
+  const event = (envelope.message?.payload ?? envelope.payload)?.event;
+  if (event?.type !== "timeline" || event.item?.type !== "tool_call") return message;
+  const detail = event.item.detail;
+  if (!detail || typeof detail !== "object" || (detail as { type?: unknown }).type !== "shell") {
+    return message;
+  }
+  (detail as { command?: unknown }).command = command;
   return JSON.stringify(envelope);
 }
 
@@ -182,6 +194,36 @@ function readAgentStreamItemType(message: ClientRequest | null): string | null {
   return event?.type === "timeline" && typeof event.item?.type === "string"
     ? event.item.type
     : null;
+}
+
+function matchesToolCall(
+  message: ClientRequest | null,
+  input: { status: string; command?: string },
+): boolean {
+  if (readAgentStreamItemType(message) !== "tool_call") return false;
+  const event = (
+    message?.payload as
+      | {
+          event?: { item?: { status?: unknown; detail?: { command?: unknown } } };
+        }
+      | undefined
+  )?.event;
+  return (
+    event?.item?.status === input.status &&
+    (input.command === undefined || event.item.detail?.command === input.command)
+  );
+}
+
+function matchesShellToolCall(message: ClientRequest | null, status: string): boolean {
+  if (readAgentStreamItemType(message) !== "tool_call") return false;
+  const event = (
+    message?.payload as
+      | {
+          event?: { item?: { status?: unknown; detail?: { type?: unknown } } };
+        }
+      | undefined
+  )?.event;
+  return event?.item?.status === status && event.item.detail?.type === "shell";
 }
 
 function shouldSuppressServerMessage(input: {
@@ -258,18 +300,24 @@ export async function installDaemonWebSocketGate(page: Page) {
   let forceTimelineEpochReset = false;
   let stripAssistantMessageIds = false;
   let stripCanonicalSubmittedPromptsFeature = false;
-  const serverFeatureOverrides = new Map<string, boolean>();
+  let shellToolCommandOverride: string | null = null;
+  let failingTimelineAgentId: string | null = null;
+  let holdingTimelineAgentId: string | null = null;
+  const heldTimelineResponses: Array<() => void> = [];
+  const heldTimelineResponseWaiters = new Set<() => void>();
   let heldClientRequestType: string | null = null;
   let heldClientRequest: { server: WebSocketRoute; message: string | Buffer } | null = null;
   let resolveHeldClientRequest: (() => void) | null = null;
-  const pendingServerMessageHolds = new Map<string, (message: ClientRequest | null) => boolean>();
-  const latestServerMessageHoldKeys = new Set<string>();
+  const pendingServerMessageHolds = new Map<string, PendingServerMessageHold>();
   const heldServerMessages: HeldServerMessage[] = [];
   const heldServerMessageWaiters = new Set<() => void>();
   const suppressedServerMessageTypes = new Set<string>();
   const suppressedAgentStreamEventTypes = new Set<string>();
   const suppressedAgentStreamItemTypes = new Set<string>();
   const activeSockets = new Set<WebSocketRoute>();
+  let blockedConnectionCount = 0;
+  let blockedConnectionCountAtDrop = 0;
+  const blockedConnectionWaiters = new Set<() => void>();
   let latestServer: WebSocketRoute | null = null;
   const directoryStarts: DirectoryRequestStartCounts = {
     subscribed: { agents: 0, workspaces: 0 },
@@ -277,6 +325,7 @@ export async function installDaemonWebSocketGate(page: Page) {
     total: { agents: 0, workspaces: 0 },
   };
   const clientRequestCounts = new Map<string, number>();
+  const clientRequests = new Map<string, ClientRequest[]>();
   const timelineRequestCounts = new Map<string, number>();
   const serverMessageCounts = new Map<string, number>();
   const agentStreamEventCounts = new Map<string, number>();
@@ -356,39 +405,25 @@ export async function installDaemonWebSocketGate(page: Page) {
       if (!suppressed) blocked.agentStreamFollowers.push(input.message);
       return true;
     }
-    const matchedHold = Array.from(pendingServerMessageHolds).find(([, matches]) =>
-      matches(input.parsed),
+    const matchedHold = Array.from(pendingServerMessageHolds).find(([, hold]) =>
+      hold.matches(input.parsed),
     );
     if (!matchedHold) return suppressed;
-    const [key] = matchedHold;
-    const retainUntilRelease = latestServerMessageHoldKeys.has(key);
-    if (!retainUntilRelease) pendingServerMessageHolds.delete(key);
-    const heldMessage: HeldServerMessage = {
+    const [key, hold] = matchedHold;
+    pendingServerMessageHolds.delete(key);
+    heldServerMessages.push({
       browser: input.browser,
       message: input.message,
       key,
       agentStreamFollowers: [],
       blockedAgentId:
-        readAgentStreamEventType(input.parsed) === "turn_started"
+        hold.blockAgentStreamFollowers || readAgentStreamEventType(input.parsed) === "turn_started"
           ? (agentId ?? undefined)
           : undefined,
-    };
-    let inserted = true;
-    if (retainUntilRelease) {
-      inserted = upsertLatestHeldMessage(heldServerMessages, heldMessage);
-    } else {
-      heldServerMessages.push(heldMessage);
-    }
-    if (inserted) {
-      for (const resolve of heldServerMessageWaiters) resolve();
-      heldServerMessageWaiters.clear();
-    }
+    });
+    for (const resolve of heldServerMessageWaiters) resolve();
+    heldServerMessageWaiters.clear();
     return true;
-  };
-
-  const clearServerMessageHold = (key: string): void => {
-    pendingServerMessageHolds.delete(key);
-    latestServerMessageHoldKeys.delete(key);
   };
 
   const holdReadyFileUpdate = (
@@ -411,6 +446,9 @@ export async function installDaemonWebSocketGate(page: Page) {
 
   await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
     if (!acceptingConnections) {
+      blockedConnectionCount += 1;
+      for (const resolve of blockedConnectionWaiters) resolve();
+      blockedConnectionWaiters.clear();
       void ws.close({ code: 1008, reason: "Blocked by reconnect test." });
       return;
     }
@@ -433,6 +471,11 @@ export async function installDaemonWebSocketGate(page: Page) {
       }
       const request = readClientRequest(message);
       recordClientRequest(request, clientRequestCounts, timelineRequestCounts, directoryStarts);
+      if (typeof request?.type === "string") {
+        const requests = clientRequests.get(request.type) ?? [];
+        requests.push(request);
+        clientRequests.set(request.type, requests);
+      }
       if (request?.type === heldClientRequestType) {
         heldClientRequest = { server, message };
         resolveHeldClientRequest?.();
@@ -465,21 +508,31 @@ export async function installDaemonWebSocketGate(page: Page) {
         stripAssistantMessageIds,
         serverMessage?.type,
       );
+      outboundMessage = rewriteShellToolCommand(outboundMessage, shellToolCommandOverride);
       outboundMessage = stripCanonicalSubmittedPrompts(
         outboundMessage,
         stripCanonicalSubmittedPromptsFeature,
         serverMessage?.type,
       );
-      outboundMessage = applyServerFeatureOverrides(
-        outboundMessage,
-        serverFeatureOverrides,
-        serverMessage?.type,
-      );
+      const isTimelineResponse = serverMessage?.type === "fetch_agent_timeline_response";
+      if (isTimelineResponse) {
+        outboundMessage = failTimelineResponse(outboundMessage, failingTimelineAgentId);
+      }
       const shouldForceTimelineReset =
         forceTimelineEpochReset && serverMessage?.type === "fetch_agent_timeline_response";
       outboundMessage = forceTimelineReset(outboundMessage, shouldForceTimelineReset);
       if (shouldForceTimelineReset) forceTimelineEpochReset = false;
       recordServerMessage(serverMessage);
+      if (isTimelineResponse && holdingTimelineAgentId) {
+        const payload = (serverMessage as { payload?: { agentId?: unknown } } | null)?.payload;
+        if (payload?.agentId === holdingTimelineAgentId) {
+          const forward = outboundMessage;
+          heldTimelineResponses.push(() => ws.send(forward));
+          for (const resolve of heldTimelineResponseWaiters) resolve();
+          heldTimelineResponseWaiters.clear();
+          return;
+        }
+      }
       if (holdServerMessage({ browser: ws, message: outboundMessage, parsed: serverMessage }))
         return;
       if (holdReadyFileUpdate(ws, outboundMessage, fileMessage)) return;
@@ -536,6 +589,7 @@ export async function installDaemonWebSocketGate(page: Page) {
       forward?.();
     },
     async drop(): Promise<void> {
+      blockedConnectionCountAtDrop = blockedConnectionCount;
       acceptingConnections = false;
       const sockets = Array.from(activeSockets);
       activeSockets.clear();
@@ -545,8 +599,30 @@ export async function installDaemonWebSocketGate(page: Page) {
         ),
       );
     },
+    async waitForBlockedConnection(): Promise<void> {
+      if (blockedConnectionCount > blockedConnectionCountAtDrop) return;
+      await new Promise<void>((resolve) => blockedConnectionWaiters.add(resolve));
+    },
     restore(): void {
       acceptingConnections = true;
+    },
+    failTimelineResponses(agentId: string): void {
+      failingTimelineAgentId = agentId;
+    },
+    allowTimelineResponses(): void {
+      failingTimelineAgentId = null;
+    },
+    holdTimelineResponses(agentId: string): void {
+      holdingTimelineAgentId = agentId;
+    },
+    async waitForHeldTimelineResponse(): Promise<void> {
+      while (heldTimelineResponses.length === 0) {
+        await new Promise<void>((resolve) => heldTimelineResponseWaiters.add(resolve));
+      }
+    },
+    releaseHeldTimelineResponses(): void {
+      holdingTimelineAgentId = null;
+      for (const forward of heldTimelineResponses.splice(0)) forward();
     },
     restoreFresh(): void {
       reconnectWithFreshClient = true;
@@ -569,25 +645,36 @@ export async function installDaemonWebSocketGate(page: Page) {
       heldClientRequestType = null;
     },
     holdNextServerMessage(type: string): void {
-      pendingServerMessageHolds.set(serverMessageKey(type), (message) => message?.type === type);
+      pendingServerMessageHolds.set(serverMessageKey(type), {
+        matches: (message) => message?.type === type,
+      });
     },
     holdNextAgentUpdate(agentId: string, status: string): void {
       const heldAgentUpdate = { agentId, status };
-      const key = agentUpdateKey(agentId, status);
-      latestServerMessageHoldKeys.add(key);
-      pendingServerMessageHolds.set(key, (message) => matchesAgentUpdate(message, heldAgentUpdate));
+      pendingServerMessageHolds.set(agentUpdateKey(agentId, status), {
+        matches: (message) => matchesAgentUpdate(message, heldAgentUpdate),
+      });
     },
     holdNextAgentStreamEvent(type: string): void {
-      pendingServerMessageHolds.set(
-        agentStreamEventKey(type),
-        (message) => readAgentStreamEventType(message) === type,
-      );
+      pendingServerMessageHolds.set(agentStreamEventKey(type), {
+        matches: (message) => readAgentStreamEventType(message) === type,
+      });
     },
     holdNextAgentStreamItem(type: string): void {
-      pendingServerMessageHolds.set(
-        agentStreamItemKey(type),
-        (message) => readAgentStreamItemType(message) === type,
-      );
+      pendingServerMessageHolds.set(agentStreamItemKey(type), {
+        matches: (message) => readAgentStreamItemType(message) === type,
+      });
+    },
+    holdNextToolCall(input: { status: string; command?: string }): void {
+      pendingServerMessageHolds.set(`tool-call:${input.status}:${input.command ?? ""}`, {
+        matches: (message) => matchesToolCall(message, input),
+      });
+    },
+    holdNextShellToolCall(status: string): void {
+      pendingServerMessageHolds.set(`shell-tool-call:${status}`, {
+        matches: (message) => matchesShellToolCall(message, status),
+        blockAgentStreamFollowers: true,
+      });
     },
     async waitForHeldServerMessage(type?: string): Promise<void> {
       const key = type ? serverMessageKey(type) : null;
@@ -600,7 +687,6 @@ export async function installDaemonWebSocketGate(page: Page) {
       const index = heldServerMessages.findIndex((message) => key === null || message.key === key);
       const [heldServerMessage] = index >= 0 ? heldServerMessages.splice(index, 1) : [];
       if (!heldServerMessage) throw new Error("No held server message to release");
-      clearServerMessageHold(heldServerMessage.key);
       heldServerMessage.browser.send(heldServerMessage.message);
       for (const follower of heldServerMessage.agentStreamFollowers) {
         heldServerMessage.browser.send(follower);
@@ -617,7 +703,6 @@ export async function installDaemonWebSocketGate(page: Page) {
       const index = heldServerMessages.findIndex((message) => message.key === key);
       const [heldServerMessage] = index >= 0 ? heldServerMessages.splice(index, 1) : [];
       if (!heldServerMessage) throw new Error("No held agent update to release");
-      clearServerMessageHold(key);
       heldServerMessage.browser.send(heldServerMessage.message);
       for (const follower of heldServerMessage.agentStreamFollowers) {
         heldServerMessage.browser.send(follower);
@@ -741,8 +826,8 @@ export async function installDaemonWebSocketGate(page: Page) {
     setCanonicalSubmittedPromptsStripped(stripped: boolean): void {
       stripCanonicalSubmittedPromptsFeature = stripped;
     },
-    setServerFeatureOverride(feature: string, value: boolean): void {
-      serverFeatureOverrides.set(feature, value);
+    setShellToolCommandOverride(command: string | null): void {
+      shellToolCommandOverride = command;
     },
     setAgentStreamSuppressed(suppressed: boolean): void {
       suppressAgentStream = suppressed;
@@ -759,6 +844,9 @@ export async function installDaemonWebSocketGate(page: Page) {
     },
     getClientRequestCount(type: string): number {
       return clientRequestCounts.get(type) ?? 0;
+    },
+    getClientRequests(type: string): ReadonlyArray<ClientRequest> {
+      return [...(clientRequests.get(type) ?? [])];
     },
     getTimelineRequestCount(direction: "tail" | "before" | "after"): number {
       return timelineRequestCounts.get(direction) ?? 0;

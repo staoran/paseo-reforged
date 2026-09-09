@@ -16,7 +16,10 @@ import type { Theme } from "@/styles/theme";
 import { WEB_SCROLLBAR_SIZE_PX } from "@/styles/web-scrollbar";
 import type { StreamRenderRow } from "./model";
 import { estimateStreamRenderRowHeight } from "./web-virtualization";
+import { DomOverlayScrollbar } from "@/components/ui/overlay-scrollbar/dom-overlay-scrollbar";
+import { shouldAdjustScrollForVirtualRowResize } from "./web-virtualization";
 import type { StreamRenderInput, StreamStrategy, StreamViewportHandle } from "./strategy";
+import { useRevisedHistoryRows } from "./history-row-revision";
 import { createStreamStrategy } from "./strategy";
 import {
   abandonHistoryStartPaginationRequest,
@@ -241,6 +244,65 @@ function syncNearBottom(
   return nextValue;
 }
 
+interface ActiveFollowOutputLayout {
+  scrollContainer: HTMLElement | null;
+  viewportWidth: number;
+  viewportHeight: number;
+  activationKey: string;
+  isActivationReady: boolean;
+  renderLiveAuxiliary: StreamRenderInput["renderers"]["renderLiveAuxiliary"];
+  historyMounted: StreamRenderInput["segments"]["historyMounted"];
+  historyVirtualized: StreamRenderInput["segments"]["historyVirtualized"];
+  liveHead: StreamRenderInput["segments"]["liveHead"];
+  virtualTotalSize: number;
+}
+
+function activeFollowOutputLayoutsEqual(
+  previous: ActiveFollowOutputLayout,
+  next: ActiveFollowOutputLayout,
+): boolean {
+  return (
+    previous.scrollContainer === next.scrollContainer &&
+    previous.viewportWidth === next.viewportWidth &&
+    previous.viewportHeight === next.viewportHeight &&
+    previous.activationKey === next.activationKey &&
+    previous.isActivationReady === next.isActivationReady &&
+    previous.renderLiveAuxiliary === next.renderLiveAuxiliary &&
+    previous.historyMounted === next.historyMounted &&
+    previous.historyVirtualized === next.historyVirtualized &&
+    previous.liveHead === next.liveHead &&
+    previous.virtualTotalSize === next.virtualTotalSize
+  );
+}
+
+interface ObservedViewportGeometry {
+  clientWidth: number;
+  clientHeight: number;
+  scrollWidth: number;
+  scrollHeight: number;
+}
+
+function getObservedViewportGeometry(scrollContainer: HTMLElement): ObservedViewportGeometry {
+  return {
+    clientWidth: scrollContainer.clientWidth,
+    clientHeight: scrollContainer.clientHeight,
+    scrollWidth: scrollContainer.scrollWidth,
+    scrollHeight: scrollContainer.scrollHeight,
+  };
+}
+
+function observedViewportGeometriesEqual(
+  previous: ObservedViewportGeometry,
+  next: ObservedViewportGeometry,
+): boolean {
+  return (
+    previous.clientWidth === next.clientWidth &&
+    previous.clientHeight === next.clientHeight &&
+    previous.scrollWidth === next.scrollWidth &&
+    previous.scrollHeight === next.scrollHeight
+  );
+}
+
 function getScrollContainerDistanceFromBottom(
   scrollContainer: Pick<HTMLElement, "scrollTop" | "clientHeight" | "scrollHeight">,
 ): number {
@@ -255,7 +317,8 @@ function isScrollContainerOverscrolledPastBottom(
 
 function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: boolean }) {
   const {
-    segments,
+    segments: inputSegments,
+    historyRowRevision,
     liveHeadRowRevision,
     boundary,
     renderers,
@@ -272,6 +335,15 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     scrollEnabled,
     isMobileBreakpoint,
   } = props;
+  const historyVirtualized = useRevisedHistoryRows(
+    inputSegments.historyVirtualized,
+    historyRowRevision,
+  );
+  const historyMounted = useRevisedHistoryRows(inputSegments.historyMounted, historyRowRevision);
+  const segments = useMemo(
+    () => ({ ...inputSegments, historyVirtualized, historyMounted }),
+    [historyMounted, historyVirtualized, inputSegments],
+  );
   const isActive = useRetainedPanelActive();
   const isActiveRef = useRef(isActive);
   const scrollContainerRef = useRef<HTMLElement | null>(null);
@@ -326,6 +398,11 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     window.clearTimeout(timeout);
     pendingAuthoritativeHydrationReleaseTimeoutRef.current = null;
   }, []);
+  const lastActiveFollowOutputLayoutRef = useRef<ActiveFollowOutputLayout | null>(null);
+  const lastObservedViewportGeometryRef = useRef<ObservedViewportGeometry | null>(null);
+  const wasFollowOutputLayoutActiveRef = useRef(false);
+  const resumedUnchangedLayoutRef = useRef(false);
+  const pendingResumeGeometryCheckRef = useRef(false);
   const shouldUseVirtualizer = segments.historyVirtualized.length > 0;
   const {
     renderHistoryVirtualizedRow,
@@ -357,14 +434,17 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     overscan: 8,
   });
   useEffect(() => {
-    rowVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (_item, _delta, instance) => {
-      if (historyStartPrependAnchorActiveRef.current) {
-        return false;
-      }
+    rowVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) => {
       const viewportHeight = instance.scrollRect?.height ?? 0;
       const scrollOffset = instance.scrollOffset ?? 0;
       const remainingDistance = instance.getTotalSize() - (scrollOffset + viewportHeight);
-      return remainingDistance > AUTO_SCROLL_BOTTOM_THRESHOLD_PX;
+      return shouldAdjustScrollForVirtualRowResize({
+        isHistoryStartPrependActive: historyStartPrependAnchorActiveRef.current,
+        rowStart: item.start,
+        scrollOffset,
+        remainingDistanceFromBottom: remainingDistance,
+        bottomThreshold: AUTO_SCROLL_BOTTOM_THRESHOLD_PX,
+      });
     };
     return () => {
       rowVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = undefined;
@@ -902,17 +982,42 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   // Following output is a layout invariant: rows, footer, and bottom offset must
   // reach the browser in the same paint.
   useLayoutEffect(() => {
-    if (!isActive || !followOutputRef.current) {
+    const layout: ActiveFollowOutputLayout = {
+      scrollContainer: scrollContainerRef.current,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      activationKey,
+      isActivationReady,
+      renderLiveAuxiliary,
+      historyMounted: segments.historyMounted,
+      historyVirtualized: segments.historyVirtualized,
+      liveHead: segments.liveHead,
+      virtualTotalSize,
+    };
+    const resumedUnchangedLayout = Boolean(
+      isActive &&
+      !wasFollowOutputLayoutActiveRef.current &&
+      lastActiveFollowOutputLayoutRef.current &&
+      activeFollowOutputLayoutsEqual(lastActiveFollowOutputLayoutRef.current, layout),
+    );
+    resumedUnchangedLayoutRef.current = resumedUnchangedLayout;
+    pendingResumeGeometryCheckRef.current = resumedUnchangedLayout;
+    wasFollowOutputLayoutActiveRef.current = isActive;
+    if (!isActive) {
       return;
     }
+    lastActiveFollowOutputLayoutRef.current = layout;
+    if (!followOutputRef.current || resumedUnchangedLayout) return;
     cancelPendingStickToBottom();
     if (authoritativeHydrationProtectionActiveRef.current) {
       return;
     }
     scrollMessagesToBottom("auto");
   }, [
+    activationKey,
     cancelPendingStickToBottom,
     isActive,
+    isActivationReady,
     renderLiveAuxiliary,
     scrollMessagesToBottom,
     segments.historyMounted,
@@ -955,7 +1060,11 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     if (!isActive) {
       return;
     }
-    updateScrollMetrics();
+    const resumedUnchangedLayout = resumedUnchangedLayoutRef.current;
+    resumedUnchangedLayoutRef.current = false;
+    if (!resumedUnchangedLayout) {
+      updateScrollMetrics();
+    }
     evaluateHistoryStart();
     if (historyStartPaginationStateRef.current.status === "settling") {
       scheduleHistoryStartPrependSettle();
@@ -984,9 +1093,23 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       return;
     }
 
-    updateScrollMetrics();
-    evaluateHistoryStart();
+    if (!pendingResumeGeometryCheckRef.current) {
+      updateScrollMetrics();
+      evaluateHistoryStart();
+    }
     const observer = new ResizeObserver(() => {
+      const nextGeometry = getObservedViewportGeometry(scrollContainer);
+      if (pendingResumeGeometryCheckRef.current) {
+        pendingResumeGeometryCheckRef.current = false;
+        reportReadingPosition();
+        const previousGeometry = lastObservedViewportGeometryRef.current;
+        lastObservedViewportGeometryRef.current = nextGeometry;
+        if (previousGeometry && observedViewportGeometriesEqual(previousGeometry, nextGeometry)) {
+          return;
+        }
+      } else {
+        lastObservedViewportGeometryRef.current = nextGeometry;
+      }
       if (historyStartPrependAnchorActiveRef.current) {
         applyHistoryStartPrependAnchor();
       }
@@ -1017,6 +1140,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     isActive,
     preserveAuthoritativeHydrationAnchor,
     scheduleAuthoritativeHydrationProtectionRelease,
+    reportReadingPosition,
     scheduleHistoryStartPrependSettle,
     scheduleStickToBottom,
     updateScrollMetrics,
@@ -1214,14 +1338,25 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     };
   }, [isMobileBreakpoint]);
   const scrollContainerStyle = useMemo((): CSSProperties => {
+    const overlayScrollbarEnabled = scrollEnabled && !isMobileBreakpoint;
     return {
-      flex: 1,
-      minHeight: 0,
+      width: "100%",
+      height: "100%",
       overflowX: "hidden",
       overflowY: scrollEnabled ? "auto" : "hidden",
       overscrollBehaviorY: "contain",
+      scrollbarWidth: overlayScrollbarEnabled ? "none" : undefined,
     };
-  }, [scrollEnabled]);
+  }, [isMobileBreakpoint, scrollEnabled]);
+  const viewportStyle = useMemo(
+    (): CSSProperties => ({
+      position: "relative",
+      flex: 1,
+      minWidth: 0,
+      minHeight: 0,
+    }),
+    [],
+  );
   const virtualRowsContainerStyle = useMemo((): CSSProperties => {
     return {
       position: "relative",
@@ -1242,17 +1377,17 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     [],
   );
   const mountedHistoryRows = useMemo(() => {
-    return segments.historyMounted.map((item, index) => (
-      <div key={item.id} data-history-row-id={item.id} style={streamRowStyle}>
-        {renderHistoryMountedRow(item, index, segments.historyMounted)}
+    return segments.historyMounted.map((row, index) => (
+      <div key={row.id} data-history-row-id={row.id} style={streamRowStyle}>
+        {renderHistoryMountedRow(row, index, segments.historyMounted)}
       </div>
     ));
   }, [renderHistoryMountedRow, segments.historyMounted]);
   const liveHeadRows = useMemo(() => {
     void liveHeadRowRevision;
-    return segments.liveHead.map((item, index) => (
-      <div key={item.id} data-history-row-id={item.id} style={streamRowStyle}>
-        {renderLiveHeadRow(item, index, segments.liveHead)}
+    return segments.liveHead.map((row, index) => (
+      <div key={row.id} data-history-row-id={row.id} style={streamRowStyle}>
+        {renderLiveHeadRow(row, index, segments.liveHead)}
       </div>
     ));
   }, [liveHeadRowRevision, renderLiveHeadRow, segments.liveHead]);
@@ -1282,39 +1417,52 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     !liveAuxiliary;
 
   return (
-    <div
-      ref={handleScrollContainerRef}
-      data-testid="agent-chat-scroll"
-      id={`agent-chat-scroll-${shouldUseVirtualizer ? "web-dom-virtualized" : "web-dom-scroll"}`}
-      style={scrollContainerStyle}
-    >
-      <div ref={handleContentRef} style={contentContainerStyle}>
-        {historyStartSlot}
-        {shouldUseVirtualizer ? (
-          <div style={virtualRowsContainerStyle}>
-            {virtualRows.map((virtualRow) => {
-              const item = segments.historyVirtualized[virtualRow.index];
-              if (!item) {
-                return null;
-              }
-              return (
-                <div
-                  key={virtualRow.key}
-                  data-index={virtualRow.index}
-                  data-history-row-id={item.id}
-                  ref={measureVirtualizedRowElement}
-                  style={renderVirtualRowStyle(virtualRow.start)}
-                >
-                  {renderHistoryVirtualizedRow(item, virtualRow.index, segments.historyVirtualized)}
-                </div>
-              );
-            })}
-          </div>
-        ) : null}
-        {mountedRows}
-        {liveAuxiliary}
-        {shouldRenderEmpty ? listEmptyComponent : null}
+    <div style={viewportStyle}>
+      <div
+        ref={handleScrollContainerRef}
+        data-testid="agent-chat-scroll"
+        data-overlay-scrollbar={scrollEnabled && !isMobileBreakpoint ? "true" : undefined}
+        id={`agent-chat-scroll-${shouldUseVirtualizer ? "web-dom-virtualized" : "web-dom-scroll"}`}
+        style={scrollContainerStyle}
+      >
+        <div ref={handleContentRef} style={contentContainerStyle}>
+          {historyStartSlot}
+          {shouldUseVirtualizer ? (
+            <div style={virtualRowsContainerStyle}>
+              {virtualRows.map((virtualRow) => {
+                const row = segments.historyVirtualized[virtualRow.index];
+                if (!row) {
+                  return null;
+                }
+                return (
+                  <div
+                    key={virtualRow.key}
+                    data-index={virtualRow.index}
+                    data-history-row-id={row.id}
+                    ref={measureVirtualizedRowElement}
+                    style={renderVirtualRowStyle(virtualRow.start)}
+                  >
+                    {renderHistoryVirtualizedRow(
+                      row,
+                      virtualRow.index,
+                      segments.historyVirtualized,
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
+          {mountedRows}
+          {liveAuxiliary}
+          {shouldRenderEmpty ? listEmptyComponent : null}
+        </div>
       </div>
+      {scrollEnabled && !isMobileBreakpoint ? (
+        <DomOverlayScrollbar
+          scrollContainerRef={scrollContainerRef}
+          onUserScrollUp={stopFollowingOutputFromUserIntent}
+        />
+      ) : null}
     </div>
   );
 }

@@ -2,13 +2,11 @@ import {
   buildHostAgentDetailRoute,
   buildHostWorkspaceOpenRoute,
   buildHostWorkspaceRoute,
-  buildNewWorkspaceRoute,
 } from "@/utils/host-routes";
 import { expect, test, type Page } from "../support/fixtures";
 import { gotoAppShell, openSettings } from "../support/helpers/app";
 import {
-  closeWorkspaceAgentTab,
-  createIdleAgent,
+  createMockIdleAgent,
   expectWorkspaceTabHidden,
   expectWorkspaceTabVisible,
   openWorkspaceWithAgents,
@@ -36,6 +34,7 @@ import {
   workspaceDeckEntryLocator,
   expectWorkspaceDeckEntryCount,
 } from "../support/helpers/workspace-ui";
+import { clickSettingsBackToWorkspace } from "../support/helpers/settings";
 import { getServerId } from "../support/helpers/server-id";
 import { expectAppRoute } from "../support/helpers/route-assertions";
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
@@ -79,25 +78,18 @@ async function getVisibleDraftTabCount(page: Page): Promise<number> {
   return page.locator('[data-testid^="workspace-tab-draft"]').filter({ visible: true }).count();
 }
 
-async function createIdleMockAgent(
-  workspace: Awaited<ReturnType<typeof seedWorkspace>>,
-  title: string,
-) {
-  const created = await workspace.client.createAgent({
-    provider: "mock",
-    model: "ten-second-stream",
-    modeId: "load-test",
-    cwd: workspace.repoPath,
-    workspaceId: workspace.workspaceId,
-    title,
+async function closeFirstVisibleDraftTab(page: Page): Promise<void> {
+  const tab = page
+    .locator('[data-testid^="workspace-tab-draft"]')
+    .filter({ visible: true })
+    .first();
+  await expect(tab).toBeVisible({ timeout: 30_000 });
+  await tab.hover();
+  const closeButton = page.locator('[data-testid^="workspace-draft-close-"]').filter({
+    visible: true,
   });
-  await workspace.client.waitForAgentUpsert(created.id, (agent) => agent.status === "idle", 30_000);
-  return {
-    id: created.id,
-    title,
-    cwd: workspace.repoPath,
-    workspaceId: workspace.workspaceId,
-  };
+  await expect(closeButton.first()).toBeVisible({ timeout: 30_000 });
+  await closeButton.first().click();
 }
 
 test.describe("Workspace navigation regression", () => {
@@ -140,132 +132,23 @@ test.describe("Workspace navigation regression", () => {
     await expect(page.getByText("Add a project", { exact: true })).toHaveCount(0);
   });
 
-  test("returns to New Workspace when only closed-Agent workspaces remain and reopens the persisted default agent", async ({
+  test("keeps one replacement draft after returning from settings and closing the last tab", async ({
     page,
+    withWorkspace,
   }) => {
-    const workspace = await seedWorkspace({ repoPrefix: "workspace-runtime-reopen-" });
-    const closedCandidateWorkspace = await seedWorkspace({
-      repoPrefix: "workspace-closed-candidate-",
-    });
-    const serverId = getServerId();
+    const workspace = await withWorkspace({ prefix: "workspace-settings-back-tab-" });
 
-    try {
-      const defaultAgent = await createIdleMockAgent(workspace, `workspace-default-${Date.now()}`);
-      const lastClosedAgent = await createIdleMockAgent(
-        workspace,
-        `workspace-last-closed-${Date.now()}`,
-      );
-      const closedCandidateAgent = await createIdleMockAgent(
-        closedCandidateWorkspace,
-        `workspace-closed-candidate-${Date.now()}`,
-      );
-      await expect(
-        closedCandidateWorkspace.client.closeAgentRuntime(closedCandidateAgent.id),
-      ).resolves.toMatchObject({ closed: true });
-      await closedCandidateWorkspace.client.waitForAgentUpsert(
-        closedCandidateAgent.id,
-        (agent) => agent.status === "closed",
-        30_000,
-      );
+    await workspace.navigateTo();
+    await expect.poll(() => getVisibleDraftTabCount(page), { timeout: 30_000 }).toBe(1);
 
-      await gotoAppShell(page);
-      await waitForSidebarHydration(page);
-      await waitForWorkspaceInSidebar(page, {
-        serverId,
-        workspaceId: closedCandidateWorkspace.workspaceId,
-      });
-      await openWorkspaceWithAgents(page, [defaultAgent, lastClosedAgent]);
-      await expectOnlyWorkspaceAgentTabsVisible(page, [defaultAgent.id, lastClosedAgent.id]);
+    await openSettings(page);
+    await clickSettingsBackToWorkspace(page);
+    await expect(page).toHaveURL(/\/workspace\//, { timeout: 30_000 });
+    await expect.poll(() => getVisibleDraftTabCount(page), { timeout: 30_000 }).toBe(1);
 
-      const workspaceRow = page
-        .getByTestId(`sidebar-workspace-row-${serverId}:${workspace.workspaceId}`)
-        .filter({ visible: true })
-        .first();
-      const residentIndicator = workspaceRow.getByTestId("workspace-runtime-resident-indicator");
-      const residentCount = workspaceRow.getByTestId("workspace-runtime-resident-count");
-      await expect(workspaceRow).toBeVisible({ timeout: 30_000 });
-      await expect(residentIndicator).toBeVisible({ timeout: 30_000 });
-      await expect(residentCount).toHaveText("2");
-      await workspaceRow.hover();
-      await expect(
-        workspaceRow.getByTestId(`sidebar-workspace-kebab-${serverId}:${workspace.workspaceId}`),
-      ).toBeVisible();
+    await closeFirstVisibleDraftTab(page);
 
-      await page
-        .getByTestId(`workspace-tab-agent_${defaultAgent.id}`)
-        .filter({ visible: true })
-        .click();
-      await closeWorkspaceAgentTab(page, defaultAgent.id);
-      await expectAppRoute(page, buildHostWorkspaceRoute(serverId, workspace.workspaceId));
-      await expect(residentIndicator).toBeVisible({ timeout: 30_000 });
-      await expect(residentCount).toHaveCount(0);
-      await closeWorkspaceAgentTab(page, lastClosedAgent.id);
-
-      await expectAppRoute(
-        page,
-        buildNewWorkspaceRoute({
-          serverId,
-          sourceDirectory: workspace.repoPath,
-          projectId: workspace.projectId,
-        }),
-      );
-
-      await expect.poll(() => getVisibleDraftTabCount(page), { timeout: 30_000 }).toBe(0);
-      await expectOnlyWorkspaceAgentTabsVisible(page, []);
-
-      await expect(residentIndicator).toHaveCount(0, { timeout: 30_000 });
-
-      await workspaceRow.click();
-      await expectWorkspaceTabVisible(page, defaultAgent.id);
-      await expectOnlyWorkspaceAgentTabsVisible(page, [defaultAgent.id]);
-      await expectWorkspaceTabHidden(page, lastClosedAgent.id);
-      await expect(residentIndicator).toBeVisible({ timeout: 30_000 });
-      await expect(residentCount).toHaveCount(0);
-    } finally {
-      await closedCandidateWorkspace.cleanup();
-      await workspace.cleanup();
-    }
-  });
-
-  test("opens another Agent workspace after closing the last agent tab", async ({ page }) => {
-    const closingWorkspace = await seedWorkspace({ repoPrefix: "workspace-close-source-" });
-    const reviewWorkspace = await seedWorkspace({ repoPrefix: "workspace-close-review-" });
-    const serverId = getServerId();
-
-    try {
-      const closingAgent = await createIdleMockAgent(
-        closingWorkspace,
-        `workspace-close-source-${Date.now()}`,
-      );
-      const reviewAgent = await createIdleMockAgent(
-        reviewWorkspace,
-        `workspace-close-review-${Date.now()}`,
-      );
-
-      await gotoAppShell(page);
-      await waitForSidebarHydration(page);
-      await waitForWorkspaceInSidebar(page, {
-        serverId,
-        workspaceId: reviewWorkspace.workspaceId,
-      });
-      await page.goto(
-        buildHostAgentDetailRoute(serverId, closingAgent.id, closingAgent.workspaceId),
-      );
-      await page.waitForURL(
-        (url) => url.pathname.includes("/workspace/") && !url.searchParams.has("open"),
-        { timeout: 60_000 },
-      );
-      await waitForWorkspaceTabsVisible(page);
-      await expectWorkspaceTabVisible(page, closingAgent.id);
-      await closeWorkspaceAgentTab(page, closingAgent.id);
-
-      await expectAppRoute(page, buildHostWorkspaceRoute(serverId, reviewWorkspace.workspaceId));
-      await expectWorkspaceTabVisible(page, reviewAgent.id);
-      await expectOnlyWorkspaceAgentTabsVisible(page, [reviewAgent.id]);
-    } finally {
-      await reviewWorkspace.cleanup();
-      await closingWorkspace.cleanup();
-    }
+    await expect.poll(() => getVisibleDraftTabCount(page), { timeout: 30_000 }).toBe(1);
   });
 
   test("keeps the workspace rendered while reconnecting to the host", async ({ page }) => {
@@ -276,7 +159,7 @@ test.describe("Workspace navigation regression", () => {
     const workspace = await seedWorkspace({ repoPrefix: "workspace-reconnect-" });
 
     try {
-      const agent = await createIdleAgent(workspace.client, {
+      const agent = await createMockIdleAgent(workspace.client, {
         cwd: workspace.repoPath,
         workspaceId: workspace.workspaceId,
         title: `workspace-reconnect-${Date.now()}`,
@@ -297,6 +180,7 @@ test.describe("Workspace navigation regression", () => {
       await expectWorkspaceTabVisible(page, agent.id);
 
       await daemonGate.drop();
+      await daemonGate.waitForBlockedConnection();
       await expectReconnectingToastVisible(page);
       await expectWorkspaceHeader(page, {
         title: workspace.workspaceName,
@@ -334,12 +218,12 @@ test.describe("Workspace navigation regression", () => {
 
     try {
       await Promise.all([
-        createIdleAgent(primaryWorkspace.client, {
+        createMockIdleAgent(primaryWorkspace.client, {
           cwd: primaryWorkspace.repoPath,
           workspaceId: primaryWorkspace.workspaceId,
           title: "Active host agent",
         }),
-        createIdleAgent(secondaryWorkspace.client, {
+        createMockIdleAgent(secondaryWorkspace.client, {
           cwd: secondaryWorkspace.repoPath,
           workspaceId: secondaryWorkspace.workspaceId,
           title: "Inactive host agent",
@@ -436,12 +320,12 @@ test.describe("Workspace navigation regression", () => {
     const secondWorkspace = await seedWorkspace({ repoPrefix: "workspace-nav-reg-b-" });
 
     try {
-      const firstAgent = await createIdleAgent(firstWorkspace.client, {
+      const firstAgent = await createMockIdleAgent(firstWorkspace.client, {
         cwd: firstWorkspace.repoPath,
         workspaceId: firstWorkspace.workspaceId,
         title: `workspace-nav-a-${Date.now()}`,
       });
-      const secondAgent = await createIdleAgent(secondWorkspace.client, {
+      const secondAgent = await createMockIdleAgent(secondWorkspace.client, {
         cwd: secondWorkspace.repoPath,
         workspaceId: secondWorkspace.workspaceId,
         title: `workspace-nav-b-${Date.now()}`,

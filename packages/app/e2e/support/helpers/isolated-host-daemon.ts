@@ -1,10 +1,10 @@
-import { once } from "node:events";
 import { spawn, execFileSync, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { withDisabledE2ESpeechEnv } from "./speech-env";
+import { killProcessTree, spawnTsx } from "./spawn-node";
 
 export interface IsolatedHostDaemon {
   serverId: string;
@@ -42,12 +42,14 @@ async function getAvailablePort(): Promise<number> {
 }
 
 async function waitForServer(port: number, child: ChildProcess): Promise<void> {
-  const deadline = Date.now() + 20_000;
+  const deadline = Date.now() + 90_000;
   let lastError: unknown = null;
 
   while (Date.now() < deadline) {
-    if (child.exitCode !== null) {
-      throw new Error(`Isolated host daemon exited before listening (exit ${child.exitCode})`);
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error(
+        `Isolated host daemon exited before listening (code ${String(child.exitCode)}, signal ${String(child.signalCode)})`,
+      );
     }
     try {
       await new Promise<void>((resolve, reject) => {
@@ -75,29 +77,6 @@ async function waitForServer(port: number, child: ChildProcess): Promise<void> {
   );
 }
 
-async function stopProcess(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  child.kill("SIGTERM");
-  const timeout = setTimeout(() => {
-    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-  }, 5_000);
-  try {
-    await once(child, "exit");
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-/** Adds captured npm stderr to a published-daemon installation failure. */
-function describePublishedDaemonInstallFailure(error: unknown): Error {
-  if (error instanceof Error && "stderr" in error) {
-    return new Error(`${error.message}\nnpm stderr:\n${String(error.stderr).trim()}`, {
-      cause: error,
-    });
-  }
-  return error instanceof Error ? error : new Error(String(error), { cause: error });
-}
-
 export async function startIsolatedHostDaemon(
   serverId: string,
   options: IsolatedHostDaemonOptions = {},
@@ -118,37 +97,31 @@ export async function startIsolatedHostDaemon(
       path.join(publishedPackageRoot, "package.json"),
       `${JSON.stringify({ private: true })}\n`,
     );
-    /** npm CLI entry inherited from the workspace script that launched Playwright. */
-    const npmExecPath = process.env.npm_execpath;
-    /** Fallback npm executable when the test runner did not provide a CLI entry. */
-    const npmExecutable = process.platform === "win32" ? "npm.cmd" : "npm";
-    /** Cross-platform executable and prefix that avoid spawning a Windows command shim. */
-    const npmCommand = npmExecPath ? process.execPath : npmExecutable;
-    const npmArgs = npmExecPath ? [npmExecPath] : [];
-    /** Keeps allow-scripts in the user's npmrc layer instead of inherited lifecycle environment. */
-    const npmInstallEnvironment = { ...process.env };
-    delete npmInstallEnvironment.npm_config_allow_scripts;
     try {
+      const npmCli = process.env.npm_execpath;
+      if (!npmCli || path.basename(npmCli).toLowerCase() !== "npm-cli.js") {
+        throw new Error(
+          "Published-version E2E requires npm_execpath from npm. Start it through `npm run test:e2e`.",
+        );
+      }
       execFileSync(
-        npmCommand,
+        process.execPath,
         [
-          ...npmArgs,
+          npmCli,
           "install",
           "--no-audit",
           "--no-fund",
           "--no-package-lock",
           `@getpaseo/server@${options.publishedVersion}`,
         ],
-        {
-          cwd: publishedPackageRoot,
-          encoding: "utf8",
-          env: npmInstallEnvironment,
-          stdio: ["ignore", "pipe", "pipe"],
-        },
+        { cwd: publishedPackageRoot, stdio: "ignore" },
       );
     } catch (error) {
+      if (!options.preserveHome) {
+        await rm(paseoHome, { recursive: true, force: true });
+      }
       await rm(publishedPackageRoot, { recursive: true, force: true });
-      throw describePublishedDaemonInstallFailure(error);
+      throw error;
     }
   }
   if (options.mutableRelay) {
@@ -193,11 +166,7 @@ export async function startIsolatedHostDaemon(
     };
     const child = publishedPackageRoot
       ? spawn(process.execPath, ["dist/scripts/supervisor-entrypoint.js"], spawnOptions)
-      : spawn(
-          process.execPath,
-          ["--import", "tsx", "scripts/supervisor-entrypoint.ts", "--dev"],
-          spawnOptions,
-        );
+      : spawnTsx("scripts/supervisor-entrypoint.ts", ["--dev"], spawnOptions);
 
     let stderr = "";
     child.stderr?.on("data", (chunk: Buffer) => {
@@ -209,7 +178,7 @@ export async function startIsolatedHostDaemon(
       await waitForServer(port, child);
       return child;
     } catch (error) {
-      await stopProcess(child);
+      await killProcessTree(child);
       throw new Error(
         `${error instanceof Error ? error.message : String(error)}\nDaemon stderr:\n${stderr}`,
         { cause: error },
@@ -238,13 +207,13 @@ export async function startIsolatedHostDaemon(
     getPid: () => child.pid,
     restart: async () => {
       if (closed) throw new Error(`Cannot restart closed isolated daemon ${serverId}`);
-      await stopProcess(child);
+      await killProcessTree(child);
       child = await spawnDaemon();
     },
     close: async () => {
       if (closed) return;
       closed = true;
-      await stopProcess(child);
+      await killProcessTree(child);
       if (!options.preserveHome) {
         await rm(paseoHome, { recursive: true, force: true });
       }

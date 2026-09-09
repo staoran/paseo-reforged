@@ -52,10 +52,42 @@ function Hub() {
         <Triggers />
         <Agents />
         <Shape />
+        <QuickStart />
         <Access />
         <FaqSection />
       </div>
     </SiteShell>
+  );
+}
+
+function QuickStart() {
+  return (
+    <section className="space-y-6">
+      <h2 className="text-xl font-medium">Get started</h2>
+      <p className="text-white/70 leading-relaxed max-w-2xl">
+        Run one command, then finish setup in the browser.
+      </p>
+      <pre className="w-fit max-w-full overflow-x-auto rounded-xl border border-white/10 bg-white/[0.03] px-5 py-4 font-mono text-sm text-white/90">
+        <code>npx @getpaseo/hub</code>
+      </pre>
+      <div className="flex flex-wrap items-center gap-4 pt-2">
+        <a
+          href="/docs/hub/quickstart"
+          className="rounded-md bg-white text-black px-4 py-2 text-sm font-medium hover:bg-white/90 transition-colors"
+        >
+          Read the quickstart
+        </a>
+        <a
+          href="https://github.com/getpaseo/hub"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-2 rounded-md border border-white/15 px-4 py-2 text-sm font-medium text-white/80 hover:border-white/25 hover:text-white transition-colors"
+        >
+          <GitHubIcon className="h-4 w-4" />
+          View the source
+        </a>
+      </div>
+    </section>
   );
 }
 
@@ -278,7 +310,7 @@ function Shape() {
 
           <div className="w-full max-w-xs rounded-xl border border-white/20 bg-white/[0.06] px-6 py-5 text-center">
             <p className="font-medium">Hub</p>
-            <p className="text-xs text-muted-foreground mt-1">Self-hosted, one per team</p>
+            <p className="text-xs text-muted-foreground mt-1">Self-hosted or managed</p>
           </div>
 
           <Connector label="the same RPCs the app and CLI use" />
@@ -369,7 +401,7 @@ function MachineIcon() {
 function Access() {
   return (
     <section className="space-y-6">
-      <h2 className="text-xl font-medium">Getting access</h2>
+      <h2 className="text-xl font-medium">Hosted Hub</h2>
       <p className="text-white/70 leading-relaxed max-w-2xl">
         Join the upstream Paseo Discord and contact its maintainer. The upstream project is looking
         for design partners who are comfortable self-hosting.
@@ -408,20 +440,25 @@ function FaqSection() {
             a team, and run multi-tenant. None of that belongs in a single machine daemon.
           </p>
         </FAQItem>
-        <FAQItem question="Why self-hosted first?">
-          The Hub can trigger executions on the daemons connected to it, so it has to be trusted. I
-          am not comfortable having people connect their daemons to my infrastructure until the
-          daemon has stronger authorization primitives and sandboxing. That work is on the roadmap,
-          and it applies to every Paseo user.
+        <FAQItem question="Can I run it myself?">
+          Yes. Run <code>npx @getpaseo/hub</code> and complete setup in the browser. The source is
+          available on{" "}
+          <a href="https://github.com/getpaseo/hub" className={LINK_CLASS}>
+            GitHub
+          </a>
+          , and the{" "}
+          <a href="/docs/hub/self-hosting" className={LINK_CLASS}>
+            self-hosting guide
+          </a>{" "}
+          covers more involved deployments.
         </FAQItem>
         <FAQItem question="What do I need to run it?">
-          A single Node.js application and a Postgres database. You also bring your own GitHub App,
-          Slack app, and Discord bot credentials, which is the tedious part.
+          Node.js and a running Paseo daemon. Hub guides you through connecting the provider apps
+          you want.
         </FAQItem>
         <FAQItem question="Will there be a hosted version?">
-          Planned, once the daemon has stronger authorization primitives and sandboxing. I already
-          run a Hub for my own repos, and I can walk you through a trial on it if you want to skip
-          the self-hosted setup. No SLA.
+          Yes. Join the Paseo Discord and watch the <code>#paseo-hub</code> channel. The hosted
+          release will be announced there.
         </FAQItem>
         <FAQItem question="What else is planned?">
           <p>Not built yet, listed so you know where this is going.</p>
@@ -453,7 +490,8 @@ function FaqSection() {
           >
             Paseo Discord
           </a>{" "}
-          and DM @moboudra for an invite to the private Hub channel.
+          and wait for the release announcement in <code>#paseo-hub</code>. You do not need to
+          message anyone directly.
         </FAQItem>
       </div>
     </section>

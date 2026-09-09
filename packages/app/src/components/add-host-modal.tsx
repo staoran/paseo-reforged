@@ -57,7 +57,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   label: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.medium,
   },
   input: {
@@ -126,7 +126,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   advancedText: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.medium,
   },
   advancedContent: {
@@ -160,11 +160,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   helper: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   error: {
     color: theme.colors.destructive,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
 }));
 
@@ -262,7 +262,6 @@ function ConnectionHeaderRow({
         nativeID={`direct-header-name-${draft.id}`}
         accessibilityLabel={t("pairing.direct.headers.name")}
         initialValue={draft.name}
-        value={draft.name}
         onChangeText={handleNameChange}
         placeholder={t("pairing.direct.headers.name")}
         placeholderTextColor={placeholderTextColor}
@@ -276,7 +275,6 @@ function ConnectionHeaderRow({
         nativeID={`direct-header-value-${draft.id}`}
         accessibilityLabel={t("pairing.direct.headers.value")}
         initialValue={draft.value}
-        value={draft.value}
         onChangeText={handleValueChange}
         placeholder={t("pairing.direct.headers.value")}
         placeholderTextColor={placeholderTextColor}
@@ -649,7 +647,6 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
             accessibilityLabel={t("pairing.direct.fields.host")}
             initialValue={host}
             resetKey={`direct-host-${inputResetKey}`}
-            value={host}
             onChangeText={setHost}
             placeholder="localhost"
             placeholderTextColor={theme.colors.foregroundMuted}
@@ -669,7 +666,6 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
             accessibilityLabel={t("pairing.direct.fields.port")}
             initialValue={port}
             resetKey={`direct-port-${inputResetKey}`}
-            value={port}
             onChangeText={setPort}
             placeholder="6767"
             placeholderTextColor={theme.colors.foregroundMuted}
@@ -712,7 +708,6 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
             accessibilityLabel={t("pairing.direct.fields.password")}
             initialValue={password}
             resetKey={`direct-password-${inputResetKey}`}
-            value={password}
             onChangeText={setPassword}
             placeholder={t("pairing.direct.fields.optional")}
             placeholderTextColor={theme.colors.foregroundMuted}
@@ -763,7 +758,6 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
               accessibilityLabel={t("pairing.direct.fields.connectionUri")}
               initialValue={advancedUri}
               resetKey={`direct-host-uri-${inputResetKey}`}
-              value={advancedUri}
               onChangeText={setAdvancedUri}
               placeholder="tcp://localhost:6767?ssl=true"
               placeholderTextColor={theme.colors.foregroundMuted}
