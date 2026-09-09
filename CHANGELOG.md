@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.2-beta.1 - 2026-09-09
+## 0.7.2-beta.2 - 2026-09-10
 
 ### Added
 
@@ -19,6 +19,8 @@
 - Fixed large and many-file diffs stalling or crashing while opening and scrolling
 - Fixed paginated Codex rewind, Windows daemon shutdown, mobile keyboard and panel-position failures
 - Fixed cached workspace, timeline, runtime-close, and multi-client ownership recovery after restart
+- Fixed recent workspace activity times disappearing after incremental agent sync
+- Fixed Android release APK builds failing from Hermes compiler memory exhaustion
 
 ## 0.7.1 - 2026-09-01
 
