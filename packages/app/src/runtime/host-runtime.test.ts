@@ -21,7 +21,6 @@ import {
   type HostRuntimeControllerDeps,
   type HostRuntimeStorage,
 } from "./host-runtime";
-import type { ReplicaRow, ReplicaRowStore } from "./replica-cache/row-store";
 
 class FakeDaemonClient {
   private state: ConnectionState = { status: "idle" };
@@ -452,50 +451,6 @@ function createMemoryHostRuntimeStorage(entries: Record<string, string> = {}): H
     removeItem: async (key) => {
       values.delete(key);
     },
-  };
-}
-
-function createMemoryReplicaRowStore(): ReplicaRowStore {
-  const rows = new Map<string, ReplicaRow>();
-  const keyOf = (row: Pick<ReplicaRow, "serverId" | "kind" | "id">) =>
-    `${row.serverId}:${row.kind}:${row.id}`;
-  return {
-    open: async () => undefined,
-    read: async (serverId, kinds, ids) => {
-      const acceptedKinds = new Set(kinds);
-      const acceptedIds = ids ? new Set(ids) : null;
-      return [...rows.values()].filter(
-        (row) =>
-          row.serverId === serverId &&
-          acceptedKinds.has(row.kind) &&
-          (!acceptedIds || acceptedIds.has(row.id)),
-      );
-    },
-    readAll: async () => {
-      const hosts = new Map<string, ReplicaRow[]>();
-      for (const row of rows.values()) {
-        const hostRows = hosts.get(row.serverId) ?? [];
-        hostRows.push(row);
-        hosts.set(row.serverId, hostRows);
-      }
-      return [...hosts].map(([serverId, hostRows]) => ({ serverId, rows: hostRows }));
-    },
-    apply: async (changes) => {
-      for (const key of changes.deletes) rows.delete(keyOf(key));
-      for (const row of changes.upserts) rows.set(keyOf(row), row);
-    },
-    deleteHost: async (serverId) => {
-      for (const [key, row] of rows) if (row.serverId === serverId) rows.delete(key);
-    },
-    renameHost: async (oldServerId, newServerId) => {
-      for (const [key, row] of rows) {
-        if (row.serverId !== oldServerId) continue;
-        rows.delete(key);
-        const renamed = { ...row, serverId: newServerId };
-        rows.set(keyOf(renamed), renamed);
-      }
-    },
-    clear: async () => rows.clear(),
   };
 }
 
@@ -1486,22 +1441,12 @@ describe("HostRuntimeStore", () => {
   it("loads the host registry without scanning or installing replica rows", async () => {
     const host = makeHost();
     const storage = createMemoryHostRuntimeStorage();
-    const backingStore = createMemoryReplicaRowStore();
-    let fullScans = 0;
-    const replicaRowStore: ReplicaRowStore = {
-      ...backingStore,
-      readAll: async () => {
-        fullScans += 1;
-        return backingStore.readAll();
-      },
-    };
     await storage.setItem("@paseo:daemon-registry", JSON.stringify([host]));
     await storage.setItem("@paseo:e2e", "1");
     const session = useSessionStore.getState();
 
     const store = new HostRuntimeStore({
       storage,
-      replicaRowStore,
       deps: {
         createClient: () => {
           throw new Error("createClient should not be called");
@@ -1516,7 +1461,6 @@ describe("HostRuntimeStore", () => {
     store.boot();
     await registryLoaded;
 
-    expect(fullScans).toBe(0);
     expect(useSessionStore.getState().sessions[host.serverId]).toMatchObject({
       client: null,
       hasHydratedAgents: false,
@@ -3047,7 +2991,9 @@ describe("HostRuntimeStore", () => {
         createdAt: new Date(stale.createdAt),
         updatedAt: new Date(stale.updatedAt),
         lastUserMessageAt: null,
+        lastMessageAt: null,
         lastActivityAt: new Date(stale.updatedAt),
+        providerRetryMessage: null,
         archivedAt: stale.archivedAt ? new Date(stale.archivedAt) : null,
         attentionTimestamp: stale.attentionTimestamp ? new Date(stale.attentionTimestamp) : null,
         parentAgentId: null,

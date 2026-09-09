@@ -23,6 +23,7 @@ const workspace: WorkspaceDescriptor = {
   statusEnteredAt: null,
   archivingAt: null,
   diffStat: null,
+  defaultAgentId: null,
   scripts: [],
 };
 

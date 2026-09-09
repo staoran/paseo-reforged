@@ -51,6 +51,16 @@ interface HeldServerMessage {
   blockedAgentId?: string;
 }
 
+export function upsertLatestHeldMessage<T extends { key: string }>(held: T[], message: T): boolean {
+  const index = held.findIndex((entry) => entry.key === message.key);
+  if (index >= 0) {
+    held[index] = message;
+    return false;
+  }
+  held.push(message);
+  return true;
+}
+
 interface PendingServerMessageHold {
   matches: (message: ClientRequest | null) => boolean;
   blockAgentStreamFollowers?: boolean;

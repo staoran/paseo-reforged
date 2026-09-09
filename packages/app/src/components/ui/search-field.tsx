@@ -60,7 +60,7 @@ export function SearchField({
       <ThemedSearch size={14} uniProps={mutedColorMapping} />
       <ThemedTextInput
         testID={testID}
-        value={value}
+        initialValue={value}
         onChangeText={onChangeText}
         onFocus={handleFocus}
         onBlur={handleBlur}

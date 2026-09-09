@@ -48,7 +48,7 @@ class FakeDaemonProbe {
       if (target.transportType === "ssh") {
         return `paseo+desktop://ssh?host=${encodeURIComponent(target.host)}`;
       }
-      return `paseo+desktop://${target.transportType}?path=${encodeURIComponent(target.transportPath)}`;
+      return `paseo+desktop://${target.transportType}?path=${encodeURIComponent(String(target.transportPath))}`;
     },
     createClient: (config) => {
       const client = new FakeDaemonClient(this, config);
@@ -222,7 +222,7 @@ describe("test-daemon-connection connectToDaemon", () => {
       undefined,
       {
         ...probe.deps,
-        createWebSocketTransportFactory: () => transportFactory,
+        createDesktopTransportFactory: () => transportFactory,
       },
     );
     await result.client.close();

@@ -95,6 +95,7 @@ function workspace(input: {
     statusEnteredAt: null,
     archivingAt: null,
     diffStat: null,
+    defaultAgentId: null,
     scripts: input.scripts ?? [],
   };
 }

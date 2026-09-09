@@ -171,7 +171,15 @@ export function parseTransportTarget(value: unknown): TransportTarget {
     return normalizeWebSocketTarget({
       transportType: "websocket",
       url: value.url,
-      ...(isRecord(value.headers) ? { headers: value.headers } : {}),
+      ...(isRecord(value.headers)
+        ? {
+            headers: Object.fromEntries(
+              Object.entries(value.headers).filter(
+                (entry): entry is [string, string] => typeof entry[1] === "string",
+              ),
+            ),
+          }
+        : {}),
       ...(Array.isArray(value.protocols) ? { protocols: value.protocols } : {}),
     });
   }

@@ -17,6 +17,7 @@ const workspace: WorkspaceDescriptor = {
   statusEnteredAt: new Date("2026-08-16T10:00:00.000Z"),
   archivingAt: null,
   diffStat: { additions: 12, deletions: 3 },
+  defaultAgentId: null,
   scripts: [],
 };
 
@@ -29,6 +30,7 @@ const agent: Agent = {
   createdAt: new Date("2026-08-16T10:01:00.000Z"),
   updatedAt: new Date("2026-08-16T10:02:00.000Z"),
   lastUserMessageAt: null,
+  lastMessageAt: null,
   lastActivityAt: new Date("2026-08-16T10:03:00.000Z"),
   capabilities: {
     supportsStreaming: true,
@@ -51,6 +53,7 @@ const agent: Agent = {
   attentionReason: "permission",
   parentAgentId: null,
   labels: { phase: "implementation" },
+  providerRetryMessage: null,
 };
 
 describe("plugin context snapshots", () => {

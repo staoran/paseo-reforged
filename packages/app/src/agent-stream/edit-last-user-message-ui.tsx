@@ -119,7 +119,7 @@ export const LastUserMessageEditor = memo(function LastUserMessageEditor({
         style={styles.editorInput}
         testID="edit-last-user-message-input"
         textAlignVertical="top"
-        value={value}
+        initialValue={value}
       />
       <View style={styles.editorActions}>
         <EditorIconButton
