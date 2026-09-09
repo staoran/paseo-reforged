@@ -786,6 +786,104 @@ describe("DirectorySync session readiness", () => {
     directory.dispose();
   });
 
+  it.each(["2026-09-09T01:00:00.000Z", null])(
+    "preserves workspace activity time %s when an agent is unchanged in a directory refresh",
+    async (lastMessageAt) => {
+      // Host identity for the isolated directory replica
+      const serverId = "agent-message-time-changes";
+      // Directory and transport fixture using the production synchronization path
+      const { client, directory } = createDirectory(serverId);
+      // Session actions for initializing the connected host
+      const store = useSessionStore.getState();
+      store.initializeSession(serverId, client as unknown as DaemonClient, 1);
+      store.updateSessionServerInfo(serverId, {
+        serverId,
+        hostname: null,
+        version: "test",
+        features: { directorySync: true, workspaceMultiplicity: true },
+      });
+      // Canonical message time remains distinct from later runtime activity
+      const expectedTime = lastMessageAt === null ? null : new Date(lastMessageAt);
+
+      try {
+        // Initial authoritative response establishes the directory baseline and cursor
+        const releaseSnapshot = client.holdAgentFetch();
+        // Pending refresh consumes the initial full snapshot
+        const initialRefresh = directory.refreshAgents();
+        releaseSnapshot({
+          requestId: "initial-agents",
+          entries: [
+            {
+              agent: {
+                id: "agent-1",
+                provider: "codex",
+                cwd: "/repo",
+                workspaceId: "workspace-1",
+                model: null,
+                createdAt: "2026-09-09T00:00:00.000Z",
+                updatedAt: "2026-09-09T02:00:00.000Z",
+                lastUserMessageAt: null,
+                lastMessageAt,
+                status: "closed",
+                capabilities: createAgent(serverId, "agent-1").capabilities,
+                currentModeId: null,
+                availableModes: [],
+                pendingPermissions: [],
+                persistence: null,
+                title: "Unchanged agent",
+                labels: {},
+              },
+              project: {
+                projectKey: "/repo",
+                projectName: "repo",
+                checkout: {
+                  cwd: "/repo",
+                  isGit: false,
+                  currentBranch: null,
+                  remoteUrl: null,
+                  worktreeRoot: null,
+                  isPaseoOwnedWorktree: false,
+                  mainRepoRoot: null,
+                },
+              },
+            },
+          ],
+          pageInfo: { hasMore: false, nextCursor: null, prevCursor: null },
+          sync: { generation: "generation", headSeq: 7, mode: "snapshot", removals: [] },
+        });
+        await initialRefresh;
+        expect(
+          useSessionStore.getState().sessions[serverId]?.workspaceAgentActivity.get("workspace-1")
+            ?.lastActivityAt,
+        ).toEqual(expectedTime);
+
+        // An empty change set must retain the unchanged Agent's message metadata
+        const releaseChanges = client.holdAgentFetch();
+        // Pending incremental refresh uses the established directory cursor
+        const incrementalRefresh = directory.refreshAgents();
+        releaseChanges({
+          requestId: "unchanged-agents",
+          entries: [],
+          pageInfo: { hasMore: false, nextCursor: null, prevCursor: null },
+          sync: { generation: "generation", headSeq: 7, mode: "changes", removals: [] },
+        });
+        await incrementalRefresh;
+
+        expect(client.lastAgentOptions).toMatchObject({
+          sync: { generation: "generation", afterSeq: 7 },
+        });
+        // Final replica supplies the sidebar's workspace activity index
+        const session = useSessionStore.getState().sessions[serverId];
+        expect(session?.workspaceAgentActivity.get("workspace-1")?.lastActivityAt).toEqual(
+          expectedTime,
+        );
+        expect(session?.agents.get("agent-1")?.lastMessageAt).toEqual(expectedTime);
+      } finally {
+        directory.dispose();
+      }
+    },
+  );
+
   it("uses the saved agent sequence while bounding the bootstrap page", async () => {
     const serverId = "agent-list-sequence-page";
     serverIds.add(serverId);

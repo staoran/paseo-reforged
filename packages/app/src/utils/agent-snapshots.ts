@@ -43,6 +43,7 @@ export function derivePendingPermissionKey(
   return `${agentId}:${fallbackId}`;
 }
 
+/** Projects an Agent into a directory snapshot while preserving canonical message time */
 export function projectAgentSnapshot(agent: Agent): AgentSnapshotPayload {
   return {
     id: agent.id,
@@ -55,6 +56,7 @@ export function projectAgentSnapshot(agent: Agent): AgentSnapshotPayload {
     createdAt: agent.createdAt.toISOString(),
     updatedAt: agent.updatedAt.toISOString(),
     lastUserMessageAt: agent.lastUserMessageAt?.toISOString() ?? null,
+    lastMessageAt: agent.lastMessageAt?.toISOString() ?? null,
     status: agent.status,
     ...projectActiveTurn(agent),
     capabilities: agent.capabilities,
