@@ -18,7 +18,8 @@
     "production": {
       "env": {
         "APP_VARIANT": "production",
-        "EAS_PROJECT_ID": "5e4527ba-abbd-428f-8a56-300c21b9e1af"
+        "EAS_PROJECT_ID": "5e4527ba-abbd-428f-8a56-300c21b9e1af",
+        "PASEO_RELEASE_SOURCEMAPS": "0"
       }
     },
     "production-apk": {

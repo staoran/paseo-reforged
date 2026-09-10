@@ -158,6 +158,7 @@ jobs:
         shell: bash
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          PASEO_RELEASE_SOURCEMAPS: "0"
         run: |
           set -euo pipefail
 
@@ -187,6 +188,7 @@ jobs:
         shell: bash
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          PASEO_RELEASE_SOURCEMAPS: "0"
           ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a
           # Keep the local build below the memory envelope of a free hosted runner
           GRADLE_OPTS: >-
