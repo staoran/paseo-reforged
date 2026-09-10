@@ -150,8 +150,38 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Build Android APK with EAS cloud
+        id: cloud-build
+        continue-on-error: true
+        shell: bash
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          asset_name="Paseo-Reforged-${RELEASE_TAG}-android.apk"
+          asset_path="$RUNNER_TEMP/$asset_name"
+          cd packages/app
+
+          if ! build_json="$(npx --no-install eas build --platform android --profile production-apk --non-interactive --wait --json)"; then
+            echo "Cloud EAS build failed; falling back to local runner build."
+            exit 1
+          fi
+
+          artifact_url="$(printf '%s' "$build_json" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const v=JSON.parse(s); const b=Array.isArray(v)?v[0]:v; process.stdout.write(b?.artifacts?.buildUrl ?? b?.buildArtifactUrl ?? "")})')"
+          if [[ -z "$artifact_url" ]]; then
+            echo "Cloud EAS build returned no APK URL; falling back to local runner build."
+            exit 1
+          fi
+
+          curl --fail --location --retry 3 --output "$asset_path" "$artifact_url"
+          test -s "$asset_path"
+          echo "asset_name=$asset_name" >> "$GITHUB_OUTPUT"
+          echo "asset_path=$asset_path" >> "$GITHUB_OUTPUT"
+
       - name: Build Android APK on GitHub runner
         id: build
+        if: steps.cloud-build.outcome != 'success'
         shell: bash
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
@@ -346,8 +376,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          asset_name="${{ steps.build.outputs.asset_name }}"
-          asset_path="${{ steps.build.outputs.asset_path }}"
+          asset_name="${{ steps.cloud-build.outputs.asset_name || steps.build.outputs.asset_name }}"
+          asset_path="${{ steps.cloud-build.outputs.asset_path || steps.build.outputs.asset_path }}"
           if [[ ! -s "$asset_path" ]]; then
             echo "::error::APK is missing or empty: $asset_path"
             exit 1
