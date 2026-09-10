@@ -14,7 +14,9 @@ on:
 
 concurrency:
   group: android-apk-release-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
-  cancel-in-progress: false
+  # A tag push and a manual dispatch can target the same immutable source.
+  # Keep only the newest run so EAS and runner capacity are not duplicated.
+  cancel-in-progress: true
 
 env:
   SOURCE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
