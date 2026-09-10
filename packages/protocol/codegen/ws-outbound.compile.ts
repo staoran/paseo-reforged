@@ -1,4 +1,21 @@
 import { compile } from "zod-aot";
-import { WSOutboundMessageSchema as SourceWSOutboundMessageSchema } from "../src/messages.js";
+import { WSPongMessageSchema } from "../src/messages.js";
+import { getSessionOutboundValidationShard } from "../src/validation/ws-outbound-shards.js";
 
-export const WSOutboundMessageSchema = compile(SourceWSOutboundMessageSchema);
+export const WSPong = compile(WSPongMessageSchema);
+export const SessionOutboundShard0 = compile(getSessionOutboundValidationShard(0).schema);
+export const SessionOutboundShard1 = compile(getSessionOutboundValidationShard(1).schema);
+export const SessionOutboundShard2 = compile(getSessionOutboundValidationShard(2).schema);
+export const SessionOutboundShard3 = compile(getSessionOutboundValidationShard(3).schema);
+export const SessionOutboundShard4 = compile(getSessionOutboundValidationShard(4).schema);
+export const SessionOutboundShard5 = compile(getSessionOutboundValidationShard(5).schema);
+export const SessionOutboundShard6 = compile(getSessionOutboundValidationShard(6).schema);
+export const SessionOutboundShard7 = compile(getSessionOutboundValidationShard(7).schema);
+export const SessionOutboundShard8 = compile(getSessionOutboundValidationShard(8).schema);
+export const SessionOutboundShard9 = compile(getSessionOutboundValidationShard(9).schema);
+export const SessionOutboundShard10 = compile(getSessionOutboundValidationShard(10).schema);
+export const SessionOutboundShard11 = compile(getSessionOutboundValidationShard(11).schema);
+export const SessionOutboundShard12 = compile(getSessionOutboundValidationShard(12).schema);
+export const SessionOutboundShard13 = compile(getSessionOutboundValidationShard(13).schema);
+export const SessionOutboundShard14 = compile(getSessionOutboundValidationShard(14).schema);
+export const SessionOutboundShard15 = compile(getSessionOutboundValidationShard(15).schema);

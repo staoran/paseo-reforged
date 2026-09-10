@@ -4,7 +4,13 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createJiti } from "jiti";
 import { describe, expect, it } from "vitest";
-import { WSOutboundMessageSchema as GeneratedWSOutboundMessageSchema } from "../../src/generated/validation/ws-outbound.aot.js";
+import { SessionOutboundMessageSchema } from "../../src/messages.js";
+import { validateWSOutboundMessage } from "../../src/validation/ws-outbound.js";
+import {
+  SESSION_OUTBOUND_VALIDATOR_SHARD_COUNT,
+  getSessionOutboundValidatorShardIndex,
+  sessionOutboundValidationShards,
+} from "../../src/validation/ws-outbound-shards.js";
 
 interface GeneratedSchema {
   safeParse(input: unknown): { success: boolean; data?: unknown };
@@ -13,9 +19,11 @@ interface GeneratedSchema {
 const protocolRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const generatedWSOutboundPath = resolve(
   protocolRoot,
-  "src/generated/validation/ws-outbound.aot.ts",
+  "src/generated/validation/ws-outbound/session-outbound-shard-0.aot.ts",
 );
 const require = createRequire(import.meta.url);
+
+const GeneratedWSOutboundMessageSchema = { safeParse: validateWSOutboundMessage };
 
 async function compileInlineSchema(sourceSchema: string): Promise<GeneratedSchema> {
   const scratchRoot = resolve(protocolRoot, "../../.tmp");
@@ -136,6 +144,29 @@ const SourceSchema = z.object({
     expect(GeneratedWSOutboundMessageSchema.safeParse({ type: "not_a_message" }).success).toBe(
       false,
     );
+  });
+
+  it("routes every known session message type to one generated shard", () => {
+    const messageTypes = sessionOutboundValidationShards.flatMap((shard) => shard.messageTypes);
+
+    expect(sessionOutboundValidationShards).toHaveLength(SESSION_OUTBOUND_VALIDATOR_SHARD_COUNT);
+    expect(sessionOutboundValidationShards.every((shard) => shard.messageTypes.length > 0)).toBe(
+      true,
+    );
+    expect(new Set(messageTypes).size).toBe(SessionOutboundMessageSchema.options.length);
+
+    for (const option of SessionOutboundMessageSchema.options) {
+      expect(getSessionOutboundValidatorShardIndex(option.shape.type.value)).toBeTypeOf("number");
+    }
+  });
+
+  it("falls back to the source schema for unknown session message types", () => {
+    expect(
+      GeneratedWSOutboundMessageSchema.safeParse({
+        type: "session",
+        message: { type: "future_session_message" },
+      }).success,
+    ).toBe(false);
   });
 
   it("accepts project config responses with and without setup commit status", () => {
@@ -334,7 +365,7 @@ const SourceSchema = z.object({
 
   it("emits runtime imports with .js extensions", async () => {
     const generated = await readFile(generatedWSOutboundPath, "utf8");
-    expect(generated).toContain('from "../../validation/ws-outbound-schema-metadata.js"');
+    expect(generated).toContain('from "../../../validation/ws-outbound-schema-metadata.js"');
   });
 
   it("accepts a forge.search.response envelope", () => {

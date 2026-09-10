@@ -1,3 +1,20 @@
-import { WSOutboundMessageSchema as SourceWSOutboundMessageSchema } from "../messages.js";
+import { WSPongMessageSchema } from "../messages.js";
+import { getSessionOutboundValidationShard } from "./ws-outbound-shards.js";
 
-export const WSOutboundMessageSchema = { schema: SourceWSOutboundMessageSchema };
+export const WSPong = { schema: WSPongMessageSchema };
+export const SessionOutboundShard0 = { schema: getSessionOutboundValidationShard(0).schema };
+export const SessionOutboundShard1 = { schema: getSessionOutboundValidationShard(1).schema };
+export const SessionOutboundShard2 = { schema: getSessionOutboundValidationShard(2).schema };
+export const SessionOutboundShard3 = { schema: getSessionOutboundValidationShard(3).schema };
+export const SessionOutboundShard4 = { schema: getSessionOutboundValidationShard(4).schema };
+export const SessionOutboundShard5 = { schema: getSessionOutboundValidationShard(5).schema };
+export const SessionOutboundShard6 = { schema: getSessionOutboundValidationShard(6).schema };
+export const SessionOutboundShard7 = { schema: getSessionOutboundValidationShard(7).schema };
+export const SessionOutboundShard8 = { schema: getSessionOutboundValidationShard(8).schema };
+export const SessionOutboundShard9 = { schema: getSessionOutboundValidationShard(9).schema };
+export const SessionOutboundShard10 = { schema: getSessionOutboundValidationShard(10).schema };
+export const SessionOutboundShard11 = { schema: getSessionOutboundValidationShard(11).schema };
+export const SessionOutboundShard12 = { schema: getSessionOutboundValidationShard(12).schema };
+export const SessionOutboundShard13 = { schema: getSessionOutboundValidationShard(13).schema };
+export const SessionOutboundShard14 = { schema: getSessionOutboundValidationShard(14).schema };
+export const SessionOutboundShard15 = { schema: getSessionOutboundValidationShard(15).schema };
