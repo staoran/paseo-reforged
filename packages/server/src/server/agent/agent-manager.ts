@@ -3120,6 +3120,7 @@ export class AgentManager {
             stagedSubmittedPromptEcho?.item.type === "user_message"
               ? stagedSubmittedPromptEcho.item.messageId
               : undefined,
+          ...(pendingRun.replayKind ? { replayKind: pendingRun.replayKind } : {}),
         });
       }
       for (const stagedEvent of pendingRun.stagedEvents.splice(0)) {
@@ -3370,7 +3371,7 @@ export class AgentManager {
         expectedTurnId,
       });
       if (admission.status === "accepted") {
-        await this.recordAcceptedSteer(agent, prompt, options?.clientMessageId, expectedTurnId);
+        await this.recordAcceptedSteer(agent, prompt, options, expectedTurnId);
       }
       return admission;
     });
@@ -3400,7 +3401,7 @@ export class AgentManager {
             expectedTurnId,
           });
           if (admission.status === "accepted") {
-            await this.recordAcceptedSteer(agent, prompt, options?.clientMessageId, expectedTurnId);
+            await this.recordAcceptedSteer(agent, prompt, options, expectedTurnId);
           }
           return admission;
         })
@@ -3503,15 +3504,17 @@ export class AgentManager {
   private async recordAcceptedSteer(
     agent: ActiveManagedAgent,
     prompt: AgentPromptInput,
-    clientMessageId: string | undefined,
+    options: AgentSteerOptions | undefined,
     expectedTurnId: string,
   ): Promise<void> {
+    const clientMessageId = options?.clientMessageId;
     if (!clientMessageId) {
       return;
     }
     this.recordSubmittedPrompt(agent, prompt, clientMessageId, {
       messageId: clientMessageId,
       turnId: expectedTurnId,
+      ...(options?.replayKind ? { replayKind: options.replayKind } : {}),
     });
     this.emitState(agent);
   }
@@ -5966,6 +5969,36 @@ export class AgentManager {
     void this.refreshRuntimeInfo(agent);
   }
 
+  /** Enriches a canonical user prompt without allowing an older echo to replace the latest proof */
+  private reconcileSubmittedUserMessageTimelineEvent(
+    agent: ActiveManagedAgent,
+    event: Extract<AgentStreamEvent, { type: "timeline" }>,
+  ): boolean {
+    if (event.item.type !== "user_message" || !event.item.clientMessageId) {
+      return false;
+    }
+    const reconciledSubmittedPrompt = this.reconcileSubmittedPromptEcho(
+      agent,
+      event.item,
+      event.turnId,
+    );
+    if (reconciledSubmittedPrompt?.item.type !== "user_message") {
+      return false;
+    }
+    const latestUserMessage = this.timelineStore
+      .getRows(agent.id)
+      .findLast((row) => row.item.type === "user_message");
+    if (latestUserMessage?.seq === reconciledSubmittedPrompt.seq) {
+      agent.lastReplayableUserMessageId =
+        reconciledSubmittedPrompt.item.replayKind === "text_only" && event.item.messageId
+          ? event.item.messageId
+          : null;
+    }
+    agent.lastUserMessageAt = new Date();
+    this.emitState(agent);
+    return true;
+  }
+
   private async onStreamTimelineEvent(params: {
     agent: ActiveManagedAgent;
     event: Extract<AgentStreamEvent, { type: "timeline" }>;
@@ -5980,15 +6013,7 @@ export class AgentManager {
       return;
     }
 
-    if (
-      event.item.type === "user_message" &&
-      event.item.clientMessageId &&
-      this.reconcileSubmittedPromptEcho(agent, event.item, event.turnId)
-    ) {
-      agent.lastReplayableUserMessageId =
-        event.item.replayKind === "text_only" && event.item.messageId ? event.item.messageId : null;
-      agent.lastUserMessageAt = new Date();
-      this.emitState(agent);
+    if (this.reconcileSubmittedUserMessageTimelineEvent(agent, event)) {
       flags.shouldDispatchEvent = false;
       flags.shouldNotifyWaiters = false;
       return;

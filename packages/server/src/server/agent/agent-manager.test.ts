@@ -19,19 +19,13 @@ import {
 import { AgentStorage } from "./agent-storage.js";
 import { InMemoryDurableAgentTimelineStore } from "./agent-timeline-store.js";
 import { FileAgentTimelineStore } from "./file-agent-timeline-store.js";
-import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 import { toAgentListItemPayload, toAgentPayload } from "./agent-projections.js";
 import { projectTimelineRows } from "./timeline-projection.js";
 import { getOpenAgentTabLabel, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { formatSystemNotificationPrompt, startAgentRun } from "./agent-prompt.js";
 import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent-loading.js";
 import type { AgentMetadataEntry, StoredAgentRecord } from "./agent-storage.js";
-import type {
-  AgentTimelineFetchOptions,
-  AgentTimelineFetchResult,
-  AgentTimelineRow,
-  AgentTimelineStore,
-} from "./agent-timeline-store-types.js";
+import type { AgentTimelineRow, AgentTimelineStageInput } from "./agent-timeline-store-types.js";
 import type {
   AgentClient,
   AgentCreateSessionOptions,
@@ -105,70 +99,14 @@ const TEST_CAPABILITIES = {
   supportsToolInvocations: false,
 } as const;
 
-class RecordingTimelineStore implements AgentTimelineStore {
+class RecordingTimelineStore extends InMemoryDurableAgentTimelineStore {
+  /** Durable rows observed by the injected-store contract test. */
   readonly writes: AgentTimelineRow[][] = [];
-  private readonly memory = new InMemoryAgentTimelineStore();
 
-  private ensure(agentId: string): void {
-    if (!this.memory.has(agentId)) this.memory.initialize(agentId);
-  }
-
-  async appendCommitted(
-    agentId: string,
-    item: AgentTimelineItem,
-    options?: { timestamp?: string; turnId?: string },
-  ): Promise<AgentTimelineRow> {
-    this.ensure(agentId);
-    return this.memory.append(agentId, item, options);
-  }
-
-  async fetchCommitted(
-    agentId: string,
-    options?: AgentTimelineFetchOptions,
-  ): Promise<AgentTimelineFetchResult> {
-    this.ensure(agentId);
-    return this.memory.fetch(agentId, options);
-  }
-
-  async getLatestCommittedSeq(agentId: string): Promise<number> {
-    return this.memory.has(agentId) ? (this.memory.getRows(agentId).at(-1)?.seq ?? 0) : 0;
-  }
-
-  async getCommittedRows(agentId: string): Promise<AgentTimelineRow[]> {
-    return this.memory.has(agentId) ? this.memory.getRows(agentId) : [];
-  }
-
-  async getLastItem(agentId: string): Promise<AgentTimelineItem | null> {
-    return this.memory.has(agentId) ? this.memory.getLastItem(agentId) : null;
-  }
-
-  async getLastAssistantMessage(agentId: string): Promise<string | null> {
-    return this.memory.has(agentId) ? this.memory.getLastAssistantMessage(agentId) : null;
-  }
-
-  async deleteAgent(agentId: string): Promise<void> {
-    this.memory.delete(agentId);
-  }
-
-  async bulkInsert(agentId: string, rows: readonly AgentTimelineRow[]): Promise<void> {
-    this.writes.push(rows.map((row) => ({ ...row })));
-    this.ensure(agentId);
-    for (const row of rows) {
-      this.memory.append(agentId, row.item, {
-        timestamp: row.timestamp,
-        turnId: row.turnId,
-      });
-    }
-  }
-
-  async updateCommittedRow(agentId: string, row: AgentTimelineRow): Promise<void> {
-    this.ensure(agentId);
-    const rows = this.memory.getRows(agentId);
-    const index = rows.findIndex((candidate) => candidate.seq === row.seq);
-    if (index >= 0) {
-      rows[index] = row;
-      this.memory.initialize(agentId, { rows });
-    }
+  /** Records staged rows while keeping the durable generation contract intact. */
+  override async stageRows(agentId: string, input: AgentTimelineStageInput): Promise<void> {
+    this.writes.push(input.rows.map((row) => ({ ...row })));
+    await super.stageRows(agentId, input);
   }
 }
 
@@ -1404,13 +1342,20 @@ test("steering records concurrent early echoes as canonical submitted prompts", 
     })();
     await manager.waitForAgentRunStart(agent.id);
     await Promise.all([
-      manager.steerAgentRun(agent.id, "one", { clientMessageId: "client-one" }),
+      manager.steerAgentRun(agent.id, "one", {
+        clientMessageId: "client-one",
+        replayKind: "text_only",
+      }),
       manager.steerAgentRun(agent.id, "two", { clientMessageId: "client-two" }),
     ]);
     const rows = manager.getTimeline(agent.id).filter((item) => item.type === "user_message");
     expect(rows).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ messageId: "client-one", clientMessageId: "client-one" }),
+        expect.objectContaining({
+          messageId: "client-one",
+          clientMessageId: "client-one",
+          replayKind: "text_only",
+        }),
         expect.objectContaining({ messageId: "client-two", clientMessageId: "client-two" }),
       ]),
     );
@@ -14018,6 +13963,149 @@ test("canonical submitted prompt keeps wire identity while rewind resolves provi
   } finally {
     await manager.flush().catch(() => undefined);
     await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("keeps the latest replay proof when canceled turns receive provider echoes out of order", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-late-provider-echo-"));
+
+  class LateProviderEchoSession extends TestAgentSession {
+    private readonly promptsByTurnId = new Map<
+      string,
+      { text: string; clientMessageId: string | undefined }
+    >();
+    private historyReady = false;
+    private activeTurnId: string | null = null;
+    private turnCount = 0;
+
+    override async startTurn(
+      prompt: AgentPromptInput,
+      options?: AgentRunOptions,
+    ): Promise<{ turnId: string }> {
+      const turnId = `turn-late-provider-echo-${++this.turnCount}`;
+      this.activeTurnId = turnId;
+      this.promptsByTurnId.set(turnId, {
+        text: typeof prompt === "string" ? prompt : "",
+        clientMessageId: options?.clientMessageId,
+      });
+      setTimeout(() => {
+        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+      }, 0);
+      return { turnId };
+    }
+
+    override async interrupt(): Promise<void> {
+      if (!this.activeTurnId) {
+        return;
+      }
+      this.pushEvent({
+        type: "turn_canceled",
+        provider: this.provider,
+        reason: "interrupted",
+        turnId: this.activeTurnId,
+      });
+    }
+
+    /** Delivers one delayed Pi-style provider user echo after foreground runs are gone */
+    emitLateProviderEcho(turnId: string): void {
+      const prompt = this.promptsByTurnId.get(turnId);
+      if (!prompt) {
+        throw new Error(`Unknown late provider echo turn: ${turnId}`);
+      }
+      this.historyReady = true;
+      this.pushEvent({
+        type: "timeline",
+        provider: this.provider,
+        turnId,
+        item: {
+          type: "user_message",
+          text: prompt.text,
+          messageId: `provider-message-${turnId}`,
+          ...(prompt.clientMessageId ? { clientMessageId: prompt.clientMessageId } : {}),
+        },
+      });
+    }
+
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      if (!this.historyReady) {
+        return;
+      }
+      for (const [turnId, prompt] of this.promptsByTurnId) {
+        yield {
+          type: "timeline",
+          provider: this.provider,
+          turnId,
+          item: {
+            type: "user_message",
+            text: prompt.text,
+            messageId: `provider-message-${turnId}`,
+          },
+        };
+      }
+    }
+  }
+
+  class LateProviderEchoClient extends TestAgentClient {
+    session: LateProviderEchoSession | null = null;
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.session = new LateProviderEchoSession(config);
+      return this.session;
+    }
+  }
+
+  const client = new LateProviderEchoClient();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+  let agentId: string | null = null;
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    const firstRun = manager.runAgent(agent.id, "first stopped prompt", {
+      clientMessageId: "client-first-stopped-prompt",
+      replayKind: "text_only",
+    });
+    await manager.waitForAgentRunStart(agent.id);
+    const firstTurnId = "turn-late-provider-echo-1";
+
+    await expect(manager.cancelAgentRun(agent.id)).resolves.toEqual({ status: "settled" });
+    await expect(firstRun).resolves.toMatchObject({ canceled: true });
+
+    const secondRun = manager.runAgent(agent.id, "second stopped prompt", {
+      clientMessageId: "client-second-stopped-prompt",
+      replayKind: "text_only",
+    });
+    await manager.waitForAgentRunStart(agent.id);
+    const secondTurnId = "turn-late-provider-echo-2";
+
+    await expect(manager.cancelAgentRun(agent.id)).resolves.toEqual({ status: "settled" });
+    await expect(secondRun).resolves.toMatchObject({ canceled: true });
+
+    client.session?.emitLateProviderEcho(secondTurnId);
+    client.session?.emitLateProviderEcho(firstTurnId);
+    await manager.flush();
+
+    await manager.hydrateTimelineFromProvider(agent.id, { force: true });
+
+    expect(manager.getTimeline(agent.id)).toEqual([
+      {
+        type: "user_message",
+        text: "first stopped prompt",
+        messageId: `provider-message-${firstTurnId}`,
+      },
+      {
+        type: "user_message",
+        text: "second stopped prompt",
+        messageId: `provider-message-${secondTurnId}`,
+        replayKind: "text_only",
+      },
+    ]);
+  } finally {
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    await manager.flush().catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });
   }
 });

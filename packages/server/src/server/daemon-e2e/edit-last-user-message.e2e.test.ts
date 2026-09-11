@@ -40,6 +40,8 @@ class InPlaceEditSession implements AgentSession {
   readonly provider = "mock" as const;
   readonly capabilities = EDIT_CAPABILITIES;
   readonly inPlaceEditCalls: Array<{ messageId: string }> = [];
+  /** Forces native provider IDs to differ from canonical client IDs in mapping tests */
+  useDistinctProviderMessageIds = false;
 
   private sessionId = EDIT_SESSION_ID;
   private nativeHandle = EDIT_NATIVE_HANDLE;
@@ -74,7 +76,9 @@ class InPlaceEditSession implements AgentSession {
   ): Promise<{ turnId: string }> {
     const turnId = `mock-edit-turn-${++this.turnOrdinal}`;
     const text = typeof prompt === "string" ? prompt : "";
-    const messageId = options?.clientMessageId ?? `mock-message-${this.turnOrdinal}`;
+    const messageId = this.useDistinctProviderMessageIds
+      ? `mock-provider-user-${this.turnOrdinal}`
+      : (options?.clientMessageId ?? `mock-message-${this.turnOrdinal}`);
     const events: AgentStreamEvent[] = [
       { type: "turn_started", provider: this.provider, turnId },
       {
@@ -347,6 +351,7 @@ class RestartableEditDaemonHarness {
 test("regenerates the latest answer from the original text in the same session", async () => {
   const cwd = mkdtempSync(path.join(tmpdir(), "paseo-edit-last-user-message-"));
   const provider = new InPlaceEditClient();
+  provider.session.useDistinctProviderMessageIds = true;
   const daemon = await createTestPaseoDaemon({ agentClients: { mock: provider }, isDev: true });
   const client = new DaemonClient({
     url: `ws://127.0.0.1:${daemon.port}/ws`,
@@ -385,6 +390,9 @@ test("regenerates the latest answer from the original text in the same session",
     if (!original || original.item.type !== "user_message" || !original.item.messageId) {
       throw new Error("Expected the canonical original user message");
     }
+    expect(original.item.replayKind).toBe("text_only");
+    const originalProviderMessageId = "mock-provider-user-1";
+    expect(originalProviderMessageId).not.toBe(original.item.messageId);
 
     const result = await client.editLastUserMessage({
       agentId: created.id,
@@ -436,7 +444,7 @@ test("regenerates the latest answer from the original text in the same session",
       ),
     ).toBe(false);
     expect(provider.createSessionCalls).toHaveLength(1);
-    expect(provider.session.inPlaceEditCalls).toEqual([{ messageId: original.item.messageId }]);
+    expect(provider.session.inPlaceEditCalls).toEqual([{ messageId: originalProviderMessageId }]);
   } finally {
     await client.close();
     await daemon.close();

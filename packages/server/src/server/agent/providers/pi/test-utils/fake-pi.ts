@@ -135,6 +135,8 @@ export class FakePiSession implements PiRuntimeSession {
   readonly branchRequests: string[] = [];
   state: PiSessionState;
 
+  /** Mirrors the generated extension sequence for submitted user entry markers */
+  private submittedUserEntrySequence = 0;
   private readonly subscribers = new Set<(event: PiRuntimeEvent) => void>();
   private readonly subagentMessageResults = new Map<string, FakePiSubagentMessagesResult[]>();
   private nextHeldPrompt: { promise: Promise<void>; reject: (error: Error) => void } | null = null;
@@ -400,6 +402,7 @@ export class FakePiSession implements PiRuntimeSession {
   }
 
   finishSubmittedUserMessage(entry: FakePiUserEntry): void {
+    const sequence = ++this.submittedUserEntrySequence;
     this.emit({
       type: "message_end",
       message: { role: "user", content: entry.text },
@@ -408,7 +411,7 @@ export class FakePiSession implements PiRuntimeSession {
       type: "extension_ui_request",
       id: `submitted-user-${entry.id}`,
       method: "notify",
-      message: `PASEO_SUBMITTED_USER_ENTRY ${JSON.stringify({ entry })}`,
+      message: `PASEO_SUBMITTED_USER_ENTRY ${JSON.stringify({ sequence, entry })}`,
     });
   }
 

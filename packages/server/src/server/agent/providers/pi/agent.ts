@@ -96,6 +96,8 @@ const PASEO_PI_CAPTURE_EXTENSION_COMMAND = "paseo_capture_entries";
 const PASEO_PI_ENTRY_CAPTURE_MARKER = "PASEO_ENTRY_CAPTURE";
 const PASEO_PI_SUBMITTED_USER_ENTRY_MARKER = "PASEO_SUBMITTED_USER_ENTRY";
 const PASEO_PI_COMMAND_RESULT_MARKER = "PASEO_COMMAND_RESULT";
+/** Limits retained associations when Pi does not deliver a submitted-entry marker */
+const MAX_PENDING_PI_SUBMITTED_ENTRY_ASSOCIATIONS = 128;
 const DEFAULT_PI_EXTENSION_RESULT_TIMEOUT_MS = 30_000;
 const DEFAULT_PI_RPC_TIMEOUT_MS = 60_000;
 const QUESTION_RESPONSE_HEADER = "Response";
@@ -222,7 +224,14 @@ interface StartTurnResult {
 }
 
 interface PiPendingSteerSubmission {
-  text: string;
+  turnId: string;
+  clientMessageId: string | null;
+}
+
+interface PiSubmittedUserEntryAssociation {
+  /** Identifies the turn that owned the corresponding Pi user message_end event */
+  turnId: string | undefined;
+  /** Identifies the canonical client prompt that owns the submitted provider entry */
   clientMessageId: string | null;
 }
 
@@ -670,15 +679,17 @@ function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
 
 	export default function paseoIntegration(pi) {
 	  const submittedUserMessages = [];
+	  let submittedUserMessageSequence = 0;
 
 	  function emitSubmittedUserEntries(ctx) {
 	    const entries = ctx.sessionManager.getEntries();
 	    for (let index = 0; index < submittedUserMessages.length; index += 1) {
-	      const message = submittedUserMessages[index];
+	      const submittedUserMessage = submittedUserMessages[index];
 	      // Pi assigns the entry ID after message_end, then persists this same message object.
 	      // Reference equality preserves the exact association even when another extension edits it.
 	      const entry = entries.find(
-	        (candidate) => candidate.type === "message" && candidate.message === message,
+	        (candidate) =>
+	          candidate.type === "message" && candidate.message === submittedUserMessage.message,
 	      );
 	      if (!entry) {
 	        continue;
@@ -687,7 +698,10 @@ function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
 	      index -= 1;
 	      ctx.ui.notify(
 	        "${PASEO_PI_SUBMITTED_USER_ENTRY_MARKER} " +
-	          JSON.stringify({ entry: toCapturedUserEntry(entry) }),
+	          JSON.stringify({
+	            sequence: submittedUserMessage.sequence,
+	            entry: toCapturedUserEntry(entry),
+	          }),
 	        "info",
 	      );
 	    }
@@ -707,7 +721,10 @@ function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
 
 	  pi.on("message_end", async (event) => {
 	    if (event.message?.role === "user") {
-	      submittedUserMessages.push(event.message);
+	      submittedUserMessages.push({
+	        message: event.message,
+	        sequence: ++submittedUserMessageSequence,
+	      });
 	    }
 	  });
 
@@ -1229,6 +1246,10 @@ export class PiRpcAgentSession implements AgentSession {
   private pendingCombinedAskUserResponse: PendingCombinedAskUserResponse | null = null;
   private activeTurnId: string | null = null;
   private activeClientMessageId: string | null = null;
+  /** Owns the first user message_end emitted for the active prompt */
+  private pendingInitialSubmittedUserEntry: PiSubmittedUserEntryAssociation | null = null;
+  /** Mirrors the generated extension sequence for submitted user entries */
+  private submittedUserEntrySequence = 0;
   private activeAssistantMessageId: string | null = null;
   private activeTurnStarted = false;
   private activeTurnStartedEmitted = false;
@@ -1238,6 +1259,11 @@ export class PiRpcAgentSession implements AgentSession {
   private activePromptRequestId: string | null = null;
   private readonly pendingPromptResults = new Map<string, boolean>();
   private readonly pendingSteerSubmissions: PiPendingSteerSubmission[] = [];
+  /** Holds stable associations until delayed Pi extension markers are consumed */
+  private readonly pendingSubmittedUserEntryAssociations = new Map<
+    number,
+    PiSubmittedUserEntryAssociation
+  >();
   private lastKnownThinkingOptionId: string | null;
   currentLeafOverrideId: string | null | undefined;
   private readonly capturedUserEntries: PiCapturedEntry[] = [];
@@ -1325,6 +1351,10 @@ export class PiRpcAgentSession implements AgentSession {
     this.usagePoller.startTurn();
     this.lastInterruptedTurnId = null;
     this.activeClientMessageId = options?.clientMessageId ?? null;
+    this.pendingInitialSubmittedUserEntry = {
+      turnId,
+      clientMessageId: this.activeClientMessageId,
+    };
     this.activeAssistantMessageId = null;
     this.activeTurnStarted = false;
     this.activeTurnStartedEmitted = false;
@@ -1360,6 +1390,7 @@ export class PiRpcAgentSession implements AgentSession {
         this.usagePoller.stopTurn();
         this.activeTurnId = null;
         this.activeClientMessageId = null;
+        this.pendingInitialSubmittedUserEntry = null;
         this.activeTurnStarted = false;
         this.activeTurnStartedEmitted = false;
         this.pendingSettledMessages = null;
@@ -1415,7 +1446,7 @@ export class PiRpcAgentSession implements AgentSession {
       return { status: "unavailable" };
     }
     this.pendingSteerSubmissions.push({
-      text: payload.text,
+      turnId: options.expectedTurnId,
       clientMessageId: options.clientMessageId ?? null,
     });
     if (options.clearPendingPermissions) {
@@ -1435,13 +1466,40 @@ export class PiRpcAgentSession implements AgentSession {
     }
   }
 
-  private takePendingSteerSubmission(text: string): PiPendingSteerSubmission | undefined {
-    const index = this.pendingSteerSubmissions.findIndex((submission) => submission.text === text);
-    if (index < 0) {
+  /** Consumes accepted Steers in the order Pi emits their user message_end events */
+  private takePendingSteerSubmission(): PiPendingSteerSubmission | undefined {
+    return this.pendingSteerSubmissions.shift();
+  }
+
+  /** Captures submitted entries by Pi's message order before later lifecycle events clear state */
+  private recordSubmittedUserEntryAssociation(): void {
+    const association = this.pendingInitialSubmittedUserEntry ?? this.takePendingSteerSubmission();
+    this.pendingInitialSubmittedUserEntry = null;
+    const sequence = ++this.submittedUserEntrySequence;
+    if (!association) {
+      return;
+    }
+    this.pendingSubmittedUserEntryAssociations.set(sequence, association);
+    if (
+      this.pendingSubmittedUserEntryAssociations.size > MAX_PENDING_PI_SUBMITTED_ENTRY_ASSOCIATIONS
+    ) {
+      const oldestSequence = this.pendingSubmittedUserEntryAssociations.keys().next().value;
+      if (oldestSequence !== undefined) {
+        this.pendingSubmittedUserEntryAssociations.delete(oldestSequence);
+      }
+    }
+  }
+
+  /** Consumes each extension marker association once so duplicate notifications stay inert */
+  private takeSubmittedUserEntryAssociation(
+    sequence: number,
+  ): PiSubmittedUserEntryAssociation | undefined {
+    const association = this.pendingSubmittedUserEntryAssociations.get(sequence);
+    if (!association) {
       return undefined;
     }
-    const [submission] = this.pendingSteerSubmissions.splice(index, 1);
-    return submission;
+    this.pendingSubmittedUserEntryAssociations.delete(sequence);
+    return association;
   }
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
@@ -1557,6 +1615,7 @@ export class PiRpcAgentSession implements AgentSession {
         this.usagePoller.stopTurn();
         this.activeTurnId = null;
         this.activeClientMessageId = null;
+        this.pendingInitialSubmittedUserEntry = null;
         this.activeTurnStarted = false;
         this.activeTurnStartedEmitted = false;
         this.pendingSettledMessages = null;
@@ -1576,6 +1635,7 @@ export class PiRpcAgentSession implements AgentSession {
       this.usagePoller.stopTurn();
       this.activeTurnId = null;
       this.activeClientMessageId = null;
+      this.pendingInitialSubmittedUserEntry = null;
       this.activeTurnStarted = false;
       this.activeTurnStartedEmitted = false;
       this.pendingSettledMessages = null;
@@ -1995,23 +2055,32 @@ export class PiRpcAgentSession implements AgentSession {
     if (!payload) {
       return false;
     }
+    const sequence =
+      typeof payload.sequence === "number" &&
+      Number.isSafeInteger(payload.sequence) &&
+      payload.sequence > 0
+        ? payload.sequence
+        : null;
+    if (sequence === null) {
+      return true;
+    }
+    const association = this.takeSubmittedUserEntryAssociation(sequence);
+    if (!association) {
+      return true;
+    }
     const [entry] = parseCapturedEntries([payload.entry]);
     if (!entry) {
       return true;
     }
-    const pendingSteer = this.takePendingSteerSubmission(entry.text);
-    const clientMessageId = pendingSteer
-      ? pendingSteer.clientMessageId
-      : this.activeClientMessageId;
     this.emit({
       type: "timeline",
       provider: this.provider,
-      turnId: this.currentTurnIdForEvent(),
+      turnId: association.turnId,
       item: {
         type: "user_message",
         text: entry.text,
         messageId: entry.id,
-        ...(clientMessageId ? { clientMessageId } : {}),
+        ...(association.clientMessageId ? { clientMessageId: association.clientMessageId } : {}),
       },
     });
     return true;
@@ -2183,6 +2252,7 @@ export class PiRpcAgentSession implements AgentSession {
     this.usagePoller.stopTurn();
     this.activeTurnId = null;
     this.activeClientMessageId = null;
+    this.pendingInitialSubmittedUserEntry = null;
     this.activeTurnStarted = false;
     this.activeTurnStartedEmitted = false;
     this.pendingSettledMessages = null;
@@ -2410,6 +2480,10 @@ export class PiRpcAgentSession implements AgentSession {
     event: Extract<PiAgentSessionEvent, { type: "message_end" }>,
     turnId: string | undefined,
   ): void {
+    if (event.message.role === "user") {
+      this.recordSubmittedUserEntryAssociation();
+      return;
+    }
     if (event.message.role === "assistant") {
       this.activeAssistantMessageId = null;
       return;
@@ -2483,6 +2557,7 @@ export class PiRpcAgentSession implements AgentSession {
     }
     this.activeTurnId = null;
     this.activeClientMessageId = null;
+    this.pendingInitialSubmittedUserEntry = null;
     this.activeAssistantMessageId = null;
     this.activeTurnStarted = false;
     this.activeTurnStartedEmitted = false;

@@ -220,6 +220,20 @@ class SessionEvents {
       .map((event) => event.item);
   }
 
+  /** Returns user-message timeline events observed from the provider session. */
+  userMessageTimelineEvents() {
+    return this.events.filter(
+      (
+        event,
+      ): event is Extract<AgentStreamEvent, { type: "timeline" }> & {
+        item: Extract<
+          Extract<AgentStreamEvent, { type: "timeline" }>["item"],
+          { type: "user_message" }
+        >;
+      } => event.type === "timeline" && event.item.type === "user_message",
+    );
+  }
+
   timelineAndCompletionEvents() {
     return this.events.flatMap((event) => {
       if (event.type === "timeline") {
@@ -843,6 +857,112 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test("preserves a submitted Pi entry correlation after stopping its turn", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    const first = await session.startTurn("first prompt", { clientMessageId: "client-a" });
+
+    fakeSession.emit({
+      type: "message_end",
+      message: { role: "user", content: "first prompt" },
+    });
+    await session.interrupt();
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "submitted-user-a",
+      method: "notify",
+      message: `PASEO_SUBMITTED_USER_ENTRY ${JSON.stringify({
+        sequence: 1,
+        entry: { id: "entry-a", parentId: null, text: "first prompt" },
+      })}`,
+    });
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "submitted-user-a-duplicate",
+      method: "notify",
+      message: `PASEO_SUBMITTED_USER_ENTRY ${JSON.stringify({
+        sequence: 1,
+        entry: { id: "entry-a", parentId: null, text: "first prompt" },
+      })}`,
+    });
+
+    const submittedEntries = events.userMessageTimelineEvents();
+    expect(submittedEntries).toEqual([
+      {
+        type: "timeline",
+        provider: "pi",
+        turnId: first.turnId,
+        item: {
+          type: "user_message",
+          text: "first prompt",
+          messageId: "entry-a",
+          clientMessageId: "client-a",
+        },
+      },
+    ]);
+  });
+
+  test("keeps out-of-order delayed submitted Pi entries bound to their original turns", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    const first = await session.startTurn("first prompt", { clientMessageId: "client-a" });
+    fakeSession.emit({
+      type: "message_end",
+      message: { role: "user", content: "first prompt" },
+    });
+    await session.interrupt();
+
+    const second = await session.startTurn("second prompt", { clientMessageId: "client-b" });
+    fakeSession.emit({
+      type: "message_end",
+      message: { role: "user", content: "second prompt" },
+    });
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "submitted-user-b",
+      method: "notify",
+      message: `PASEO_SUBMITTED_USER_ENTRY ${JSON.stringify({
+        sequence: 2,
+        entry: { id: "entry-b", parentId: "entry-a", text: "second prompt" },
+      })}`,
+    });
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "submitted-user-a",
+      method: "notify",
+      message: `PASEO_SUBMITTED_USER_ENTRY ${JSON.stringify({
+        sequence: 1,
+        entry: { id: "entry-a", parentId: null, text: "first prompt" },
+      })}`,
+    });
+
+    const submittedEntries = events.userMessageTimelineEvents();
+    expect(submittedEntries).toEqual([
+      {
+        type: "timeline",
+        provider: "pi",
+        turnId: second.turnId,
+        item: {
+          type: "user_message",
+          text: "second prompt",
+          messageId: "entry-b",
+          clientMessageId: "client-b",
+        },
+      },
+      {
+        type: "timeline",
+        provider: "pi",
+        turnId: first.turnId,
+        item: {
+          type: "user_message",
+          text: "first prompt",
+          messageId: "entry-a",
+          clientMessageId: "client-a",
+        },
+      },
+    ]);
+  });
+
   test("surfaces Pi extension command messages and completes when no agent turn starts", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
@@ -1208,7 +1328,7 @@ describe("PiRpcAgentSession", () => {
     );
 
     expect(notifications).toEqual([
-      'PASEO_SUBMITTED_USER_ENTRY {"entry":{"id":"entry-new","parentId":"entry-old-assistant","text":"new prompt"}}',
+      'PASEO_SUBMITTED_USER_ENTRY {"sequence":1,"entry":{"id":"entry-new","parentId":"entry-old-assistant","text":"new prompt"}}',
     ]);
 
     await session.close();
@@ -1767,6 +1887,11 @@ describe("PiRpcAgentSession steering", () => {
     const { turnId } = await session.startTurn("fix the tests", {
       clientMessageId: "client-prompt-1",
     });
+    fakeSession.finishSubmittedUserMessage({
+      id: "entry-prompt-1",
+      parentId: null,
+      text: "fix the tests",
+    });
     const result = await session.steerActiveTurn("steer this turn", {
       expectedTurnId: turnId,
       clientMessageId: "client-steer-1",
@@ -1785,9 +1910,66 @@ describe("PiRpcAgentSession steering", () => {
     expect(userMessages).toEqual([
       {
         type: "user_message",
+        text: "fix the tests",
+        messageId: "entry-prompt-1",
+        clientMessageId: "client-prompt-1",
+      },
+      {
+        type: "user_message",
         text: "steer this turn",
         messageId: "entry-steer-1",
         clientMessageId: "client-steer-1",
+      },
+    ]);
+  });
+
+  test("keeps identical initial prompt and steer correlations in submission order", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    const { turnId } = await session.startTurn("same prompt", {
+      clientMessageId: "client-prompt-1",
+    });
+
+    await expect(
+      session.steerActiveTurn("same prompt", {
+        expectedTurnId: turnId,
+        clientMessageId: "client-steer-1",
+      }),
+    ).resolves.toEqual({ status: "accepted" });
+
+    fakeSession.finishSubmittedUserMessage({
+      id: "entry-prompt-1",
+      parentId: null,
+      text: "same prompt",
+    });
+    fakeSession.finishSubmittedUserMessage({
+      id: "entry-steer-1",
+      parentId: "entry-prompt-1",
+      text: "same prompt",
+    });
+
+    expect(events.userMessageTimelineEvents()).toEqual([
+      {
+        type: "timeline",
+        provider: "pi",
+        turnId,
+        item: {
+          type: "user_message",
+          text: "same prompt",
+          messageId: "entry-prompt-1",
+          clientMessageId: "client-prompt-1",
+        },
+      },
+      {
+        type: "timeline",
+        provider: "pi",
+        turnId,
+        item: {
+          type: "user_message",
+          text: "same prompt",
+          messageId: "entry-steer-1",
+          clientMessageId: "client-steer-1",
+        },
       },
     ]);
   });
@@ -1796,6 +1978,11 @@ describe("PiRpcAgentSession steering", () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
     const { turnId } = await session.startTurn("work", { clientMessageId: "client-prompt-1" });
+    fakeSession.finishSubmittedUserMessage({
+      id: "entry-prompt-1",
+      parentId: null,
+      text: "work",
+    });
 
     await session.steerActiveTurn("steer without a client ID", { expectedTurnId: turnId });
     fakeSession.finishSubmittedUserMessage({
@@ -1815,6 +2002,7 @@ describe("PiRpcAgentSession steering", () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
     const { turnId } = await session.startTurn("work");
+    fakeSession.finishSubmittedUserMessage({ id: "entry-prompt-1", parentId: null, text: "work" });
 
     await session.steerActiveTurn("steer one", {
       expectedTurnId: turnId,
@@ -1830,6 +2018,11 @@ describe("PiRpcAgentSession steering", () => {
 
     const userMessages = events.timelineItems().filter((item) => item.type === "user_message");
     expect(userMessages).toEqual([
+      {
+        type: "user_message",
+        text: "work",
+        messageId: "entry-prompt-1",
+      },
       {
         type: "user_message",
         text: "steer one",

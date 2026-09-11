@@ -187,7 +187,10 @@ test.describe("Edit latest user message", () => {
   }) => {
     const firstPrompt = "emit 1 coalesced agent stream updates for the edit gate baseline.";
     const runningPrompt = "Keep this mock turn running while edit eligibility is checked.";
+    const stoppedReplacementPrompt =
+      "Replace the interrupted prompt after the runtime is restored.";
     const attachmentPrompt = "emit 1 coalesced agent stream updates for the attachment edit gate.";
+    const editRequests = observeEditRequests(page);
     const session = await seedMockAgentWorkspace({
       repoPrefix: "edit-last-user-message-gates-e2e-",
       title: "Edit latest user message gates e2e",
@@ -226,11 +229,15 @@ test.describe("Edit latest user message", () => {
       await expect(stoppedEditTrigger).toBeVisible();
       await stoppedEditTrigger.click();
       const stoppedEditor = page.getByTestId("edit-last-user-message-editor");
-      await expect(stoppedEditor.getByRole("textbox", { name: "Edit message" })).toHaveValue(
-        runningPrompt,
-      );
-      await stoppedEditor.getByRole("button", { name: "Cancel edit" }).click();
+      const stoppedInput = stoppedEditor.getByRole("textbox", { name: "Edit message" });
+      await expect(stoppedInput).toHaveValue(runningPrompt);
+      await stoppedInput.fill(stoppedReplacementPrompt);
+      await stoppedEditor.getByRole("button", { name: "Submit edit" }).click();
+      await expect.poll(() => editRequests.length).toBe(1);
       await expect(stoppedEditor).toHaveCount(0);
+      await expect(userMessage(page, stoppedReplacementPrompt)).toBeVisible({ timeout: 15_000 });
+      await expect(userMessage(page, runningPrompt)).toHaveCount(0);
+      await expectAgentIdle(page);
 
       await attachImageFromMenu(page, TEST_IMAGE);
       await expectAttachmentPill(page, "composer-image-attachment-pill");
