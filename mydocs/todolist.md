@@ -159,7 +159,7 @@
 | 0107 | 已收口     | micro-spec | 已同步        | [Agent 懒加载启动](micro_specs/0107_Agent懒加载启动.md)                                                    | 2026-09-11       | App-only 懒加载已完成：被动打开 `closed` Agent 零 timeline request；手动启动或发送消息才同步 provider 历史。Vitest 217/217、Browser 2/2、lint/diff 通过；typecheck 仅被范围外终端删除阻塞 |
 | 0108 | 已收口     | micro-spec | 已同步        | [移动端工作区尾部信息菜单触发区](micro_specs/0108_移动端工作区尾部信息菜单触发区.md)                       | 2026-09-11       | 活动时间/差异统计与更多提示合为统一紧凑触发区；Vitest 11/11、Browser E2E、typecheck、格式/diff 通过；根 lint 仅有范围外 `agent-manager.ts` complexity 错误                                |
 | 0109 | 暂停       | micro-spec | 已同步        | [发布 0.7.2 beta.7 测试版](micro_specs/0109_发布0.7.2_beta.7测试版.md)                                     | 2026-09-12       | 合并提交 `5ec05ee28` 已推送；当前 CI 与父提交同类 job 均失败，等待修复范围或例外发布授权                                                                                                  |
-| 0110 | 验证中     | micro-spec | 已同步        | [修复主分支 CI 红项](micro_specs/0110_修复主分支CI红项.md)                                                 | 2026-09-12       | Nix hash 已修复；完整 CI 待验                                                                                                                                                             |
+| 0110 | 验证中     | micro-spec | 已同步        | [修复主分支 CI 红项](micro_specs/0110_修复主分支CI红项.md)                                                 | 2026-09-12       | Nix hash、App split-boundary 与 Server worktree 合同已修复；本地 App 38/38、format/typecheck/lint 通过，待推送精确 CI                                                                     |
 
 ## 候选待办
 

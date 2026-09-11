@@ -1445,6 +1445,10 @@ async function resolveWorktreeSourcePlan({
         createdBranchName: newBranchName,
         metadataBaseRefName: normalizedBaseBranch,
         metadataBaseRef: resolvedBaseBranch,
+        changeRequestLookupTarget: createPaseoWorktreeChangeRequestHint({
+          headRef: newBranchName,
+          localBranchName: newBranchName,
+        }),
         addArguments: ["-b", newBranchName, "--no-track", base],
       };
     }
@@ -1482,6 +1486,10 @@ async function resolveCheckoutBranchWorktreeSourcePlan(options: {
       branchName,
       createdBranchName: branchName,
       metadataBaseRefName: options.branchName,
+      changeRequestLookupTarget: createPaseoWorktreeChangeRequestHint({
+        headRef: branchName,
+        localBranchName: branchName,
+      }),
       addArguments: ["-b", branchName, "--no-track", options.branchName],
     };
   }
@@ -1496,6 +1504,10 @@ async function resolveCheckoutBranchWorktreeSourcePlan(options: {
         }
       : {}),
     metadataBaseRefName: options.branchName,
+    changeRequestLookupTarget: createPaseoWorktreeChangeRequestHint({
+      headRef: options.branchName,
+      localBranchName: options.branchName,
+    }),
     addArguments: [options.branchName],
   };
 }
@@ -1763,7 +1775,7 @@ async function configureWorktreeTrackingRemote(options: {
 function validateWorktreeBranchName(branchName: string): void {
   const validation = validateBranchSlug(branchName);
   if (!validation.valid) {
-    throw new Error(`Invalid branch name: ${validation.error}`);
+    throw new InvalidGitBranchNameError(branchName);
   }
 }
 
