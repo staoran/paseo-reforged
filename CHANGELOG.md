@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.2-beta.5 - 2026-09-11
+## 0.7.2-beta.6 - 2026-09-11
 
 ### Added
 
@@ -21,6 +21,7 @@
 - Fixed cached workspace, timeline, runtime-close, and multi-client ownership recovery after restart
 - Fixed recent workspace activity times disappearing after incremental agent sync
 - Fixed Android release APK builds failing from Hermes compiler memory exhaustion
+- Fixed cloud Android APK builds emitting unsupported extra ABIs
 - Disabled Metro source maps in remote Android release builds to lower build memory pressure
 
 ## 0.7.1 - 2026-09-01
