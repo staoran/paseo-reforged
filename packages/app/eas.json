@@ -25,6 +25,9 @@
     "production-apk": {
       "extends": "production",
       "distribution": "internal",
+      "env": {
+        "ORG_GRADLE_PROJECT_reactNativeArchitectures": "arm64-v8a"
+      },
       "android": {
         "buildType": "apk",
         "gradleCommand": ":app:assembleRelease --max-workers=1 -Dorg.gradle.parallel=false -x lint -x lintVitalAnalyzeRelease -x lintVitalRelease -x generateReleaseLintModel -x generateReleaseLintVitalModel"

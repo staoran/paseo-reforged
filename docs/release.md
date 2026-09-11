@@ -247,7 +247,7 @@ provide it to remote builders, while `.github/workflows/android-apk-release.yml`
 uses the matching repository variable for its local preflight and skips when
 that variable is absent. Keep both values identical.
 
-- **Android APK (current beta contract)** — `.github/workflows/android-apk-release.yml` builds an `arm64-v8a`-only `sh.paseo.reforged` APK and attaches `Paseo-Reforged-<tag>-android.apk` to the GitHub prerelease. It supports 64-bit ARM devices, not 32-bit ARM devices or x86/x86_64 emulators.
+- **Android APK (current beta contract)** — `.github/workflows/android-apk-release.yml` first tries the EAS cloud `production-apk` profile and falls back to `eas build --local` on a GitHub runner. Both paths build an `arm64-v8a`-only `sh.paseo.reforged` APK and attach `Paseo-Reforged-<tag>-android.apk` to the GitHub prerelease. It supports 64-bit ARM devices, not 32-bit ARM devices or x86/x86_64 emulators.
 - **Android Play Store** — blocked until a `sh.paseo.reforged` Play listing and submission credentials exist.
 - **iOS TestFlight/App Store** — blocked until a `sh.paseo.reforged` App Store Connect listing and signing/submission credentials exist. The removed upstream `ascAppId` must not be restored.
 
