@@ -15,7 +15,7 @@
 | file path          | `mydocs/micro_specs/0104_Android release source map优化.md` |
 | parent spec        | N/A                                                         |
 | superseded by      | N/A                                                         |
-| created / updated  | 2026-09-10                                                  |
+| created / updated  | 2026-09-11                                                  |
 
 ## 1. 目标与完成契约
 
@@ -67,22 +67,24 @@
 - 性能决策：不以 runtime Zod 取代 AOT validator。`docs/protocol-validation.md` 的 Hermes 基准显示相同 `353 KB` provider snapshot 会从约 `2.5 ms / 1.2 MB` 分配退化为约 `10.9 ms / 5.9 MB` 分配
 - 实际改动：plugin 在 `PASEO_RELEASE_SOURCEMAPS=0` 时向 React Native Gradle `react` block 追加空的 `--sourcemap-output`，覆盖默认 Metro map 输出；始终保留 `hermesFlags = ["-O"]`。EAS production profile 和 GitHub cloud/local build 均显式关闭该 map
 - 实际改动：将 213 个 session outbound 类型按稳定哈希拆为 16 个非空 AOT shard，`ws-outbound.ts` 按 `message.type` 路由；未知或畸形帧回退完整 Zod schema，生成 index 和模块均由 protocol 生命周期脚本重建
+- beta5 发布验证：`v0.7.2-beta.5` 的 EAS 云构建成功，但 `production-apk` profile 未传 `ORG_GRADLE_PROJECT_reactNativeArchitectures`，产物包含 `arm64-v8a`、`armeabi-v7a`、`x86` 和 `x86_64` 四种 ABI；Android workflow 的单 ABI 校验拒绝该 APK，运行 `34532223544` 未上传资产
+- beta6 修复：在 `production-apk.env` 显式传入 `ORG_GRADLE_PROJECT_reactNativeArchitectures=arm64-v8a`，并由 `scripts/ci-workflow.test.mjs` 锁定云构建与 GitHub runner fallback 的相同 ABI 合同
 - 偏差与用户决策：用户明确允许 Metro packager source map 完全关闭，要求先分析再决定 bundle 瘦身。本版不做会降低客户端校验性能的 bundle 瘦身；native export 当前 `splitChunks: false`，简单 dynamic import 也不会减少 APK 主 bundle
 - Change Log：新增 plugin 回归测试，覆盖本地保留 map、远端覆盖 map 和策略切换不重复注入
 - Change Log：新增 shard 完整性和未知类型回退测试；已用 `hermesc -O` 对分片后的完整 bundle 做本地编译验证
 
 ## 6. 验证与完成判断
 
-| 验收项                 | 命令或步骤                                                                                                                                                         | 结果   | 证据                                                                                                                                          |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| production bundle 分析 | `npx expo export --platform android --no-bytecode --dump-assetmap --source-maps --max-workers 1`                                                                   | 通过   | `23,280,616` bytes JS、`62,406,506` bytes map、`5,874` modules                                                                                |
-| source map 配置        | plugin unit test 与 React Native `BundleHermesCTask` 参数链路审查                                                                                                  | 通过   | local 默认无 override；remote 使用 `extraPackagerArgs = ["--sourcemap-output", ""]`，Expo 仅在非空 `sourcemapOutput` 时 serializerIncludeMaps |
-| 定向测试               | `npx vitest run packages/app/plugins/with-hermes-memory-budget.test.ts --bail=1`、`npx vitest run packages/protocol/tests/validation/ws-outbound.test.ts --bail=1` | 通过   | app `3/3`；protocol `15/15`                                                                                                                   |
-| 静态检查               | `npm run typecheck`、protocol/client workspace typecheck、`npm run lint`                                                                                           | 通过   | protocol/client exit `0`；root typecheck 无诊断输出；lint `0 warnings / 0 errors`                                                             |
-| 格式检查               | `npm run format:check:files -- ...`                                                                                                                                | 通过   | 所有改动源码和文档均已格式化                                                                                                                  |
-| Hermes 编译            | `hermesc -w -emit-binary ... -O`                                                                                                                                   | 通过   | 23,438,434 bytes bundle；Windows hermesc 工作集峰值约 2.56 GiB；输出 bytecode `38,620,247` bytes                                              |
-| Android Gradle         | `:app:createBundleReleaseJsAndAssets`                                                                                                                              | 未执行 | 本机未安装 Android SDK，无法进入 Gradle 配置后的 Metro/Hermes task                                                                            |
-| APK 发布               | GitHub Actions Android workflow                                                                                                                                    | 待执行 | 待填写                                                                                                                                        |
+| 验收项                 | 命令或步骤                                                                                                                                                         | 结果       | 证据                                                                                                                                          |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| production bundle 分析 | `npx expo export --platform android --no-bytecode --dump-assetmap --source-maps --max-workers 1`                                                                   | 通过       | `23,280,616` bytes JS、`62,406,506` bytes map、`5,874` modules                                                                                |
+| source map 配置        | plugin unit test 与 React Native `BundleHermesCTask` 参数链路审查                                                                                                  | 通过       | local 默认无 override；remote 使用 `extraPackagerArgs = ["--sourcemap-output", ""]`，Expo 仅在非空 `sourcemapOutput` 时 serializerIncludeMaps |
+| 定向测试               | `npx vitest run packages/app/plugins/with-hermes-memory-budget.test.ts --bail=1`、`npx vitest run packages/protocol/tests/validation/ws-outbound.test.ts --bail=1` | 通过       | app `3/3`；protocol `15/15`                                                                                                                   |
+| 静态检查               | `npm run typecheck`、protocol/client workspace typecheck、`npm run lint`                                                                                           | 通过       | protocol/client exit `0`；root typecheck 无诊断输出；lint `0 warnings / 0 errors`                                                             |
+| 格式检查               | `npm run format:check:files -- ...`                                                                                                                                | 通过       | 所有改动源码和文档均已格式化                                                                                                                  |
+| Hermes 编译            | `hermesc -w -emit-binary ... -O`                                                                                                                                   | 通过       | 23,438,434 bytes bundle；Windows hermesc 工作集峰值约 2.56 GiB；输出 bytecode `38,620,247` bytes                                              |
+| Android Gradle         | `:app:createBundleReleaseJsAndAssets`                                                                                                                              | 未执行     | 本机未安装 Android SDK，无法进入 Gradle 配置后的 Metro/Hermes task                                                                            |
+| APK 发布               | GitHub Actions Android workflow                                                                                                                                    | beta5 失败 | `34532223544` 的 EAS 云构建成功但四 ABI 校验失败，未上传 APK；修复后由 `v0.7.2-beta.6` 重试                                                   |
 
 - 未验证项与原因：Linux EAS/GitHub runner 的实际 beta APK 仍待新 tag 验证；本机无 Android SDK
 - 剩余风险：关闭 Metro map 会降低远端 release 的 JS 栈映射能力；Windows hermesc 峰值不能完全替代 Linux runner 内存曲线；AOT shard 总体代码量未减少，收益来自降低单个 factory 峰值
@@ -92,13 +94,13 @@
 
 - 状态说明：执行中
 - 当前卡点：无
-- 下一步唯一动作：提交 AOT 分片并发布 `v0.7.2-beta.5`
+- 下一步唯一动作：提交 EAS production-apk ABI 修复并发布 `v0.7.2-beta.6`
 - Resume / Handoff：从本文件第 6 节的 APK 发布验证继续
 - Project Sync Candidates：保留本任务的 AOT validator 性能结论，不新增长期文档
 - 长期文档同步：仅同步已验证的构建流程事实
 
 ### 提交记录
 
-| 提交信息（Commit Message） | 提交脚注（Commit Footer） | 关联改动或阶段               | 文档同步状态 | 备注 |
-| -------------------------- | ------------------------- | ---------------------------- | ------------ | ---- |
-| `<待提交>`                 | `N/A`                     | `AOT 分片与 Hermes 峰值验证` | `待同步`     |      |
+| 提交信息（Commit Message） | 提交脚注（Commit Footer） | 关联改动或阶段                           | 文档同步状态 | 备注 |
+| -------------------------- | ------------------------- | ---------------------------------------- | ------------ | ---- |
+| `<待提交>`                 | `N/A`                     | `EAS 云构建 arm64 ABI 修复与 beta6 验证` | `待同步`     |      |

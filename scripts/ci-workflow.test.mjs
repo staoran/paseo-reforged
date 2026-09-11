@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { relative as relativePath } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 const repoRoot = new URL("../", import.meta.url);
 const ciWorkflowPath = new URL(".github/workflows/ci.yml", repoRoot);
 const androidReleaseWorkflowPath = new URL(".github/workflows/android-apk-release.yml", repoRoot);
+const easConfigPath = new URL("packages/app/eas.json", repoRoot);
 const dockerWorkflowPath = new URL(".github/workflows/docker.yml", repoRoot);
 const nixWorkflowPath = new URL(".github/workflows/nix.yml", repoRoot);
 const filtersPath = new URL(".github/ci-paths.yml", repoRoot);
@@ -67,10 +69,11 @@ function loadFilters(path) {
 
 function filesUnder(relativeDirectory, predicate) {
   const directory = new URL(`${relativeDirectory}/`, repoRoot);
+  const directoryPath = fileURLToPath(directory);
   return readdirSync(directory, { recursive: true, withFileTypes: true })
     .filter((entry) => entry.isFile())
     .map((entry) =>
-      [relativeDirectory, relativePath(directory.pathname, entry.parentPath), entry.name]
+      [relativeDirectory, relativePath(directoryPath, entry.parentPath), entry.name]
         .filter(Boolean)
         .join("/")
         .replaceAll("\\", "/"),
@@ -111,7 +114,9 @@ test("change gating allows superseded workflow runs to cancel", () => {
 });
 
 test("Android APK build observability and task cache follow the arm64 base-version contract", () => {
-  const workflowSource = readFileSync(androidReleaseWorkflowPath, "utf8");
+  const workflowSource = readFileSync(androidReleaseWorkflowPath, "utf8").replaceAll("\r\n", "\n");
+  const easConfig = JSON.parse(readFileSync(easConfigPath, "utf8"));
+  const productionApkProfile = easConfig.build["production-apk"];
   const immutableCheckoutStep = workflowSource
     .split("- name: Verify immutable tag checkout", 2)[1]
     ?.split("- name: Enforce beta-only release gate", 1)[0];
@@ -152,6 +157,11 @@ test("Android APK build observability and task cache follow the arm64 base-versi
     /restore-keys: \|\s+android-gradle-v2-\$\{\{ runner\.os \}\}-\$\{\{ runner\.arch \}\}-java21-\s+android-gradle-v1-\$\{\{ runner\.os \}\}-\$\{\{ runner\.arch \}\}-java21-/,
   );
   assert.ok(buildStep, "missing Android APK build step");
+  assert.equal(
+    productionApkProfile?.env?.ORG_GRADLE_PROJECT_reactNativeArchitectures,
+    "arm64-v8a",
+    "EAS cloud APK builds must request the same single ABI as the local fallback",
+  );
   assert.match(buildStep, /^\s+ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a$/m);
   assert.match(buildStep, /^\s+GRADLE_OPTS: >-$/m);
   assert.match(buildStep, /-Xmx3072m/);
