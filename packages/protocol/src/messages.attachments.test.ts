@@ -361,6 +361,7 @@ describe("shared messages attachments", () => {
       cwd: "/tmp/repo",
       firstAgentContext: {
         prompt: "Investigate flaky test",
+        titleLanguage: "zh-CN",
         attachments: [
           {
             type: "github_pr",
@@ -388,6 +389,35 @@ describe("shared messages attachments", () => {
       },
     ]);
     expect(parsed.firstAgentContext?.prompt).toBe("Investigate flaky test");
+    expect(parsed.firstAgentContext?.titleLanguage).toBe("zh-CN");
+  });
+
+  it("accepts a legacy firstAgentContext without a title language", () => {
+    const parsed = CreatePaseoWorktreeRequestSchema.parse({
+      type: "create_paseo_worktree_request",
+      requestId: "req-legacy-title-language",
+      cwd: "/tmp/repo",
+      firstAgentContext: {
+        prompt: "Investigate flaky test",
+        attachments: [],
+      },
+    });
+
+    expect(parsed.firstAgentContext?.titleLanguage).toBeUndefined();
+  });
+
+  it("rejects unsupported firstAgentContext title languages", () => {
+    expect(() =>
+      CreatePaseoWorktreeRequestSchema.parse({
+        type: "create_paseo_worktree_request",
+        requestId: "req-title-language",
+        cwd: "/tmp/repo",
+        firstAgentContext: {
+          prompt: "Investigate flaky test",
+          titleLanguage: "de",
+        },
+      }),
+    ).toThrow();
   });
 
   it("parses worktree-create payloads without a firstAgentContext", () => {

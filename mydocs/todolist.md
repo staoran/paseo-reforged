@@ -2,9 +2,9 @@
 
 ## 编号索引
 
-- 当前编号基线：`0103`
-- 下一个建议编号：`0105`
-- 最后更新：`2026-09-09`
+- 当前编号基线：`0105`
+- 下一个建议编号：`0106`
+- 最后更新：`2026-09-11`
 - 迁移说明：既有 `0001` 至 `0014` 任务已于 2026-08-02 合并迁移至 `mydocs/specs/`，旧 `mydocs/tasks/` 目录已删除；这些编号继续占用。
 
 ## 用途
@@ -155,6 +155,7 @@
 | 0102 | 执行中     | spec       | 已同步        | [合并upstream_0.7基线到Reforged](specs/0102_合并upstream_0.7基线到Reforged.md)                             | 2026-09-02       | 147 个冲突路径已解析并暂存；typecheck、lint、定向回归与 merge commit 尚未完成；恢复锚点见 spec 第 5/9 节                                         |
 | 0103 | 已收口     | micro-spec | 已同步        | [保留增量同步后的工作区活动时间](micro_specs/0103_保留增量同步后的工作区活动时间.md)                       | 2026-09-09       | 增量同步 RED→GREEN；目录 19/19、快照 8/8、根 typecheck/lint 通过；未提交                                                                         |
 | 0104 | 执行中     | micro-spec | 已同步        | [Android release source map 优化](micro_specs/0104_Android release source map优化.md)                      | 2026-09-10       | production bundle 已分析；远端 source map 已关闭，待发布 beta.4 并验证 APK                                                                       |
+| 0105 | 已收口     | micro-spec | 已同步        | [标题语言跟随应用设置](micro_specs/0105_标题语言跟随应用设置.md)                                           | 2026-09-11       | 可选语言字段从新建工作区请求传给 daemon；标题生成提示词按解析后的应用 locale 输出，旧客户端保持既有默认行为；协议/生成器定向测试与根静态检查通过 |
 
 ## 候选待办
 

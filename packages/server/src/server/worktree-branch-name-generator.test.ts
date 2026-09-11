@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
+import type { FirstAgentContext } from "@getpaseo/protocol/messages";
 import type { AgentManager } from "./agent/agent-manager.js";
 import type { StructuredAgentGenerationWithFallbackOptions } from "./agent/agent-response-loop.js";
 import {
@@ -267,6 +268,22 @@ describe("generateBranchNameFromFirstAgentContext", () => {
     expect(prompt).toContain("Return JSON only with fields 'title' and 'branch'.");
   });
 
+  test("keeps the app title language requirement above paseo.json title instructions", async () => {
+    const { prompt } = await generateBranchPromptWithConfig(
+      {
+        metadataGeneration: { title: { instructions: "Title in Spanish." } },
+      },
+      "zh-CN",
+    );
+
+    const titleInstructionsIndex = prompt.indexOf("Title style:\nTitle in Spanish.");
+    const titleLanguageRequirementIndex = prompt.indexOf(
+      "The workspace title must be written in Simplified Chinese.",
+    );
+    expect(titleLanguageRequirementIndex).toBeGreaterThanOrEqual(0);
+    expect(titleLanguageRequirementIndex).toBeLessThan(titleInstructionsIndex);
+  });
+
   test("branch instructions replace the default branch style, leaving the title style intact", async () => {
     const { prompt } = await generateBranchPromptWithConfig({
       metadataGeneration: { branchName: { instructions: "Use the prefix mb/." } },
@@ -337,7 +354,10 @@ describe("generateBranchNameFromFirstAgentContext", () => {
   });
 });
 
-async function generateBranchPromptWithConfig(config: unknown): Promise<{ prompt: string }> {
+async function generateBranchPromptWithConfig(
+  config: unknown,
+  titleLanguage?: FirstAgentContext["titleLanguage"],
+): Promise<{ prompt: string }> {
   const repoRoot = createTempDir("paseo-branch-config-");
   if (typeof config === "string") {
     writeFileSync(path.join(repoRoot, "paseo.json"), config);
@@ -356,7 +376,10 @@ async function generateBranchPromptWithConfig(config: unknown): Promise<{ prompt
     workspaceGitService: createNoopWorkspaceGitService({
       resolveRepoRoot: async () => repoRoot,
     }),
-    firstAgentContext: { prompt: "Fix the login flow" },
+    firstAgentContext: {
+      prompt: "Fix the login flow",
+      ...(titleLanguage ? { titleLanguage } : {}),
+    },
     logger: createLogger(),
     deps: { generateStructuredAgentResponseWithFallback: structured.generateStructured },
   });

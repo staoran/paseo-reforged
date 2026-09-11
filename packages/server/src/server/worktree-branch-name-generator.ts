@@ -44,13 +44,31 @@ const BranchNameSchema = z.object({
   branch: z.string().min(1).max(100),
 });
 
+// Human-readable names make the title-language requirement unambiguous to the model
+const TITLE_LANGUAGE_NAMES = {
+  ar: "Arabic",
+  en: "English",
+  es: "Spanish",
+  fr: "French",
+  ja: "Japanese",
+  ko: "Korean",
+  "pt-BR": "Brazilian Portuguese",
+  ru: "Russian",
+  "zh-CN": "Simplified Chinese",
+} satisfies Record<NonNullable<FirstAgentContext["titleLanguage"]>, string>;
+
 async function buildPrompt(
   seed: string,
   options: {
     cwd: string;
     workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
+    titleLanguage?: FirstAgentContext["titleLanguage"];
   },
 ): Promise<string> {
+  const titleLanguageRequirement = options.titleLanguage
+    ? `The workspace title must be written in ${TITLE_LANGUAGE_NAMES[options.titleLanguage]}. This requirement overrides any title style instructions.`
+    : undefined;
+
   return buildMetadataPrompt({
     cwd: options.cwd,
     workspaceGitService: options.workspaceGitService,
@@ -60,6 +78,7 @@ async function buildPrompt(
       "Do not read files, write files, run tools, or execute commands.",
       "The branch must be a valid git ref: lowercase letters, numbers, hyphens, and slashes only, with no spaces, no uppercase, no leading or trailing hyphen, and no consecutive hyphens.",
       "The branch is generated directly from the prompt — it is NEVER derived from or slugified from the title.",
+      ...(titleLanguageRequirement ? [titleLanguageRequirement] : []),
     ].join("\n"),
     styles: [
       {
@@ -116,6 +135,7 @@ export async function generateBranchNameFromFirstAgentContext(
       prompt: await buildPrompt(seed, {
         cwd: options.cwd,
         workspaceGitService: options.workspaceGitService,
+        titleLanguage: options.firstAgentContext?.titleLanguage,
       }),
       schema: BranchNameSchema,
       schemaName: "BranchName",

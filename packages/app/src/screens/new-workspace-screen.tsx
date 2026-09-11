@@ -34,6 +34,7 @@ import { useForgeSearchQuery } from "@/git/use-forge-search-query";
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
 import { ensureCheckoutStatus } from "@/git/checkout-status-cache";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
+import { DEFAULT_LOCALE, parseAppLanguage } from "@/i18n/locales";
 import { resolveTerminalProfiles } from "@getpaseo/protocol/terminal-profiles";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
 import { LaunchControl } from "@/new-workspace-launch/launch-control";
@@ -87,7 +88,11 @@ import type { ComposerAttachment } from "@/attachments/types";
 import { useDraftWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
 import type { MessagePayload } from "@/composer/types";
 import type { UserComposerAttachment } from "@/attachments/types";
-import type { AgentAttachment, ForgeSearchItem } from "@getpaseo/protocol/messages";
+import type {
+  AgentAttachment,
+  FirstAgentContext,
+  ForgeSearchItem,
+} from "@getpaseo/protocol/messages";
 import type { CreatePaseoWorktreeInput } from "@getpaseo/client/internal/daemon-client";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import type { WorkspaceDraftTabSetup, WorkspaceTabTarget } from "@/workspace-tabs/model";
@@ -167,10 +172,17 @@ function resolveWorktreeSupport(
   return getWorktreeSupportForHostProject({ project, serverId });
 }
 
+// The i18n instance stores the active resolved locale rather than the saved setting
+function resolveTitleLanguage(language: unknown): NonNullable<FirstAgentContext["titleLanguage"]> {
+  const parsedLanguage = parseAppLanguage(language);
+  return parsedLanguage && parsedLanguage !== "system" ? parsedLanguage : DEFAULT_LOCALE;
+}
+
 function buildFirstAgentContext(input: {
   prompt: string;
   attachments: AgentAttachment[];
-}): { prompt?: string; attachments?: AgentAttachment[] } | undefined {
+  titleLanguage: NonNullable<FirstAgentContext["titleLanguage"]>;
+}): FirstAgentContext | undefined {
   const trimmedPrompt = input.prompt.trim();
   if (!trimmedPrompt && input.attachments.length === 0) {
     return undefined;
@@ -179,6 +191,7 @@ function buildFirstAgentContext(input: {
   return {
     ...(trimmedPrompt ? { prompt: trimmedPrompt } : {}),
     attachments: input.attachments,
+    titleLanguage: input.titleLanguage,
   };
 }
 
@@ -814,6 +827,7 @@ async function createMultiplicityWorkspace(input: {
   withInitialAgent: boolean;
   prompt: string;
   attachments: AgentAttachment[];
+  titleLanguage: NonNullable<FirstAgentContext["titleLanguage"]>;
   mergeWorkspaces: (
     serverId: string,
     workspaces: ReturnType<typeof normalizeWorkspaceDescriptor>[],
@@ -827,6 +841,7 @@ async function createMultiplicityWorkspace(input: {
   const firstAgentContext = buildFirstAgentContext({
     prompt: input.prompt,
     attachments: input.attachments,
+    titleLanguage: input.titleLanguage,
   });
   const payload = await input.client.createWorkspace({
     source: isWorktree
@@ -1558,7 +1573,8 @@ export function NewWorkspaceScreen({
 }: NewWorkspaceScreenProps) {
   const queryClient = useQueryClient();
   const { theme } = useUnistyles();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const titleLanguage = resolveTitleLanguage(i18n.language);
   const insets = useSafeAreaInsets();
   const isCompact = useIsCompactFormFactor();
   const toast = useToast();
@@ -1954,7 +1970,7 @@ export function NewWorkspaceScreen({
       if (!selectedSourceDirectory) {
         throw new Error("Choose a host for this project");
       }
-      const firstAgentContext = buildFirstAgentContext(input);
+      const firstAgentContext = buildFirstAgentContext({ ...input, titleLanguage });
       const hostProjectId = getHostProjectId(selectedProject, selectedServerId);
       if (!hostProjectId) {
         throw new Error("Project is not available on the selected host");
@@ -1968,7 +1984,7 @@ export function NewWorkspaceScreen({
         ...input.checkoutRequest,
       };
     },
-    [selectedProject, selectedServerId, selectedSourceDirectory],
+    [selectedProject, selectedServerId, selectedSourceDirectory, titleLanguage],
   );
 
   const ensureWorkspace = useCallback(
@@ -2012,6 +2028,7 @@ export function NewWorkspaceScreen({
             withInitialAgent: input.withInitialAgent,
             prompt: input.prompt,
             attachments: input.attachments,
+            titleLanguage,
             mergeWorkspaces,
             serverId: selectedServerId,
             createFailedMessage: t("newWorkspace.errors.createWorktreeFailed"),
@@ -2038,6 +2055,7 @@ export function NewWorkspaceScreen({
       selectedSourceDirectory,
       supportsWorkspaceMultiplicity,
       t,
+      titleLanguage,
       withConnectedClient,
     ],
   );
