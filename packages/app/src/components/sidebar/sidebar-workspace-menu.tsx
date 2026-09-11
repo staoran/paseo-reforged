@@ -1,6 +1,6 @@
 import { useMemo, type ComponentProps, type PropsWithChildren, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { type PressableStateCallbackType } from "react-native";
+import { View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   Archive,
@@ -34,6 +34,10 @@ import {
 import { Shortcut } from "@/components/ui/shortcut";
 import { OpenInFileManagerMenuItem } from "@/workspace/open-in-file-manager/menu-item";
 import { resolveSidebarWorkspaceAccessibilityLabel } from "@/components/sidebar/sidebar-workspace-title";
+import {
+  SidebarWorkspaceTrailingContent,
+  type SidebarWorkspaceTrailing,
+} from "@/components/sidebar/workspace-trailing";
 import {
   workspaceServiceLabelKey,
   type WorkspaceServiceSummary,
@@ -100,11 +104,15 @@ export interface SidebarWorkspaceMenuProps {
    */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  /** The selected workspace fact displayed in the compact-layout menu trigger. */
+  compactTrailing?: SidebarWorkspaceTrailing;
+  /** The workspace that supplies the fact displayed in the compact-layout menu trigger. */
+  trailingWorkspace?: SidebarWorkspaceEntry;
 }
 
 interface SidebarWorkspaceMenuItemsProps extends Omit<
   SidebarWorkspaceMenuProps,
-  "onArchive" | "open" | "onOpenChange"
+  "onArchive" | "open" | "onOpenChange" | "compactTrailing" | "trailingWorkspace"
 > {
   onArchive?: () => void;
 }
@@ -257,6 +265,8 @@ export function SidebarWorkspaceMenu({
   openInFileManagerPath,
   open,
   onOpenChange,
+  compactTrailing,
+  trailingWorkspace,
 }: SidebarWorkspaceMenuProps) {
   const { t } = useTranslation();
   const workspaceTarget = useMemo<WorkspaceLabelTarget | null>(
@@ -269,12 +279,25 @@ export function SidebarWorkspaceMenu({
     <DropdownMenu compactMode="sheet" open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger
         hitSlop={8}
-        style={triggerStyle}
+        style={compactTrailing && trailingWorkspace ? trailingTriggerStyle : triggerStyle}
         accessibilityRole={isWeb ? undefined : "button"}
         accessibilityLabel={t("sidebar.workspace.actions.menu")}
         testID={`sidebar-workspace-kebab-${workspaceKey}`}
       >
-        {renderTriggerIcon}
+        {compactTrailing && trailingWorkspace
+          ? ({ hovered }) => (
+              <View
+                style={styles.trailingTriggerContent}
+                testID={`sidebar-workspace-trailing-menu-trigger-${workspaceKey}`}
+              >
+                <SidebarWorkspaceTrailingContent
+                  workspace={trailingWorkspace}
+                  trailing={compactTrailing}
+                />
+                {renderTriggerIcon({ hovered })}
+              </View>
+            )
+          : renderTriggerIcon}
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="end"
@@ -424,6 +447,13 @@ function triggerStyle({ hovered = false }: PressableStateCallbackType & { hovere
   return [styles.trigger, hovered && styles.triggerHovered];
 }
 
+/** Keeps a compact trailing fact and its menu cue within one stable press target. */
+function trailingTriggerStyle({
+  hovered = false,
+}: PressableStateCallbackType & { hovered?: boolean }) {
+  return [styles.trailingTrigger, hovered && styles.triggerHovered];
+}
+
 const styles = StyleSheet.create((theme) => ({
   trigger: {
     padding: 2,
@@ -435,5 +465,17 @@ const styles = StyleSheet.create((theme) => ({
   },
   triggerHovered: {
     backgroundColor: theme.colors.surface2,
+  },
+  trailingTrigger: {
+    minHeight: 20,
+    paddingLeft: theme.spacing[1],
+    paddingRight: theme.spacing[1],
+    marginRight: -5,
+    borderRadius: 4,
+  },
+  trailingTriggerContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
   },
 }));

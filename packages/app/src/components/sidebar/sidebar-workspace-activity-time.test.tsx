@@ -9,7 +9,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import { i18n } from "@/i18n/i18next";
 import { SidebarWorkspaceActivityTime } from "./sidebar-workspace-activity-time";
-import { SidebarWorkspaceRowContent } from "./sidebar-workspace-row-content";
+import {
+  resolveTrailingActionVisibility,
+  SidebarWorkspaceRowContent,
+} from "./sidebar-workspace-row-content";
 import { SidebarWorkspaceTrailingContent } from "./workspace-trailing";
 import type { WorkspaceServiceSummary } from "./workspace-meta-row";
 
@@ -59,6 +62,7 @@ vi.mock("lucide-react-native", async () => {
     ExternalLink: () => null,
     Folder: () => null,
     FolderGit2: () => null,
+    GitBranch: () => null,
     GitMerge: () => null,
     GitPullRequest: () => null,
     GitPullRequestClosed: () => null,
@@ -123,6 +127,81 @@ const ROW_WITH_LAST_EXIT_ACTIVE_MARKER_AND_RESIDENT_AGENTS: SidebarWorkspaceEntr
 
 /** Stable service metadata fixture used to verify the Agent's trailing position. */
 const RUNNING_SERVICE_SUMMARY: WorkspaceServiceSummary = { name: "web", health: null };
+
+describe("resolveTrailingActionVisibility", () => {
+  it("uses compact activity time as the workspace menu trigger", () => {
+    const visibility = resolveTrailingActionVisibility({
+      workspace: ROW_WORKSPACE,
+      trailing: "timestamp",
+      hasArchiveAction: true,
+      isHovered: false,
+      isTouchPlatform: true,
+      showShortcut: false,
+    });
+
+    expect(visibility).toMatchObject({
+      showTrailing: true,
+      showKebab: false,
+      showTrailingMenuTrigger: true,
+      showScrim: false,
+      renderSlot: true,
+      reserveSlotWidth: true,
+    });
+  });
+
+  it("uses compact diff statistics as the workspace menu trigger", () => {
+    const visibility = resolveTrailingActionVisibility({
+      workspace: { ...ROW_WORKSPACE, diffStat: { additions: 12, deletions: 3 } },
+      trailing: "diff",
+      hasArchiveAction: true,
+      isHovered: false,
+      isTouchPlatform: true,
+      showShortcut: false,
+    });
+
+    expect(visibility).toMatchObject({
+      showTrailing: true,
+      showKebab: false,
+      showTrailingMenuTrigger: true,
+    });
+  });
+
+  it("keeps a standalone compact menu when the chosen trailing fact is unavailable", () => {
+    const visibility = resolveTrailingActionVisibility({
+      workspace: ROW_WITHOUT_ACTIVITY,
+      trailing: "timestamp",
+      hasArchiveAction: true,
+      isHovered: false,
+      isTouchPlatform: true,
+      showShortcut: false,
+    });
+
+    expect(visibility).toMatchObject({
+      showTrailing: false,
+      showKebab: true,
+      showTrailingMenuTrigger: false,
+      reserveSlotWidth: true,
+    });
+  });
+
+  it("keeps the desktop hover overlay behavior", () => {
+    const visibility = resolveTrailingActionVisibility({
+      workspace: ROW_WORKSPACE,
+      trailing: "timestamp",
+      hasArchiveAction: true,
+      isHovered: true,
+      isTouchPlatform: false,
+      showShortcut: false,
+    });
+
+    expect(visibility).toMatchObject({
+      showTrailing: true,
+      showKebab: true,
+      showTrailingMenuTrigger: false,
+      showScrim: true,
+    });
+  });
+});
 
 describe("SidebarWorkspaceActivityTime", () => {
   let root: Root | null = null;

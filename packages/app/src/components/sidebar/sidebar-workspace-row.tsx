@@ -393,6 +393,7 @@ function WorkspaceRowTrailingActions({
   const {
     showTrailing,
     showKebab: showKebabInSlot,
+    showTrailingMenuTrigger,
     showScrim,
     renderSlot,
     reserveSlotWidth,
@@ -413,34 +414,59 @@ function WorkspaceRowTrailingActions({
       ) : null}
       {renderSlot ? (
         <SidebarWorkspaceTrailingActionSlot reserveWidth={reserveSlotWidth}>
-          <SidebarWorkspaceTrailingActionBase visible={showTrailing}>
-            <SidebarWorkspaceTrailingContent workspace={workspace} trailing={trailing} />
-          </SidebarWorkspaceTrailingActionBase>
-          <SidebarWorkspaceTrailingActionOverlay
-            visible={kebab.showKebab}
-            scrimBackdrop={showScrim ? backdrop : undefined}
-          >
-            {onArchive ? (
-              <SidebarWorkspaceMenu
-                {...kebab.menuProps}
-                workspaceKey={workspace.workspaceKey}
-                serverId={workspace.serverId}
-                workspaceId={workspace.workspaceId}
-                workspaceLabels={workspace.labels}
-                onCopyPath={onCopyPath}
-                onCopyBranchName={onCopyBranchName}
-                onRename={onRename}
-                onMarkAsRead={onMarkAsRead}
-                onArchive={onArchive}
-                archiveLabel={archiveLabel}
-                archiveStatus={archiveStatus}
-                archivePendingLabel={archivePendingLabel}
-                archiveShortcutKeys={archiveShortcutKeys}
-                openInFileManagerServerId={workspace.serverId}
-                openInFileManagerPath={workspace.workspaceDirectory}
-              />
-            ) : null}
-          </SidebarWorkspaceTrailingActionOverlay>
+          {showTrailingMenuTrigger && onArchive ? (
+            <SidebarWorkspaceMenu
+              {...kebab.menuProps}
+              workspaceKey={workspace.workspaceKey}
+              serverId={workspace.serverId}
+              workspaceId={workspace.workspaceId}
+              workspaceLabels={workspace.labels}
+              onCopyPath={onCopyPath}
+              onCopyBranchName={onCopyBranchName}
+              onRename={onRename}
+              onMarkAsRead={onMarkAsRead}
+              onArchive={onArchive}
+              archiveLabel={archiveLabel}
+              archiveStatus={archiveStatus}
+              archivePendingLabel={archivePendingLabel}
+              archiveShortcutKeys={archiveShortcutKeys}
+              openInFileManagerServerId={workspace.serverId}
+              openInFileManagerPath={workspace.workspaceDirectory}
+              compactTrailing={trailing}
+              trailingWorkspace={workspace}
+            />
+          ) : (
+            <>
+              <SidebarWorkspaceTrailingActionBase visible={showTrailing}>
+                <SidebarWorkspaceTrailingContent workspace={workspace} trailing={trailing} />
+              </SidebarWorkspaceTrailingActionBase>
+              <SidebarWorkspaceTrailingActionOverlay
+                visible={kebab.showKebab}
+                scrimBackdrop={showScrim ? backdrop : undefined}
+              >
+                {onArchive ? (
+                  <SidebarWorkspaceMenu
+                    {...kebab.menuProps}
+                    workspaceKey={workspace.workspaceKey}
+                    serverId={workspace.serverId}
+                    workspaceId={workspace.workspaceId}
+                    workspaceLabels={workspace.labels}
+                    onCopyPath={onCopyPath}
+                    onCopyBranchName={onCopyBranchName}
+                    onRename={onRename}
+                    onMarkAsRead={onMarkAsRead}
+                    onArchive={onArchive}
+                    archiveLabel={archiveLabel}
+                    archiveStatus={archiveStatus}
+                    archivePendingLabel={archivePendingLabel}
+                    archiveShortcutKeys={archiveShortcutKeys}
+                    openInFileManagerServerId={workspace.serverId}
+                    openInFileManagerPath={workspace.workspaceDirectory}
+                  />
+                ) : null}
+              </SidebarWorkspaceTrailingActionOverlay>
+            </>
+          )}
         </SidebarWorkspaceTrailingActionSlot>
       ) : null}
     </>

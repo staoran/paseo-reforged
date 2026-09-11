@@ -645,6 +645,7 @@ function WorkspaceRowRightGroup({
   const {
     showTrailing,
     showKebab: showKebabInSlot,
+    showTrailingMenuTrigger,
     showScrim,
     renderSlot,
     reserveSlotWidth,
@@ -665,36 +666,63 @@ function WorkspaceRowRightGroup({
       ) : null}
       {renderSlot ? (
         <SidebarWorkspaceTrailingActionSlot reserveWidth={reserveSlotWidth}>
-          <SidebarWorkspaceTrailingActionBase visible={showTrailing}>
-            <SidebarWorkspaceTrailingContent workspace={workspace} trailing={trailing} />
-          </SidebarWorkspaceTrailingActionBase>
-          <SidebarWorkspaceTrailingActionOverlay
-            visible={kebab.showKebab}
-            scrimBackdrop={showScrim ? backdrop : undefined}
-          >
-            {onArchive ? (
-              <SidebarWorkspaceMenu
-                {...kebab.menuProps}
-                workspaceKey={workspace.workspaceKey}
-                openInFileManagerServerId={workspace.serverId}
-                serverId={workspace.serverId}
-                workspaceId={workspace.workspaceId}
-                workspaceLabels={workspace.labels}
-                onCopyPath={onCopyPath}
-                onCopyBranchName={onCopyBranchName}
-                onRename={onRename}
-                onMarkAsRead={onMarkAsRead}
-                onArchive={onArchive}
-                archiveLabel={archiveLabel}
-                archiveStatus={archiveStatus}
-                archivePendingLabel={archivePendingLabel}
-                archiveShortcutKeys={archiveShortcutKeys}
-                isPinned={isPinned}
-                onTogglePin={onTogglePin}
-                openInFileManagerPath={workspacePath}
-              />
-            ) : null}
-          </SidebarWorkspaceTrailingActionOverlay>
+          {showTrailingMenuTrigger && onArchive ? (
+            <SidebarWorkspaceMenu
+              {...kebab.menuProps}
+              workspaceKey={workspace.workspaceKey}
+              openInFileManagerServerId={workspace.serverId}
+              serverId={workspace.serverId}
+              workspaceId={workspace.workspaceId}
+              workspaceLabels={workspace.labels}
+              onCopyPath={onCopyPath}
+              onCopyBranchName={onCopyBranchName}
+              onRename={onRename}
+              onMarkAsRead={onMarkAsRead}
+              onArchive={onArchive}
+              archiveLabel={archiveLabel}
+              archiveStatus={archiveStatus}
+              archivePendingLabel={archivePendingLabel}
+              archiveShortcutKeys={archiveShortcutKeys}
+              isPinned={isPinned}
+              onTogglePin={onTogglePin}
+              openInFileManagerPath={workspacePath}
+              compactTrailing={trailing}
+              trailingWorkspace={workspace}
+            />
+          ) : (
+            <>
+              <SidebarWorkspaceTrailingActionBase visible={showTrailing}>
+                <SidebarWorkspaceTrailingContent workspace={workspace} trailing={trailing} />
+              </SidebarWorkspaceTrailingActionBase>
+              <SidebarWorkspaceTrailingActionOverlay
+                visible={kebab.showKebab}
+                scrimBackdrop={showScrim ? backdrop : undefined}
+              >
+                {onArchive ? (
+                  <SidebarWorkspaceMenu
+                    {...kebab.menuProps}
+                    workspaceKey={workspace.workspaceKey}
+                    openInFileManagerServerId={workspace.serverId}
+                    serverId={workspace.serverId}
+                    workspaceId={workspace.workspaceId}
+                    workspaceLabels={workspace.labels}
+                    onCopyPath={onCopyPath}
+                    onCopyBranchName={onCopyBranchName}
+                    onRename={onRename}
+                    onMarkAsRead={onMarkAsRead}
+                    onArchive={onArchive}
+                    archiveLabel={archiveLabel}
+                    archiveStatus={archiveStatus}
+                    archivePendingLabel={archivePendingLabel}
+                    archiveShortcutKeys={archiveShortcutKeys}
+                    isPinned={isPinned}
+                    onTogglePin={onTogglePin}
+                    openInFileManagerPath={workspacePath}
+                  />
+                ) : null}
+              </SidebarWorkspaceTrailingActionOverlay>
+            </>
+          )}
         </SidebarWorkspaceTrailingActionSlot>
       ) : null}
     </>

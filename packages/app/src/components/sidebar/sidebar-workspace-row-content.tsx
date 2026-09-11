@@ -366,8 +366,9 @@ export function SidebarWorkspaceShortcutBadge({ number }: { number: number }) {
  * others stopped.
  *
  * The trailing content survives the kebab on hover and fades under the scrim instead of
- * blinking out. Touch has no hover, so its permanent kebab still hides the content outright
- * rather than scrimming an unhovered row whose background doesn't match the gradient.
+ * blinking out. Touch has no hover, so a visible trailing fact becomes the menu trigger with
+ * a small kebab cue. This preserves the selected fact instead of replacing it with a permanent
+ * menu icon on an unhovered row.
  */
 export function resolveTrailingActionVisibility({
   workspace,
@@ -386,25 +387,32 @@ export function resolveTrailingActionVisibility({
 }): {
   showTrailing: boolean;
   showKebab: boolean;
+  showTrailingMenuTrigger: boolean;
   showScrim: boolean;
   renderSlot: boolean;
   reserveSlotWidth: boolean;
 } {
   const hasTrailing = hasSidebarWorkspaceTrailing({ workspace, trailing });
-  const showKebab = Boolean(hasArchiveAction && (isHovered || isTouchPlatform)) && !showShortcut;
+  const showTrailingMenuTrigger =
+    hasArchiveAction && hasTrailing && isTouchPlatform && !showShortcut;
+  const showKebab =
+    Boolean(hasArchiveAction && (isHovered || isTouchPlatform)) &&
+    !showShortcut &&
+    !showTrailingMenuTrigger;
   const showTrailing = hasTrailing && !showShortcut && (isHovered || !showKebab);
   return {
     showTrailing,
     showKebab,
+    showTrailingMenuTrigger,
     // The scrim paints the row's own hover background, so it can only be drawn on a hovered
     // row — over an unhovered one the gradient fades to the wrong color. That is also why
     // touch, which shows the kebab without ever hovering, never gets one.
     showScrim: showKebab && isHovered,
     renderSlot: hasArchiveAction || hasTrailing,
-    // The slot only holds width for something that permanently sits in it. Trailing content
-    // does; the kebab only does on touch, where there is no hover for it to appear on and so
-    // no scrim to let it overlay the title. Everywhere else the width goes back to the title
-    // and the kebab fades in over its tail.
+    // The slot holds width for something that permanently sits in it. Trailing content does,
+    // including when it is the compact menu trigger. A standalone kebab only does on touch,
+    // where there is no hover for it to appear on and no scrim to let it overlay the title.
+    // Everywhere else the width goes back to the title and the kebab fades in over its tail.
     reserveSlotWidth: hasTrailing || (hasArchiveAction && isTouchPlatform),
   };
 }

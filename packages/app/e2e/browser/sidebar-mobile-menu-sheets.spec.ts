@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
+import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import { projectEquivalenceViewKey } from "../support/helpers/project-view-key";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
@@ -45,5 +46,39 @@ test("project and workspace kebabs open action sheets on compact layouts", async
     await expect(page.getByText("Workspace actions", { exact: true })).toBeVisible();
   } finally {
     await seeded.cleanup();
+  }
+});
+
+test("activity time remains visible in the compact workspace menu trigger", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "@paseo:app-settings",
+      JSON.stringify({ sidebarWorkspaceTrailing: "timestamp" }),
+    );
+  });
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "sidebar-mobile-activity-menu-",
+    title: "Compact workspace activity menu",
+    initialPrompt: "Create workspace activity for the compact sidebar row.",
+  });
+
+  try {
+    await agent.client.waitForFinish(agent.agentId, 30_000);
+    await openAgentRoute(page, agent);
+    await page.getByRole("button", { name: "Open menu", exact: true }).click();
+    await waitForSidebarHydration(page);
+
+    const workspaceKey = `${getServerId()}:${agent.workspaceId}`;
+    const trigger = page.getByTestId(`sidebar-workspace-trailing-menu-trigger-${workspaceKey}`);
+    await expect(trigger).toBeVisible({ timeout: 30_000 });
+    await expect(trigger.getByTestId("sidebar-workspace-activity-time")).toBeVisible();
+
+    await trigger.click();
+    await expect(page.getByRole("button", { name: "Bottom sheet backdrop" }).first()).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(page.getByText("Workspace actions", { exact: true })).toBeVisible();
+  } finally {
+    await agent.cleanup();
   }
 });
