@@ -35,10 +35,13 @@ describe("buildSubagentPillPresentation", () => {
 
   const pill = (rows: SubagentRow[]) => buildSubagentPillPresentation(i18n.t, rows);
 
-  it("counts the children that are working, not the fan-out", () => {
+  it("reports every active state in a mixed fan-out", () => {
     expect(pill([row({ id: "a" }), row({ id: "b", status: "running" })])).toEqual({
-      segments: [{ bucket: "running", text: "1 working" }],
-      accessibilityLabel: "1 working",
+      segments: [
+        { bucket: "attention", text: "1 ready to review" },
+        { bucket: "running", text: "1 working" },
+      ],
+      accessibilityLabel: "1 ready to review, 1 working",
     });
   });
 
@@ -50,8 +53,11 @@ describe("buildSubagentPillPresentation", () => {
         row({ id: "c" }),
       ]),
     ).toEqual({
-      segments: [{ bucket: "running", text: "2 working" }],
-      accessibilityLabel: "2 working",
+      segments: [
+        { bucket: "attention", text: "1 ready to review" },
+        { bucket: "running", text: "2 working" },
+      ],
+      accessibilityLabel: "1 ready to review, 2 working",
     });
   });
 
@@ -72,14 +78,14 @@ describe("buildSubagentPillPresentation", () => {
   });
 
   it("names what it opens once every child is done", () => {
-    expect(pill([row({ id: "a" }), row({ id: "b" })])).toEqual({
+    expect(pill([row({ id: "a", status: "closed" }), row({ id: "b", status: "closed" })])).toEqual({
       segments: [{ bucket: null, text: "2 subagents" }],
       accessibilityLabel: "2 subagents",
     });
   });
 
   it("keeps the singular for a lone child", () => {
-    expect(pill([row({ id: "a" })])).toEqual({
+    expect(pill([row({ id: "a", status: "closed" })])).toEqual({
       segments: [{ bucket: null, text: "1 subagent" }],
       accessibilityLabel: "1 subagent",
     });
