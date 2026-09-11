@@ -1723,7 +1723,7 @@ function ProjectBlock({
     void (async () => {
       const confirmed = await confirmDialog({
         title: t("sidebar.project.confirmations.removeTitle"),
-        message: t("sidebar.project.confirmations.removeMessage", { projectName: displayName }),
+        message: t("sidebar.project.confirmations.removeMessage", { name: displayName }),
         confirmLabel: t("sidebar.project.confirmations.removeConfirm"),
         cancelLabel: t("sidebar.project.confirmations.cancel"),
         destructive: true,

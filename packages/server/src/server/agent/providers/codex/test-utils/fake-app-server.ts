@@ -233,6 +233,7 @@ export function createFakeCodexAppServer(
   const errors: Error[] = [];
   const approvalRequestIds = new Map<string, number>();
   let mcpElicitationRequestId: number | undefined;
+  let nextTurnStartMessageIndex = 0;
   const waiters = new Set<{
     predicate: (message: JsonObject) => boolean;
     resolve: (message: JsonObject) => void;
@@ -369,9 +370,12 @@ export function createFakeCodexAppServer(
     },
     async waitForTurnStart() {
       const message = await waitForMessage(
-        (candidate) => candidate.method === "turn/start",
+        (candidate) =>
+          candidate.method === "turn/start" &&
+          messages.indexOf(candidate) >= nextTurnStartMessageIndex,
         "turn start request",
       );
+      nextTurnStartMessageIndex = messages.indexOf(message) + 1;
       return toJsonObject(message.params);
     },
     async waitForRequest(method) {

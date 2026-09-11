@@ -1196,7 +1196,7 @@ export const zhCN: TranslationResources = {
       },
       confirmations: {
         removeTitle: "移除 project？",
-        removeMessage: "从侧边栏移除「{{projectName}}」？\n\n磁盘上的文件不会被更改。",
+        removeMessage: "从侧边栏移除「{{name}}」？\n\n磁盘上的文件不会被更改。",
         removeConfirm: "移除",
         cancel: "取消",
       },

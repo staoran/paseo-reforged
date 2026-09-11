@@ -9165,9 +9165,10 @@ test("keeps a completed durable generation through archive until physical timeli
   ).resolves.toMatchObject({ eligible: true, working: null });
   await expect(
     manager.fetchDurableTimelinePage(agent.id, { direction: "tail", limit: 1 }),
-  ).resolves.toMatchObject({ rows: [{ seq: 1, item: { text: "final reply" } }] });
+  ).resolves.toMatchObject({ rows: [{ seq: 2, item: { text: "reply" } }] });
   await expect(manager.getTimelineRows(agent.id)).resolves.toMatchObject([
-    { seq: 1, item: { text: "final reply" } },
+    { seq: 1, item: { text: "final " } },
+    { seq: 2, item: { text: "reply" } },
   ]);
 
   await manager.archiveAgent(agent.id);

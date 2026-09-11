@@ -1,16 +1,16 @@
 import { expect, type Page } from "@playwright/test";
 
-const DATABASE_NAME = "paseo-replica-row-store";
-const STORE_NAME = "rows";
-const SINGLETON_ID = "singleton";
+/** Browser storage key used by the replica cache */
+const STORAGE_KEY = "@paseo:replica-cache";
 
-type ReplicaRowKind = "agent" | "workspace" | "project" | "timeline" | "checkpoint";
-
-interface ReplicaRowRecord {
-  serverId: string;
-  kind: ReplicaRowKind;
-  id: string;
-  payload: string;
+interface ReplicaCacheTimeline {
+  agentId?: string;
+  items?: Array<Record<string, unknown>>;
+  range?: {
+    endSeq?: number;
+    epoch?: string;
+    startSeq?: number;
+  } | null;
 }
 
 interface ReplicaCacheHostRecord {
@@ -18,16 +18,9 @@ interface ReplicaCacheHostRecord {
   agents: Array<Record<string, unknown>>;
   workspaces: Array<Record<string, unknown>>;
   projects: Array<Record<string, unknown>>;
-  timelines: Array<{
-    agentId?: string;
-    items?: Array<Record<string, unknown>>;
-    range?: {
-      endSeq?: number;
-      epoch?: string;
-      startSeq?: number;
-    } | null;
-  }>;
-  directorySync?: unknown;
+  emptyProjects?: Array<Record<string, unknown>>;
+  timeline?: ReplicaCacheTimeline | null;
+  timelines: ReplicaCacheTimeline[];
 }
 
 export interface ReplicaCacheRecord {
@@ -36,7 +29,7 @@ export interface ReplicaCacheRecord {
 }
 
 interface ReplicaCacheWriteObserverState {
-  lastValues: Record<string, string>;
+  lastValue: string | null;
   redundantWrites: number;
   serializedChars: number;
   storageDurationMs: number;
@@ -56,66 +49,35 @@ declare global {
   }
 }
 
-async function readRows(input: {
-  databaseName: string;
-  storeName: string;
-}): Promise<ReplicaRowRecord[]> {
-  const database = await new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open(input.databaseName, 1);
-    request.addEventListener("success", () => resolve(request.result));
-    request.addEventListener("error", () => reject(request.error));
-  });
-  return new Promise((resolve, reject) => {
-    const request = database
-      .transaction(input.storeName, "readonly")
-      .objectStore(input.storeName)
-      .getAll();
-    request.addEventListener("success", () => resolve(request.result));
-    request.addEventListener("error", () => reject(request.error));
-  });
+/** Presents the persisted singleton timeline as the test helper's legacy collection */
+function addTimelineCompatibility(cache: ReplicaCacheRecord): ReplicaCacheRecord {
+  return {
+    ...cache,
+    hosts: cache.hosts?.map((host) => ({
+      ...host,
+      timelines: host.timeline ? [host.timeline] : [],
+    })),
+  };
 }
 
-function assembleCache(rows: ReplicaRowRecord[]): ReplicaCacheRecord {
-  const hosts = new Map<string, ReplicaCacheHostRecord>();
-  for (const row of rows) {
-    const host = hosts.get(row.serverId) ?? {
-      serverId: row.serverId,
-      agents: [],
-      workspaces: [],
-      projects: [],
-      timelines: [],
-    };
-    const payload = JSON.parse(row.payload) as Record<string, unknown>;
-    switch (row.kind) {
-      case "agent":
-        host.agents.push(payload);
-        break;
-      case "workspace":
-        host.workspaces.push(payload);
-        break;
-      case "project":
-        host.projects.push(payload);
-        break;
-      case "timeline":
-        host.timelines.push(payload);
-        break;
-      case "checkpoint":
-        host.directorySync = payload;
-        break;
-    }
-    hosts.set(row.serverId, host);
-  }
-  return { version: 6, hosts: [...hosts.values()] };
+/** Restores the persisted singleton timeline schema before writing browser storage */
+function removeTimelineCompatibility(cache: ReplicaCacheRecord): Record<string, unknown> {
+  return {
+    ...cache,
+    hosts: cache.hosts?.map(({ timelines, ...host }) => ({
+      ...host,
+      timeline: timelines[0] ?? null,
+    })),
+  };
 }
 
+/** Reads the currently persisted replica cache from browser storage */
 export async function readReplicaCache(page: Page): Promise<ReplicaCacheRecord | null> {
-  const rows = await page.evaluate(readRows, {
-    databaseName: DATABASE_NAME,
-    storeName: STORE_NAME,
-  });
-  return rows.length > 0 ? assembleCache(rows) : null;
+  const raw = await page.evaluate((storageKey) => localStorage.getItem(storageKey), STORAGE_KEY);
+  return raw ? addTimelineCompatibility(JSON.parse(raw) as ReplicaCacheRecord) : null;
 }
 
+/** Waits for a workspace to appear in the persisted replica cache */
 export async function waitForWorkspaceInReplicaCache(
   page: Page,
   workspaceId: string,
@@ -133,147 +95,78 @@ export async function waitForWorkspaceInReplicaCache(
     .toBe(true);
 }
 
+/** Waits for an archived workspace to disappear from the persisted replica cache */
+export async function waitForWorkspaceToLeaveReplicaCache(
+  page: Page,
+  workspaceId: string,
+): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const cache = await readReplicaCache(page);
+        return cache?.hosts?.some((host) =>
+          host.workspaces.some((workspace) => workspace.id === workspaceId),
+        );
+      },
+      { timeout: 15_000 },
+    )
+    .toBe(false);
+}
+
+/** Writes a test replica-cache value using the application storage schema */
 export async function writeReplicaCache(page: Page, value: ReplicaCacheRecord): Promise<void> {
-  const rows: ReplicaRowRecord[] = [];
-  for (const host of value.hosts ?? []) {
-    for (const agent of host.agents) {
-      const snapshot = agent.snapshot;
-      if (!snapshot || typeof snapshot !== "object") continue;
-      const id = Reflect.get(snapshot, "id");
-      if (typeof id === "string") {
-        rows.push({ serverId: host.serverId, kind: "agent", id, payload: JSON.stringify(agent) });
-      }
-    }
-    for (const workspace of host.workspaces) {
-      if (typeof workspace.id === "string") {
-        rows.push({
-          serverId: host.serverId,
-          kind: "workspace",
-          id: workspace.id,
-          payload: JSON.stringify(workspace),
-        });
-      }
-    }
-    for (const project of host.projects) {
-      if (typeof project.projectId === "string") {
-        rows.push({
-          serverId: host.serverId,
-          kind: "project",
-          id: project.projectId,
-          payload: JSON.stringify(project),
-        });
-      }
-    }
-    for (const timeline of host.timelines) {
-      if (typeof timeline.agentId !== "string") continue;
-      rows.push({
-        serverId: host.serverId,
-        kind: "timeline",
-        id: timeline.agentId,
-        payload: JSON.stringify(timeline),
-      });
-    }
-    if (host.directorySync !== undefined) {
-      rows.push({
-        serverId: host.serverId,
-        kind: "checkpoint",
-        id: SINGLETON_ID,
-        payload: JSON.stringify(host.directorySync),
-      });
-    }
-  }
-  await page.evaluate(
-    async ({ databaseName, storeName, nextRows }) => {
-      const database = await new Promise<IDBDatabase>((resolve, reject) => {
-        const request = indexedDB.open(databaseName, 1);
-        request.addEventListener("success", () => resolve(request.result));
-        request.addEventListener("error", () => reject(request.error));
-      });
-      await new Promise<void>((resolve, reject) => {
-        const transaction = database.transaction(storeName, "readwrite");
-        const store = transaction.objectStore(storeName);
-        store.clear();
-        for (const row of nextRows) store.put(row);
-        transaction.addEventListener("complete", () => resolve());
-        transaction.addEventListener("error", () => reject(transaction.error));
-        transaction.addEventListener("abort", () => reject(transaction.error));
-      });
-    },
-    { databaseName: DATABASE_NAME, storeName: STORE_NAME, nextRows: rows },
-  );
-}
-
-export async function observeReplicaCacheStorageWrites(page: Page): Promise<void> {
-  await page.addInitScript(
-    ({ databaseName, storeName }) => {
-      window.__replicaCacheWriteObserver = {
-        lastValues: {},
-        redundantWrites: 0,
-        serializedChars: 0,
-        storageDurationMs: 0,
-        writes: 0,
-      };
-      const originalPut = IDBObjectStore.prototype.put;
-      IDBObjectStore.prototype.put = function measuredPut(value: unknown, key?: IDBValidKey) {
-        const request =
-          key === undefined ? originalPut.call(this, value) : originalPut.call(this, value, key);
-        if (
-          this.transaction.db.name !== databaseName ||
-          this.name !== storeName ||
-          !value ||
-          typeof value !== "object"
-        ) {
-          return request;
-        }
-        const serverId = Reflect.get(value, "serverId");
-        const kind = Reflect.get(value, "kind");
-        const id = Reflect.get(value, "id");
-        const payload = Reflect.get(value, "payload");
-        if (
-          typeof serverId !== "string" ||
-          typeof kind !== "string" ||
-          typeof id !== "string" ||
-          typeof payload !== "string"
-        ) {
-          return request;
-        }
-        const rowKey = `${serverId}:${kind}:${id}`;
-        const startedAt = performance.now();
-        request.addEventListener("success", () => {
-          const state = window.__replicaCacheWriteObserver;
-          if (!state) return;
-          if (state.lastValues[rowKey] === payload) state.redundantWrites += 1;
-          state.lastValues[rowKey] = payload;
-          state.writes += 1;
-          state.serializedChars += payload.length;
-          state.storageDurationMs += performance.now() - startedAt;
-        });
-        return request;
-      };
-    },
-    { databaseName: DATABASE_NAME, storeName: STORE_NAME },
-  );
-}
-
-export async function resetReplicaCacheStorageWriteObserver(page: Page): Promise<void> {
-  const rows = await page.evaluate(readRows, {
-    databaseName: DATABASE_NAME,
-    storeName: STORE_NAME,
+  await page.evaluate(({ storageKey, raw }) => localStorage.setItem(storageKey, raw), {
+    storageKey: STORAGE_KEY,
+    raw: JSON.stringify(removeTimelineCompatibility(value)),
   });
-  const lastValues = Object.fromEntries(
-    rows.map((row) => [`${row.serverId}:${row.kind}:${row.id}`, row.payload]),
-  );
-  await page.evaluate((values) => {
+}
+
+/** Installs a localStorage observer for replica-cache write assertions */
+export async function observeReplicaCacheStorageWrites(page: Page): Promise<void> {
+  await page.addInitScript((storageKey) => {
     window.__replicaCacheWriteObserver = {
-      lastValues: values,
+      lastValue: null,
       redundantWrites: 0,
       serializedChars: 0,
       storageDurationMs: 0,
       writes: 0,
     };
-  }, lastValues);
+    const originalSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function measuredSetItem(key: string, value: string) {
+      if (this !== localStorage || key !== storageKey) {
+        return originalSetItem.call(this, key, value);
+      }
+      const startedAt = performance.now();
+      originalSetItem.call(this, key, value);
+      const state = window.__replicaCacheWriteObserver;
+      if (!state) return;
+      if (state.lastValue === value) state.redundantWrites += 1;
+      state.lastValue = value;
+      state.writes += 1;
+      state.serializedChars += value.length;
+      state.storageDurationMs += performance.now() - startedAt;
+    };
+  }, STORAGE_KEY);
 }
 
+/** Resets replica-cache write measurements while retaining the current stored value */
+export async function resetReplicaCacheStorageWriteObserver(page: Page): Promise<void> {
+  const lastValue = await page.evaluate(
+    (storageKey) => localStorage.getItem(storageKey),
+    STORAGE_KEY,
+  );
+  await page.evaluate((value) => {
+    window.__replicaCacheWriteObserver = {
+      lastValue: value,
+      redundantWrites: 0,
+      serializedChars: 0,
+      storageDurationMs: 0,
+      writes: 0,
+    };
+  }, lastValue);
+}
+
+/** Returns the accumulated replica-cache write measurements */
 export async function readReplicaCacheStorageWriteObserver(
   page: Page,
 ): Promise<ReplicaCacheWriteObserverReport> {

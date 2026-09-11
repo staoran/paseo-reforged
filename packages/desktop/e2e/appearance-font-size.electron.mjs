@@ -23,8 +23,8 @@ export async function runAppearanceFontSizeRegression(page) {
   assert((await interfaceSizeInput.inputValue()) === "14", "Interface size did not start at 14px");
   assert((await contentSizeInput.inputValue()) === "15", "Content size did not start at 15px");
   assert(
-    (await readFontSize(sectionTitle)) === "16px",
-    "Theme label did not start at the configured 16px interface size",
+    (await readFontSize(sectionTitle)) === "12px",
+    "Theme section label did not start at the configured 12px secondary interface size",
   );
 
   await interfaceSizeInput.fill("12");

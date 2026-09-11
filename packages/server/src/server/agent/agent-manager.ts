@@ -90,6 +90,7 @@ import type {
   AgentTimelineCoverage,
   AgentTimelineFetchOptions,
   AgentTimelineFetchResult,
+  AgentTimelineGenerationSelection,
   AgentTimelineRegistrationSnapshot,
   AgentTimelineRow,
   AgentTimelineStore,
@@ -225,6 +226,15 @@ interface SessionRegistrationBaseline {
   durableTimelineOwnedGenerationIds: Set<string>;
   /** Whether this registration may have changed durable timeline state. */
   durableTimelineMutationStarted: boolean;
+}
+
+interface PersistDirtyRegistrationTimelineInput {
+  /** Agent whose registration-time timeline became dirty */
+  agentId: string;
+  /** Baseline and rollback ownership retained by the registration */
+  baseline: SessionRegistrationBaseline;
+  /** Durable selection owned by the baseline or a preceding registration commit */
+  expectedCurrent: AgentTimelineGenerationSelection;
 }
 
 interface SessionRegistrationAttempt {
@@ -4911,10 +4921,18 @@ export class AgentManager {
     if (!this.durableTimelineStore) {
       return { timestamp: now.toISOString() };
     }
-    return {
-      nextSeq: (await this.durableTimelineStore.getLatestCommittedSeq(agentId)) + 1,
-      timestamp: now.toISOString(),
-    };
+    /** The tail preserves the committed epoch even when it has no rows. */
+    const page = await this.durableTimelineStore.fetchCommittedPage(agentId, {
+      direction: "tail",
+      limit: 1,
+    });
+    return page
+      ? {
+          epoch: page.epoch,
+          nextSeq: page.window.nextSeq,
+          timestamp: now.toISOString(),
+        }
+      : { timestamp: now.toISOString() };
   }
 
   private prepareAgentForClosure(
@@ -5364,7 +5382,6 @@ export class AgentManager {
     broadcast: boolean,
     broadcastTimeline: boolean,
   ): Promise<void> {
-    void broadcastTimeline;
     const replacementEpoch = randomUUID();
     await this.beginDurableTimelineMutation(agent.id, "replace", replacementEpoch);
     const history = await readLegacyProviderHistory(agent.session);
@@ -5423,7 +5440,7 @@ export class AgentManager {
           event.item,
           event.timestamp ? { timestamp: event.timestamp } : undefined,
         );
-        if (broadcast) {
+        if (broadcastTimeline) {
           this.dispatchStream(agent.id, event, {
             seq: row.seq,
             epoch: this.timelineStore.getEpoch(agent.id),
@@ -5552,6 +5569,11 @@ export class AgentManager {
       agent.historyPrimed = false;
       await this.markDurableTimelineIncomplete(agent.id);
       throw error;
+    }
+    if (!history.complete) {
+      agent.historyPrimed = false;
+      await this.markDurableTimelineIncomplete(agent.id);
+      throw history.error;
     }
     agent.historyPrimed = history.complete;
 
@@ -6644,6 +6666,75 @@ export class AgentManager {
     this.registrationTimelineDirtyAgentIds.add(agentId);
   }
 
+  /** Determines whether registration rows continue the currently committed durable timeline. */
+  private shouldAppendRegistrationTimeline(
+    baseline: SessionRegistrationBaseline,
+    agentId: string,
+    rows: AgentTimelineRow[],
+  ): boolean {
+    const active = baseline.durableTimelineSnapshot?.active;
+    return (
+      active?.valid === true &&
+      active.epoch === this.timelineStore.getEpoch(agentId) &&
+      (rows.length === 0 || rows[0]?.seq === active.nextSeq)
+    );
+  }
+
+  /** Commits one dirty registration-time timeline generation before publication */
+  private async persistDirtyRegistrationTimeline({
+    agentId,
+    baseline,
+    expectedCurrent,
+  }: PersistDirtyRegistrationTimelineInput): Promise<AgentTimelineGenerationSelection> {
+    const durableTimelineStore = this.durableTimelineStore;
+    if (!durableTimelineStore) return expectedCurrent;
+    if (baseline.durableTimelineSnapshot?.working) {
+      throw new Error(
+        `Cannot persist registration timeline while a working generation exists: ${agentId}`,
+      );
+    }
+    /** Stable generation identity proving ownership if staging or revision persistence fails */
+    const generationId = randomUUID();
+    baseline.durableTimelineOwnedGenerationIds.add(generationId);
+    baseline.durableTimelineMutationStarted = true;
+    /** Registration after a durable seed contains only the newly observed suffix */
+    const timelineRows = this.timelineStore.getRows(agentId);
+    /** Append clones the committed prefix when the local suffix shares its epoch boundary */
+    const appendCommittedTimeline = this.shouldAppendRegistrationTimeline(
+      baseline,
+      agentId,
+      timelineRows,
+    );
+    await durableTimelineStore.stageRows(agentId, {
+      generationId,
+      expectedCurrent,
+      epoch: this.timelineStore.getEpoch(agentId),
+      mode: appendCommittedTimeline ? "append" : "replace",
+      rows: timelineRows,
+    });
+    await durableTimelineStore.flush(agentId);
+    const commitSelection = {
+      exists: true,
+      activeGenerationId: expectedCurrent.activeGenerationId,
+      workingGenerationId: generationId,
+      invalidGenerationIds: expectedCurrent.invalidGenerationIds,
+    };
+    const committed = await durableTimelineStore.commit(agentId, generationId, commitSelection);
+    await baseline.storageRegistration?.setTimelineRevision(committed.timelineRevision);
+    await durableTimelineStore.cleanup(agentId).catch((error) => {
+      this.logger.warn(
+        { err: error, agentId },
+        "Failed to clean up old timeline generations after registration",
+      );
+    });
+    return {
+      exists: true,
+      activeGenerationId: generationId,
+      workingGenerationId: null,
+      invalidGenerationIds: [],
+    };
+  }
+
   /** Persists every registration-time timeline mutation before publishing the Agent. */
   private async persistRegistrationTimelineStrict(
     agent: ActiveManagedAgent,
@@ -6651,7 +6742,7 @@ export class AgentManager {
   ): Promise<void> {
     const agentId = agent.id;
     /** Selection owned by the baseline or the preceding registration commit. */
-    let expectedCurrent = {
+    let expectedCurrent: AgentTimelineGenerationSelection = {
       exists: baseline.durableTimelineSnapshot?.exists ?? false,
       activeGenerationId: baseline.durableTimelineSnapshot?.active?.generationId ?? null,
       workingGenerationId: baseline.durableTimelineSnapshot?.working?.generationId ?? null,
@@ -6662,47 +6753,11 @@ export class AgentManager {
       // Coalesced timeline chunks are synchronous but otherwise outlive the event tail.
       this.agentStreamCoalescer.flushFor(agentId);
       const timelineDirty = this.registrationTimelineDirtyAgentIds.delete(agentId);
-      if (timelineDirty && this.durableTimelineStore) {
-        if (baseline.durableTimelineSnapshot?.working) {
-          throw new Error(
-            `Cannot persist registration timeline while a working generation exists: ${agentId}`,
-          );
-        }
-        /** Stable generation identity proving ownership if staging or revision persistence fails. */
-        const generationId = randomUUID();
-        baseline.durableTimelineOwnedGenerationIds.add(generationId);
-        baseline.durableTimelineMutationStarted = true;
-        await this.durableTimelineStore.stageRows(agentId, {
-          generationId,
-          expectedCurrent,
-          epoch: this.timelineStore.getEpoch(agentId),
-          mode: "replace",
-          rows: this.timelineStore.getRows(agentId),
-        });
-        await this.durableTimelineStore.flush(agentId);
-        const commitSelection = {
-          exists: true,
-          activeGenerationId: expectedCurrent.activeGenerationId,
-          workingGenerationId: generationId,
-          invalidGenerationIds: expectedCurrent.invalidGenerationIds,
-        };
-        const committed = await this.durableTimelineStore.commit(
+      if (timelineDirty) {
+        expectedCurrent = await this.persistDirtyRegistrationTimeline({
+          baseline,
           agentId,
-          generationId,
-          commitSelection,
-        );
-        await baseline.storageRegistration?.setTimelineRevision(committed.timelineRevision);
-        expectedCurrent = {
-          exists: true,
-          activeGenerationId: generationId,
-          workingGenerationId: null,
-          invalidGenerationIds: [],
-        };
-        await this.durableTimelineStore.cleanup(agentId).catch((error) => {
-          this.logger.warn(
-            { err: error, agentId },
-            "Failed to clean up old timeline generations after registration",
-          );
+          expectedCurrent,
         });
       }
 

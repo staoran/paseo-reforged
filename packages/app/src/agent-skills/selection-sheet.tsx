@@ -92,7 +92,7 @@ export function SkillSelectionSheet({
           const confirmed = await confirmDialog({
             title: t("settings.host.skills.removeTitle"),
             message: t("settings.host.skills.removeMessage", {
-              skills: attempt.confirmationRequired.removals.join(", "),
+              name: attempt.confirmationRequired.removals.join(", "),
             }),
             confirmLabel: t("settings.host.skills.actions.remove"),
             destructive: true,

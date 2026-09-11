@@ -3640,14 +3640,14 @@ describe("Codex app-server provider", () => {
     );
 
     try {
-      const resultPromise = session.run("Wait for the child.");
+      const startPromise = session.startTurn("Wait for the child.");
       await appServer.waitForTurnStart();
       appServer.startsTurn({ threadId: "thread-1", turnId: "turn-already-idle" });
+      await startPromise;
 
       await expect(session.interrupt()).resolves.toBeUndefined();
-
-      appServer.completeTurn();
-      await resultPromise;
+      expect(asInternals(session).activeForegroundTurnId).toBeNull();
+      expect(asInternals(session).currentTurnId).toBeNull();
       appServer.assertNoErrors();
     } finally {
       await session.close();
