@@ -156,6 +156,7 @@
 | 0103 | 已收口     | micro-spec | 已同步        | [保留增量同步后的工作区活动时间](micro_specs/0103_保留增量同步后的工作区活动时间.md)                       | 2026-09-09       | 增量同步 RED→GREEN；目录 19/19、快照 8/8、根 typecheck/lint 通过；未提交                                                                                   |
 | 0104 | 执行中     | micro-spec | 已同步        | [Android release source map 优化](micro_specs/0104_Android release source map优化.md)                      | 2026-09-10       | production bundle 已分析；远端 source map 已关闭，待发布 beta.4 并验证 APK                                                                                 |
 | 0105 | 已收口     | micro-spec | 已同步        | [标题语言跟随应用设置](micro_specs/0105_标题语言跟随应用设置.md)                                           | 2026-09-11       | 可选语言字段从新建工作区请求传给 daemon；标题生成提示词按解析后的应用 locale 输出，旧客户端保持既有默认行为；协议/生成器定向测试与根静态检查通过           |
+| 0107 | 已收口     | micro-spec | 已同步        | [Agent 懒加载启动](micro_specs/0107_Agent懒加载启动.md)                                                    | 2026-09-11       | App-only 懒加载已完成：被动打开 `closed` Agent 零 timeline request；手动启动或发送消息才同步 provider 历史。Vitest 217/217、Browser 2/2、lint/diff 通过；typecheck 仅被范围外终端删除阻塞 |
 | 0108 | 已收口     | micro-spec | 已同步        | [移动端工作区尾部信息菜单触发区](micro_specs/0108_移动端工作区尾部信息菜单触发区.md)                       | 2026-09-11       | 活动时间/差异统计与更多提示合为统一紧凑触发区；Vitest 11/11、Browser E2E、typecheck、格式/diff 通过；根 lint 仅有范围外 `agent-manager.ts` complexity 错误 |
 
 ## 候选待办

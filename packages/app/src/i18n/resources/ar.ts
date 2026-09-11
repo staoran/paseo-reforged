@@ -236,6 +236,10 @@ export const ar: TranslationResources = {
       reconnecting: "جارٍ إعادة الاتصال",
       timelineSyncFailed: "تعذر تحديث سجل الوكيل.",
       timelineSyncRetrying: "جارٍ إعادة المحاولة…",
+      cachedHistoryMayBeOutdated: "قد لا يكون السجل المحلي المخزن مؤقتًا محدّثًا.",
+      startAgent: "بدء الوكيل",
+      startingAgent: "جارٍ بدء الوكيل...",
+      startAgentFailed: "تعذر بدء الوكيل: {{message}}",
       archivingTitle: "وكيل الارشيف...",
       archivingSubtitle: "الرجاء الانتظار بينما نقوم بأرشفة هذا الوكيل.",
     },
@@ -2112,6 +2116,11 @@ export const ar: TranslationResources = {
         label: "فتح مساحة العمل الأخيرة عند بدء التشغيل",
         description: "إعادة فتح آخر مساحة عمل تلقائيًا عند تشغيل تطبيق الهاتف أو سطح المكتب",
         accessibilityLabel: "فتح مساحة العمل الأخيرة عند بدء التشغيل",
+      },
+      lazyLoadAgents: {
+        label: "تحميل الوكلاء عند الطلب",
+        description: "اعرض السجل المحلي للوكلاء المغلقين حتى تبدأ وكيلاً أو ترسل رسالة",
+        accessibilityLabel: "تحميل الوكلاء عند الطلب",
       },
       terminalScrollback: {
         label: "التمرير Terminal",

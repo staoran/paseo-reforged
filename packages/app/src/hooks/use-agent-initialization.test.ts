@@ -49,7 +49,7 @@ afterEach(() => {
 });
 
 describe("ensureAgentIsInitialized", () => {
-  it("catches up after loaded authoritative history", () => {
+  it("requests a canonical projected tail after loaded authoritative history", () => {
     const client = new FakeDaemonClient();
     const runtime = new FakeTimelineRuntime();
     useSessionStore.getState().initializeSession(serverId, client as never);
@@ -74,15 +74,14 @@ describe("ensureAgentIsInitialized", () => {
         serverId,
         agentId,
         request: {
-          direction: "after",
-          cursor: { epoch: "epoch-1", seq: 42 },
+          direction: "tail",
           limit: TIMELINE_FETCH_PAGE_SIZE,
           projection: "projected",
           requestId: getInitDeferred(getInitKey(serverId, agentId))?.requestId,
         },
       },
     ]);
-    expect(getInitDeferred(getInitKey(serverId, agentId))?.requestDirection).toBe("after");
+    expect(getInitDeferred(getInitKey(serverId, agentId))?.requestDirection).toBe("tail");
   });
 
   it("requests a bounded projected tail when no authoritative cursor is available", () => {
@@ -150,12 +149,13 @@ describe("ensureAgentIsInitialized", () => {
           direction: "tail",
           limit: TIMELINE_FETCH_PAGE_SIZE,
           projection: "projected",
+          requestId: getInitDeferred(getInitKey(serverId, agentId))?.requestId,
         },
       },
     ]);
   });
 
-  it("catches up after the restored canonical replica range", () => {
+  it("requests a canonical projected tail after the restored canonical replica range", () => {
     const client = new FakeDaemonClient();
     const runtime = new FakeTimelineRuntime();
     useSessionStore.getState().initializeSession(serverId, null);
@@ -190,15 +190,14 @@ describe("ensureAgentIsInitialized", () => {
         serverId,
         agentId,
         request: {
-          direction: "after",
-          cursor: { epoch: "epoch-1", seq: 12 },
+          direction: "tail",
           limit: TIMELINE_FETCH_PAGE_SIZE,
           projection: "projected",
           requestId: getInitDeferred(getInitKey(serverId, agentId))?.requestId,
         },
       },
     ]);
-    expect(getInitDeferred(getInitKey(serverId, agentId))?.requestDirection).toBe("after");
+    expect(getInitDeferred(getInitKey(serverId, agentId))?.requestDirection).toBe("tail");
   });
 
   it("times out initialization after 65 seconds", async () => {

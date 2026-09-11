@@ -59,7 +59,7 @@ import {
 import { openWorkspacePullRequest } from "@/workspace-tabs/open-supporting-view";
 import { type ExplorerCheckoutContext } from "@/stores/explorer-checkout-context";
 import { traceInstant } from "@/performance/native-trace";
-import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
+import { useSessionStore, type Agent, type WorkspaceDescriptor } from "@/stores/session-store";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import {
   canDismissPaneInLayout,
@@ -79,7 +79,7 @@ import {
   type WorkspaceTab,
   type WorkspaceTabTarget,
 } from "@/workspace-tabs/model";
-import { useSettings } from "@/hooks/use-settings";
+import { useLazyAgentTimelineSyncGate, useSettings } from "@/hooks/use-settings";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import { buildWorkspaceKeyboardHandlerId } from "@/keyboard/handler-id";
 import type {
@@ -89,6 +89,7 @@ import type {
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { normalizeWorkspaceTabTarget, workspaceTabTargetsEqual } from "@/workspace-tabs/identity";
 import { useVisibleAgentIds } from "./visible-agent-ids";
+import { selectRemoteTimelineAgentIds } from "@/timeline/lazy-agent-loading";
 import {
   getHostRuntimeStore,
   useHostRuntimeClient,
@@ -222,6 +223,7 @@ const EMPTY_UI_TABS: WorkspaceTab[] = [];
 const EMPTY_WORKSPACE_SCRIPTS: WorkspaceDescriptor["scripts"] = [];
 const EMPTY_PINNED_AGENT_IDS = new Set<string>();
 const EMPTY_SET = new Set<string>();
+const EMPTY_AGENT_MAP: ReadonlyMap<string, Agent> = new Map();
 
 function getWorkspaceScripts(
   workspaceDescriptor: WorkspaceDescriptor | null | undefined,
@@ -1895,6 +1897,7 @@ function WorkspaceScreenContent({
   );
   const openInSidePane = useSettings((settings) => settings.openInSidePane);
   const pullRequestOpenLocation = useSettings((settings) => settings.pullRequestOpenLocation);
+  const lazyLoadAgents = useLazyAgentTimelineSyncGate();
   const focusWorkspaceTab = useWorkspaceLayoutStore((state) => state.focusTab);
   const selectWorkspaceTabInPane = useWorkspaceLayoutStore((state) => state.selectTabInPane);
   const closeWorkspaceTab = useWorkspaceLayoutStore((state) => state.closeTab);
@@ -1972,6 +1975,71 @@ function WorkspaceScreenContent({
     routeFocused: isRouteFocused,
     focusedPaneOnly: syncFocusedPaneOnly,
   });
+  const visibleAgents = useSessionStore(
+    (state) => state.sessions[normalizedServerId]?.agents ?? EMPTY_AGENT_MAP,
+  );
+  const visibleAgentDetails = useSessionStore(
+    (state) => state.sessions[normalizedServerId]?.agentDetails ?? EMPTY_AGENT_MAP,
+  );
+  const lazyAgentStartIntentAgentIds = useSessionStore(
+    (state) => state.sessions[normalizedServerId]?.lazyAgentStartIntentAgentIds ?? EMPTY_SET,
+  );
+  const lazyAgentDeferredAgentIds = useSessionStore(
+    (state) => state.sessions[normalizedServerId]?.lazyAgentDeferredAgentIds ?? EMPTY_SET,
+  );
+  const setLazyAgentTimelineDeferred = useSessionStore(
+    (state) => state.setLazyAgentTimelineDeferred,
+  );
+  const clearLazyAgentTimelineDeferrals = useSessionStore(
+    (state) => state.clearLazyAgentTimelineDeferrals,
+  );
+  const agentDirectoryDemandSourceRef = useRef({});
+  const remoteTimelineAgentIds = useMemo(() => {
+    const agentsById = new Map(visibleAgentDetails);
+    for (const [agentId, agent] of visibleAgents) {
+      agentsById.set(agentId, agent);
+    }
+    return selectRemoteTimelineAgentIds({
+      visibleAgentIds,
+      lazyLoadAgents,
+      hasAuthoritativeAgentDirectory: hasHydratedAgents,
+      agentsById,
+      startIntentAgentIds: lazyAgentStartIntentAgentIds,
+      deferredAgentIds: lazyAgentDeferredAgentIds,
+    });
+  }, [
+    lazyAgentDeferredAgentIds,
+    lazyAgentStartIntentAgentIds,
+    lazyLoadAgents,
+    hasHydratedAgents,
+    visibleAgentDetails,
+    visibleAgentIds,
+    visibleAgents,
+  ]);
+  useLayoutEffect(() => {
+    if (!lazyLoadAgents) {
+      clearLazyAgentTimelineDeferrals(normalizedServerId);
+      return;
+    }
+    if (!hasHydratedAgents) {
+      return;
+    }
+    for (const agentId of visibleAgentIds) {
+      const agent = visibleAgents.get(agentId) ?? visibleAgentDetails.get(agentId);
+      if (agent?.status === "closed" && !agent.archivedAt) {
+        setLazyAgentTimelineDeferred(normalizedServerId, agentId, true);
+      }
+    }
+  }, [
+    clearLazyAgentTimelineDeferrals,
+    hasHydratedAgents,
+    lazyLoadAgents,
+    normalizedServerId,
+    setLazyAgentTimelineDeferred,
+    visibleAgentDetails,
+    visibleAgentIds,
+    visibleAgents,
+  ]);
   useEffect(() => {
     for (const agentId of visibleAgentIds) {
       void getHostRuntimeStore()
@@ -1980,11 +2048,27 @@ function WorkspaceScreenContent({
     }
   }, [normalizedServerId, visibleAgentIds]);
   useLayoutEffect(() => {
+    const hostRuntimeStore = getHostRuntimeStore();
+    const demandSource = agentDirectoryDemandSourceRef.current;
+    hostRuntimeStore.replaceAgentRouteDemand(normalizedServerId, demandSource, visibleAgentIds);
+    return () => {
+      hostRuntimeStore.replaceAgentRouteDemand(normalizedServerId, demandSource, []);
+    };
+  }, [normalizedServerId, visibleAgentIds]);
+  useLayoutEffect(() => {
     if (!persistenceKey || !viewedTimelineSync) {
       return;
     }
-    viewedTimelineSync.replaceVisibleAgentIds(persistenceKey, visibleAgentIds);
-  }, [persistenceKey, viewedTimelineSync, visibleAgentIds]);
+    viewedTimelineSync.replaceVisibleAgentIds(persistenceKey, remoteTimelineAgentIds);
+  }, [
+    hasHydratedAgents,
+    lazyAgentDeferredAgentIds,
+    lazyAgentStartIntentAgentIds,
+    lazyLoadAgents,
+    persistenceKey,
+    remoteTimelineAgentIds,
+    viewedTimelineSync,
+  ]);
   useEffect(() => {
     if (!persistenceKey || !viewedTimelineSync) {
       return;

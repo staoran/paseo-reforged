@@ -406,7 +406,7 @@ describe("DirectorySync session readiness", () => {
       features: { workspaceMultiplicity: true },
     });
 
-    directory.setAgentRouteDemand(["agent-1"]);
+    directory.setAgentRouteDemand({}, ["agent-1"]);
     directory.setDemand({}, true);
     await expect.poll(() => client.fetchAgentsCalls).toBe(1);
     await expect.poll(() => client.fetchWorkspacesCalls).toBe(1);

@@ -280,6 +280,7 @@ interface GeneralSectionProps {
   isDesktopApp: boolean;
   handleSendBehaviorChange: (behavior: SendBehavior) => void;
   handleRestoreLastWorkspaceOnLaunchChange: (value: boolean) => void;
+  handleLazyLoadAgentsChange: (value: boolean) => void;
   handleServiceUrlBehaviorChange: (behavior: ServiceUrlBehavior) => void;
   handleLanguageChange: (language: AppLanguage) => void;
   handleTerminalScrollbackLinesChange: (lines: number) => void;
@@ -355,6 +356,7 @@ function GeneralSection({
   isDesktopApp,
   handleSendBehaviorChange,
   handleRestoreLastWorkspaceOnLaunchChange,
+  handleLazyLoadAgentsChange,
   handleServiceUrlBehaviorChange,
   handleLanguageChange,
   handleTerminalScrollbackLinesChange,
@@ -476,6 +478,22 @@ function GeneralSection({
             />
           </View>
         ) : null}
+        <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+          <View style={settingsStyles.rowContent}>
+            <Text style={settingsStyles.rowTitle}>
+              {t("settings.general.lazyLoadAgents.label")}
+            </Text>
+            <Text style={settingsStyles.rowHint}>
+              {t("settings.general.lazyLoadAgents.description")}
+            </Text>
+          </View>
+          <Switch
+            value={settings.lazyLoadAgents}
+            onValueChange={handleLazyLoadAgentsChange}
+            accessibilityLabel={t("settings.general.lazyLoadAgents.accessibilityLabel")}
+            testID="lazy-load-agents-switch"
+          />
+        </View>
         {isDesktopApp ? (
           <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
             <View style={settingsStyles.rowContent}>
@@ -1271,6 +1289,14 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
     [updateSettings],
   );
 
+  /** Persists whether closed agents wait for an explicit start or send intent */
+  const handleLazyLoadAgentsChange = useCallback(
+    (lazyLoadAgents: boolean) => {
+      void updateSettings({ lazyLoadAgents });
+    },
+    [updateSettings],
+  );
+
   const handleLanguageChange = useCallback(
     (language: AppLanguage) => {
       void updateSettings({ language });
@@ -1505,6 +1531,7 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
                   handleRestoreLastWorkspaceOnLaunchChange={
                     handleRestoreLastWorkspaceOnLaunchChange
                   }
+                  handleLazyLoadAgentsChange={handleLazyLoadAgentsChange}
                   handleServiceUrlBehaviorChange={handleServiceUrlBehaviorChange}
                   handleLanguageChange={handleLanguageChange}
                   handleTerminalScrollbackLinesChange={handleTerminalScrollbackLinesChange}

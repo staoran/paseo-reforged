@@ -1024,6 +1024,8 @@ interface ComposerProps {
   commandDraftConfig?: DraftCommandConfig;
   /** Called when a message is about to be sent (any path: keyboard, dictation, queued). */
   onMessageSent?: () => void;
+  /** Runs before message transport and may return a rollback for a rejected transport */
+  onBeforeMessageTransport?: () => (() => void) | void;
   onComposerHeightChange?: (height: number) => void;
   onAttentionInputFocus?: () => void;
   onAttentionPromptSend?: () => void;
@@ -1243,6 +1245,7 @@ function ComposerContentImpl({
   onFocusInput,
   commandDraftConfig,
   onMessageSent,
+  onBeforeMessageTransport,
   onComposerHeightChange,
   onAttentionInputFocus,
   onAttentionPromptSend,
@@ -1496,22 +1499,28 @@ function ComposerContentImpl({
 
   const submitMessage = useCallback(
     async (text: string, submitAttachments: ComposerAttachment[]) => {
+      const rollbackBeforeTransport = onBeforeMessageTransport?.();
       onMessageSent?.();
-      if (onSubmitMessageRef.current) {
-        await onSubmitMessageRef.current({ text, attachments: submitAttachments, cwd });
-        return;
+      try {
+        if (onSubmitMessageRef.current) {
+          await onSubmitMessageRef.current({ text, attachments: submitAttachments, cwd });
+          return;
+        }
+        if (!sendAgentMessageRef.current) {
+          throw new Error(t("workspace.terminal.hostDisconnected"));
+        }
+        await sendAgentMessageRef.current(
+          agentIdRef.current,
+          text,
+          submitAttachments,
+          appSettings.sendBehavior === "steer" ? "steer" : "interrupt",
+        );
+      } catch (error) {
+        rollbackBeforeTransport?.();
+        throw error;
       }
-      if (!sendAgentMessageRef.current) {
-        throw new Error(t("workspace.terminal.hostDisconnected"));
-      }
-      await sendAgentMessageRef.current(
-        agentIdRef.current,
-        text,
-        submitAttachments,
-        appSettings.sendBehavior === "steer" ? "steer" : "interrupt",
-      );
     },
-    [appSettings.sendBehavior, cwd, onMessageSent, t],
+    [appSettings.sendBehavior, cwd, onBeforeMessageTransport, onMessageSent, t],
   );
 
   useEffect(() => {

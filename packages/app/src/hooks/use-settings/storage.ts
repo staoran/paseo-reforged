@@ -78,6 +78,8 @@ export interface AppSettings {
   sendBehavior: SendBehavior;
   serviceUrlBehavior: ServiceUrlBehavior;
   restoreLastWorkspaceOnLaunch: boolean;
+  /** Defers remote history synchronization for closed agents until user intent */
+  lazyLoadAgents: boolean;
   terminalScrollbackLines: number;
   useLegacyTerminalRenderer: boolean;
   uiFontFamily: string; // "" = platform default UI stack
@@ -130,6 +132,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   sendBehavior: "steer",
   serviceUrlBehavior: "ask",
   restoreLastWorkspaceOnLaunch: false,
+  lazyLoadAgents: false,
   terminalScrollbackLines: DEFAULT_TERMINAL_SCROLLBACK_LINES,
   useLegacyTerminalRenderer: false,
   uiFontFamily: "",
@@ -208,6 +211,7 @@ const StoredAppSettingsSchema = z
     sendBehavior: z.enum(["interrupt", "steer", "queue"]).catch("steer"),
     serviceUrlBehavior: z.enum(["ask", "in-app", "external"]).catch("ask"),
     restoreLastWorkspaceOnLaunch: z.boolean().catch(false),
+    lazyLoadAgents: z.boolean().catch(false),
     terminalScrollbackLines: clampedNumber(
       MIN_TERMINAL_SCROLLBACK_LINES,
       MAX_TERMINAL_SCROLLBACK_LINES,

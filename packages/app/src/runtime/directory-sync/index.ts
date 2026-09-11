@@ -124,6 +124,8 @@ export class DirectorySync {
   private revision = 0;
   private workspaceRevision = 0;
   private readonly routeDemandIds = new Set<string>();
+  // Keeps each mounted route's directory demand independent until their ids are merged
+  private readonly routeDemandIdsBySource = new Map<object, Set<string>>();
   private readonly fullDemandSources = new Set<object>();
   private demandRefresh: Promise<void> | null = null;
   private satisfiedDemandSource: DirectorySourceToken | null = null;
@@ -241,16 +243,34 @@ export class DirectorySync {
     }
   }
 
-  setAgentRouteDemand(agentIds: readonly string[]): void {
+  /** Reconciles one route's Agent directory demand into the shared union */
+  setAgentRouteDemand(source: object, agentIds: readonly string[]): void {
     const next = new Set(agentIds);
+    const previous = this.routeDemandIdsBySource.get(source);
     if (
-      next.size === this.routeDemandIds.size &&
-      [...next].every((agentId) => this.routeDemandIds.has(agentId))
+      previous &&
+      next.size === previous.size &&
+      [...next].every((agentId) => previous.has(agentId))
+    ) {
+      return;
+    }
+    if (next.size === 0) {
+      this.routeDemandIdsBySource.delete(source);
+    } else {
+      this.routeDemandIdsBySource.set(source, next);
+    }
+    const merged = new Set<string>();
+    for (const agentIdsForSource of this.routeDemandIdsBySource.values()) {
+      for (const agentId of agentIdsForSource) merged.add(agentId);
+    }
+    if (
+      merged.size === this.routeDemandIds.size &&
+      [...merged].every((agentId) => this.routeDemandIds.has(agentId))
     ) {
       return;
     }
     this.routeDemandIds.clear();
-    for (const agentId of next) this.routeDemandIds.add(agentId);
+    for (const agentId of merged) this.routeDemandIds.add(agentId);
     if (this.routeDemandIds.size > 0 && this.getOnlineConnection()) {
       void this.requestDemandRefresh().catch(() => undefined);
     }
@@ -263,6 +283,7 @@ export class DirectorySync {
     this.unsubscribe = null;
     this.fullDemandSources.clear();
     this.routeDemandIds.clear();
+    this.routeDemandIdsBySource.clear();
     workspaceLabels.disconnect(this.serverId);
   }
 

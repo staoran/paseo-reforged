@@ -233,6 +233,10 @@ export const en = {
       reconnecting: "Reconnecting",
       timelineSyncFailed: "Couldn't refresh agent history.",
       timelineSyncRetrying: "Retrying…",
+      cachedHistoryMayBeOutdated: "Local cached history may be out of date.",
+      startAgent: "Start agent",
+      startingAgent: "Starting agent...",
+      startAgentFailed: "Couldn't start agent: {{message}}",
       archivingTitle: "Archiving agent...",
       archivingSubtitle: "Please wait while we archive this agent.",
     },
@@ -2213,6 +2217,11 @@ export const en = {
         label: "Open last workspace on launch",
         description: "Teach your agents to orchestrate through the CLI",
         accessibilityLabel: "Open last workspace on launch",
+      },
+      lazyLoadAgents: {
+        label: "Lazy load agents",
+        description: "Show local history for closed agents until you start one or send a message",
+        accessibilityLabel: "Lazy load agents",
       },
       terminalScrollback: {
         label: "Terminal scrollback",

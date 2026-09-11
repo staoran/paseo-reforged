@@ -236,6 +236,10 @@ export const ptBR: TranslationResources = {
       reconnecting: "Reconectando",
       timelineSyncFailed: "Não foi possível atualizar o histórico do agente.",
       timelineSyncRetrying: "Tentando novamente…",
+      cachedHistoryMayBeOutdated: "O histórico local em cache pode estar desatualizado.",
+      startAgent: "Iniciar agente",
+      startingAgent: "Iniciando agente...",
+      startAgentFailed: "Não foi possível iniciar o agente: {{message}}",
       archivingTitle: "Arquivando agente...",
       archivingSubtitle: "Aguarde enquanto arquivamos este agente.",
     },
@@ -2149,6 +2153,12 @@ export const ptBR: TranslationResources = {
         label: "Abrir o último workspace ao iniciar",
         description: "Ensine seus agentes a orquestrar pela CLI",
         accessibilityLabel: "Abrir o último workspace ao iniciar",
+      },
+      lazyLoadAgents: {
+        label: "Carregar agentes sob demanda",
+        description:
+          "Mostra o histórico local de agentes fechados até você iniciar um ou enviar uma mensagem",
+        accessibilityLabel: "Carregar agentes sob demanda",
       },
       terminalScrollback: {
         label: "Scrollback do terminal",

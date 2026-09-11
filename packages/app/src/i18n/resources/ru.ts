@@ -236,6 +236,10 @@ export const ru: TranslationResources = {
       reconnecting: "Повторное подключение",
       timelineSyncFailed: "Не удалось обновить историю агента.",
       timelineSyncRetrying: "Повторная попытка…",
+      cachedHistoryMayBeOutdated: "Локальная кэшированная история может быть устаревшей.",
+      startAgent: "Запустить агента",
+      startingAgent: "Запуск агента...",
+      startAgentFailed: "Не удалось запустить агента: {{message}}",
       archivingTitle: "Агент перемещается в архив...",
       archivingSubtitle: "Подождите, пока агент будет перемещён в архив.",
     },
@@ -2151,6 +2155,12 @@ export const ru: TranslationResources = {
         description:
           "Автоматически открывает последнее рабочее пространство при запуске мобильного или настольного приложения",
         accessibilityLabel: "Открывать последнее рабочее пространство при запуске",
+      },
+      lazyLoadAgents: {
+        label: "Загружать агентов по требованию",
+        description:
+          "Показывает локальную историю закрытых агентов, пока вы не запустите агента или не отправите сообщение",
+        accessibilityLabel: "Загружать агентов по требованию",
       },
       terminalScrollback: {
         label: "Буфер прокрутки терминала",

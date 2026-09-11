@@ -9,6 +9,7 @@ import {
   useActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
 import { useHasHydratedWorkspaces, useWorkspaceExists } from "@/stores/session-store-hooks";
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { WorkspaceScreen } from "@/screens/workspace/workspace-screen";
 import { useWorkspaceLayoutStoreHydrated } from "@/stores/workspace-layout-store";
@@ -98,6 +99,7 @@ function HostWorkspaceRouteContent() {
   const rootNavigationState = useRootNavigationState();
   const hasHydratedWorkspaceLayoutStore = useWorkspaceLayoutStoreHydrated();
   const consumedIntentRef = useRef<string | null>(null);
+  const routeDirectoryDemandSourceRef = useRef({});
   const [intentConsumed, setIntentConsumed] = useState(false);
   const params = useLocalSearchParams<{
     serverId?: string | string[];
@@ -120,6 +122,17 @@ function HostWorkspaceRouteContent() {
   const isOpenIntentWaitingForWorkspace = Boolean(
     isAgentOpenIntent && (!hasHydratedWorkspaces || !workspaceExists),
   );
+  useEffect(() => {
+    if (!serverId || !recoveryAgentId) {
+      return;
+    }
+    const hostRuntimeStore = getHostRuntimeStore();
+    const demandSource = routeDirectoryDemandSourceRef.current;
+    hostRuntimeStore.replaceAgentRouteDemand(serverId, demandSource, [recoveryAgentId]);
+    return () => {
+      hostRuntimeStore.replaceAgentRouteDemand(serverId, demandSource, []);
+    };
+  }, [recoveryAgentId, serverId]);
   useEffect(() => {
     if (!serverId || !workspaceId) {
       return;

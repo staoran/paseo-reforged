@@ -284,6 +284,8 @@ describe("replaceFetchedAgentDirectory", () => {
       new Map([["permission", { key: "permission", agentId, request: null as never }]]),
     );
     store.setInitializingAgents(serverId, new Map([[agentId, true]]));
+    store.setLazyAgentStartIntent(serverId, agentId, true);
+    store.setLazyAgentTimelineDeferred(serverId, agentId, true);
     setAgentArchiving({ queryClient, serverId, agentId, isArchiving: true });
 
     applyAgentDirectoryDelta({ serverId, delta: { kind: "remove", agentId } });
@@ -296,6 +298,8 @@ describe("replaceFetchedAgentDirectory", () => {
       cursor: session?.agentTimelineCursor.has(agentId),
       permissions: session?.pendingPermissions.size,
       initializing: session?.initializingAgents.has(agentId),
+      lazyStartIntent: session?.lazyAgentStartIntentAgentIds.has(agentId),
+      lazyTimelineDeferral: session?.lazyAgentDeferredAgentIds.has(agentId),
       archivePending: isAgentArchiving({ queryClient, serverId, agentId }),
     }).toEqual({
       agents: false,
@@ -304,6 +308,8 @@ describe("replaceFetchedAgentDirectory", () => {
       cursor: false,
       permissions: 0,
       initializing: false,
+      lazyStartIntent: false,
+      lazyTimelineDeferral: false,
       archivePending: false,
     });
 

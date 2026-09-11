@@ -1550,6 +1550,8 @@ export class HostRuntimeStore {
       }
       this.hosts = profiles;
       this.replicaCache.setHosts(profiles.map((profile) => profile.serverId));
+      await this.replicaCache.restore();
+      this.replicaCache.start();
       projectIconCache.setHosts(profiles.map((profile) => profile.serverId));
       await projectIconCache.restore();
       this.syncHosts(profiles);
@@ -2431,13 +2433,20 @@ export class HostRuntimeStore {
     if (!directory) throw new Error(`Unknown host runtime for serverId ${serverId}`);
     const replica = this.timelineReplicaByServer.get(serverId);
     if (!replica) throw new Error(`Unknown host runtime for serverId ${serverId}`);
+    const timelineDemandSource = {};
     return createViewedTimelineOwner({
       serverId,
       replica,
-      replaceDemandedAgentIds: (agentIds) => directory.setAgentRouteDemand(agentIds),
+      replaceDemandedAgentIds: (agentIds) =>
+        directory.setAgentRouteDemand(timelineDemandSource, agentIds),
       drainQueuedAgentMessage: (agentId) => this.drainQueuedAgentMessage(serverId, agentId),
       ports,
     });
+  }
+
+  /** Replaces the route-local Agent directory demand without requesting timeline history */
+  replaceAgentRouteDemand(serverId: string, source: object, agentIds: readonly string[]): void {
+    this.directorySyncByServer.get(serverId)?.setAgentRouteDemand(source, agentIds);
   }
 
   private emit(serverId: string): void {

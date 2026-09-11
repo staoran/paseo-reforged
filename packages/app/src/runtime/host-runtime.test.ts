@@ -14,6 +14,7 @@ import { useSessionStore, type Agent } from "@/stores/session-store";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { isAgentArchiving, setAgentArchiving } from "@/hooks/use-archive-agent";
 import { queryClient } from "@/data/query-client";
+import { ReplicaCache } from "./replica-cache";
 import {
   HostRuntimeController,
   HostRuntimeStore,
@@ -1390,6 +1391,34 @@ describe("HostRuntimeController", () => {
 });
 
 describe("HostRuntimeStore", () => {
+  it("restores and starts the replica cache during boot", async () => {
+    const restore = vi.spyOn(ReplicaCache.prototype, "restore").mockResolvedValue();
+    const start = vi.spyOn(ReplicaCache.prototype, "start").mockImplementation(() => undefined);
+    const store = new HostRuntimeStore({
+      storage: createMemoryHostRuntimeStorage({ "@paseo:e2e": "1" }),
+      deps: {
+        createClient: () => {
+          throw new Error("createClient should not be called");
+        },
+        connectToDaemon: async () => {
+          throw new Error("connectToDaemon should not be called");
+        },
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    try {
+      await store.boot();
+
+      expect(restore).toHaveBeenCalledTimes(1);
+      expect(start).toHaveBeenCalledTimes(1);
+      expect(restore.mock.invocationCallOrder[0]).toBeLessThan(start.mock.invocationCallOrder[0]!);
+    } finally {
+      restore.mockRestore();
+      start.mockRestore();
+    }
+  });
+
   it("revokes push notifications before removing a host", async () => {
     const host = makeHost({ connections: [makeHost().connections[0]!] });
     const revocation = createDeferred<void>();

@@ -184,6 +184,12 @@ export function useAppSettings(): UseAppSettingsReturn {
   };
 }
 
+/** Holds remote Agent timeline demand until the persisted lazy-loading preference is available */
+export function useLazyAgentTimelineSyncGate(): boolean {
+  const { settings, isLoading } = useAppSettings();
+  return isLoading || settings.lazyLoadAgents;
+}
+
 export function useSettings(): UseSettingsReturn;
 export function useSettings<TSelected>(selector: SettingsSelector<TSelected>): TSelected;
 export function useSettings<TSelected>(

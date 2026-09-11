@@ -374,6 +374,23 @@ export function selectAgentTurnPresentation(
   );
 }
 
+/** Drops explicit lazy-start intents when an Agent becomes closed again */
+function clearClosedLazyAgentStartIntents(
+  intentAgentIds: Set<string>,
+  agents: ReadonlyMap<string, Agent>,
+): Set<string> {
+  let nextIntentAgentIds: Set<string> | null = null;
+  for (const agentId of intentAgentIds) {
+    const agent = agents.get(agentId);
+    if (agent && agent.status !== "closed") {
+      continue;
+    }
+    nextIntentAgentIds ??= new Set(intentAgentIds);
+    nextIntentAgentIds.delete(agentId);
+  }
+  return nextIntentAgentIds ?? intentAgentIds;
+}
+
 function latestTasksFromStream(items: readonly StreamItem[]): TodoEntry[] {
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = items[index];
@@ -437,6 +454,10 @@ export interface SessionState {
 
   // Initializing agents (used for UI loading state)
   initializingAgents: Map<string, boolean>;
+  // Agent ids explicitly started by the user during this app session
+  lazyAgentStartIntentAgentIds: Set<string>;
+  // Agent ids passively observed as closed while lazy timeline loading is enabled
+  lazyAgentDeferredAgentIds: Set<string>;
 
   // Agents
   agents: Map<string, Agent>;
@@ -619,6 +640,12 @@ interface SessionStoreActions {
     serverId: string,
     state: Map<string, boolean> | ((prev: Map<string, boolean>) => Map<string, boolean>),
   ) => void;
+  // Records whether user intent has released lazy timeline synchronization for an agent
+  setLazyAgentStartIntent: (serverId: string, agentId: string, hasIntent: boolean) => void;
+  // Retains passive closed-agent timeline deferrals until explicit user intent or settings reset
+  setLazyAgentTimelineDeferred: (serverId: string, agentId: string, deferred: boolean) => void;
+  // Clears session-local passive deferrals when lazy timeline loading is disabled
+  clearLazyAgentTimelineDeferrals: (serverId: string) => void;
 
   // Agents
   setAgents: (
@@ -725,6 +752,8 @@ function createInitialSessionState(
     agentHistorySyncGeneration: new Map(),
     agentAuthoritativeHistoryApplied: new Map(),
     initializingAgents: new Map(),
+    lazyAgentStartIntentAgentIds: new Set(),
+    lazyAgentDeferredAgentIds: new Set(),
     agents: new Map(),
     workspaceAgentActivity: new Map(),
     workspaceResidentAgentCounts: new Map(),
@@ -1767,6 +1796,77 @@ export const useSessionStore = create<SessionStore>()(
         });
       },
 
+      // Lazy agent startup intent
+      setLazyAgentStartIntent: (serverId, agentId, hasIntent) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session) {
+            return prev;
+          }
+          const alreadySet = session.lazyAgentStartIntentAgentIds.has(agentId);
+          if (alreadySet === hasIntent) {
+            return prev;
+          }
+          const lazyAgentStartIntentAgentIds = new Set(session.lazyAgentStartIntentAgentIds);
+          if (hasIntent) {
+            lazyAgentStartIntentAgentIds.add(agentId);
+          } else {
+            lazyAgentStartIntentAgentIds.delete(agentId);
+          }
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, lazyAgentStartIntentAgentIds },
+            },
+          };
+        });
+      },
+
+      // Retain a passive closed-agent deferral until the user explicitly starts it
+      setLazyAgentTimelineDeferred: (serverId, agentId, deferred) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session) {
+            return prev;
+          }
+          const alreadyDeferred = session.lazyAgentDeferredAgentIds.has(agentId);
+          if (alreadyDeferred === deferred) {
+            return prev;
+          }
+          const lazyAgentDeferredAgentIds = new Set(session.lazyAgentDeferredAgentIds);
+          if (deferred) {
+            lazyAgentDeferredAgentIds.add(agentId);
+          } else {
+            lazyAgentDeferredAgentIds.delete(agentId);
+          }
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, lazyAgentDeferredAgentIds },
+            },
+          };
+        });
+      },
+
+      // Reset passive deferrals when lazy loading is turned off
+      clearLazyAgentTimelineDeferrals: (serverId) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session || session.lazyAgentDeferredAgentIds.size === 0) {
+            return prev;
+          }
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, lazyAgentDeferredAgentIds: new Set() },
+            },
+          };
+        });
+      },
+
       // Agents
       setAgents: (serverId, agents) => {
         set((prev) => {
@@ -1778,6 +1878,10 @@ export const useSessionStore = create<SessionStore>()(
           if (session.agents === nextAgents) {
             return prev;
           }
+          const lazyAgentStartIntentAgentIds = clearClosedLazyAgentStartIntents(
+            session.lazyAgentStartIntentAgentIds,
+            nextAgents,
+          );
           return {
             ...prev,
             sessions: {
@@ -1785,6 +1889,7 @@ export const useSessionStore = create<SessionStore>()(
               [serverId]: {
                 ...session,
                 agents: nextAgents,
+                lazyAgentStartIntentAgentIds,
                 workspaceAgentActivity: buildWorkspaceAgentActivityIndex(
                   nextAgents,
                   session.workspaceAgentActivity,

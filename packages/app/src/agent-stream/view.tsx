@@ -408,6 +408,8 @@ export interface AgentStreamViewProps {
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
   onOpenWorkingDiffFile?: (path: string, disposition: OpenFileDisposition) => void;
   readOnly?: boolean;
+  /** Keeps a cached closed-agent transcript local until the user explicitly starts or sends */
+  remoteTimelineDisabled?: boolean;
   editLastUserMessageController?: LastUserMessageEditController;
   onEditLastUserMessageEffect?: (effect: LastUserMessageEditEffect) => Promise<void> | void;
   historyPagination?: {
@@ -471,6 +473,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       onOpenWorkspaceFile,
       onOpenWorkingDiffFile,
       readOnly = false,
+      remoteTimelineDisabled = false,
       editLastUserMessageController,
       onEditLastUserMessageEffect,
       historyPagination,
@@ -522,7 +525,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       ),
     );
     const streamHead = providedStreamHead ?? sessionStreamHead;
-    const forkAgent = useForkAgent({ serverId: resolvedServerId, toast, readOnly });
+    const forkAgent = useForkAgent({
+      serverId: resolvedServerId,
+      toast,
+      readOnly: readOnly || remoteTimelineDisabled,
+    });
     const supportsAgentForkContextCursor = useSessionStore((state) =>
       selectRetainedAgentPresentationFeature(
         state,
@@ -564,9 +571,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       serverId: resolvedServerId,
       agentId,
       toast,
-      active: isActive,
+      active: isActive && !remoteTimelineDisabled,
     });
-    const activeHistoryPagination = isActive ? historyPagination : undefined;
+    const activeHistoryPagination =
+      isActive && !remoteTimelineDisabled ? historyPagination : undefined;
     const remoteHistoryPagination = activeHistoryPagination
       ? {
           isLoadingOlder: activeHistoryPagination.isLoadingOlder,
@@ -716,7 +724,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       projectionDisplay?.activityFolds ?? EMPTY_ACTIVITY_FOLDS,
       isActive,
     );
-    const activeRequestActivityDetail = isActive ? onRequestActivityDetail : undefined;
+    const activeRequestActivityDetail =
+      isActive && !remoteTimelineDisabled ? onRequestActivityDetail : undefined;
     const effectiveTurnPresentation = useRetainedValue(turnPresentation, isActive);
     const isTurnActive = effectiveTurnPresentation.isActive;
     const editableLastUserMessageId = useMemo(
@@ -774,6 +783,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       items: projectedToolCalls.tail,
       loadRemoteOlder,
     });
+    /** Blocks remote pagination while the closed Agent is showing a cached timeline */
+    const loadOlderOnHistoryStart = useCallback(() => {
+      if (remoteTimelineDisabled) return false;
+      return loadOlder();
+    }, [loadOlder, remoteTimelineDisabled]);
     const isLoadingOlder = remoteIsLoadingOlder;
     const hasOlder = hasLocalHistory || remoteHasOlder;
     const progressKey = `${remoteProgressKey ?? "local"}:${historyWindowStart}`;
@@ -831,7 +845,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       timelineEpoch,
       tail: effectiveStreamItems,
       head: effectiveStreamHead,
-      enabled: isActive && supportsChatOutline && chatOutlineEnabled,
+      enabled: isActive && !remoteTimelineDisabled && supportsChatOutline && chatOutlineEnabled,
       viewportRef,
       onJumpError: handleTimelineHistoryLoadError,
       visibleItemIds: visibleHistoryItemIds,
@@ -855,7 +869,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       if (!isActive) {
         return;
       }
-      if (!isTimelineDetached) {
+      if (!isTimelineDetached || remoteTimelineDisabled) {
         viewportRef.current?.scrollToBottom("jump-to-bottom");
         return;
       }
@@ -867,7 +881,14 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         scrollToBottom: () => viewportRef.current?.scrollToBottom("jump-to-bottom"),
         onError: handleTimelineHistoryLoadError,
       });
-    }, [agentId, handleTimelineHistoryLoadError, isActive, isTimelineDetached, resolvedServerId]);
+    }, [
+      agentId,
+      handleTimelineHistoryLoadError,
+      isActive,
+      isTimelineDetached,
+      remoteTimelineDisabled,
+      resolvedServerId,
+    ]);
 
     const setInlineDetailsExpanded = useCallback(
       (itemId: string, expanded: boolean) => {
@@ -910,12 +931,18 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
     useEffect(() => {
       requestIdleProjectionActivityDetails({
-        active: isActive,
+        active: isActive && !remoteTimelineDisabled,
         autoExpand: autoExpandActivity,
         folds: effectiveProjectionFolds,
         requestDetail: activeRequestActivityDetail,
       });
-    }, [activeRequestActivityDetail, autoExpandActivity, effectiveProjectionFolds, isActive]);
+    }, [
+      activeRequestActivityDetail,
+      autoExpandActivity,
+      effectiveProjectionFolds,
+      isActive,
+      remoteTimelineDisabled,
+    ]);
 
     const renderUserMessageItem = useCallback(
       (layoutItem: StreamLayoutItem, item: Extract<StreamItem, { kind: "user_message" }>) => {
@@ -1224,8 +1251,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const bottomTurnFooterHost = streamLayout.auxiliaryTurnFooter;
     const showRunningTurnFooter = isTurnActive;
     const turnChanges = useTurnChanges({
-      active: isActive,
-      enabled: Boolean(onOpenWorkingDiffFile),
+      active: isActive && !remoteTimelineDisabled,
+      enabled: !remoteTimelineDisabled && Boolean(onOpenWorkingDiffFile),
       serverId,
       workspaceRoot: context.cwd,
       host: bottomTurnFooterHost,
@@ -1242,7 +1269,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             layoutItem,
             strategy: streamRenderStrategy,
             supportsTimelineCursor: supportsAgentForkContextCursor,
-            onForkAssistantTurn: readOnly ? undefined : handleForkAssistantTurn,
+            onForkAssistantTurn:
+              readOnly || remoteTimelineDisabled ? undefined : handleForkAssistantTurn,
           });
         }
         const expanded = isActivityFoldExpanded(fold, activityFoldOverrides, autoExpandActivity);
@@ -1260,7 +1288,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                   layoutItem: memberLayoutItem,
                   strategy: streamRenderStrategy,
                   supportsTimelineCursor: supportsAgentForkContextCursor,
-                  onForkAssistantTurn: readOnly ? undefined : handleForkAssistantTurn,
+                  onForkAssistantTurn:
+                    readOnly || remoteTimelineDisabled ? undefined : handleForkAssistantTurn,
                 })}
               </React.Fragment>
             ))
@@ -1281,7 +1310,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           layoutItem,
           strategy: streamRenderStrategy,
           supportsTimelineCursor: supportsAgentForkContextCursor,
-          onForkAssistantTurn: readOnly ? undefined : handleForkAssistantTurn,
+          onForkAssistantTurn:
+            readOnly || remoteTimelineDisabled ? undefined : handleForkAssistantTurn,
         });
       },
       [
@@ -1289,6 +1319,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         autoExpandActivity,
         handleForkAssistantTurn,
         readOnly,
+        remoteTimelineDisabled,
         renderStreamItemContent,
         streamRenderStrategy,
         supportsAgentForkContextCursor,
@@ -1320,8 +1351,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             host={bottomTurnFooterHost}
             strategy={streamRenderStrategy}
             supportsTimelineCursor={supportsAgentForkContextCursor}
-            onForkAssistantTurn={readOnly ? undefined : handleForkAssistantTurn}
-            onForkInFlightTurn={readOnly ? undefined : handleForkInFlightTurn}
+            onForkAssistantTurn={
+              readOnly || remoteTimelineDisabled ? undefined : handleForkAssistantTurn
+            }
+            onForkInFlightTurn={
+              readOnly || remoteTimelineDisabled ? undefined : handleForkInFlightTurn
+            }
             turnChanges={turnChanges}
             onTurnChangeFilePress={onOpenWorkingDiffFile}
           />
@@ -1330,6 +1365,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         handleForkAssistantTurn,
         handleForkInFlightTurn,
         readOnly,
+        remoteTimelineDisabled,
         showRunningTurnFooter,
         context.providerRetryMessage,
         isTurnActive,
@@ -1499,7 +1535,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               isAuthoritativeHistoryReady,
               onNearBottomChange: setIsNearBottom,
               onReadingPositionChange: chatOutline.reportReadingPosition,
-              onNearHistoryStart: loadOlder,
+              onNearHistoryStart: loadOlderOnHistoryStart,
               isLoadingOlderHistory: isLoadingOlder,
               hasOlderHistory: hasOlder,
               olderHistoryProgressKey: progressKey,
@@ -1658,6 +1694,9 @@ function agentStreamViewPropsEqual(
     reasons.push("onOpenWorkingDiffFile");
   }
   if (left.readOnly !== right.readOnly) reasons.push("readOnly");
+  if (left.remoteTimelineDisabled !== right.remoteTimelineDisabled) {
+    reasons.push("remoteTimelineDisabled");
+  }
   if (left.editLastUserMessageController !== right.editLastUserMessageController) {
     reasons.push("editLastUserMessageController");
   }

@@ -236,6 +236,10 @@ export const ja: TranslationResources = {
       reconnecting: "再接続中",
       timelineSyncFailed: "エージェントの履歴を更新できませんでした。",
       timelineSyncRetrying: "再試行しています…",
+      cachedHistoryMayBeOutdated: "ローカルにキャッシュされた履歴は最新でない可能性があります。",
+      startAgent: "Agent を開始",
+      startingAgent: "Agent を開始中...",
+      startAgentFailed: "Agent を開始できませんでした: {{message}}",
       archivingTitle: "エージェントをアーカイブ中...",
       archivingSubtitle: "このエージェントをアーカイブするまでお待ちください。",
     },
@@ -2131,6 +2135,12 @@ export const ja: TranslationResources = {
         label: "起動時に前回のワークスペースを開く",
         description: "エージェントがCLI経由でオーケストレーションできるようにします。",
         accessibilityLabel: "起動時に前回のワークスペースを開く",
+      },
+      lazyLoadAgents: {
+        label: "Agent を遅延読み込み",
+        description:
+          "閉じた Agent は、開始するかメッセージを送信するまでローカル履歴のみ表示します",
+        accessibilityLabel: "Agent を遅延読み込み",
       },
       terminalScrollback: {
         label: "ターミナルスクロールバック",

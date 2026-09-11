@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { TFunction } from "i18next";
-import { SquarePen } from "lucide-react-native";
+import { Play, SquarePen } from "lucide-react-native";
 import React, {
   memo,
   type ReactNode,
@@ -64,6 +64,7 @@ import {
 } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
 import { useAgentAttentionClear } from "@/hooks/use-agent-attention-clear";
+import { useAgentInitialization } from "@/hooks/use-agent-initialization";
 import { useAgentInputDraft, type AgentInputDraft } from "@/composer/draft/input-draft";
 import {
   type AgentScreenAgent,
@@ -95,6 +96,7 @@ import {
   useHosts,
 } from "@/runtime/host-runtime";
 import { planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
+import { shouldDeferAgentTimelineSync } from "@/timeline/lazy-agent-loading";
 import {
   buildProjectionDisplay,
   getActivityDetailPageValidationError,
@@ -118,7 +120,7 @@ import {
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { openWorkspaceChanges } from "@/workspace-tabs/open-supporting-view";
-import { useSettings } from "@/hooks/use-settings";
+import { useLazyAgentTimelineSyncGate, useSettings } from "@/hooks/use-settings";
 import type { Theme } from "@/styles/theme";
 import type { PendingPermission } from "@/types/shared";
 import { upsertAgentReplica } from "@/utils/agent-directory-sync";
@@ -318,12 +320,9 @@ function resolveWorkspaceAgentTabLabel(title: string | null | undefined): string
   return normalized;
 }
 
-function shouldStoreFetchedAgentInActiveDirectory(agent: Agent): boolean {
-  return !agent.archivedAt && Boolean(agent.projectPlacement);
-}
-
 type FetchAgentResult = Awaited<ReturnType<DaemonClient["fetchAgent"]>>;
 
+/** Stores a fetchAgent result without treating its persisted lifecycle as directory authority */
 function storeFetchedAgentDetail(input: {
   serverId: string;
   result: NonNullable<FetchAgentResult>;
@@ -337,20 +336,12 @@ function storeFetchedAgentDetail(input: {
     },
   });
   const store = useSessionStore.getState();
-
-  if (shouldStoreFetchedAgentInActiveDirectory(hydrated)) {
-    store.setAgents(input.serverId, (previous) => {
-      const next = new Map(previous);
-      next.set(hydrated.id, hydrated);
-      return next;
-    });
-  } else {
-    store.setAgentDetails(input.serverId, (previous) => {
-      const next = new Map(previous);
-      next.set(hydrated.id, hydrated);
-      return next;
-    });
-  }
+  // Detail reads preserve persisted metadata but do not establish runtime lifecycle state
+  store.setAgentDetails(input.serverId, (previous) => {
+    const next = new Map(previous);
+    next.set(hydrated.id, hydrated);
+    return next;
+  });
 
   store.setPendingPermissions(input.serverId, (previous) => {
     const next = new Map(previous);
@@ -842,6 +833,31 @@ function ChatAgentContent({
   const agentState = useSessionStore(
     useShallow((state) => selectChatAgentState(state, serverId, agentId)),
   );
+  const lazyLoadAgents = useLazyAgentTimelineSyncGate();
+  const hasHydratedAgents = useSessionStore(
+    (state) => state.sessions[serverId]?.hasHydratedAgents ?? false,
+  );
+  const hasLazyAgentStartIntent = useSessionStore((state) =>
+    agentId
+      ? (state.sessions[serverId]?.lazyAgentStartIntentAgentIds.has(agentId) ?? false)
+      : false,
+  );
+  const hasLazyAgentTimelineDeferral = useSessionStore((state) =>
+    agentId ? (state.sessions[serverId]?.lazyAgentDeferredAgentIds.has(agentId) ?? false) : false,
+  );
+  const setLazyAgentStartIntent = useSessionStore((state) => state.setLazyAgentStartIntent);
+  const isLazyTimelineDeferred = shouldDeferAgentTimelineSync({
+    lazyLoadAgents,
+    hasAuthoritativeAgentDirectory: hasHydratedAgents,
+    agent: agentState.status
+      ? { status: agentState.status, archivedAt: agentState.archivedAt }
+      : null,
+    hasLocalStartIntent: hasLazyAgentStartIntent,
+    hasPassiveDeferral: hasLazyAgentTimelineDeferral,
+  });
+  const { ensureAgentIsInitialized } = useAgentInitialization({ serverId, client });
+  const [isLazyAgentStarting, setIsLazyAgentStarting] = useState(false);
+  const [lazyAgentStartError, setLazyAgentStartError] = useState<string | null>(null);
   const projectPlacement = useStoreWithEqualityFn(
     useSessionStore,
     (state) => {
@@ -1025,12 +1041,18 @@ function ChatAgentContent({
     }
     return agentHistorySyncGeneration < historySyncGeneration;
   }, [agentHistorySyncGeneration, agentId, historySyncGeneration]);
+  const effectiveNeedsAuthoritativeSync = isLazyTimelineDeferred ? false : needsAuthoritativeSync;
+  const effectiveIsHistorySyncing = isLazyTimelineDeferred ? false : isHistorySyncing;
+  const effectiveVisibilityCatchUpStatus = isLazyTimelineDeferred
+    ? ("ready" as const)
+    : visibilityCatchUpStatus;
+  const effectiveVisibilityCatchUpError = isLazyTimelineDeferred ? null : visibilityCatchUpError;
 
   useEffect(() => {
     if (
       !agentId ||
       !hasProjectionTimeline ||
-      !needsAuthoritativeSync ||
+      !effectiveNeedsAuthoritativeSync ||
       !isPaneVisible ||
       !isConnected
     ) {
@@ -1042,7 +1064,7 @@ function ChatAgentContent({
     hasProjectionTimeline,
     isConnected,
     isPaneVisible,
-    needsAuthoritativeSync,
+    effectiveNeedsAuthoritativeSync,
     projectionTimelineIdentity?.epoch,
     projectionTimelineIdentity?.timelineRevision,
     viewedTimelineSync,
@@ -1076,10 +1098,10 @@ function ChatAgentContent({
       missingAgentState,
       isConnected,
       isArchivingCurrentAgent,
-      isHistorySyncing,
-      needsAuthoritativeSync,
-      visibilityCatchUpStatus,
-      visibilityCatchUpError,
+      isHistorySyncing: effectiveIsHistorySyncing,
+      needsAuthoritativeSync: effectiveNeedsAuthoritativeSync,
+      visibilityCatchUpStatus: effectiveVisibilityCatchUpStatus,
+      visibilityCatchUpError: effectiveVisibilityCatchUpError,
       continuity,
       hasHydratedHistoryBefore,
     },
@@ -1118,6 +1140,43 @@ function ChatAgentContent({
     streamViewRef.current?.scrollToBottom("message-sent");
   }, [agentId]);
 
+  // A direct send is an explicit user choice to load this closed Agent
+  const handleBeforeMessageTransport = useCallback(() => {
+    if (!agentId || !isLazyTimelineDeferred) {
+      return;
+    }
+    setLazyAgentStartError(null);
+    setLazyAgentStartIntent(serverId, agentId, true);
+    return () => setLazyAgentStartIntent(serverId, agentId, false);
+  }, [agentId, isLazyTimelineDeferred, serverId, setLazyAgentStartIntent]);
+
+  // Manual startup retains the local cache until the canonical tail request succeeds
+  const handleLazyAgentStart = useCallback(() => {
+    if (!agentId || !isLazyTimelineDeferred || isLazyAgentStarting) {
+      return;
+    }
+    setLazyAgentStartError(null);
+    setIsLazyAgentStarting(true);
+    void ensureAgentIsInitialized(agentId)
+      .then(() => {
+        setLazyAgentStartIntent(serverId, agentId, true);
+        return undefined;
+      })
+      .catch((error) => {
+        setLazyAgentStartError(toErrorMessage(error));
+      })
+      .finally(() => {
+        setIsLazyAgentStarting(false);
+      });
+  }, [
+    agentId,
+    ensureAgentIsInitialized,
+    isLazyAgentStarting,
+    isLazyTimelineDeferred,
+    serverId,
+    setLazyAgentStartIntent,
+  ]);
+
   const handleRewindComplete = useCallback(() => {
     streamViewRef.current?.scrollToBottom("rewind");
   }, []);
@@ -1132,6 +1191,11 @@ function ChatAgentContent({
     if (!agentId || !viewedTimelineSync) return;
     viewedTimelineSync.retryVisibleAgentTimeline(agentId);
   }, [agentId, viewedTimelineSync]);
+
+  useEffect(() => {
+    setIsLazyAgentStarting(false);
+    setLazyAgentStartError(null);
+  }, [agentId, serverId]);
 
   useEffect(() => {
     initAttemptTokenRef.current += 1;
@@ -1273,10 +1337,15 @@ function ChatAgentContent({
       streamViewRef={streamViewRef}
       handleComposerHeightChange={handleComposerHeightChange}
       handleMessageSent={handleMessageSent}
+      onBeforeMessageTransport={handleBeforeMessageTransport}
       handleRewindComplete={handleRewindComplete}
       showHistorySyncOverlay={showHistorySyncOverlay}
       showHistorySyncError={showHistorySyncError}
       isRetryingHistorySync={isRetryingHistorySync}
+      isLazyTimelineDeferred={isLazyTimelineDeferred}
+      isLazyAgentStarting={isLazyAgentStarting}
+      lazyAgentStartError={lazyAgentStartError}
+      onLazyAgentStart={handleLazyAgentStart}
       cwd={agentCwd}
       retryTimelineSync={retryTimelineSync}
       onAttentionInputFocus={attentionController.clearOnInputFocus}
@@ -1302,10 +1371,15 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   streamViewRef,
   handleComposerHeightChange,
   handleMessageSent,
+  onBeforeMessageTransport,
   handleRewindComplete,
   showHistorySyncOverlay,
   showHistorySyncError,
   isRetryingHistorySync,
+  isLazyTimelineDeferred,
+  isLazyAgentStarting,
+  lazyAgentStartError,
+  onLazyAgentStart,
   retryTimelineSync,
   cwd,
   onAttentionInputFocus,
@@ -1327,10 +1401,15 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   streamViewRef: React.RefObject<AgentStreamViewHandle | null>;
   handleComposerHeightChange: (height: number) => void;
   handleMessageSent: () => void;
+  onBeforeMessageTransport: () => (() => void) | void;
   handleRewindComplete: () => void;
   showHistorySyncOverlay: boolean;
   showHistorySyncError: boolean;
   isRetryingHistorySync: boolean;
+  isLazyTimelineDeferred: boolean;
+  isLazyAgentStarting: boolean;
+  lazyAgentStartError: string | null;
+  onLazyAgentStart: () => void;
   retryTimelineSync: () => void;
   cwd: string;
   onAttentionInputFocus: () => void;
@@ -1364,7 +1443,8 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
       goal: trackedAgent?.goal,
     });
   });
-  const hasVisibleComposerTracks = hasVisibleAgentTracks || hasVisibleGoalTrack;
+  const hasVisibleComposerTracks =
+    !isLazyTimelineDeferred && (hasVisibleAgentTracks || hasVisibleGoalTrack);
   const rawAgentInputDraft = useAgentInputDraft({
     draftKey: buildDraftStoreKey({
       serverId,
@@ -1513,6 +1593,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
         onAttentionPromptSend={onAttentionPromptSend}
         onComposerHeightChange={handleComposerHeightChange}
         onMessageSent={handleMessageSent}
+        onBeforeMessageTransport={onBeforeMessageTransport}
       />
     </RenderProfile>
   );
@@ -1533,9 +1614,10 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
           editLastUserMessageController={editLastUserMessageController}
           onEditLastUserMessageEffect={handleEditLastUserMessageEffect}
           onOpenWorkspaceFile={onOpenWorkspaceFile}
+          remoteTimelineDisabled={isLazyTimelineDeferred}
         />
       </RenderProfile>
-      {hasActiveComposer ? (
+      {hasActiveComposer && !isLazyTimelineDeferred ? (
         <>
           <AgentGoalTrack serverId={serverId} agentId={agentId} />
           <AgentTracks
@@ -1582,6 +1664,35 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
                     {isRetryingHistorySync
                       ? t("agentPanel.states.timelineSyncRetrying")
                       : t("common.actions.retry")}
+                  </Button>
+                </View>
+              </View>
+            </View>
+          ) : null}
+
+          {isLazyTimelineDeferred ? (
+            <View style={styles.timelineSyncCalloutRail}>
+              <View style={styles.timelineSyncCalloutContent}>
+                <View style={styles.lazyTimelineCallout} testID="agent-lazy-timeline-callout">
+                  <Text style={styles.timelineSyncCalloutText}>
+                    {t("agentPanel.states.cachedHistoryMayBeOutdated")}
+                  </Text>
+                  {lazyAgentStartError ? (
+                    <Text style={styles.lazyTimelineError} testID="agent-lazy-start-error">
+                      {t("agentPanel.states.startAgentFailed", { message: lazyAgentStartError })}
+                    </Text>
+                  ) : null}
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    leftIcon={Play}
+                    onPress={onLazyAgentStart}
+                    loading={isLazyAgentStarting}
+                    testID="agent-lazy-start"
+                  >
+                    {isLazyAgentStarting
+                      ? t("agentPanel.states.startingAgent")
+                      : t("agentPanel.states.startAgent")}
                   </Button>
                 </View>
               </View>
@@ -1642,6 +1753,7 @@ const AgentStreamSection = memo(function AgentStreamSection({
   editLastUserMessageController,
   onEditLastUserMessageEffect,
   onOpenWorkspaceFile,
+  remoteTimelineDisabled,
 }: {
   streamViewRef: React.RefObject<AgentStreamViewHandle | null>;
   serverId: string;
@@ -1656,6 +1768,7 @@ const AgentStreamSection = memo(function AgentStreamSection({
   editLastUserMessageController: LastUserMessageEditController;
   onEditLastUserMessageEffect: (effect: LastUserMessageEditEffect) => Promise<void> | void;
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
+  remoteTimelineDisabled: boolean;
 }) {
   const { t } = useTranslation();
   const { openTab } = usePaneContext();
@@ -1675,7 +1788,9 @@ const AgentStreamSection = memo(function AgentStreamSection({
   const isCompactFormFactor = useIsCompactFormFactor();
   const hasWorkspaceDiffStat = useWorkspaceHasDiffStat(serverId, workspaceId);
   const hasVisibleBottomOverlayTracks =
-    hasActiveComposer && (hasVisibleComposerTrackRail || hasWorkspaceDiffStat);
+    !remoteTimelineDisabled &&
+    hasActiveComposer &&
+    (hasVisibleComposerTrackRail || hasWorkspaceDiffStat);
   const bottomOverlayTailClearance = hasVisibleBottomOverlayTracks
     ? resolveComposerTrackTailClearance(isCompactFormFactor)
     : 0;
@@ -1706,7 +1821,7 @@ const AgentStreamSection = memo(function AgentStreamSection({
   );
   const requestProjectionActivityDetail = useCallback(
     (activityId: string) => {
-      if (!isActive || !agentId) return;
+      if (!isActive || !agentId || remoteTimelineDisabled) return;
       const request = beginProjectionDetail(
         serverId,
         agentId,
@@ -1773,12 +1888,13 @@ const AgentStreamSection = memo(function AgentStreamSection({
       beginProjectionDetail,
       failProjectionDetail,
       isActive,
+      remoteTimelineDisabled,
       serverId,
       t,
     ],
   );
   const projectionHistoryPagination = useMemo(() => {
-    if (!isActive || !projectionLane) return undefined;
+    if (!isActive || !projectionLane || remoteTimelineDisabled) return undefined;
     return {
       hasOlder: projectionLane.hasOlderTurns && !projectionLane.canonicalReplacementPending,
       isLoadingOlder: projectionLane.canonicalReplacementPending,
@@ -1797,6 +1913,7 @@ const AgentStreamSection = memo(function AgentStreamSection({
     isActive,
     markProjectionCanonicalReplacementPending,
     projectionLane,
+    remoteTimelineDisabled,
     serverId,
     viewedTimelineSync,
   ]);
@@ -1828,20 +1945,26 @@ const AgentStreamSection = memo(function AgentStreamSection({
       context={agent}
       streamItems={streamItems}
       projectionDisplay={projectionDisplay}
-      onRequestActivityDetail={isActive ? requestProjectionActivityDetail : undefined}
-      pendingPermissions={pendingPermissions}
+      onRequestActivityDetail={
+        isActive && !remoteTimelineDisabled ? requestProjectionActivityDetail : undefined
+      }
+      pendingPermissions={remoteTimelineDisabled ? EMPTY_PENDING_PERMISSIONS : pendingPermissions}
       routeBottomAnchorRequest={routeBottomAnchorRequest}
       isAuthoritativeHistoryReady={hasAppliedAuthoritativeHistory}
       bottomOverlayTailClearance={bottomOverlayTailClearance}
       bottomOverlayControlClearance={bottomOverlayControlClearance}
       toast={toast}
-      editLastUserMessageController={editLastUserMessageController}
-      onEditLastUserMessageEffect={onEditLastUserMessageEffect}
+      readOnly={remoteTimelineDisabled}
+      remoteTimelineDisabled={remoteTimelineDisabled}
+      editLastUserMessageController={
+        remoteTimelineDisabled ? undefined : editLastUserMessageController
+      }
+      onEditLastUserMessageEffect={remoteTimelineDisabled ? undefined : onEditLastUserMessageEffect}
       pendingMessageSubmissions={pendingMessageSubmissions}
       turnPresentation={turnPresentation}
       historyPagination={projectionHistoryPagination}
       onOpenWorkspaceFile={onOpenWorkspaceFile}
-      onOpenWorkingDiffFile={handleOpenWorkingDiffFile}
+      onOpenWorkingDiffFile={remoteTimelineDisabled ? undefined : handleOpenWorkingDiffFile}
     />
   );
 });
@@ -1859,6 +1982,7 @@ const AgentComposerSection = memo(function AgentComposerSection({
   onAttentionPromptSend,
   onComposerHeightChange,
   onMessageSent,
+  onBeforeMessageTransport,
 }: {
   agentId?: string;
   serverId: string;
@@ -1872,6 +1996,7 @@ const AgentComposerSection = memo(function AgentComposerSection({
   onAttentionPromptSend: () => void;
   onComposerHeightChange: (height: number) => void;
   onMessageSent: () => void;
+  onBeforeMessageTransport: () => (() => void) | void;
 }) {
   if (!agentId) {
     return null;
@@ -1895,6 +2020,7 @@ const AgentComposerSection = memo(function AgentComposerSection({
       onAttentionPromptSend={onAttentionPromptSend}
       onComposerHeightChange={onComposerHeightChange}
       onMessageSent={onMessageSent}
+      onBeforeMessageTransport={onBeforeMessageTransport}
     />
   );
 });
@@ -1910,6 +2036,7 @@ function ActiveAgentComposer({
   onAttentionPromptSend,
   onComposerHeightChange,
   onMessageSent,
+  onBeforeMessageTransport,
 }: {
   agentId: string;
   serverId: string;
@@ -1921,6 +2048,7 @@ function ActiveAgentComposer({
   onAttentionPromptSend: () => void;
   onComposerHeightChange: (height: number) => void;
   onMessageSent: () => void;
+  onBeforeMessageTransport: () => (() => void) | void;
 }) {
   const insets = useSafeAreaInsets();
   const isCompactFormFactor = useIsCompactFormFactor();
@@ -2027,6 +2155,7 @@ function ActiveAgentComposer({
         onAttentionPromptSend={onAttentionPromptSend}
         onComposerHeightChange={onComposerHeightChange}
         onMessageSent={onMessageSent}
+        onBeforeMessageTransport={onBeforeMessageTransport}
         onClientSlashCommand={handleClientSlashCommand}
         isCompactLayout={isCompactComposerLayout}
         enablePromptPresets
@@ -2152,9 +2281,25 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[2],
     paddingHorizontal: theme.spacing[4],
   },
+  lazyTimelineCallout: {
+    alignItems: "center",
+    gap: theme.spacing[3],
+    backgroundColor: theme.colors.surface1,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.borderAccent,
+    borderRadius: theme.borderRadius.lg,
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[4],
+  },
   timelineSyncCalloutText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
+    textAlign: "center",
+  },
+  lazyTimelineError: {
+    color: theme.colors.statusDanger,
+    fontSize: theme.fontSize.sm,
+    textAlign: "center",
   },
   historySyncOverlay: {
     position: "absolute",

@@ -197,6 +197,27 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result.chatOutlineEnabled).toBe(false);
   });
 
+  it("defaults lazy agent loading to disabled and persists an explicit enable", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ theme: "dark" }),
+      }),
+    });
+
+    expect((await loadAppSettingsFromStorage(deps)).lazyLoadAgents).toBe(false);
+
+    await saveAppSettings({
+      queryClient: new QueryClient(),
+      updates: { lazyLoadAgents: true },
+      deps,
+    });
+
+    expect((await loadAppSettingsFromStorage(deps)).lazyLoadAgents).toBe(true);
+    expect(JSON.parse(deps.storage.entries.get(APP_SETTINGS_KEY) ?? "{}")).toMatchObject({
+      lazyLoadAgents: true,
+    });
+  });
+
   it("collapses legacy diff destinations into the former Explorer choice", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({

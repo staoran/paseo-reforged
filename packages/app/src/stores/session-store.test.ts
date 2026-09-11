@@ -184,6 +184,129 @@ describe("agent task state", () => {
   });
 });
 
+describe("lazy agent start intents", () => {
+  it("keeps a user start intent in the current session only", () => {
+    initializeTestSession();
+    const store = useSessionStore.getState();
+
+    store.setLazyAgentStartIntent("test-server", "agent-1", true);
+
+    expect(
+      useSessionStore
+        .getState()
+        .sessions["test-server"]?.lazyAgentStartIntentAgentIds.has("agent-1"),
+    ).toBe(true);
+
+    store.clearSession("test-server");
+    store.initializeSession("test-server", null as unknown as DaemonClient);
+
+    expect(
+      useSessionStore
+        .getState()
+        .sessions["test-server"]?.lazyAgentStartIntentAgentIds.has("agent-1"),
+    ).toBe(false);
+  });
+
+  it("retains a start intent when an authoritative agent update becomes active", () => {
+    initializeTestSession();
+    const store = useSessionStore.getState();
+
+    store.setLazyAgentStartIntent("test-server", "agent-1", true);
+    store.setAgents(
+      "test-server",
+      new Map([
+        ["agent-1", createAgent({ id: "agent-1", workspaceId: "workspace-1", status: "idle" })],
+      ]),
+    );
+
+    expect(
+      useSessionStore
+        .getState()
+        .sessions["test-server"]?.lazyAgentStartIntentAgentIds.has("agent-1"),
+    ).toBe(true);
+  });
+
+  it("records a start intent after an active agent update arrives first", () => {
+    initializeTestSession();
+    const store = useSessionStore.getState();
+    store.setAgents(
+      "test-server",
+      new Map([
+        ["agent-1", createAgent({ id: "agent-1", workspaceId: "workspace-1", status: "idle" })],
+      ]),
+    );
+
+    store.setLazyAgentStartIntent("test-server", "agent-1", true);
+
+    expect(
+      useSessionStore
+        .getState()
+        .sessions["test-server"]?.lazyAgentStartIntentAgentIds.has("agent-1"),
+    ).toBe(true);
+  });
+
+  it("retains a start intent while the authoritative agent remains closed", () => {
+    initializeTestSession();
+    const store = useSessionStore.getState();
+
+    store.setLazyAgentStartIntent("test-server", "agent-1", true);
+    store.setAgentDetails(
+      "test-server",
+      new Map([
+        ["agent-1", createAgent({ id: "agent-1", workspaceId: "workspace-1", status: "closed" })],
+      ]),
+    );
+
+    expect(
+      useSessionStore
+        .getState()
+        .sessions["test-server"]?.lazyAgentStartIntentAgentIds.has("agent-1"),
+    ).toBe(true);
+  });
+
+  it("clears a start intent when a later directory update returns the agent to closed", () => {
+    initializeTestSession();
+    const store = useSessionStore.getState();
+
+    store.setLazyAgentStartIntent("test-server", "agent-1", true);
+    store.setAgents(
+      "test-server",
+      new Map([
+        ["agent-1", createAgent({ id: "agent-1", workspaceId: "workspace-1", status: "idle" })],
+      ]),
+    );
+    store.setAgents(
+      "test-server",
+      new Map([
+        ["agent-1", createAgent({ id: "agent-1", workspaceId: "workspace-1", status: "closed" })],
+      ]),
+    );
+
+    expect(
+      useSessionStore
+        .getState()
+        .sessions["test-server"]?.lazyAgentStartIntentAgentIds.has("agent-1"),
+    ).toBe(false);
+  });
+
+  it("keeps passive timeline deferrals local to the current session", () => {
+    initializeTestSession();
+    const store = useSessionStore.getState();
+
+    store.setLazyAgentTimelineDeferred("test-server", "agent-1", true);
+
+    expect(
+      useSessionStore.getState().sessions["test-server"]?.lazyAgentDeferredAgentIds.has("agent-1"),
+    ).toBe(true);
+
+    store.clearLazyAgentTimelineDeferrals("test-server");
+
+    expect(
+      useSessionStore.getState().sessions["test-server"]?.lazyAgentDeferredAgentIds.has("agent-1"),
+    ).toBe(false);
+  });
+});
+
 describe("agent timeline state", () => {
   it("commits canonical items, range, and older availability as one synced state", () => {
     initializeTestSession();

@@ -236,6 +236,10 @@ export const zhCN: TranslationResources = {
       reconnecting: "正在重连",
       timelineSyncFailed: "无法刷新代理历史记录。",
       timelineSyncRetrying: "正在重试…",
+      cachedHistoryMayBeOutdated: "本地缓存历史可能不是最新消息。",
+      startAgent: "启动 Agent",
+      startingAgent: "正在启动 Agent...",
+      startAgentFailed: "无法启动 Agent：{{message}}",
       archivingTitle: "正在归档 Agent...",
       archivingSubtitle: "请稍候，我们正在归档这个 Agent。",
     },
@@ -2087,6 +2091,11 @@ export const zhCN: TranslationResources = {
         label: "启动时打开上次工作区",
         description: "移动端或桌面端启动时自动重新打开上次使用的工作区",
         accessibilityLabel: "启动时打开上次工作区",
+      },
+      lazyLoadAgents: {
+        label: "懒加载 Agent",
+        description: "已关闭的 Agent 仅显示本地历史，直到你启动它或发送消息",
+        accessibilityLabel: "懒加载 Agent",
       },
       terminalScrollback: {
         label: "终端回滚",

@@ -236,6 +236,10 @@ export const ko: TranslationResources = {
       reconnecting: "다시 연결하는 중",
       timelineSyncFailed: "에이전트 기록을 새로고침할 수 없습니다.",
       timelineSyncRetrying: "재시도 중…",
+      cachedHistoryMayBeOutdated: "로컬에 캐시된 기록이 최신이 아닐 수 있습니다.",
+      startAgent: "에이전트 시작",
+      startingAgent: "에이전트 시작 중...",
+      startAgentFailed: "에이전트를 시작할 수 없습니다: {{message}}",
       archivingTitle: "에이전트 보관 중...",
       archivingSubtitle: "이 에이전트를 보관하는 동안 잠시 기다려 주세요.",
     },
@@ -2124,6 +2128,11 @@ export const ko: TranslationResources = {
         label: "시작할 때 마지막 작업 공간 열기",
         description: "CLI를 통해 에이전트가 오케스트레이션하도록 가르칩니다",
         accessibilityLabel: "시작할 때 마지막 작업 공간 열기",
+      },
+      lazyLoadAgents: {
+        label: "에이전트 지연 로드",
+        description: "닫힌 에이전트는 시작하거나 메시지를 보낼 때까지 로컬 기록만 표시합니다",
+        accessibilityLabel: "에이전트 지연 로드",
       },
       terminalScrollback: {
         label: "터미널 스크롤백",

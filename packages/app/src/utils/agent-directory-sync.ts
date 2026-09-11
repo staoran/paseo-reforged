@@ -102,6 +102,8 @@ export function replaceAgentPendingPermissions(serverId: string, agent: Agent): 
 export function removeAgentDirectoryReplica(serverId: string, agentId: string): void {
   const store = useSessionStore.getState();
   clearArchiveAgentPending({ queryClient, serverId, agentId });
+  store.setLazyAgentStartIntent(serverId, agentId, false);
+  store.setLazyAgentTimelineDeferred(serverId, agentId, false);
   const removeKey = <T>(current: Map<string, T>): Map<string, T> => {
     if (!current.has(agentId)) return current;
     const next = new Map(current);
