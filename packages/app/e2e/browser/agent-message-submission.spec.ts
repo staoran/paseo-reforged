@@ -352,12 +352,18 @@ async function replaySteeredSleepTurnInBrowser(
     prompt: `Replay a ${shape}-shaped foreground shell tool call while the user steers this turn.`,
   });
   try {
-    await expect(page.getByTestId("tool-call-badge").last()).toBeVisible({ timeout: 30_000 });
+    const toolCallGroup = page.getByTestId("tool-call-group").last();
+    await expect(toolCallGroup).toBeVisible({ timeout: 30_000 });
+    await expect(toolCallGroup).toContainText("Ran 1 command");
+    await toolCallGroup.getByRole("button").click();
+    await expect(
+      page.getByTestId("tool-call-badge").filter({ hasText: "Shell" }).last(),
+    ).toBeVisible();
     await expectComposerVisible(page);
     await submitMessage(page, "hello");
 
     await expect(page.getByText("hello", { exact: true })).toHaveCount(1);
-    await expect(page.getByRole("button", { name: /^Worked for/ })).toHaveCount(0);
+    await expect(page.getByText(/^Worked for/)).toHaveCount(0);
     await expectInFlightForkAvailable(page);
 
     await gate.waitForHeldServerMessage();
@@ -365,7 +371,8 @@ async function replaySteeredSleepTurnInBrowser(
     await agent.client.waitForFinish(agent.agentId, 30_000);
 
     await expect(page.getByText("hello", { exact: true })).toHaveCount(1);
-    await expect(page.getByRole("button", { name: /^Worked for/ })).toHaveCount(1);
+    await expect(page.getByText(/^Worked for/)).toHaveCount(1);
+    await expect(page.getByTestId("assistant-turn-completed-at")).toHaveCount(1);
     await expect(page.getByRole("button", { name: "Fork chat" }).last()).toBeVisible();
   } finally {
     gate.restore();

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DaemonClientConfig } from "@getpaseo/client/internal/daemon-client";
+import { connectToDaemon } from "./test-daemon-connection";
 import type { DaemonConnectionDependencies, DaemonProbeClient } from "./test-daemon-connection";
 
 class FakeDaemonClient implements DaemonProbeClient {
@@ -44,6 +45,7 @@ class FakeDaemonProbe {
     },
     resolveAppVersion: () => null,
     createDesktopTransportFactory: () => null,
+    createDesktopWebSocketTransportFactory: () => null,
     buildDesktopTransportUrl: (target) => {
       if (target.transportType === "ssh") {
         return `paseo+desktop://ssh?host=${encodeURIComponent(target.host)}`;
@@ -76,7 +78,6 @@ describe("test-daemon-connection connectToDaemon", () => {
   });
 
   it("reuses the app clientId for direct connections", async () => {
-    const { connectToDaemon } = await import("./test-daemon-connection");
     const first = await connectToDaemon(
       {
         id: "direct:lan:6767",
@@ -106,13 +107,12 @@ describe("test-daemon-connection connectToDaemon", () => {
   });
 
   it("keeps headerless direct TCP probes on the app WebSocket without consulting the desktop bridge", async () => {
-    const { connectToDaemon } = await import("./test-daemon-connection");
-    const createWebSocketTransportFactory = vi.fn(() => {
+    const createDesktopWebSocketTransportFactory = vi.fn(() => {
       throw new Error("Direct TCP without custom headers must not use the desktop bridge");
     });
     const deps = {
       ...probe.deps,
-      createWebSocketTransportFactory,
+      createDesktopWebSocketTransportFactory,
     };
 
     const result = await connectToDaemon(
@@ -128,11 +128,10 @@ describe("test-daemon-connection connectToDaemon", () => {
 
     expect(probe.createdConfigs()[0]?.transportFactory).toBeUndefined();
     expect(probe.createdConfigs()[0]?.webSocketFactory).toEqual(expect.any(Function));
-    expect(createWebSocketTransportFactory).not.toHaveBeenCalled();
+    expect(createDesktopWebSocketTransportFactory).not.toHaveBeenCalled();
   });
 
   it("encodes the local socket target into the client config", async () => {
-    const { connectToDaemon } = await import("./test-daemon-connection");
     const result = await connectToDaemon(
       {
         id: "socket:/tmp/paseo.sock",
@@ -148,7 +147,6 @@ describe("test-daemon-connection connectToDaemon", () => {
   });
 
   it("uses the desktop transport for Remote SSH connections", async () => {
-    const { connectToDaemon } = await import("./test-daemon-connection");
     const transportFactory = vi.fn();
     const result = await connectToDaemon(
       {
@@ -173,7 +171,6 @@ describe("test-daemon-connection connectToDaemon", () => {
   });
 
   it("passes direct TCP connection passwords into the client config", async () => {
-    const { connectToDaemon } = await import("./test-daemon-connection");
     const result = await connectToDaemon(
       {
         id: "direct:lan:6767",
@@ -190,7 +187,6 @@ describe("test-daemon-connection connectToDaemon", () => {
   });
 
   it("passes direct TCP custom headers into the initial probe client config", async () => {
-    const { connectToDaemon } = await import("./test-daemon-connection");
     const result = await connectToDaemon(
       {
         id: "direct:lan:6767",
@@ -208,7 +204,6 @@ describe("test-daemon-connection connectToDaemon", () => {
   });
 
   it("uses the Electron WebSocket transport for the initial probe", async () => {
-    const { connectToDaemon } = await import("./test-daemon-connection");
     const transportFactory: NonNullable<DaemonClientConfig["transportFactory"]> = () => {
       throw new Error("The fake probe client should not open the transport.");
     };
@@ -222,7 +217,7 @@ describe("test-daemon-connection connectToDaemon", () => {
       undefined,
       {
         ...probe.deps,
-        createDesktopTransportFactory: () => transportFactory,
+        createDesktopWebSocketTransportFactory: () => transportFactory,
       },
     );
     await result.client.close();
@@ -231,7 +226,6 @@ describe("test-daemon-connection connectToDaemon", () => {
   });
 
   it("passes performance tracing into the connected client", async () => {
-    const { connectToDaemon } = await import("./test-daemon-connection");
     const trace = {
       isEnabled: () => true,
       beginSection: vi.fn(),
@@ -252,7 +246,6 @@ describe("test-daemon-connection connectToDaemon", () => {
   });
 
   it("uses relay TLS from the stored connection", async () => {
-    const { connectToDaemon } = await import("./test-daemon-connection");
     const tlsResult = await connectToDaemon(
       {
         id: "relay:wss:[::1]:443",
@@ -284,7 +277,6 @@ describe("test-daemon-connection connectToDaemon", () => {
   });
 
   it("surfaces auth rejection as an incorrect password", async () => {
-    const { connectToDaemon } = await import("./test-daemon-connection");
     probe.failNextConnection(
       new Error("Transport closed (code 4001)"),
       "Transport closed (code 4001)",
@@ -307,7 +299,6 @@ describe("test-daemon-connection connectToDaemon", () => {
   });
 
   it("keeps generic transport failures generic when a password was supplied", async () => {
-    const { connectToDaemon } = await import("./test-daemon-connection");
     probe.failNextConnection(new Error("Transport error"), "Transport error");
 
     await expect(

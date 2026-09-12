@@ -1491,10 +1491,10 @@ function ComposerContentImpl({
 
   const insertPromptPreset = useCallback(
     (text: string) => {
-      setUserInput(userInput.trim() ? `${userInput}\n${text}` : text);
+      replaceUserInput(userInput.trim() ? `${userInput}\n${text}` : text);
       focusInput();
     },
-    [focusInput, setUserInput, userInput],
+    [focusInput, replaceUserInput, userInput],
   );
 
   const submitMessage = useCallback(

@@ -11,8 +11,10 @@ import {
 import {
   buildDesktopDaemonTransportUrl,
   createDesktopDaemonTransportFactory,
+  createDesktopWebSocketTransportFactory,
 } from "@/desktop/daemon/desktop-daemon-transport";
 import type { DesktopDaemonTransportTarget } from "@/desktop/daemon/desktop-daemon";
+import { createAppWebSocketFactory } from "@/runtime/websocket-factory";
 
 export interface DaemonProbeClient {
   readonly lastError: string | null;
@@ -25,6 +27,7 @@ export interface DaemonConnectionDependencies<TClient extends DaemonProbeClient>
   getClientId(): Promise<string>;
   resolveAppVersion(): string | null;
   createDesktopTransportFactory(): DaemonClientConfig["transportFactory"] | null;
+  createDesktopWebSocketTransportFactory(): DaemonClientConfig["transportFactory"] | null;
   buildDesktopTransportUrl(input: DesktopDaemonTransportTarget): string;
   createClient(config: DaemonClientConfig): TClient;
 }
@@ -33,6 +36,7 @@ const defaultDaemonConnectionDependencies: DaemonConnectionDependencies<DaemonCl
   getClientId: getOrCreateClientId,
   resolveAppVersion,
   createDesktopTransportFactory: createDesktopDaemonTransportFactory,
+  createDesktopWebSocketTransportFactory,
   buildDesktopTransportUrl: buildDesktopDaemonTransportUrl,
   createClient: (config) => new DaemonClient(config),
 };
@@ -57,6 +61,30 @@ function buildRemoteSshClientConfig(input: {
         ? { daemonPort: input.connection.daemonPort }
         : {}),
     }),
+  };
+}
+
+/** Builds a direct TCP probe with the desktop bridge when headers require it */
+function buildDirectTcpClientConfig(input: {
+  connection: Extract<HostConnection, { type: "directTcp" }>;
+  base: Omit<DaemonClientConfig, "url">;
+  webSocketConfig: Pick<DaemonClientConfig, "webSocketFactory">;
+  createDesktopWebSocketTransportFactory: () => DaemonClientConfig["transportFactory"] | null;
+}): DaemonClientConfig {
+  const hasCustomHeaders = Object.keys(input.connection.headers ?? {}).length > 0;
+  const desktopWebSocketTransportFactory = hasCustomHeaders
+    ? input.createDesktopWebSocketTransportFactory()
+    : null;
+  return {
+    ...input.base,
+    ...(desktopWebSocketTransportFactory
+      ? { transportFactory: desktopWebSocketTransportFactory }
+      : input.webSocketConfig),
+    url: buildDaemonWebSocketUrl(input.connection.endpoint, {
+      useTls: input.connection.useTls ?? false,
+    }),
+    ...(input.connection.password ? { password: input.connection.password } : {}),
+    ...(input.connection.headers ? { headers: input.connection.headers } : {}),
   };
 }
 
@@ -125,11 +153,13 @@ export async function buildClientConfig(
     | "getClientId"
     | "resolveAppVersion"
     | "createDesktopTransportFactory"
+    | "createDesktopWebSocketTransportFactory"
     | "buildDesktopTransportUrl"
   > = defaultDaemonConnectionDependencies,
 ): Promise<DaemonClientConfig> {
   const clientId = await deps.getClientId();
   const desktopTransportFactory = deps.createDesktopTransportFactory();
+  const webSocketConfig = { webSocketFactory: createAppWebSocketFactory() };
   const base = {
     clientId,
     clientType: "mobile" as const,
@@ -164,11 +194,12 @@ export async function buildClientConfig(
   }
 
   if (connection.type === "directTcp") {
-    return {
-      ...base,
-      url: buildDaemonWebSocketUrl(connection.endpoint, { useTls: connection.useTls ?? false }),
-      ...(connection.password ? { password: connection.password } : {}),
-    };
+    return buildDirectTcpClientConfig({
+      connection,
+      base,
+      webSocketConfig,
+      createDesktopWebSocketTransportFactory: deps.createDesktopWebSocketTransportFactory,
+    });
   }
 
   if (!serverId) {
@@ -177,6 +208,7 @@ export async function buildClientConfig(
 
   return {
     ...base,
+    ...webSocketConfig,
     url: buildRelayWebSocketUrl({
       endpoint: connection.relayEndpoint,
       useTls: connection.useTls ?? shouldUseTlsForDefaultHostedRelay(connection.relayEndpoint),

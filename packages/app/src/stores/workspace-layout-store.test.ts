@@ -3372,6 +3372,47 @@ describe("workspace-layout-store actions", () => {
     expect(findPaneById(layout.root, "main")?.focusedTabId).toBe("agent_agent-1");
   });
 
+  it("reconcileTabs keeps a route-opened Agent focused after an empty workspace seeds a draft", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    store.reconcileTabs(workspaceKey, {
+      agentsHydrated: true,
+      terminalsHydrated: true,
+      activeAgentIds: [],
+      autoOpenAgentIds: [],
+      knownAgentIds: [],
+      knownTerminalIds: [],
+      standaloneTerminalIds: [],
+      hasActivePendingDraftCreate: false,
+    });
+    const draftTabId = findPaneById(
+      workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey].root,
+      "main",
+    )?.focusedTabId;
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "pending-agent" },
+      intent: "reveal",
+      pin: true,
+    });
+
+    store.reconcileTabs(workspaceKey, {
+      agentsHydrated: true,
+      terminalsHydrated: true,
+      activeAgentIds: [],
+      autoOpenAgentIds: [],
+      knownAgentIds: ["pending-agent"],
+      knownTerminalIds: [],
+      standaloneTerminalIds: [],
+      hasActivePendingDraftCreate: false,
+    });
+
+    const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+    const mainPane = findPaneById(layout.root, "main");
+    expect(mainPane?.tabIds).toEqual([draftTabId, "agent_pending-agent"]);
+    expect(mainPane?.focusedTabId).toBe("agent_pending-agent");
+  });
+
   it("reconcileTabs lands on a draft when the hydrated workspace is empty", () => {
     const workspaceKey = createWorkspaceKey();
 

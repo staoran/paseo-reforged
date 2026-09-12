@@ -64,7 +64,7 @@ export default defineConfig({
   // dependency optimizer does not apply `resolve.extensions`, so it scans native files that
   // import symbols react-native-web does not provide. Unbundled imports use the resolver below.
   optimizeDeps: {
-    include: ["react/jsx-runtime"],
+    include: ["react/jsx-runtime", "invariant"],
     exclude: ["expo-modules-core", "react-native-reanimated"],
   },
   // The globals a React Native bundler defines, which esbuild is no longer there to supply for
@@ -152,6 +152,10 @@ export default defineConfig({
       {
         find: /^expo-linking$/,
         replacement: path.resolve(__dirname, "test-stubs/expo-linking.ts"),
+      },
+      {
+        find: /^expo-clipboard$/,
+        replacement: path.resolve(__dirname, "test-stubs/expo-clipboard.ts"),
       },
       {
         find: /^lucide-react-native$/,

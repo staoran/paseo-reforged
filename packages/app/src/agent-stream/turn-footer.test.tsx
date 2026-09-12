@@ -6,7 +6,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("react-native", () => ({
-  Platform: { OS: "web" },
+  Platform: {
+    OS: "web",
+    select: (values: Record<string, unknown>) => values.web ?? values.default,
+  },
   View: ({ children, testID }: { children?: React.ReactNode; testID?: string }) => (
     <div data-testid={testID}>{children}</div>
   ),

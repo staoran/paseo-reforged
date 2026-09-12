@@ -2373,6 +2373,7 @@ function seedDraftForEmptyWorkspace(input: {
   layout: WorkspaceLayout;
   snapshot: WorkspaceTabSnapshot;
   activeAgentIds: Set<string>;
+  visibleAgentIds: Set<string>;
   knownTerminalIds: Set<string>;
   explorerSidebarPaneId: string | null;
 }): WorkspaceLayout {
@@ -2380,7 +2381,10 @@ function seedDraftForEmptyWorkspace(input: {
   const creatingContent =
     input.snapshot.hasActivePendingDraftCreate === true ||
     input.snapshot.hasActivePendingTerminalCreate === true;
-  const hasWorkspaceEntities = input.activeAgentIds.size > 0 || input.knownTerminalIds.size > 0;
+  const hasWorkspaceEntities =
+    input.activeAgentIds.size > 0 ||
+    input.visibleAgentIds.size > 0 ||
+    input.knownTerminalIds.size > 0;
   const explorerTabIds = new Set(
     input.explorerSidebarPaneId
       ? (findPaneById(input.layout.root, input.explorerSidebarPaneId)?.tabIds ?? [])
@@ -2498,6 +2502,7 @@ export function reconcileWorkspaceTabs(
     layout: nextLayout,
     snapshot,
     activeAgentIds,
+    visibleAgentIds,
     knownTerminalIds,
     explorerSidebarPaneId: state.explorerSidebarPaneId,
   });

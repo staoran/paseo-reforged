@@ -108,31 +108,31 @@ describe("desktop-daemon-transport", () => {
     });
 
     expect(() => invalidPortTransportFactory!({ url })).toThrow("Invalid SSH transport target");
+  });
 
-    it("forwards remote WebSocket headers and protocols through the desktop bridge", async () => {
-      const rpc = createFakeLocalDaemonTransportRpc();
-      const transportFactory = createDesktopWebSocketTransportFactory(rpc);
-      expect(transportFactory).not.toBeNull();
+  it("forwards remote WebSocket headers and protocols through the desktop bridge", async () => {
+    const rpc = createFakeLocalDaemonTransportRpc();
+    const transportFactory = createDesktopWebSocketTransportFactory(rpc);
+    expect(transportFactory).not.toBeNull();
 
-      const transport = transportFactory!({
-        url: "wss://daemon.example/ws",
-        headers: { "X-Tenant": "acme", Authorization: "Bearer secret" },
-        protocols: ["paseo.bearer.secret"],
-      });
-
-      rpc.resolveListen(vi.fn());
-      await Promise.resolve();
-
-      expect(rpc.openCalls).toHaveLength(1);
-      const openCall = rpc.openCalls[0] as Record<string, unknown>;
-      expect(openCall.sessionId).not.toBe("");
-      expect(openCall.target).toEqual({
-        transportType: "websocket",
-        url: "wss://daemon.example/ws",
-        headers: { "X-Tenant": "acme", Authorization: "Bearer secret" },
-        protocols: ["paseo.bearer.secret"],
-      });
-      transport.close();
+    const transport = transportFactory!({
+      url: "wss://daemon.example/ws",
+      headers: { "X-Tenant": "acme", Authorization: "Bearer secret" },
+      protocols: ["paseo.bearer.secret"],
     });
+
+    rpc.resolveListen(vi.fn());
+    await Promise.resolve();
+
+    expect(rpc.openCalls).toHaveLength(1);
+    const openCall = rpc.openCalls[0] as Record<string, unknown>;
+    expect(openCall.sessionId).not.toBe("");
+    expect(openCall.target).toEqual({
+      transportType: "websocket",
+      url: "wss://daemon.example/ws",
+      headers: { "X-Tenant": "acme", Authorization: "Bearer secret" },
+      protocols: ["paseo.bearer.secret"],
+    });
+    transport.close();
   });
 });
