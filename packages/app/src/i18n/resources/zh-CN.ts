@@ -1473,6 +1473,9 @@ export const zhCN: TranslationResources = {
     title: "Paseo Reforged 遇到了问题。",
     body: "请重试以重新加载应用。如果问题持续发生，请在报告时附上下面的详细信息。",
     details: "详情",
+    copyDetails: "复制详情",
+    copySuccess: "详情已复制",
+    copyFailed: "无法复制详情，请手动选择并复制文本。",
   },
   startup: {
     errorTitle: "出现问题",

@@ -1,11 +1,20 @@
-import React, { Component, Fragment, type ErrorInfo, type ReactNode } from "react";
+import React, {
+  Component,
+  Fragment,
+  useCallback,
+  useState,
+  type ErrorInfo,
+  type ReactNode,
+} from "react";
 import { Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet } from "react-native-unistyles";
+import { Copy } from "lucide-react-native";
 import { Button } from "@/components/ui/button";
 import { ScrollableCodeSurface } from "@/components/ui/scrollable-code-surface";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { copyToClipboard } from "@/utils/copy-to-clipboard";
 import { formatCaughtValue } from "./root-error-details";
 
 interface RootErrorBoundaryProps {
@@ -60,16 +69,56 @@ interface RootErrorFallbackProps {
   onRetry: () => void;
 }
 
+type CopyStatus = "idle" | "copying" | "copied" | "failed";
+
+/** Renders recovery controls and copyable diagnostics after an unhandled render error */
 export function RootErrorFallback({ error, onRetry }: RootErrorFallbackProps) {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const isCompact = useIsCompactFormFactor();
+  // Keeps the complete result of the asynchronous clipboard action visible on this fallback screen
+  const [copyStatus, setCopyStatus] = useState<CopyStatus>("idle");
+
+  // Copies the exact caught value and handles an unsuccessful Web clipboard fallback
+  const handleCopy = useCallback(async () => {
+    setCopyStatus("copying");
+    try {
+      const copied = await copyToClipboard(error);
+      setCopyStatus(copied ? "copied" : "failed");
+    } catch {
+      setCopyStatus("failed");
+    }
+  }, [error]);
 
   const retry = (
     <Button variant="default" onPress={onRetry} testID="root-error-boundary-retry">
       {t("common.actions.retry")}
     </Button>
   );
+  const copy = (
+    <Button
+      variant="secondary"
+      leftIcon={Copy}
+      loading={copyStatus === "copying"}
+      onPress={handleCopy}
+      testID="root-error-boundary-copy"
+      accessibilityLabel={t("rootError.copyDetails")}
+    >
+      {t("rootError.copyDetails")}
+    </Button>
+  );
+  const actions = (
+    <View style={styles.actions}>
+      {copy}
+      {retry}
+    </View>
+  );
+  let copyFeedback: string | null = null;
+  if (copyStatus === "copied") {
+    copyFeedback = t("rootError.copySuccess");
+  } else if (copyStatus === "failed") {
+    copyFeedback = t("rootError.copyFailed");
+  }
 
   return (
     <View
@@ -93,16 +142,25 @@ export function RootErrorFallback({ error, onRetry }: RootErrorFallbackProps) {
           <Text style={styles.detailsLabel}>{t("rootError.details")}</Text>
           <ScrollableCodeSurface
             maxHeight={isCompact ? undefined : DETAILS_MAX_HEIGHT}
+            singleTextNode
             style={styles.detailsSurface}
             scrollStyle={styles.detailsScroll}
             testID="root-error-boundary-details"
           >
             {error}
           </ScrollableCodeSurface>
+          {copyFeedback ? (
+            <Text
+              style={copyStatus === "failed" ? styles.copyFailure : styles.copySuccess}
+              testID="root-error-boundary-copy-feedback"
+            >
+              {copyFeedback}
+            </Text>
+          ) : null}
         </View>
-        {isCompact ? null : retry}
+        {isCompact ? null : actions}
       </View>
-      {isCompact ? <View style={styles.footer}>{retry}</View> : null}
+      {isCompact ? <View style={styles.footer}>{actions}</View> : null}
     </View>
   );
 }
@@ -152,6 +210,23 @@ const styles = StyleSheet.create((theme) => ({
   },
   detailsScroll: {
     flexShrink: 1,
+  },
+  copySuccess: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+  },
+  copyFailure: {
+    color: theme.colors.destructive,
+    fontSize: theme.fontSize.sm,
+  },
+  actions: {
+    width: "100%",
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    justifyContent: "center",
+    alignSelf: "center",
+    gap: theme.spacing[2],
   },
   footer: {
     alignSelf: "center",

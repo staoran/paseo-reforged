@@ -20,6 +20,8 @@ interface ScrollableCodeSurfaceProps {
   maxHeight?: number;
   horizontal?: boolean;
   selectable?: boolean;
+  /** Keeps a string child in one Text node for cross-line selection */
+  singleTextNode?: boolean;
   tone?: CodeSurfaceTone;
   bordered?: boolean;
   style?: StyleProp<ViewStyle>;
@@ -73,6 +75,7 @@ export function ScrollableCodeSurface({
   maxHeight,
   horizontal = true,
   selectable = true,
+  singleTextNode = false,
   tone = "surface1",
   bordered = true,
   style,
@@ -96,7 +99,7 @@ export function ScrollableCodeSurface({
   );
   const codeTextStyle = useMemo(() => [styles.text, textStyle], [textStyle]);
   const codeContent =
-    typeof children === "string" ? (
+    typeof children === "string" && !singleTextNode ? (
       <PlainCodeText text={children} selectable={selectable} textStyle={codeTextStyle} />
     ) : (
       <Text selectable={selectable} style={codeTextStyle} dataSet={CODE_SURFACE_DATASET}>

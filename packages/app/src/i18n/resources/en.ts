@@ -1500,6 +1500,9 @@ export const en = {
     title: "Paseo Reforged ran into a problem.",
     body: "Try again to reload the app. If this keeps happening, include the details below when you report it.",
     details: "Details",
+    copyDetails: "Copy details",
+    copySuccess: "Details copied.",
+    copyFailed: "Couldn't copy the details. Select and copy the text manually.",
   },
   startup: {
     errorTitle: "Something went wrong",

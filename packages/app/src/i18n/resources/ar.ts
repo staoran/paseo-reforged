@@ -1489,6 +1489,9 @@ export const ar: TranslationResources = {
     title: "واجه Paseo Reforged مشكلة.",
     body: "جرّب مرة أخرى لإعادة تحميل التطبيق. إذا استمر حدوث ذلك، فأرفق التفاصيل أدناه عند الإبلاغ عنه.",
     details: "التفاصيل",
+    copyDetails: "نسخ التفاصيل",
+    copySuccess: "تم نسخ التفاصيل.",
+    copyFailed: "تعذر نسخ التفاصيل. حدد النص وانسخه يدويًا.",
   },
   startup: {
     errorTitle: "حدث خطأ ما",

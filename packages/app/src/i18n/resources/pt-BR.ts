@@ -1523,6 +1523,9 @@ export const ptBR: TranslationResources = {
     title: "O Paseo Reforged encontrou um problema.",
     body: "Tente novamente para recarregar o app. Se isso continuar acontecendo, inclua os detalhes abaixo ao relatar o problema.",
     details: "Detalhes",
+    copyDetails: "Copiar detalhes",
+    copySuccess: "Detalhes copiados.",
+    copyFailed: "Não foi possível copiar os detalhes. Selecione e copie o texto manualmente.",
   },
   startup: {
     errorTitle: "Algo deu errado",

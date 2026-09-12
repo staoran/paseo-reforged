@@ -1541,6 +1541,9 @@ export const fr: TranslationResources = {
     title: "Paseo Reforged a rencontré un problème.",
     body: "Réessayez pour recharger l'application. Si cela continue, joignez les détails ci-dessous au signalement.",
     details: "Détails",
+    copyDetails: "Copier les détails",
+    copySuccess: "Détails copiés.",
+    copyFailed: "Impossible de copier les détails. Sélectionnez et copiez le texte manuellement.",
   },
   startup: {
     errorTitle: "Quelque chose s'est mal passé",

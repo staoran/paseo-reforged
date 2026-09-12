@@ -1499,6 +1499,9 @@ export const ko: TranslationResources = {
     title: "Paseo에 문제가 발생했습니다.",
     body: "앱을 다시 로드해 보세요. 이런 일이 계속 발생하면 신고할 때 아래 세부정보를 포함하세요.",
     details: "세부",
+    copyDetails: "세부 정보 복사",
+    copySuccess: "세부 정보를 복사했습니다.",
+    copyFailed: "세부 정보를 복사할 수 없습니다. 텍스트를 선택해 직접 복사하세요.",
   },
   startup: {
     errorTitle: "문제가 발생했습니다",

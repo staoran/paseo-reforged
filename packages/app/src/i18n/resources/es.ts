@@ -1538,6 +1538,9 @@ export const es: TranslationResources = {
     title: "Paseo Reforged tuvo un problema.",
     body: "Vuelve a intentarlo para recargar la app. Si sigue ocurriendo, incluye los detalles de abajo al reportarlo.",
     details: "Detalles",
+    copyDetails: "Copiar detalles",
+    copySuccess: "Detalles copiados.",
+    copyFailed: "No se pudieron copiar los detalles. Selecciona y copia el texto manualmente.",
   },
   startup: {
     errorTitle: "algo salió mal",

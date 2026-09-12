@@ -2,6 +2,7 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { copyToClipboard } from "@/utils/copy-to-clipboard";
 import { RootErrorFallback } from "./root-error-boundary";
 
 const { runtime, theme } = vi.hoisted(() => ({
@@ -28,6 +29,10 @@ const { runtime, theme } = vi.hoisted(() => ({
     },
     opacity: { 50: 0.5 },
   },
+}));
+
+vi.mock("@/utils/copy-to-clipboard", () => ({
+  copyToClipboard: vi.fn(),
 }));
 
 vi.mock("react-native-unistyles", () => ({
@@ -61,6 +66,8 @@ beforeEach(() => {
   const container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
+  vi.mocked(copyToClipboard).mockReset();
+  vi.mocked(copyToClipboard).mockResolvedValue(true);
 });
 
 afterEach(() => {
@@ -92,4 +99,88 @@ describe("RootErrorFallback", () => {
       expect(screen?.contains(retry)).toBe(true);
     });
   }
+
+  it("keeps multiline details in one selectable text node", () => {
+    const error = "first line\nsecond line\nthird line";
+    act(() => {
+      root?.render(<RootErrorFallback error={error} onRetry={vi.fn()} />);
+    });
+
+    const details = document.querySelector('[data-testid="root-error-boundary-details"]');
+    const textNode = findTextNode(details, error);
+
+    expect(textNode).not.toBeNull();
+    const range = document.createRange();
+    range.selectNodeContents(textNode!);
+    expect(range.toString()).toBe(error);
+  });
+
+  it("copies the complete multiline error details", async () => {
+    const error = "first line\nsecond line\nthird line";
+    act(() => {
+      root?.render(<RootErrorFallback error={error} onRetry={vi.fn()} />);
+    });
+
+    const copy = document.querySelector('[data-testid="root-error-boundary-copy"]');
+    expect(copy).not.toBeNull();
+    expect(copy?.getAttribute("aria-label")).toBe("rootError.copyDetails");
+
+    await act(async () => {
+      copy?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(copyToClipboard).toHaveBeenCalledOnce();
+    expect(copyToClipboard).toHaveBeenCalledWith(error);
+    expect(document.body.textContent).toContain("rootError.copySuccess");
+  });
+
+  it("keeps an unsuccessful Web clipboard fallback visible beside the details", async () => {
+    vi.mocked(copyToClipboard).mockResolvedValueOnce(false);
+    act(() => {
+      root?.render(<RootErrorFallback error="first line\nsecond line" onRetry={vi.fn()} />);
+    });
+
+    const copy = document.querySelector('[data-testid="root-error-boundary-copy"]');
+    expect(copy).not.toBeNull();
+
+    await act(async () => {
+      copy?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(document.body.textContent).toContain("rootError.copyFailed");
+  });
+
+  it("keeps a rejected clipboard copy visible beside the details", async () => {
+    vi.mocked(copyToClipboard).mockRejectedValueOnce(new Error("Clipboard unavailable"));
+    act(() => {
+      root?.render(<RootErrorFallback error="first line\nsecond line" onRetry={vi.fn()} />);
+    });
+
+    const copy = document.querySelector('[data-testid="root-error-boundary-copy"]');
+    expect(copy).not.toBeNull();
+
+    await act(async () => {
+      copy?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(document.body.textContent).toContain("rootError.copyFailed");
+  });
 });
+
+/** Returns the text node that contains the complete expected error value */
+function findTextNode(node: Element | null, expected: string): Text | null {
+  if (!node) return null;
+  for (const child of node.childNodes) {
+    if (child.nodeType === window.Node.TEXT_NODE && child.textContent === expected) {
+      return child as Text;
+    }
+    if (child.nodeType === window.Node.ELEMENT_NODE) {
+      const match = findTextNode(child as Element, expected);
+      if (match) return match;
+    }
+  }
+  return null;
+}

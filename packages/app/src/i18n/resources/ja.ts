@@ -1505,6 +1505,9 @@ export const ja: TranslationResources = {
     title: "Paseo Reforged で問題が発生しました。",
     body: "アプリを再読み込みするにはもう一度お試しください。繰り返し発生する場合は、以下の詳細を添えて報告してください。",
     details: "詳細",
+    copyDetails: "詳細をコピー",
+    copySuccess: "詳細をコピーしました。",
+    copyFailed: "詳細をコピーできませんでした。テキストを選択して手動でコピーしてください。",
   },
   startup: {
     errorTitle: "問題が発生しました",
