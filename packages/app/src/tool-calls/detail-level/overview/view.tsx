@@ -78,6 +78,9 @@ export const OverviewToolCallGroupView = memo(function OverviewToolCallGroupView
   const toggle = useCallback(() => {
     onExpandedChange(expansionId, !expanded);
   }, [expanded, expansionId, onExpandedChange]);
+  const close = useCallback(() => {
+    onExpandedChange(expansionId, false);
+  }, [expansionId, onExpandedChange]);
   const renderDetails = useCallback(
     () =>
       constrainDetails ? (
