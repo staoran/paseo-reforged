@@ -1,14 +1,8 @@
 import { useMemo, type ReactNode } from "react";
-import {
-  ScrollView,
-  Text,
-  View,
-  type StyleProp,
-  type TextStyle,
-  type ViewStyle,
-} from "react-native";
+import { Text, View, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 
+import { ScrollView } from "./scroll-view";
 import { isWeb } from "@/constants/platform";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
@@ -90,7 +84,7 @@ export function ScrollableCodeSurface({
     [maxHeight],
   );
   const outerScrollStyle = useMemo(
-    () => [maxHeightStyle, scrollStyle],
+    () => [styles.scroll, maxHeightStyle, scrollStyle],
     [maxHeightStyle, scrollStyle],
   );
   const contentStyle = useMemo(
@@ -111,24 +105,21 @@ export function ScrollableCodeSurface({
     <SurfaceCard
       tone={tone}
       bordered={bordered}
-      style={style}
+      style={[styles.scroll, style]}
       testID={testID}
       accessibilityLabel={accessibilityLabel}
       codeSurface
     >
-      <ScrollView
-        style={outerScrollStyle}
-        contentContainerStyle={contentStyle}
-        nestedScrollEnabled
-        showsVerticalScrollIndicator
-      >
-        {horizontal ? (
-          <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator>
-            {codeContent}
-          </ScrollView>
-        ) : (
-          codeContent
-        )}
+      <ScrollView style={outerScrollStyle} nestedScrollEnabled showsVerticalScrollIndicator>
+        <View style={contentStyle}>
+          {horizontal ? (
+            <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator>
+              {codeContent}
+            </ScrollView>
+          ) : (
+            codeContent
+          )}
+        </View>
       </ScrollView>
     </SurfaceCard>
   );
@@ -174,6 +165,10 @@ function getSurfaceStyle(tone: CodeSurfaceTone): StyleProp<ViewStyle> {
 }
 
 const styles = StyleSheet.create((theme) => ({
+  scroll: {
+    flexShrink: 1,
+    minHeight: 0,
+  },
   container: {
     overflow: "hidden",
   },

@@ -19,6 +19,7 @@ import {
   useAgentHistory,
 } from "@/hooks/use-agent-history";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { useImportSession } from "@/hooks/use-import-session";
 import { useHosts } from "@/runtime/host-runtime";
 import { buildOpenProjectRoute } from "@/utils/host-routes";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -241,6 +242,7 @@ function SessionsScreenContent() {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
+  const importSession = useImportSession();
   const hosts = useHosts();
   const [selectedHost, setSelectedHost] = useState(ALL_HOSTS_OPTION_ID);
   const [searchInput, setSearchInput] = useState("");
@@ -360,6 +362,7 @@ function SessionsScreenContent() {
         onRefresh={handleRefresh}
         t={t}
       />
+      {importSession.sheet}
     </View>
   );
 }

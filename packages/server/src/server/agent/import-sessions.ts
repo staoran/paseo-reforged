@@ -39,6 +39,7 @@ const METADATA_GENERATION_PROMPT_PREFIX =
   "Generate metadata for a coding agent based on the user prompt.";
 const IMPORTABLE_QUERY_CACHE_TTL_MS = 1_000;
 const IMPORTABLE_QUERY_CACHE_MAX_SETTLED_ENTRIES = 64;
+const IMPORT_SESSION_SEARCH_SCAN_LIMIT = 500;
 export type ImportSessionAgentManager = AgentLoaderManager &
   Pick<
     AgentManager,
@@ -101,6 +102,7 @@ export interface ListImportableProviderSessionsInput {
 export interface ListImportableProviderSessionsResult {
   entries: RecentProviderSessionDescriptorPayload[];
   filteredAlreadyImportedCount: number;
+  providerErrors: Array<{ provider: string; message: string }>;
 }
 
 export interface ImportProviderSessionInput {
@@ -158,11 +160,13 @@ export async function listImportableProviderSessions(
   const limit = request.limit ?? 20;
   const sinceTimestamp = parseRecentProviderSessionsSince(request.since);
   const providerFilter = request.providers ? new Set(request.providers) : undefined;
+  const query = normalizeImportSessionQuery(request.query);
   const metadata = await agentStorage.getMetadataSnapshot();
   const queryKey = buildImportableQueryKey({
     request,
     limit,
     sinceTimestamp,
+    query,
     catalogGeneration: metadata.generation,
   });
   const cache = getImportableQueryCache(agentStorage);
@@ -181,6 +185,7 @@ export async function listImportableProviderSessions(
     metadataEntries: metadata.entries,
     agentManager,
     providerSnapshotManager,
+    query,
   });
   const entry: ImportableQueryCacheEntry = { promise, expiresAt: null };
   cache.set(queryKey, entry);
@@ -206,13 +211,15 @@ async function listImportableProviderSessionsSnapshot(input: {
   metadataEntries: AgentMetadataEntry[];
   agentManager: Pick<AgentManager, "listImportableSessions">;
   providerSnapshotManager: Pick<ProviderSnapshotManager, "getProviderLabel">;
+  query: string | null;
 }): Promise<ListImportableProviderSessionsResult> {
   const importedHandles = collectImportedProviderHandles(
     input.metadataEntries,
     input.providerFilter,
   );
   const sessions = await input.agentManager.listImportableSessions({
-    limit: input.limit,
+    limit: input.query ? IMPORT_SESSION_SEARCH_SCAN_LIMIT : input.limit,
+    ...(input.query ? { query: input.query, scanLimit: IMPORT_SESSION_SEARCH_SCAN_LIMIT } : {}),
     providerFilter: input.providerFilter,
     cwd: input.request.cwd,
   });
@@ -221,7 +228,7 @@ async function listImportableProviderSessionsSnapshot(input: {
   const matchesRequestCwd = input.request.cwd
     ? createRealpathAwarePathMatcher(input.request.cwd)
     : null;
-  for (const session of sessions) {
+  for (const session of sessions.sessions) {
     if (matchesRequestCwd && !matchesRequestCwd(session.cwd)) {
       continue;
     }
@@ -254,7 +261,16 @@ async function listImportableProviderSessionsSnapshot(input: {
       }),
     );
 
-  return { entries, filteredAlreadyImportedCount };
+  return {
+    entries,
+    filteredAlreadyImportedCount,
+    providerErrors: sessions.providerErrors,
+  };
+}
+
+function normalizeImportSessionQuery(query: string | undefined): string | null {
+  const normalized = query?.trim().toLowerCase();
+  return normalized ? normalized : null;
 }
 
 export async function importProviderSession(
@@ -742,12 +758,14 @@ function buildImportableQueryKey(input: {
   request: FetchRecentProviderSessionsRequestMessage;
   limit: number;
   sinceTimestamp: number | null;
+  query: string | null;
   catalogGeneration: number;
 }): string {
   return JSON.stringify({
     providers: input.request.providers ? [...input.request.providers].sort() : null,
     cwd: input.request.cwd ? normalizePathForIdentity(input.request.cwd) : null,
     since: input.sinceTimestamp,
+    query: input.query,
     limit: input.limit,
     catalogGeneration: input.catalogGeneration,
   });
@@ -783,6 +801,7 @@ function cloneImportableResult(
   return {
     entries: result.entries.map((entry) => ({ ...entry })),
     filteredAlreadyImportedCount: result.filteredAlreadyImportedCount,
+    providerErrors: result.providerErrors.map((error) => ({ ...error })),
   };
 }
 

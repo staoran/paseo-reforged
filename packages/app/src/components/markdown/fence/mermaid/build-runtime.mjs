@@ -54,6 +54,11 @@ const html = `<!doctype html>
         margin: 0;
         padding: 0;
         background: transparent;
+        height: 100%;
+      }
+      /* The host sizes this frame to the diagram, so the diagram fills the frame. */
+      #diagram {
+        height: 100%;
       }
       html[data-interactive="true"],
       html[data-interactive="true"] body,

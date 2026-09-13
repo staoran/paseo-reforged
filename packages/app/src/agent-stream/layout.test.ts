@@ -228,11 +228,12 @@ describe("layoutStream", () => {
     (platform) => {
       const reasoning = thought("thought-1", 2);
       const commentary = assistantMessage("commentary-1", 3, undefined, "commentary");
-      const systemError: Extract<StreamItem, { kind: "activity_log" }> = {
-        kind: "activity_log",
+      const systemError: Extract<StreamItem, { kind: "notification" }> = {
+        kind: "notification",
+        sourceType: "error",
         id: "error-1",
         timestamp: timestamp(4),
-        activityType: "error",
+        level: "error",
         message: "provider failed",
       };
       const layout = layoutFor({

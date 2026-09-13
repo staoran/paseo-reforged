@@ -1,3 +1,10 @@
+import { ProviderSnapshotUpdates } from "./provider-snapshots/index.js";
+import type { SessionEventSubscription } from "@getpaseo/protocol/messages";
+import {
+  ConnectionSubscriptions,
+  DEFAULT_CLIENT_CAPABILITIES,
+  type TimelineSubscription,
+} from "./connection/index.js";
 import type { z } from "zod";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
 import type { AgentAttentionNotificationPayload } from "@getpaseo/protocol/agent-attention-notification";
@@ -317,6 +324,9 @@ export type BrowserAutomationExecuteRequestMessage = BrowserAutomationExecuteReq
 export type BrowserAutomationExecuteResponseMessage = BrowserAutomationExecuteResponse;
 
 export interface DaemonClientConfig {
+  /** Deliver compact bodies/hash references to a caller-owned snapshot cache.
+   * The default keeps public SDK snapshot entries expanded. */
+  providerSnapshots?: "wire";
   url: string;
   clientId: string;
   clientType?: "mobile" | "browser" | "cli" | "mcp" | "hub";
@@ -384,6 +394,7 @@ export interface CreateAgentRequestOptions extends AgentConfigOverrides {
   workspaceId?: string;
   callerAgentId?: string;
   initialPrompt?: string;
+  idempotencyKey?: string;
   clientMessageId?: string;
   outputSchema?: Record<string, unknown>;
   images?: CreateAgentRequestMessage["images"];
@@ -1100,6 +1111,17 @@ interface PingProbe {
 }
 
 export class DaemonClient {
+  private readonly providerSnapshotUpdates = new ProviderSnapshotUpdates({
+    fetch: (cwd) => this.requestProvidersSnapshot({ cwd }),
+    emit: (message) => this.deliverSessionMessage(message),
+    failed: (error) => this.logger.error({ err: error }, "Failed to resolve provider snapshot"),
+  });
+  private readonly subscriptions = new ConnectionSubscriptions({
+    timelines: (agentIds) => (this.isConnected ? this.sendTimelineSubscription(agentIds) : null),
+    events: (events) => this.sendEventSubscription(events),
+    failed: (error) =>
+      this.logger.error({ err: error }, "Failed to update connection subscriptions"),
+  });
   private transport: DaemonTransport | null = null;
   private transportCleanup: Array<() => void> = [];
   private rawMessageListeners: Set<(message: SessionOutboundMessage) => void> = new Set();
@@ -1401,6 +1423,7 @@ export class DaemonClient {
       return;
     }
     this.shouldReconnect = false;
+    this.subscriptions.close();
     this.connectPromise = null;
     this.connectResolve = null;
     this.connectReject = null;
@@ -1410,6 +1433,7 @@ export class DaemonClient {
     }
     this.resetConnectTimeout();
     this.disposeTransport(1000, "Client closed");
+    this.providerSnapshotUpdates.clear();
     this.clearWaiters(new Error("Daemon client closed"));
     this.rejectPendingSendQueue(new Error("Daemon client closed"));
     this.rejectPingProbe(new Error("Daemon client closed"));
@@ -1439,6 +1463,14 @@ export class DaemonClient {
       this.connectionState.status === "connected" ||
       this.connectionState.status === "connecting"
     ) {
+      return;
+    }
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = null;
+    }
+    if (this.connectPromise) {
+      this.attemptConnect();
       return;
     }
     void this.connect();
@@ -1478,7 +1510,11 @@ export class DaemonClient {
 
   subscribe(handler: DaemonEventHandler): () => void {
     this.eventListeners.add(handler);
-    return () => this.eventListeners.delete(handler);
+    this.updateEventSubscriptions();
+    return () => {
+      this.eventListeners.delete(handler);
+      this.updateEventSubscriptions();
+    };
   }
 
   subscribeRawMessages(handler: (message: SessionOutboundMessage) => void): () => void {
@@ -1508,6 +1544,7 @@ export class DaemonClient {
       this.messageHandlers.set(type, new Set());
     }
     this.messageHandlers.get(type)!.add(handler);
+    this.updateEventSubscriptions();
 
     return () => {
       const handlers = this.messageHandlers.get(type);
@@ -1518,6 +1555,7 @@ export class DaemonClient {
       if (handlers.size === 0) {
         this.messageHandlers.delete(type);
       }
+      this.updateEventSubscriptions();
     };
   }
 
@@ -1894,6 +1932,20 @@ export class DaemonClient {
     }
   }
 
+  async markWorkspaceUnread(workspaceId: string, requestId?: string): Promise<void> {
+    const response =
+      await this.sendNamespacedCorrelatedSessionRequest<"workspace.mark_unread.response">({
+        requestId,
+        message: {
+          type: "workspace.mark_unread.request",
+          workspaceId,
+        },
+      });
+    if (!response.success) {
+      throw new Error(response.error ?? "Failed to mark workspace unread");
+    }
+  }
+
   sendHeartbeat(params: {
     deviceType: "web" | "mobile";
     focusedAgentId: string | null;
@@ -2135,6 +2187,7 @@ export class DaemonClient {
       ...(options?.providers ? { providers: options.providers } : {}),
       ...(options?.since ? { since: options.since } : {}),
       ...(options?.limit ? { limit: options.limit } : {}),
+      ...(options?.query !== undefined ? { query: options.query } : {}),
     });
     return this.sendRequest({
       requestId: resolvedRequestId,
@@ -2430,6 +2483,16 @@ export class DaemonClient {
     });
   }
 
+  async runWorkspaceSetup(
+    workspaceId: string,
+    requestId?: string,
+  ): Promise<Extract<SessionOutboundMessage, { type: "workspace.setup.run.response" }>["payload"]> {
+    return this.sendNamespacedCorrelatedSessionRequest<"workspace.setup.run.response">({
+      requestId,
+      message: { type: "workspace.setup.run.request", workspaceId },
+    });
+  }
+
   async fetchAgent(options: FetchAgentOptions): Promise<FetchAgentResult | null>;
   async fetchAgent(agentId: string, requestId?: string): Promise<FetchAgentResult | null>;
   async fetchAgent(
@@ -2523,6 +2586,7 @@ export class DaemonClient {
   // ============================================================================
 
   async createAgent(options: CreateAgentRequestOptions): Promise<AgentSnapshotPayload> {
+    if (options.idempotencyKey !== undefined) this.requireAgentRequestReceipts();
     const requestId = this.createRequestId(options.requestId);
     const config = resolveAgentConfig(options);
     this.requireAgentCreateConfigSupport(config);
@@ -2535,6 +2599,7 @@ export class DaemonClient {
       ...(options.workspaceId !== undefined ? { workspaceId: options.workspaceId } : {}),
       ...(options.callerAgentId !== undefined ? { callerAgentId: options.callerAgentId } : {}),
       ...(options.initialPrompt ? { initialPrompt: options.initialPrompt } : {}),
+      idempotencyKey: options.idempotencyKey,
       ...(options.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
       ...(options.outputSchema ? { outputSchema: options.outputSchema } : {}),
       ...(options.images && options.images.length > 0 ? { images: options.images } : {}),
@@ -2577,6 +2642,13 @@ export class DaemonClient {
     }
 
     return status.agent;
+  }
+
+  private requireAgentRequestReceipts(): void {
+    // COMPAT(agentRequestReceipts): added in v0.7.3; remove gate after 2027-03-05.
+    if (this.lastServerInfoMessage?.features?.agentRequestReceipts !== true) {
+      throw new Error("Update the host to use retry-safe agent creation.");
+    }
   }
 
   async deleteAgent(agentId: string): Promise<void> {
@@ -3034,6 +3106,19 @@ export class DaemonClient {
     );
   }
 
+  async appendAgentTimelineItem(
+    agentId: string,
+    item: Omit<import("@getpaseo/protocol/agent-types").PluginTimelineItem, "pluginId">,
+  ): Promise<{ seq: number; epoch: string }> {
+    const requestId = this.createRequestId();
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "agent.timeline.append.request", requestId, agentId, item },
+      responseType: "agent.timeline.append.response",
+    });
+    return { seq: payload.seq, epoch: payload.epoch };
+  }
+
   async listAgentTimelinePrompts(
     agentId: string,
     options: { requestId?: string; timeout?: number } = {},
@@ -3120,7 +3205,70 @@ export class DaemonClient {
     return payload;
   }
 
-  async setAgentTimelineSubscription(agentIds: string[]): Promise<void> {
+  setAgentTimelineSubscription(agentIds: string[]): Promise<void> {
+    return this.subscriptions.setViewed(agentIds);
+  }
+
+  subscribeAgentTimeline(
+    agentId: string,
+    handler: (
+      message: Extract<
+        SessionOutboundMessage,
+        { type: "agent_stream" | "agent.timeline.replacement" }
+      >,
+    ) => void,
+  ): TimelineSubscription {
+    const stream = this.on("agent_stream", (message) => {
+      if (message.payload.agentId === agentId) handler(message);
+    });
+    const replacement = this.on("agent.timeline.replacement", (message) => {
+      if (message.payload.agentId === agentId) handler(message);
+    });
+    const release = this.subscriptions.observeTimeline(agentId);
+    return Object.assign(
+      () => {
+        stream();
+        replacement();
+        release();
+      },
+      { ready: release.ready },
+    );
+  }
+
+  private updateEventSubscriptions(): void {
+    const events: SessionEventSubscription[] = [
+      "project.update",
+      "providers_snapshot_update",
+      "agent_attention_required",
+      "agent_permission_request",
+      "agent_permission_resolved",
+    ];
+    if (this.eventListeners.size === 0 && !this.messageHandlers.has("providers_snapshot_update")) {
+      this.providerSnapshotUpdates.clear();
+    }
+    this.subscriptions.setEvents(
+      events.filter(
+        (type) => this.eventListeners.size > 0 || (this.messageHandlers.get(type)?.size ?? 0) > 0,
+      ),
+    );
+  }
+
+  private async sendEventSubscription(events: SessionEventSubscription[]): Promise<void> {
+    if (this.connectionState.status !== "connected") return;
+    // COMPAT(explicitEventSubscriptions): added in v0.8.0, remove legacy broadcast handling after 2027-03-08.
+    if (
+      !this.lastServerInfoMessage?.features?.explicitEventSubscriptions ||
+      this.config.capabilities?.[CLIENT_CAPS.explicitEventSubscriptions] === false
+    )
+      return;
+    await this.sendCorrelatedSessionRequest({
+      message: { type: "session.events.set_subscription.request", events },
+      responseType: "session.events.set_subscription.response",
+    });
+  }
+
+  private async sendTimelineSubscription(agentIds: string[]): Promise<void> {
+    if (this.connectionState.status !== "connected") return;
     // COMPAT(selectiveAgentTimeline): added in v0.1.106. Old daemons keep their
     // legacy global stream and do not understand this RPC. Remove after
     // 2027-01-12 once the supported daemon floor is >= v0.1.106.
@@ -4817,7 +4965,16 @@ export class DaemonClient {
     ifNoneMatch?: string;
     requestId?: string;
   }): Promise<GetProvidersSnapshotPayload> {
-    const payload = await this.sendCorrelatedSessionRequest({
+    const payload = await this.requestProvidersSnapshot(options);
+    return normalizeProvidersSnapshotPayload(payload, this.config.providerSnapshots !== "wire");
+  }
+
+  private requestProvidersSnapshot(options?: {
+    cwd?: string;
+    ifNoneMatch?: string;
+    requestId?: string;
+  }): Promise<GetProvidersSnapshotPayload> {
+    return this.sendCorrelatedSessionRequest({
       requestId: options?.requestId,
       message: {
         type: "get_providers_snapshot_request",
@@ -4826,7 +4983,6 @@ export class DaemonClient {
       },
       responseType: "get_providers_snapshot_response",
     });
-    return normalizeProvidersSnapshotPayload(payload);
   }
 
   async getDaemonConfig(
@@ -5052,7 +5208,7 @@ export class DaemonClient {
     });
   }
 
-  async getPluginCatalog(): Promise<Array<{ id: string; clientBundle: string }>> {
+  async getPluginCatalog() {
     const requestId = this.createRequestId();
     const payload = await this.sendCorrelatedSessionRequest({
       requestId,
@@ -5838,12 +5994,7 @@ export class DaemonClient {
         clientType: this.config.clientType ?? "cli",
         protocolVersion: 1,
         capabilities: {
-          [CLIENT_CAPS.customModeIcons]: true,
-          [CLIENT_CAPS.reasoningMergeEnum]: true,
-          [CLIENT_CAPS.terminalReflowableSnapshot]: true,
-          [CLIENT_CAPS.providerSubagents]: true,
-          [CLIENT_CAPS.projectUpdates]: true,
-          [CLIENT_CAPS.compactProviderSnapshots]: true,
+          ...DEFAULT_CLIENT_CAPABILITIES,
           ...this.config.capabilities,
         },
         ...(this.config.appVersion ? { appVersion: this.config.appVersion } : {}),
@@ -5860,6 +6011,7 @@ export class DaemonClient {
   }
 
   private disposeTransport(code = 1001, reason = "Reconnecting"): void {
+    this.providerSnapshotUpdates.pause();
     this.stopLivenessHeartbeat();
     this.cleanupTransport();
     if (this.transport) {
@@ -6149,6 +6301,10 @@ export class DaemonClient {
 
   setReconnectEnabled(enabled: boolean): void {
     this.config = { ...this.config, reconnect: { ...this.config.reconnect, enabled } };
+    if (!enabled && this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = null;
+    }
   }
 
   private scheduleReconnect(input?: {
@@ -6166,6 +6322,8 @@ export class DaemonClient {
     if (typeof reason === "string" && reason.trim().length > 0) {
       this.lastErrorValue = reason.trim();
     }
+
+    this.providerSnapshotUpdates.pause();
 
     // Clear all pending waiters and queued sends since the connection was lost
     // and responses from the previous connection will never arrive.
@@ -6265,7 +6423,25 @@ export class DaemonClient {
   }
 
   private handleSessionMessage(msg: SessionOutboundMessage): void {
-    const consumerMessage = normalizeProviderSnapshotUpdateMessage(msg);
+    if (
+      msg.type === "providers_snapshot_update" &&
+      this.config.providerSnapshots !== "wire" &&
+      msg.payload.snapshotHash &&
+      !msg.payload.compactSnapshot
+    ) {
+      if (this.messageHandlers.has(msg.type) || this.eventListeners.size > 0) {
+        this.providerSnapshotUpdates.receive(msg);
+      }
+      return;
+    }
+    this.deliverSessionMessage(msg);
+  }
+
+  private deliverSessionMessage(msg: SessionOutboundMessage): void {
+    const consumerMessage = normalizeProviderSnapshotUpdateMessage(
+      msg,
+      this.config.providerSnapshots !== "wire",
+    );
 
     if (consumerMessage.type === "status") {
       const serverInfo = parseServerInfoStatusPayload(consumerMessage.payload);
@@ -6276,6 +6452,8 @@ export class DaemonClient {
           this.reconnectAttempt = 0;
           this.updateConnectionState({ status: "connected" }, { event: "HELLO_SERVER_INFO" });
           this.startLivenessHeartbeat();
+          this.subscriptions.restore();
+          this.providerSnapshotUpdates.resume();
           this.resubscribeCheckoutDiffSubscriptions();
           this.resubscribeTerminalDirectorySubscriptions();
           this.resubscribeFileSubscriptions();

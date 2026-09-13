@@ -36,6 +36,7 @@ import type { MermaidRenderRequest } from "./render-model";
 import { mermaidRuntimeHtml } from "./runtime/html.gen";
 import { parseMermaidRuntimeMessage, type MermaidRuntimeRenderMessage } from "./runtime/messages";
 import { MermaidRuntimeRequestDriver } from "./runtime/request-driver";
+import { MermaidFullscreenViewer } from "./fullscreen-viewer.web";
 import { useMermaidRenderModel } from "./use-render-model";
 import {
   createMermaidViewportController,
@@ -153,6 +154,7 @@ interface DiagramActionProps {
   label: string;
   onPress: () => void | Promise<void>;
   selected?: boolean;
+  testID?: string;
 }
 
 type WebPressableState = PressableStateCallbackType & { hovered?: boolean };
@@ -164,7 +166,7 @@ function selectedActionStyle({ hovered, pressed }: WebPressableState) {
   return [styles.action, styles.actionSelected, (hovered || pressed) && styles.actionHovered];
 }
 
-function DiagramAction({ icon: Icon, label, onPress, selected }: DiagramActionProps) {
+function DiagramAction({ icon: Icon, label, onPress, selected, testID }: DiagramActionProps) {
   const accessibilityState = useMemo(
     () => (selected === undefined ? undefined : { selected }),
     [selected],
@@ -180,6 +182,7 @@ function DiagramAction({ icon: Icon, label, onPress, selected }: DiagramActionPr
           hitSlop={6}
           onPress={onPress}
           style={selected ? selectedActionStyle : actionStyle}
+          testID={testID}
         >
           <ThemedActionIcon icon={Icon} />
         </Pressable>
@@ -419,6 +422,7 @@ function ExpandedDiagram({
 
 const COPIED_RESET_MS = 1_500;
 
+// oxlint-disable-next-line complexity -- Mermaid host owns rendering, source, and fullscreen states
 function MermaidFenceHostImpl({
   code,
   phase,
@@ -435,8 +439,11 @@ function MermaidFenceHostImpl({
   const [hasRuntimeContent, setHasRuntimeContent] = useState(false);
   const [showSource, setShowSource] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [copied, setCopied] = useState(false);
   const copiedResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const openFullscreen = useCallback(() => setIsFullscreen(true), []);
+  const closeFullscreen = useCallback(() => setIsFullscreen(false), []);
   const handleRendered = useCallback(
     (message: RuntimeRenderedMessage) => {
       setHasRuntimeContent(true);
@@ -503,6 +510,12 @@ function MermaidFenceHostImpl({
             label={t("message.actions.expandMermaidDiagram")}
             onPress={openExpanded}
           />
+          <DiagramAction
+            icon={Maximize2}
+            label={t("message.diagram.fullscreen")}
+            onPress={openFullscreen}
+            testID="mermaid-fullscreen"
+          />
         </View>
       ) : null}
       {!canShowDiagram || showSource ? (
@@ -535,6 +548,13 @@ function MermaidFenceHostImpl({
           inheritedStyles={inheritedStyles}
           textStyle={textStyle}
           onClose={closeExpanded}
+        />
+      ) : null}
+      {isFullscreen && visible ? (
+        <MermaidFullscreenViewer
+          source={visible.source}
+          colorScheme={visible.colorScheme}
+          onClose={closeFullscreen}
         />
       ) : null}
     </View>

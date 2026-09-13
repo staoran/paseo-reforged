@@ -123,7 +123,6 @@ import { openWorkspaceChanges } from "@/workspace-tabs/open-supporting-view";
 import { useLazyAgentTimelineSyncGate, useSettings } from "@/hooks/use-settings";
 import type { Theme } from "@/styles/theme";
 import type { PendingPermission } from "@/types/shared";
-import { upsertAgentReplica } from "@/utils/agent-directory-sync";
 import { getInitDeferred, getInitKey } from "@/utils/agent-initialization";
 import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { applyLegacyDaemonWorkspaceOwnership } from "@/workspace/legacy-daemon-workspaces";
@@ -320,6 +319,10 @@ function resolveWorkspaceAgentTabLabel(title: string | null | undefined): string
   return normalized;
 }
 
+function shouldStoreFetchedAgentInActiveDirectory(agent: Agent): boolean {
+  return !agent.archivedAt && Boolean(agent.projectPlacement);
+}
+
 type FetchAgentResult = Awaited<ReturnType<DaemonClient["fetchAgent"]>>;
 
 /** Stores a fetchAgent result without treating its persisted lifecycle as directory authority */
@@ -336,12 +339,15 @@ function storeFetchedAgentDetail(input: {
     },
   });
   const store = useSessionStore.getState();
-  // Detail reads preserve persisted metadata but do not establish runtime lifecycle state
-  store.setAgentDetails(input.serverId, (previous) => {
-    const next = new Map(previous);
-    next.set(hydrated.id, hydrated);
-    return next;
-  });
+  if (shouldStoreFetchedAgentInActiveDirectory(hydrated)) {
+    getHostRuntimeStore().acceptAgentSnapshot(input.serverId, hydrated);
+  } else {
+    store.setAgentDetails(input.serverId, (previous) => {
+      const next = new Map(previous);
+      next.set(hydrated.id, hydrated);
+      return next;
+    });
+  }
 
   store.setPendingPermissions(input.serverId, (previous) => {
     const next = new Map(previous);
@@ -382,7 +388,7 @@ function useAgentPanelDescriptor(
   );
   const provider = descriptorState.provider;
   const label = resolveWorkspaceAgentTabLabel(descriptorState.title);
-  const icon = getProviderIcon(provider);
+  const icon = getProviderIcon(provider, context.serverId);
 
   return {
     label: label ?? "",
@@ -434,7 +440,7 @@ function DraftPanel() {
     (agentSnapshot: Parameters<typeof normalizeAgentSnapshot>[0]) => {
       const normalized = normalizeAgentSnapshot(agentSnapshot, serverId);
       const agent = applyLegacyDaemonWorkspaceOwnership({ serverId, agent: normalized });
-      upsertAgentReplica(serverId, agent);
+      getHostRuntimeStore().acceptAgentSnapshot(serverId, agent);
       retargetCurrentTab({ kind: "agent", agentId: agentSnapshot.id });
     },
     [retargetCurrentTab, serverId],
@@ -1643,7 +1649,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
       setText={agentInputDraft.replaceText}
       onRewindComplete={handleRewindComplete}
     >
-      <View style={styles.root} dataSet={selectionOwnerDataSet}>
+      <View style={styles.root} collapsable={false} dataSet={selectionOwnerDataSet}>
         <DockedChatSurface disabled={isArchivingCurrentAgent}>
           {contentContainer}
 
@@ -2249,6 +2255,8 @@ const styles = StyleSheet.create((theme) => ({
   root: {
     flex: 1,
     backgroundColor: theme.colors.surface0,
+    // KeyboardDock translates the chat surface while the keyboard moves; clip it at the header edge.
+    overflow: "hidden",
   },
   container: {
     flex: 1,

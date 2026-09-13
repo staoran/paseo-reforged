@@ -254,6 +254,7 @@ The transport fields require a daemon that advertises the relay transport policy
 ## Common env vars
 
 - `PASEO_HOME`, set Paseo home directory
+- `PASEO_HOST`, set the daemon target for CLI commands
 - `PASEO_PASSWORD`, on the daemon, the password to require (plaintext, hashed at startup); on the CLI, the password used to connect when the host URI doesn't include one
 - `PASEO_LISTEN`, override `daemon.listen`
 - `PASEO_RELAY_ENABLED`, enable or disable the outbound relay for this daemon launch

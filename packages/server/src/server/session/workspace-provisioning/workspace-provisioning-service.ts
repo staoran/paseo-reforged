@@ -1,3 +1,5 @@
+import type { PluginLifecycle } from "../../plugins/lifecycle/index.js";
+import { describeHookWorkspace } from "../../plugins/lifecycle/index.js";
 import { basename, resolve } from "node:path";
 import type { Logger } from "pino";
 import {
@@ -16,6 +18,7 @@ import type { WorkspaceGitService } from "../../workspace-git-service.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../../worktree-session.js";
 import { deriveProjectKey } from "../../project-key.js";
 import { areEquivalentPaths, createRealpathAwarePathMatcher } from "../../../utils/path.js";
+import type { UntrustedWorkspaceSource } from "../../workspace-automation-gate.js";
 
 export interface ResolveOrCreateWorkspaceIdInput {
   createdWorktree: CreatePaseoWorktreeWorkflowResult | null;
@@ -54,6 +57,7 @@ export interface CreateWorktreeWorkspaceInput {
   baseBranch: string | null;
   title: string | null;
   expectsInitialAgent?: boolean;
+  untrustedSource?: UntrustedWorkspaceSource;
 }
 
 export interface WorkspaceProvisioningService {
@@ -101,6 +105,7 @@ export function createWorkspaceProvisioningService(deps: {
   projectRegistry: ProjectRegistry;
   workspaceGitService: Pick<WorkspaceGitService, "getCheckout" | "getSnapshot" | "peekSnapshot">;
   logger: Logger;
+  lifecycle?: PluginLifecycle;
 }): WorkspaceProvisioningService {
   const { serverId, workspaceRegistry, projectRegistry, workspaceGitService, logger } = deps;
 
@@ -139,6 +144,7 @@ export function createWorkspaceProvisioningService(deps: {
       undefined,
       transaction?.plannedWorkspaceId ? { workspaceId: transaction.plannedWorkspaceId } : undefined,
     );
+    const createdWorkspace = workspace;
     const previousProject =
       projectsBeforeImport.find((project) => project.projectId === workspace.projectId) ?? null;
 
@@ -154,7 +160,7 @@ export function createWorkspaceProvisioningService(deps: {
       }
       return {
         value: await operation(workspace),
-        createdWorkspace: workspace,
+        createdWorkspace,
       };
     } catch (error) {
       if (!transaction || !workspaceOwnershipRecorded) {
@@ -246,6 +252,7 @@ export function createWorkspaceProvisioningService(deps: {
         ? undefined
         : { expectsInitialAgent: context.expectsInitialAgent },
     );
+    deps.lifecycle?.emit("workspace.created", { workspace: describeHookWorkspace(workspace) });
     return workspace;
   }
 
@@ -276,10 +283,12 @@ export function createWorkspaceProvisioningService(deps: {
       title: input.title,
       createdAt: timestamp,
       updatedAt: timestamp,
+      ...(input.untrustedSource ? { untrustedSource: input.untrustedSource } : {}),
     });
     await workspaceRegistry.upsert(workspace, {
       expectsInitialAgent: input.expectsInitialAgent,
     });
+    deps.lifecycle?.emit("workspace.created", { workspace: describeHookWorkspace(workspace) });
     return workspace;
   }
 

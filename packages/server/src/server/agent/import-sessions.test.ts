@@ -67,6 +67,10 @@ function makeImportableSession(args: {
   };
 }
 
+function makeImportableSessionsResult(sessions: ManagedImportableProviderSession[]) {
+  return { sessions, providerErrors: [] };
+}
+
 function makeManagedAgent(args: {
   id?: string;
   provider?: string;
@@ -234,7 +238,7 @@ test("listImportableProviderSessions filters, sorts, limits, and projects import
       firstPrompt: "live prompt",
     }),
   ];
-  const listImportableSessions = vi.fn(async () => sessions);
+  const listImportableSessions = vi.fn(async () => makeImportableSessionsResult(sessions));
   const agentManager = {
     listImportableSessions,
   } satisfies Pick<AgentManager, "listImportableSessions">;
@@ -282,6 +286,7 @@ test("listImportableProviderSessions filters, sorts, limits, and projects import
   });
   expect(result).toEqual({
     filteredAlreadyImportedCount: 2,
+    providerErrors: [],
     entries: [
       {
         providerId: "codex",
@@ -322,7 +327,7 @@ test("listImportableProviderSessions keeps the provider snapshot bounded after f
     lastActivityAt: "2026-04-30T12:01:00.000Z",
   });
   const listImportableSessions = vi.fn(async (options?: { limit?: number }) =>
-    [imported, available].slice(0, options?.limit),
+    makeImportableSessionsResult([imported, available].slice(0, options?.limit)),
   );
 
   const result = await listImportableProviderSessions({
@@ -355,7 +360,7 @@ test("listImportableProviderSessions keeps the provider snapshot bounded after f
 
 test("listImportableProviderSessions does not scale provider limit with imported metadata", async () => {
   const cwd = "/tmp/project";
-  const listImportableSessions = vi.fn(async () => []);
+  const listImportableSessions = vi.fn(async () => makeImportableSessionsResult([]));
   const entries = Array.from({ length: 1_000 }, (_, index) =>
     makeAgentMetadataEntry({
       id: `stored-${index}`,
@@ -388,13 +393,15 @@ test("listImportableProviderSessions shares in-flight work and invalidates by ge
   let generation = 1;
   let now = 10_000;
   const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => now);
-  const listImportableSessions = vi.fn(async () => [
-    makeImportableSession({
-      sessionId: "available",
-      cwd,
-      lastActivityAt: "2026-04-30T12:00:00.000Z",
-    }),
-  ]);
+  const listImportableSessions = vi.fn(async () =>
+    makeImportableSessionsResult([
+      makeImportableSession({
+        sessionId: "available",
+        cwd,
+        lastActivityAt: "2026-04-30T12:00:00.000Z",
+      }),
+    ]),
+  );
   const input = {
     request: makeRequest({ cwd, providers: ["codex"], limit: 20 }),
     agentManager: { listImportableSessions },
@@ -433,7 +440,7 @@ test("listImportableProviderSessions does not cache provider failures", async ()
   const listImportableSessions = vi
     .fn()
     .mockRejectedValueOnce(new Error("provider listing failed"))
-    .mockResolvedValueOnce([]);
+    .mockResolvedValueOnce(makeImportableSessionsResult([]));
   const input = {
     request: makeRequest({ providers: ["codex"] }),
     agentManager: { listImportableSessions },
@@ -447,12 +454,13 @@ test("listImportableProviderSessions does not cache provider failures", async ()
   await expect(listImportableProviderSessions(input)).resolves.toEqual({
     entries: [],
     filteredAlreadyImportedCount: 0,
+    providerErrors: [],
   });
   expect(listImportableSessions).toHaveBeenCalledTimes(2);
 });
 
 test("listImportableProviderSessions bounds settled query cache entries", async () => {
-  const listImportableSessions = vi.fn(async () => []);
+  const listImportableSessions = vi.fn(async () => makeImportableSessionsResult([]));
   const agentStorage = {
     getMetadataSnapshot: async () => ({ generation: 1, entries: [] }),
   } satisfies Pick<AgentStorage, "getMetadataSnapshot">;
@@ -476,6 +484,65 @@ test("listImportableProviderSessions bounds settled query cache entries", async 
   expect(listImportableSessions).toHaveBeenCalledTimes(67);
 });
 
+test("listImportableProviderSessions requests a bounded deep scan for search results", async () => {
+  const matchingSessions = [
+    makeImportableSession({
+      provider: "claude",
+      sessionId: "title-match",
+      cwd: "/tmp/archive",
+      title: "Invoice cleanup",
+      lastActivityAt: "2026-04-01T04:00:00.000Z",
+    }),
+    makeImportableSession({
+      provider: "codex",
+      sessionId: "first-prompt-match",
+      cwd: "/tmp/archive",
+      title: "Unrelated",
+      firstPrompt: "Investigate invoice totals",
+      lastActivityAt: "2026-04-01T03:00:00.000Z",
+    }),
+    makeImportableSession({
+      provider: "pi",
+      sessionId: "last-prompt-match",
+      cwd: "/tmp/archive",
+      title: "Unrelated",
+      lastPrompt: "Finish invoice export",
+      lastActivityAt: "2026-04-01T02:00:00.000Z",
+    }),
+    makeImportableSession({
+      provider: "omp",
+      sessionId: "cwd-match",
+      cwd: "/tmp/invoice-service",
+      title: "Unrelated",
+      lastActivityAt: "2026-04-01T01:00:00.000Z",
+    }),
+  ];
+  const listImportableSessions = vi.fn(async () => makeImportableSessionsResult(matchingSessions));
+
+  const result = await listImportableProviderSessions({
+    request: makeRequest({ query: "INVOICE", limit: 10 }),
+    agentManager: { listImportableSessions },
+    agentStorage: {
+      getMetadataSnapshot: async () => ({ generation: 1, entries: [] }),
+    },
+    providerSnapshotManager: { getProviderLabel: (provider) => provider },
+  });
+
+  expect(listImportableSessions).toHaveBeenCalledWith({
+    limit: 500,
+    query: "invoice",
+    scanLimit: 500,
+    providerFilter: undefined,
+    cwd: undefined,
+  });
+  expect(result.entries.map((entry) => entry.providerHandleId)).toEqual([
+    "title-match",
+    "first-prompt-match",
+    "last-prompt-match",
+    "cwd-match",
+  ]);
+});
+
 test("listImportableProviderSessions includes a provider session after its Paseo agent is archived", async () => {
   const cwd = "/tmp/project";
   const archivedSession = makeImportableSession({
@@ -490,7 +557,7 @@ test("listImportableProviderSessions includes a provider session after its Paseo
   const result = await listImportableProviderSessions({
     request: makeRequest({ cwd, providers: ["claude"] }),
     agentManager: {
-      listImportableSessions: async () => [archivedSession],
+      listImportableSessions: async () => makeImportableSessionsResult([archivedSession]),
     },
     agentStorage: {
       getMetadataSnapshot: async () => ({
@@ -529,7 +596,15 @@ test("listImportableProviderSessions includes an archived provider session still
   const result = await listImportableProviderSessions({
     request: makeRequest({ cwd, providers: ["claude"] }),
     agentManager: {
-      listImportableSessions: async () => [archivedSession],
+      listAgents: () => [
+        makeManagedAgent({
+          id: agentId,
+          provider: "claude",
+          cwd,
+          sessionId: "archived-live-session",
+        }),
+      ],
+      listImportableSessions: async () => makeImportableSessionsResult([archivedSession]),
     },
     agentStorage: {
       getMetadataSnapshot: async () => ({
@@ -579,8 +654,9 @@ test("listImportableProviderSessions filters out metadata generation sessions", 
   const result = await listImportableProviderSessions({
     request: makeRequest({ cwd, providers: ["codex"] }),
     agentManager: {
-      listImportableSessions: async () => sessions,
-    } satisfies Pick<AgentManager, "listImportableSessions">,
+      listAgents: () => [],
+      listImportableSessions: async () => makeImportableSessionsResult(sessions),
+    } satisfies Pick<AgentManager, "listAgents" | "listImportableSessions">,
     agentStorage: {
       getMetadataSnapshot: async () => ({ generation: 1, entries: [] }),
     } satisfies Pick<AgentStorage, "getMetadataSnapshot">,
@@ -603,18 +679,20 @@ test("listImportableProviderSessions keeps realpath-equivalent cwd matches", asy
   const result = await listImportableProviderSessions({
     request: makeRequest({ cwd: linkedCwd, providers: ["pi"] }),
     agentManager: {
-      listImportableSessions: async () => [
-        makeImportableSession({
-          provider: "pi",
-          sessionId: "pi-session",
-          nativeHandle: "pi-handle",
-          cwd: persistedCwd,
-          title: "Pi session",
-          lastActivityAt: "2026-04-30T12:00:00.000Z",
-          firstPrompt: "remember this",
-        }),
-      ],
-    } satisfies Pick<AgentManager, "listImportableSessions">,
+      listAgents: () => [],
+      listImportableSessions: async () =>
+        makeImportableSessionsResult([
+          makeImportableSession({
+            provider: "pi",
+            sessionId: "pi-session",
+            nativeHandle: "pi-handle",
+            cwd: persistedCwd,
+            title: "Pi session",
+            lastActivityAt: "2026-04-30T12:00:00.000Z",
+            firstPrompt: "remember this",
+          }),
+        ]),
+    } satisfies Pick<AgentManager, "listAgents" | "listImportableSessions">,
     agentStorage: {
       getMetadataSnapshot: async () => ({ generation: 1, entries: [] }),
     } satisfies Pick<AgentStorage, "getMetadataSnapshot">,
@@ -629,8 +707,9 @@ test("listImportableProviderSessions rejects invalid since values", async () => 
     listImportableProviderSessions({
       request: makeRequest({ since: "not-a-date" }),
       agentManager: {
-        listImportableSessions: async () => [],
-      } satisfies Pick<AgentManager, "listImportableSessions">,
+        listAgents: () => [],
+        listImportableSessions: async () => makeImportableSessionsResult([]),
+      } satisfies Pick<AgentManager, "listAgents" | "listImportableSessions">,
       agentStorage: {
         getMetadataSnapshot: async () => ({ generation: 1, entries: [] }),
       } satisfies Pick<AgentStorage, "getMetadataSnapshot">,

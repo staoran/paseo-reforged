@@ -4,7 +4,7 @@ Paseo Hub is an explicit opt-in connection from one Paseo daemon to one Hub. Run
 not register it with a Hub. The relationship begins only when a user runs
 `paseo hub connect [url]` from the daemon machine with an explicit API key or matching stored CLI login.
 
-The human CLI login and daemon relationship are separate identities. `paseo hub login [url]` stores a durable organization-scoped CLI credential keyed by normalized Hub origin under `PASEO_HOME`. Interactive login optionally connects the local daemon, then points to the Hub UI for trigger configuration; it does not scaffold or deploy configuration. `paseo hub init` remains the explicit triggers-as-code scaffold. `paseo hub export [directory]` writes the active organization's current triggers as one self-contained YAML file per trigger, using the active login unless another Hub or API key is selected. Origin resolution uses explicit command input, `PASEO_HUB_URL`, active login, then `https://hub.paseo.sh`. Connect uses exact-origin authority to request a one-time enrollment token, then passes only that token to the daemon. The daemon generates and persists its own relationship credential.
+The human CLI login and daemon relationship are separate identities. `paseo hub login [url]` stores a durable organization-scoped CLI credential keyed by normalized Hub origin under `PASEO_HOME`. Interactive login optionally connects the local daemon, then points to the Hub UI for trigger configuration; it does not scaffold or deploy configuration. `paseo hub init` remains the explicit triggers-as-code scaffold: it writes one self-contained organization trigger under `.paseo/triggers/`, validates it through the trigger API, and optionally installs it. `paseo hub deploy` validates and installs every trigger in that directory; passing `--project` keeps deploying the legacy project bundle instead. `paseo hub export [directory]` writes the active organization's current triggers in the same layout, using the active login unless another Hub or API key is selected. Origin resolution uses explicit command input, `PASEO_HUB_URL`, active login, then `https://hub.paseo.sh`. Connect uses exact-origin authority to request a one-time enrollment token, then passes only that token to the daemon. The daemon generates and persists its own relationship credential.
 
 ## Connection and authority
 
@@ -25,17 +25,18 @@ during interactive login or later with `paseo hub permissions grant hub.execute`
 created before this split migrate their legacy execution scope to `hub.execute`. Hub sessions cannot
 manage their own relationship or permissions.
 
-## Session grants and execution ownership
+## Session grants and agent operations
 
-Trusted clients and the Hub use the same `Session` implementation. The connection boundary supplies
-semantic permissions: trusted clients receive the owner permission set, while an enrolled Hub
-connection receives its persisted permissions. Legacy relationship files carrying
-`hub.execution.*` migrate once to `hub.execute` at the persistence boundary. A denied request returns
-the ordinary `rpc_error` shape. See [permissions.md](permissions.md).
+Hub uses the same authenticated, resumable Session protocol as other clients. Its persisted
+`hub.execute` permission authorizes ordinary agent creation, messaging, cancellation, archival,
+agent/workspace observation, timeline subscriptions, and workspace recovery. This authority is
+daemon-wide; it is not limited to agents created by that Hub. Daemon configuration, terminals,
+browser control, and permission management still require their own permissions. See
+[permissions.md](permissions.md).
 
-The Hub connection still has a narrow lifecycle boundary: it has no trusted-client hello/resume,
-browser, binary, retained-session, or broadcast state. Its outbound execution events include only
-agents owned by that daemon identity, so unrelated local agents remain outside the Hub surface.
+Clients using this contract check `server_info.features.hubAgentRpc` and
+`server_info.features.agentRequestReceipts` once. An older host must be upgraded; do not silently
+fall back to creating a fresh agent when continuation was requested.
 
 Each Hub create carries an execution ID. The daemon stores that ID with the Agent's relationship
 owner before acknowledging creation. The ID is idempotent only for the same complete normalized
@@ -88,26 +89,35 @@ The v1 response keeps `error` as `string | null`. Failures may add an open-ended
 object with a stable `code` and `message`; consumers must tolerate string-only responses and unknown
 detail keys.
 
-A Hub workflow may use read-only provider settings for classifier steps. This is defense in depth,
-not a security boundary: classifier labels and prompt intent do not authorize tools. Exact MCP grants
-and the provider's local or managed policy remain the authorization controls.
+Hub owns conversation keys, trigger policy, execution records, and the mapping to workspace/agent
+IDs. None of these routing concepts are part of the generic daemon RPCs. Creation accepts ordinary
+provider configuration, exact MCP tool policy, environment, and workspace/worktree selection.
+Private session configuration is persisted for recovery and is not exposed in agent snapshots.
+Provider controls remain provider-native; see [providers.md](providers.md).
 
-Execution completion policy remains outside the daemon: a completed agent turn does not imply that
-the Hub execution is terminal.
+`create_agent_request.idempotencyKey` identifies one creation operation. With a key, omit
+`initialPrompt`, persist the returned agent/workspace identity, then deliver the prompt using
+`send_agent_message_request` with a stable `messageId`. Request IDs correlate individual attempts;
+creation keys and message IDs identify the operation across attempts. A creation key is daemon-wide;
+a message ID is scoped to its agent. Reusing either with different arguments is a conflict.
 
-The Hub ends an execution by sending `hub.execution.control.request` with the durable execution ID
-and either `interrupt` or `archive`. The daemon resolves the agent from the authenticated daemon
-relationship plus that execution ID; callers cannot supply an agent ID or workspace path. Both
-actions are idempotent and continue to resolve from stored ownership after daemon restart.
-If no execution exists for that authenticated daemon and execution ID, interrupt and archive return
-success because the requested stopped or archived state already holds. An execution owned by another
-daemon is indistinguishable from a missing execution and is never exposed or affected.
+The daemon journals the assigned agent ID before creation. Concurrent retries share one operation,
+and a retry after a lost acknowledgement or restart returns the durable agent without creating a
+workspace or starting a turn. Deleting that agent does not make its old creation key reusable.
+Confirmed message delivery is also journaled, so retrying its message ID does not submit it again.
+An unfinished delivery after restart reports `agent_request_outcome_unknown`: a provider can have
+accepted a prompt before the daemon recorded success, so automatic resubmission could duplicate
+work. Inspect the agent before choosing a new message ID. Receipts contain identity and request
+hashes, never prompts, environment values, or credentials.
 
-Interrupt uses the ordinary agent cancellation lifecycle. Archive resolves the execution agent's
-required workspaceId and sends it through the shared workspace archive service. The service archives
-that workspace's agents and terminals, then removes Paseo-owned backing directories only after their
-final active workspace reference disappears. Local checkouts remain on disk; sibling workspaces
-sharing a backing directory remain active.
+Before messaging an archived workspace, call `workspace.recovery.inspect.request`, then
+`workspace.recovery.restore.request` and await success. The native message handler unarchives the
+agent and loads its persisted provider session. `activeTurnBehavior: "steer"` uses the provider's
+native steering behavior, including Paseo's existing behavior when that provider cannot steer.
+Execution completion and arrival-specific output authority remain Hub responsibilities.
+
+The older `hub.execution.*` RPCs remain accepted for existing clients. Their execution ownership
+and create deduplication behavior are unchanged; new continuation work uses the ordinary RPCs.
 
 ## Disconnect and revocation
 

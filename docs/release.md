@@ -43,6 +43,67 @@ Rules that apply to both steps:
 - Invoking a release skill is intent to start the flow, not blanket authorization to publish.
 - If the user asks for a release preview, show the prospective changelog/release contents and answer questions, but do not commit, tag, publish, or run release commands until they explicitly authorize the release.
 
+## Release source and CI
+
+The default release source is `origin/main`. Fetch `origin`, then record the
+resolved commit. The default release checkout is a clean local `main` whose
+`HEAD` equals `origin/main`.
+
+An explicit user instruction can select another ref, such as a hotfix commit or
+tag. Resolve that ref once and apply every source, diff, and CI check to that
+commit instead of `origin/main`.
+
+Before making release-preparation commits, confirm the existing CI run for the
+resolved commit is green. Pending CI is watched to completion. Release
+preparation then stays local through the changelog, any explicitly requested ACP
+catalog update, lockfile preparation, and the version commit. After approval,
+commit the prepared inputs locally and run the release command. Its branch and
+tag push is the one remote release batch and starts CI for the complete release
+commit.
+
+## Release branch discipline
+
+While you finalize a release on `main`, use a temporary `next` branch for work intended for the following
+release. This applies to both beta and stable releases.
+
+- Create each new `next` from freshly fetched `origin/main`. Reuse it while active.
+- "This goes to next" means create the PR against `next` or retarget an existing
+  PR, and keep that destination through delivery.
+- Keep `next` current by merging `origin/main` into it as release fixes land.
+  Avoid rebasing this shared branch because agents and open PRs depend on its history.
+- After the release ships, bring `next` up to date and open a `next` → `main` PR.
+  Pass CI and merge without squashing away the individual PR commits needed for
+  the changelog. Retarget remaining PRs based on `next` to `main` and delete the integrated
+  `next`. Create it fresh when needed again.
+
+**Setup still needed:** CI, Docker, and Nix PR checks currently target only `main`,
+and GitHub permits only squash merges. Enable checks and required-check protection
+for `next`, CI on its pushes, and merge commits for the integration PR. Handle PR
+base changes (`edited` events) so retargeting runs checks against the new base;
+GitHub's default PR events do not cover this. Deployment triggers stay unchanged.
+
+### Hotfix from a release tag
+
+If `main` contains changes you do not want to release, branch from the affected
+release tag and cherry-pick only the required fixes. Run CI on that branch, then
+use the normal release flow with it as the explicit source, choosing a new patch
+or beta version. Ensure the fixes and changelog also reach `main` and any active
+`next`, preserving newer development and version changes there. This is a
+short-lived hotfix branch, not another maintained release track.
+
+## ACP catalog updates
+
+ACP catalog work enters a release through an explicit user request:
+
+- **Check ACP drift** — run `npm run acp:version-drift:check`. When drift exists,
+  run `npm run acp:version-drift:update`, verify the catalog, and include the
+  update in the local release-preparation commits.
+- **Update ACP** — run `npm run acp:version-drift:update`, verify the catalog, and
+  include the update in the local release-preparation commits.
+
+The release authorization covers the requested ACP commit. It ships in the same
+release push as the changelog and version commit.
+
 ## Two paths
 
 There are two supported ways to ship from `main`:
@@ -156,10 +217,10 @@ The rollout is driven by a `rolloutHours` field stamped into the GitHub Release 
 
 Desktop release builds now publish in two phases:
 
-- Platform build jobs upload the installers/packages (`.dmg`, `.zip`, `.exe`, `.AppImage`, etc.) to the GitHub release.
-- The final job merges/stamps the manifests and uploads all `.yml` files only after they already contain the final `releaseDate` and `rolloutHours`.
+- The GitHub Release stays a draft while platform build jobs upload the installers/packages (`.dmg`, `.zip`, `.exe`, `.AppImage`, etc.).
+- The final job merges and stamps every channel manifest, uploads them with the final `releaseDate` and `rolloutHours`, then publishes the GitHub Release.
 
-Updater clients only discover a release through those `.yml` manifests, so there is no silent 100% admission window before rollout metadata is present.
+Drafts do not appear in GitHub's releases feed. Updater clients continue to see the previous complete release until all three manifests are available. If a desktop build or manifest upload fails, the new release stays a draft.
 
 ### Default behavior
 
@@ -229,6 +290,15 @@ pattern as the instant-admit flow above, with the chosen `rollout_hours`.
 If you ship N+1 while N is still ramping, N+1 starts a fresh rollout from its own publish timestamp. N's rollout effectively ends — the newer manifest supersedes it. Rollout-aware clients revalidate the manifest for up to five seconds before installing a downloaded update on quit. If N+1 has replaced N but the client is not admitted to N+1 yet, it skips the downloaded N and waits rather than installing two updates in succession. If revalidation times out, the app exits without installing the cached update.
 
 If `reforged.(N+1)` fixes a bug in `reforged.N`, dispatch `desktop-rollout.yml -f tag=vX.Y.Z-reforged.<N+1> -f rollout_hours=0` after it publishes so users who already got `reforged.N` reach the fix quickly.
+
+### macOS system floor
+
+The desktop app requires macOS 13 or newer. Keep both release guards when the floor changes:
+
+- `packages/desktop/electron-builder.yml` writes the macOS version to `LSMinimumSystemVersion` for new installs.
+- `scripts/merge-mac-manifest.mjs` writes the matching Darwin kernel version to `minimumSystemVersion` in the update manifest. Existing clients check this before downloading an update.
+
+macOS 13 maps to Darwin 22. The two values use different version domains; do not copy the macOS version into the update manifest.
 
 ### Limitations
 
@@ -314,6 +384,7 @@ implemented.
 - The download target only moves when a future `vX.Y.Z-reforged.N` release is published as a non-prerelease after formal-channel support is implemented.
 - The public `/changelog` page renders `CHANGELOG.md` as-is, so the in-flight `-beta.N` entry shows there once it lands on `main` — that's intended, it's where beta users check what's coming. Only the **download target** stays pinned to the latest stable; the download links read GitHub's releases API, not the changelog, so a `-beta.N` heading on top never affects them.
 - The source website reads releases from `staoran/paseo-reforged`. Cloudflare deployment is not part of the release contract until fork-owned account/project credentials are configured.
+- The public website keeps store and hosted Web rows hidden until the fork configures and publishes those channels.
 
 ## Fixing a failed release build
 
@@ -362,6 +433,22 @@ For a source fix after `v0.2.0-beta.2`, update the changelog and cut
 `v0.2.0-beta.3`. `release:push` deliberately refuses a local or remote tag that
 already points elsewhere.
 
+If you decide to publish a release without working desktop builds, inspect its
+assets first, then publish it manually:
+
+```bash
+RELEASE_LOOKUP=$(node scripts/github-release.mjs --repo getpaseo/paseo --tag vX.Y.Z)
+gh release view "$RELEASE_LOOKUP" --json isDraft,isPrerelease,assets
+gh release edit "$RELEASE_LOOKUP" --tag vX.Y.Z --draft=false
+
+# Keep a beta marked as a prerelease:
+RELEASE_LOOKUP=$(node scripts/github-release.mjs --repo getpaseo/paseo --tag vX.Y.Z-beta.N)
+gh release edit "$RELEASE_LOOKUP" --tag vX.Y.Z-beta.N --draft=false --prerelease
+```
+
+This bypasses the updater-manifest guarantee. Use it only when the release is
+intentionally unavailable to desktop updater clients.
+
 ## Notes
 
 - `version:all:*` bumps root + syncs workspace versions and `@getpaseo/*` dependency versions
@@ -380,6 +467,8 @@ Release notes depend on the changelog heading format. The heading **must** be st
 ```
 
 No prefix (`v`), no extra text. `Release Notes Sync` matches the heading for the pushed tag to extract the version. `X.Y.Z-reforged.N` is reserved for the future formal channel and is not accepted by the current parser yet. A malformed or unsupported heading breaks the release-notes sync for that tag.
+
+`CHANGELOG.md` on `main` is also what the app's **What's new** sheet fetches and renders, so the file is a shipped product surface, not just a release input. `##` starts a release and `###` starts a section; the app reads section titles from the document, so renaming or adding one needs no app change. Everything under a section is rendered as Markdown: prose, lists, links, inline code, fenced code, block quotes, tables, and images. Raw HTML does not render — the shared Markdown parser runs with `html: false`, so a `<video>`, `<iframe>` or `<embed>` tag reaches the reader as visible markup. Keep media out of the changelog, or link to it. A GitHub callout renders as a block quote with its `[!NOTE]` marker still in the text. A release entry is what a user reads on a phone the moment they are offered the update — write it for them.
 
 ## Changelog policy
 
@@ -511,6 +600,8 @@ Betas are checkpoints along the way; the entry is the single record for the jump
 - [ ] The adopted upstream base version is re-checked; the target follows the current fork policy and is approved
 - [ ] Release preparation stayed local until the approved release command pushed the complete branch and tag
 - [ ] `npm run release:beta:next` completes successfully
+- [ ] Every GitHub Actions run for the complete release commit and tag is green
+- [ ] The GitHub prerelease was published only after the three beta manifests were uploaded, and it has the changelog body and every expected macOS, Linux, Windows, and Android APK asset
 - [ ] GitHub `Desktop Release` workflow for the `v*-beta.N` tag is green
 - [ ] GitHub `Android APK Release` workflow for the same tag is green
 - [ ] GitHub `Release Notes Sync` mirrored the beta entry into the prerelease body
@@ -530,6 +621,9 @@ Betas are checkpoints along the way; the entry is the single record for the jump
 - [ ] Verify the changelog heading follows strict `## X.Y.Z-reforged.N - YYYY-MM-DD` format
 - [ ] The future dedicated Reforged formal release command completes successfully
 - [ ] GitHub `Desktop Release` workflow for the `v*` tag is green
+- [ ] Release preparation stayed local until the approved release command pushed the complete branch and tag
+- [ ] GitHub `Desktop Release` workflow for the `v*` tag is green
+- [ ] `latest-mac.yml` contains the current `minimumSystemVersion` guard
 - [ ] GitHub `Android APK Release` workflow for the same tag is green
 - [ ] npm and Docker publishing remained disabled
 

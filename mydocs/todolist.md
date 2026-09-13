@@ -2,9 +2,9 @@
 
 ## 编号索引
 
-- 当前编号基线：`0110`
-- 下一个建议编号：`0111`
-- 最后更新：`2026-09-12`
+- 当前编号基线：`0114`
+- 下一个建议编号：`0115`
+- 最后更新：`2026-09-14`
 - 迁移说明：既有 `0001` 至 `0014` 任务已于 2026-08-02 合并迁移至 `mydocs/specs/`，旧 `mydocs/tasks/` 目录已删除；这些编号继续占用。
 
 ## 用途
@@ -160,6 +160,7 @@
 | 0108 | 已收口     | micro-spec | 已同步        | [移动端工作区尾部信息菜单触发区](micro_specs/0108_移动端工作区尾部信息菜单触发区.md)                       | 2026-09-11       | 活动时间/差异统计与更多提示合为统一紧凑触发区；Vitest 11/11、Browser E2E、typecheck、格式/diff 通过；根 lint 仅有范围外 `agent-manager.ts` complexity 错误                                |
 | 0109 | 暂停       | micro-spec | 已同步        | [发布 0.7.2 beta.7 测试版](micro_specs/0109_发布0.7.2_beta.7测试版.md)                                     | 2026-09-12       | 合并提交 `5ec05ee28` 已推送；当前 CI 与父提交同类 job 均失败，等待修复范围或例外发布授权                                                                                                  |
 | 0110 | 待验证     | micro-spec | 已同步        | [修复主分支 CI 红项](micro_specs/0110_修复主分支CI红项.md)                                                 | 2026-09-12       | CI 修复已独立提交；定向 Vitest 174/174、Browser E2E 5/5、format/typecheck/lint/diff 通过，待推送和精确 CI                                                                                 |
+| 0113 | 执行中     | micro-spec | 已同步        | [合并远端 bgg v0.8.0 到 Reforged](micro_specs/0113_合并远端bgg_v0.8.0到Reforged.md)                        | 2026-09-14       | 87 个冲突路径已解析；build、typecheck、lint 和定向回归通过；待 merge commit、保护 stash 回放与二次验证                                                                                    |
 
 ## 候选待办
 

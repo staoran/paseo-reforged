@@ -266,10 +266,7 @@ function clearAgentInitializingFlag(
 
 function isAgentLiveForProjection(session: SessionState | undefined, agentId: string): boolean {
   const agent = session?.agents.get(agentId) ?? session?.agentDetails.get(agentId);
-  return (
-    !isTimelineProjectionAgentStateCompatible(agent) ||
-    session?.agentTurnLiveness.get(agentId)?.phase === "open"
-  );
+  return !isTimelineProjectionAgentStateCompatible(agent) || agent?.turn.phase === "open";
 }
 
 function handleTimelineError(input: {
@@ -464,8 +461,9 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
 
   // Zustand store actions
   const setIsPlayingAudio = useSessionStore((state) => state.setIsPlayingAudio);
-  const applyAgentTurnLiveness = useSessionStore((state) => state.applyAgentTurnLiveness);
-  const clearAgentTurnLiveness = useSessionStore((state) => state.clearAgentTurnLiveness);
+  const setAgentStreamTail = useSessionStore((state) => state.setAgentStreamTail);
+  const setAgentStreamHead = useSessionStore((state) => state.setAgentStreamHead);
+  const clearAgentStreamHead = useSessionStore((state) => state.clearAgentStreamHead);
   const setInitializingAgents = useSessionStore((state) => state.setInitializingAgents);
   const bumpHistorySyncGeneration = useSessionStore((state) => state.bumpHistorySyncGeneration);
   const markAgentHistorySynchronized = useSessionStore(
@@ -716,15 +714,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     isConnected,
     setInitializingAgents,
   ]);
-
-  useEffect(
-    () =>
-      client.subscribeConnectionStatus((connection) => {
-        if (connection.status === "connected") return;
-        clearAgentTurnLiveness(serverId);
-      }),
-    [clearAgentTurnLiveness, client, serverId],
-  );
 
   const applyWorkspaceSetupProgress = useCallback(
     (payload: WorkspaceSetupProgressPayload) => {
@@ -1165,7 +1154,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         { event: streamEvent, seq, epoch, timestamp: parsedTimestamp },
       ]);
       if (turnLiveness.length > 0) {
-        applyAgentTurnLiveness(serverId, agentId, turnLiveness);
+        getHostRuntimeStore().applyAgentTurnLiveness(serverId, agentId, turnLiveness);
       }
       owner.enqueueStreamEvent(agentId, {
         event: streamEvent,
@@ -1438,7 +1427,9 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     queryClient,
     serverId,
     setIsPlayingAudio,
-    applyAgentTurnLiveness,
+    setAgentStreamTail,
+    setAgentStreamHead,
+    clearAgentStreamHead,
     setInitializingAgents,
     setPendingPermissions,
     notifyAgentAttention,
