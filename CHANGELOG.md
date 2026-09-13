@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.2-beta.6 - 2026-09-11
+## 0.7.2-beta.7 - 2026-09-13
 
 ### Added
 
@@ -8,11 +8,14 @@
 - Added SSH connections to existing remote daemons from Desktop and CLI
 - Added Explorer panes, New tabs, standalone Diff tabs, pane and tab layout controls, and workspace labels
 - Added active-turn steering for Pi agents, workspace management actions, agent skills, and expanded provider support
+- Added generated workspace titles that follow the app language setting
+- Added optional lazy loading for closed agents, showing potentially outdated cached history until you start the agent or send a message
 
 ### Improved
 
 - Changed timeline restoration, long-chat rendering, and large-diff handling to keep workspace navigation responsive
 - Added separate interface, content, workspace, and code typography settings
+- Changed compact workspace rows to combine activity or diff information with the menu trigger
 
 ### Fixed
 
@@ -23,6 +26,9 @@
 - Fixed Android release APK builds failing from Hermes compiler memory exhaustion
 - Fixed cloud Android APK builds emitting unsupported extra ABIs
 - Disabled Metro source maps in remote Android release builds to lower build memory pressure
+- Fixed editing the last plain-text message after an agent finishes or is stopped
+- Fixed copying and selecting text across lines in root error details
+- Fixed mobile tool-call groups failing to close after their details were opened
 
 ## 0.7.1 - 2026-09-01
 
