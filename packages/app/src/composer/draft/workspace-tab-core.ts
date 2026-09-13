@@ -1,8 +1,27 @@
 import { resolveSubmissionReadiness } from "@/provider-selection/provider-selection";
+import type { AgentAttachment, FirstAgentContext } from "@getpaseo/protocol/messages";
 
 export interface WorkspaceDraftAutoSubmitConfig {
   provider: string;
   model: string | null;
+}
+
+/** Builds first-agent metadata for automatic naming from a workspace draft submission */
+export function buildWorkspaceDraftFirstAgentContext(input: {
+  text: string;
+  attachments: readonly AgentAttachment[];
+  titleLanguage: NonNullable<FirstAgentContext["titleLanguage"]>;
+}): FirstAgentContext | undefined {
+  const prompt = input.text.trim();
+  if (!prompt && input.attachments.length === 0) {
+    return undefined;
+  }
+
+  return {
+    ...(prompt ? { prompt } : {}),
+    ...(input.attachments.length > 0 ? { attachments: [...input.attachments] } : {}),
+    titleLanguage: input.titleLanguage,
+  };
 }
 
 export function shouldAllowEmptyDraftText(input: {

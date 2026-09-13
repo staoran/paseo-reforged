@@ -3111,6 +3111,10 @@ test("sends structured attachments with create_agent_request", async () => {
     provider: "codex",
     cwd: "/tmp/project",
     initialPrompt: "Review this PR",
+    firstAgentContext: {
+      prompt: "Review this PR",
+      titleLanguage: "zh-CN",
+    },
     attachments: [
       {
         type: "github_pr",
@@ -3137,6 +3141,10 @@ test("sends structured attachments with create_agent_request", async () => {
       headRefName: "fix/worktree-race",
     },
   ]);
+  expect(request.firstAgentContext).toEqual({
+    prompt: "Review this PR",
+    titleLanguage: "zh-CN",
+  });
 
   mock.triggerMessage(
     wrapSessionMessage({

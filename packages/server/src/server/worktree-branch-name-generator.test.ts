@@ -2,10 +2,14 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { z } from "zod";
 
 import type { FirstAgentContext } from "@getpaseo/protocol/messages";
 import type { AgentManager } from "./agent/agent-manager.js";
-import type { StructuredAgentGenerationWithFallbackOptions } from "./agent/agent-response-loop.js";
+import {
+  getStructuredAgentResponse,
+  type StructuredAgentGenerationWithFallbackOptions,
+} from "./agent/agent-response-loop.js";
 import {
   attemptFirstAgentBranchAutoName,
   type AttemptFirstAgentBranchAutoNameResult,
@@ -66,6 +70,14 @@ function createStructuredGenerator(result: { title: string; branch: string }) {
   return { generateStructured, calls };
 }
 
+/** Narrows a structured-generator schema to its Zod implementation for assertions */
+function expectZodSchema(schema: unknown): z.ZodType {
+  if (typeof (schema as { safeParse?: unknown } | null)?.safeParse !== "function") {
+    throw new Error("expected a Zod schema");
+  }
+  return schema as z.ZodType;
+}
+
 describe("generateBranchNameFromFirstAgentContext", () => {
   test("returns title and branch independently — branch is not a slug of the title", async () => {
     const structured = createStructuredGenerator({
@@ -121,6 +133,66 @@ describe("generateBranchNameFromFirstAgentContext", () => {
     expect(firstCall.prompt).toContain("Fix the login flow");
     expect(firstCall.prompt).toContain("<user-prompt>\nFix the login flow\n</user-prompt>");
     expect(firstCall.prompt).not.toContain("User context:");
+  });
+
+  test("rejects an English title when Simplified Chinese was requested", async () => {
+    const structured = createStructuredGenerator({
+      title: "\u4fee\u590d\u767b\u5f55\u6d41\u7a0b",
+      branch: "fix-login-flow",
+    });
+
+    await generateBranchNameFromFirstAgentContext({
+      agentManager: {} as AgentManager,
+      cwd: "/tmp/repo",
+      firstAgentContext: { prompt: "Fix the login flow", titleLanguage: "zh-CN" },
+      logger: createLogger(),
+      deps: { generateStructuredAgentResponseWithFallback: structured.generateStructured },
+    });
+
+    const schema = expectZodSchema(structured.calls[0]?.schema);
+    expect(schema.safeParse({ title: "Fix login flow", branch: "fix-login-flow" }).success).toBe(
+      false,
+    );
+    expect(
+      schema.safeParse({ title: "\u4fee\u590d\u767b\u5f55\u6d41\u7a0b", branch: "fix-login-flow" })
+        .success,
+    ).toBe(true);
+  });
+
+  test("retries the structured response when its title misses the requested language", async () => {
+    const structured = createStructuredGenerator({
+      title: "\u4fee\u590d\u767b\u5f55\u6d41\u7a0b",
+      branch: "fix-login-flow",
+    });
+    await generateBranchNameFromFirstAgentContext({
+      agentManager: {} as AgentManager,
+      cwd: "/tmp/repo",
+      firstAgentContext: { prompt: "Fix the login flow", titleLanguage: "zh-CN" },
+      logger: createLogger(),
+      deps: { generateStructuredAgentResponseWithFallback: structured.generateStructured },
+    });
+
+    const schema = expectZodSchema(structured.calls[0]?.schema);
+    const prompts: string[] = [];
+    const response = await getStructuredAgentResponse({
+      caller: async (prompt) => {
+        prompts.push(prompt);
+        return prompts.length === 1
+          ? '{"title":"Fix login flow","branch":"fix-login-flow"}'
+          : '{"title":"\u4fee\u590d\u767b\u5f55\u6d41\u7a0b","branch":"fix-login-flow"}';
+      },
+      prompt: "Generate a workspace title",
+      schema,
+      maxRetries: 1,
+      schemaName: "BranchName",
+    });
+
+    expect(response).toEqual({
+      title: "\u4fee\u590d\u767b\u5f55\u6d41\u7a0b",
+      branch: "fix-login-flow",
+    });
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain("Workspace title must contain Simplified Chinese wording");
   });
 
   test("wraps a slash-only first-agent prompt as naming input", async () => {

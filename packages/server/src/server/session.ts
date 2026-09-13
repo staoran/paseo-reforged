@@ -91,6 +91,7 @@ import type {
   ManagedAgent,
 } from "./agent/agent-manager.js";
 import { createAgentCommand } from "./agent/create-agent/create.js";
+import { buildCreateAgentFirstAgentContext } from "./agent/create-agent-context.js";
 import { resolveCreateAgentIntent, type CreateAgentIntent } from "./agent/create-agent/intent.js";
 import {
   archiveAgentCommand,
@@ -3728,6 +3729,7 @@ export class Session {
       images,
       attachments,
       env,
+      firstAgentContext: requestedFirstAgentContext,
     } = msg;
     this.sessionLogger.info(
       { cwd: config.cwd, provider: config.provider, worktreeName },
@@ -3746,16 +3748,18 @@ export class Session {
         throw new Error(`Working directory does not exist or is not a directory: ${requestedCwd}`);
       }
       const trimmedPrompt = initialPrompt?.trim();
-      const { provisionalTitle } = resolveCreateAgentTitles({
+      const { explicitTitle, provisionalTitle: promptProvisionalTitle } = resolveCreateAgentTitles({
         configTitle: config.title,
         initialPrompt: trimmedPrompt,
       });
 
-      const firstAgentContext: FirstAgentContext = {
-        ...(trimmedPrompt ? { prompt: trimmedPrompt } : {}),
-        ...(attachments && attachments.length > 0 ? { attachments } : {}),
-      };
+      const firstAgentContext = buildCreateAgentFirstAgentContext({
+        requestContext: requestedFirstAgentContext,
+        initialPrompt,
+        attachments,
+      });
       const workspacePromptTitle = resolveFirstAgentPromptTitle(firstAgentContext);
+      const provisionalTitle = explicitTitle ?? workspacePromptTitle ?? promptProvisionalTitle;
       const createdWorktree = await this.createAgentLifecycleDispatch.createWorktreeForRequest({
         cwd: config.cwd,
         target: worktree,

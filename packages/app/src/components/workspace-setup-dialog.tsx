@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
-import { createNameId } from "mnemonic-id";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { Composer } from "@/composer";
@@ -10,6 +9,7 @@ import { ProjectIconView } from "@/components/project-icon-view";
 import { ICON_SIZE } from "@/styles/theme";
 import { useToast } from "@/contexts/toast-context";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
+import { useAppLocale } from "@/i18n/provider";
 import { useProjectIcon } from "@/projects/icons";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { normalizeWorkspaceDescriptor, useSessionStore } from "@/stores/session-store";
@@ -22,15 +22,17 @@ import {
   resolveComposerAttachmentSubmitFormat,
   splitComposerAttachmentsForSubmit,
 } from "@/composer/attachments/submit";
-import type {
-  CreateAgentRequestOptions,
-  DaemonClient,
-} from "@getpaseo/client/internal/daemon-client";
+import type { CreateAgentRequestOptions } from "@getpaseo/client/internal/daemon-client";
+import type { FirstAgentContext } from "@getpaseo/protocol/messages";
 import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
 import { requireWorkspaceDirectory } from "@/utils/workspace-directory";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import type { MessagePayload } from "@/composer/types";
+import {
+  buildWorkspaceSetupFirstAgentContext,
+  createWorkspaceForSetup,
+} from "./workspace-setup-dialog-core";
 
 function toProjectIconDataUri(icon: { mimeType: string; data: string } | null): string | null {
   if (!icon) {
@@ -84,26 +86,6 @@ function buildChatDraftComposerArgs({
   };
 }
 
-async function callWorkspaceCreation({
-  creationMethod,
-  connectedClient,
-  input,
-}: {
-  creationMethod: "create_worktree" | "open_project";
-  connectedClient: DaemonClient;
-  input: { cwd: string };
-}) {
-  if (creationMethod === "create_worktree") {
-    return connectedClient.createPaseoWorktree({
-      cwd: input.cwd,
-      worktreeSlug: createNameId(),
-    });
-  }
-  return connectedClient.createWorkspace({
-    source: { kind: "directory", path: input.cwd },
-  });
-}
-
 function failureMessageForCreationMethod(
   method: "create_worktree" | "open_project",
   t: ReturnType<typeof useTranslation>["t"],
@@ -121,6 +103,7 @@ function buildCreateAgentOptions({
   workspaceDirectory,
   workspaceId,
   provider,
+  firstAgentContext,
 }: {
   composerState: {
     modeOptions: { id: string }[];
@@ -134,6 +117,7 @@ function buildCreateAgentOptions({
   workspaceDirectory: string;
   workspaceId: string;
   provider: CreateAgentRequestOptions["provider"];
+  firstAgentContext: FirstAgentContext | undefined;
 }): CreateAgentRequestOptions {
   // Reconcile the selected mode against the discovered modes. The mode picker
   // shows modeOptions[0] when the stored mode isn't in the list (e.g. a stale
@@ -144,6 +128,7 @@ function buildCreateAgentOptions({
   const reconciledMode = modeOptionIds.includes(composerState.selectedMode)
     ? composerState.selectedMode
     : (modeOptionIds[0] ?? "");
+  const trimmedText = text.trim();
   return {
     provider,
     cwd: workspaceDirectory,
@@ -153,14 +138,16 @@ function buildCreateAgentOptions({
     ...(composerState.effectiveThinkingOptionId
       ? { thinkingOptionId: composerState.effectiveThinkingOptionId }
       : {}),
-    ...(text.trim() ? { initialPrompt: text.trim() } : {}),
+    ...(trimmedText ? { initialPrompt: trimmedText } : {}),
     ...(encodedImages && encodedImages.length > 0 ? { images: encodedImages } : {}),
     ...(attachments.length > 0 ? { attachments } : {}),
+    ...(firstAgentContext ? { firstAgentContext } : {}),
   };
 }
 
 export function WorkspaceSetupDialog() {
   const { t } = useTranslation();
+  const titleLanguage = useAppLocale();
   const toast = useToast();
   const pendingWorkspaceSetup = useWorkspaceSetupStore((state) => state.pendingWorkspaceSetup);
   const clearWorkspaceSetup = useWorkspaceSetupStore((state) => state.clearWorkspaceSetup);
@@ -248,7 +235,7 @@ export function WorkspaceSetupDialog() {
   }, [client, isConnected, t]);
 
   const ensureWorkspace = useCallback(
-    async (input: { cwd: string; attachments: MessagePayload["attachments"] }) => {
+    async (input: { cwd: string; firstAgentContext: FirstAgentContext | undefined }) => {
       if (!pendingWorkspaceSetup) {
         throw new Error(t("workspaceSetup.errors.pendingRequired"));
       }
@@ -258,10 +245,11 @@ export function WorkspaceSetupDialog() {
       }
 
       const connectedClient = withConnectedClient();
-      const payload = await callWorkspaceCreation({
+      const payload = await createWorkspaceForSetup({
         creationMethod: pendingWorkspaceSetup.creationMethod,
-        connectedClient,
-        input,
+        client: connectedClient,
+        cwd: input.cwd,
+        firstAgentContext: input.firstAgentContext,
       });
 
       if (payload.error || !payload.workspace) {
@@ -306,8 +294,6 @@ export function WorkspaceSetupDialog() {
       try {
         setPendingAction("chat");
         setErrorMessage(null);
-        const ensuredWorkspace = await ensureWorkspace({ cwd, attachments });
-        const connectedClient = withConnectedClient();
         if (!composerState) {
           throw new Error(t("workspaceSetup.errors.composerStateRequired"));
         }
@@ -320,6 +306,13 @@ export function WorkspaceSetupDialog() {
             supportsForgeAttachments: supportsForgeSearch,
           }),
         });
+        const firstAgentContext = buildWorkspaceSetupFirstAgentContext({
+          text,
+          attachments: wirePayload.attachments,
+          titleLanguage,
+        });
+        const ensuredWorkspace = await ensureWorkspace({ cwd, firstAgentContext });
+        const connectedClient = withConnectedClient();
         const encodedImages = await encodeImages(wirePayload.images);
         const workspaceDirectory = requireWorkspaceDirectory({
           workspaceId: ensuredWorkspace.id,
@@ -334,6 +327,7 @@ export function WorkspaceSetupDialog() {
             workspaceDirectory,
             workspaceId: ensuredWorkspace.id,
             provider: composerState.selectedProvider,
+            firstAgentContext,
           }),
         );
 
@@ -374,6 +368,7 @@ export function WorkspaceSetupDialog() {
       toast,
       withConnectedClient,
       supportsForgeSearch,
+      titleLanguage,
     ],
   );
 

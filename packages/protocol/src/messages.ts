@@ -1323,6 +1323,12 @@ function normalizeAgentAttachments(input: unknown): AgentAttachment[] {
 
 const AgentAttachmentsSchema = z.unknown().transform(normalizeAgentAttachments).optional();
 
+export const FirstAgentContextSchema = z.object({
+  prompt: z.string().optional(),
+  attachments: AgentAttachmentsSchema,
+  titleLanguage: z.enum(["ar", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"]).optional(),
+});
+
 export const ChangeRequestCheckoutSourceSchema = z.object({
   kind: z.literal("change_request"),
   forge: z.string().optional(),
@@ -1776,6 +1782,7 @@ export const CreateAgentRequestMessageSchema = z.object({
   outputSchema: z.record(z.string(), z.unknown()).optional(),
   images: z.array(ImageAttachmentSchema).optional(),
   attachments: AgentAttachmentsSchema,
+  firstAgentContext: FirstAgentContextSchema.optional(),
   git: GitSetupOptionsSchema.optional(),
   worktree: CreateAgentWorktreeTargetSchema.optional(),
   autoArchive: z.boolean().optional(),
@@ -2585,12 +2592,6 @@ export const PaseoWorktreeArchiveRequestSchema = z.object({
   // retained for wire parse-compat, drop when floor >= v0.1.97.
   deleteWorktreeFromDisk: z.boolean().optional().default(false),
   requestId: z.string(),
-});
-
-export const FirstAgentContextSchema = z.object({
-  prompt: z.string().optional(),
-  attachments: AgentAttachmentsSchema,
-  titleLanguage: z.enum(["ar", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"]).optional(),
 });
 
 export const CreatePaseoWorktreeRequestSchema = z.object({

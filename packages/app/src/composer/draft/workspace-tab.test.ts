@@ -1,6 +1,10 @@
 import { describe, expect, test } from "vitest";
 
-import { shouldAllowEmptyDraftText, validateDraftSubmission } from "./workspace-tab-core";
+import {
+  buildWorkspaceDraftFirstAgentContext,
+  shouldAllowEmptyDraftText,
+  validateDraftSubmission,
+} from "./workspace-tab-core";
 
 const baseComposerState = {
   providerDefinitions: [{ id: "codewhale" }],
@@ -67,5 +71,41 @@ describe("workspace draft empty text readiness", () => {
         attachments: [],
       }),
     ).toBe(false);
+  });
+});
+
+describe("workspace draft title language context", () => {
+  test("keeps the resolved title language with the first draft prompt", () => {
+    expect(
+      buildWorkspaceDraftFirstAgentContext({
+        text: "  Fix the login flow  ",
+        attachments: [],
+        titleLanguage: "zh-CN",
+      }),
+    ).toEqual({
+      prompt: "Fix the login flow",
+      titleLanguage: "zh-CN",
+    });
+  });
+
+  test("keeps the resolved title language for attachment-only submissions", () => {
+    const attachment = {
+      type: "github_issue" as const,
+      mimeType: "application/github-issue" as const,
+      number: 42,
+      title: "Fix login flow",
+      url: "https://github.com/acme/repo/issues/42",
+    };
+
+    expect(
+      buildWorkspaceDraftFirstAgentContext({
+        text: "",
+        attachments: [attachment],
+        titleLanguage: "zh-CN",
+      }),
+    ).toEqual({
+      attachments: [attachment],
+      titleLanguage: "zh-CN",
+    });
   });
 });

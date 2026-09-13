@@ -1,6 +1,9 @@
 import { describe, expect, test } from "vitest";
 
-import { resolveCreateAgentTitles } from "./agent/create-agent-title.js";
+import {
+  resolveCreateAgentTitles,
+  resolveFirstAgentPromptTitle,
+} from "./agent/create-agent-title.js";
 
 describe("resolveCreateAgentTitles", () => {
   test("derives a provisional title from prompt when explicit title is absent", () => {
@@ -31,5 +34,14 @@ describe("resolveCreateAgentTitles", () => {
 
     expect(resolved.explicitTitle).toBeNull();
     expect(resolved.provisionalTitle).toBeNull();
+  });
+
+  test("uses a localized provisional title when a Chinese title cannot use the prompt", () => {
+    expect(
+      resolveFirstAgentPromptTitle({
+        prompt: "Fix the login flow",
+        titleLanguage: "zh-CN",
+      }),
+    ).toBe("\u65b0\u4f1a\u8bdd");
   });
 });

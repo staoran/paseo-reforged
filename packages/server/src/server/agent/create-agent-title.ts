@@ -3,6 +3,34 @@ import type { FirstAgentContext } from "@getpaseo/protocol/messages";
 
 const MAX_INITIAL_AGENT_TITLE_CHARS = Math.min(60, MAX_EXPLICIT_AGENT_TITLE_CHARS);
 
+type TitleLanguage = NonNullable<FirstAgentContext["titleLanguage"]>;
+
+const LOCALIZED_FIRST_AGENT_TITLES = {
+  ar: "جلسة جديدة",
+  en: "New chat",
+  es: "Nueva conversación",
+  fr: "Nouvelle conversation",
+  ja: "新しい会話",
+  ko: "새 대화",
+  "pt-BR": "Nova conversa",
+  ru: "Новый чат",
+  "zh-CN": "新会话",
+} satisfies Record<TitleLanguage, string>;
+
+const TITLE_LANGUAGE_SCRIPT_PATTERNS: Partial<Record<TitleLanguage, RegExp>> = {
+  ar: /\p{Script=Arabic}/u,
+  ja: /(?:\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana})/u,
+  ko: /\p{Script=Hangul}/u,
+  ru: /\p{Script=Cyrillic}/u,
+  "zh-CN": /\p{Script=Han}/u,
+};
+
+/** Checks whether a prompt-derived title uses a locally distinguishable script */
+function titleMatchesRequestedLanguage(title: string, titleLanguage: TitleLanguage): boolean {
+  const pattern = TITLE_LANGUAGE_SCRIPT_PATTERNS[titleLanguage];
+  return !pattern || pattern.test(title);
+}
+
 function deriveInitialAgentTitle(prompt: string): string | null {
   const firstContentLine = prompt
     .split(/\r?\n/)
@@ -37,10 +65,17 @@ export function resolveCreateAgentTitles(options: {
   };
 }
 
+/** Resolves a prompt title or a localized fallback for the requested title language */
 export function resolveFirstAgentPromptTitle(firstAgentContext?: FirstAgentContext): string | null {
-  return (
-    resolveCreateAgentTitles({
-      initialPrompt: firstAgentContext?.prompt,
-    }).provisionalTitle ?? null
-  );
+  const provisionalTitle = resolveCreateAgentTitles({
+    initialPrompt: firstAgentContext?.prompt,
+  }).provisionalTitle;
+  const titleLanguage = firstAgentContext?.titleLanguage;
+  if (
+    !titleLanguage ||
+    (provisionalTitle && titleMatchesRequestedLanguage(provisionalTitle, titleLanguage))
+  ) {
+    return provisionalTitle;
+  }
+  return LOCALIZED_FIRST_AGENT_TITLES[titleLanguage];
 }

@@ -39,11 +39,6 @@ export interface GenerateBranchNameFromFirstAgentContextOptions {
   };
 }
 
-const BranchNameSchema = z.object({
-  title: z.string().min(1).max(80),
-  branch: z.string().min(1).max(100),
-});
-
 // Human-readable names make the title-language requirement unambiguous to the model
 const TITLE_LANGUAGE_NAMES = {
   ar: "Arabic",
@@ -57,6 +52,42 @@ const TITLE_LANGUAGE_NAMES = {
   "zh-CN": "Simplified Chinese",
 } satisfies Record<NonNullable<FirstAgentContext["titleLanguage"]>, string>;
 
+type TitleLanguage = NonNullable<FirstAgentContext["titleLanguage"]>;
+
+// Script checks reject impossible non-Latin title output before it can be persisted
+const TITLE_LANGUAGE_SCRIPT_PATTERNS: Partial<Record<TitleLanguage, RegExp>> = {
+  ar: /\p{Script=Arabic}/u,
+  ja: /(?:\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana})/u,
+  ko: /\p{Script=Hangul}/u,
+  ru: /\p{Script=Cyrillic}/u,
+  "zh-CN": /\p{Script=Han}/u,
+};
+
+/** Verifies a title contains the target script when its language has a distinct script */
+function titleMatchesRequestedLanguage(title: string, titleLanguage: TitleLanguage): boolean {
+  const pattern = TITLE_LANGUAGE_SCRIPT_PATTERNS[titleLanguage];
+  return !pattern || pattern.test(title);
+}
+
+/** Builds the structured response schema with a locally verifiable title-language constraint */
+function createBranchNameSchema(titleLanguage: FirstAgentContext["titleLanguage"]) {
+  const title = z.string().min(1).max(80);
+  const constrainedTitle = titleLanguage
+    ? title
+        .describe(
+          `Workspace title wording must be ${TITLE_LANGUAGE_NAMES[titleLanguage]}. Preserve only necessary technical identifiers from other languages.`,
+        )
+        .refine((value) => titleMatchesRequestedLanguage(value, titleLanguage), {
+          message: `Workspace title must contain ${TITLE_LANGUAGE_NAMES[titleLanguage]} wording`,
+        })
+    : title;
+
+  return z.object({
+    title: constrainedTitle,
+    branch: z.string().min(1).max(100),
+  });
+}
+
 async function buildPrompt(
   seed: string,
   options: {
@@ -66,7 +97,7 @@ async function buildPrompt(
   },
 ): Promise<string> {
   const titleLanguageRequirement = options.titleLanguage
-    ? `The workspace title must be written in ${TITLE_LANGUAGE_NAMES[options.titleLanguage]}. This requirement overrides any title style instructions.`
+    ? `The workspace title must be written in ${TITLE_LANGUAGE_NAMES[options.titleLanguage]}. This is a hard output requirement: use that language for task wording even when the prompt or title style uses another language, while preserving only necessary technical identifiers.`
     : undefined;
 
   return buildMetadataPrompt({
@@ -98,7 +129,12 @@ async function buildPrompt(
           "A short task-shaped slug preserving the operation, target, and explicit identifier when present.",
       },
     ],
-    after: "Return JSON only with fields 'title' and 'branch'.",
+    after: [
+      ...(titleLanguageRequirement
+        ? ["Before returning JSON, verify that the title follows the required title language."]
+        : []),
+      "Return JSON only with fields 'title' and 'branch'.",
+    ].join("\n"),
     trailing: seed,
   });
 }
@@ -137,7 +173,7 @@ export async function generateBranchNameFromFirstAgentContext(
         workspaceGitService: options.workspaceGitService,
         titleLanguage: options.firstAgentContext?.titleLanguage,
       }),
-      schema: BranchNameSchema,
+      schema: createBranchNameSchema(options.firstAgentContext?.titleLanguage),
       schemaName: "BranchName",
       maxRetries: 2,
       providers,

@@ -420,6 +420,23 @@ describe("shared messages attachments", () => {
     ).toThrow();
   });
 
+  it("keeps create-agent firstAgentContext title language", () => {
+    const parsed = CreateAgentRequestMessageSchema.parse({
+      type: "create_agent_request",
+      requestId: "req-create-agent-title-language",
+      config: { provider: "codex", cwd: "/tmp/repo" },
+      firstAgentContext: {
+        prompt: "Investigate flaky test",
+        titleLanguage: "zh-CN",
+      },
+    });
+
+    expect(parsed.firstAgentContext).toEqual({
+      prompt: "Investigate flaky test",
+      titleLanguage: "zh-CN",
+    });
+  });
+
   it("parses worktree-create payloads without a firstAgentContext", () => {
     const parsed = CreatePaseoWorktreeRequestSchema.parse({
       type: "create_paseo_worktree_request",

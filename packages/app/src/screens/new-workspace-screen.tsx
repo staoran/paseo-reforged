@@ -34,7 +34,7 @@ import { useForgeSearchQuery } from "@/git/use-forge-search-query";
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
 import { ensureCheckoutStatus } from "@/git/checkout-status-cache";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
-import { DEFAULT_LOCALE, parseAppLanguage } from "@/i18n/locales";
+import { useAppLocale } from "@/i18n/provider";
 import { resolveTerminalProfiles } from "@getpaseo/protocol/terminal-profiles";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
 import { LaunchControl } from "@/new-workspace-launch/launch-control";
@@ -170,12 +170,6 @@ function resolveWorktreeSupport(
     return "unsupported";
   }
   return getWorktreeSupportForHostProject({ project, serverId });
-}
-
-// The i18n instance stores the active resolved locale rather than the saved setting
-function resolveTitleLanguage(language: unknown): NonNullable<FirstAgentContext["titleLanguage"]> {
-  const parsedLanguage = parseAppLanguage(language);
-  return parsedLanguage && parsedLanguage !== "system" ? parsedLanguage : DEFAULT_LOCALE;
 }
 
 function buildFirstAgentContext(input: {
@@ -1573,8 +1567,8 @@ export function NewWorkspaceScreen({
 }: NewWorkspaceScreenProps) {
   const queryClient = useQueryClient();
   const { theme } = useUnistyles();
-  const { t, i18n } = useTranslation();
-  const titleLanguage = resolveTitleLanguage(i18n.language);
+  const { t } = useTranslation();
+  const titleLanguage = useAppLocale();
   const insets = useSafeAreaInsets();
   const isCompact = useIsCompactFormFactor();
   const toast = useToast();

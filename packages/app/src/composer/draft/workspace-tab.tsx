@@ -29,11 +29,12 @@ import { encodeImages } from "@/utils/encode-images";
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
 import { shouldAutoFocusWorkspaceDraftComposer } from "@/screens/workspace/workspace-draft-pane-focus";
 import {
+  buildWorkspaceDraftFirstAgentContext,
   shouldAllowEmptyDraftText,
   validateDraftSubmission,
 } from "@/composer/draft/workspace-tab-core";
 import type { AgentCapabilityFlags } from "@getpaseo/protocol/agent-types";
-import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
+import type { AgentSnapshotPayload, FirstAgentContext } from "@getpaseo/protocol/messages";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { WorkspaceComposerAttachment } from "@/attachments/types";
 import {
@@ -54,6 +55,7 @@ import {
 } from "@/workspace-tabs/model";
 import { openWorkspaceChanges } from "@/workspace-tabs/open-supporting-view";
 import { useSettings } from "@/hooks/use-settings";
+import { useAppLocale } from "@/i18n/provider";
 
 const EMPTY_PENDING_PERMISSIONS = new Map();
 const EMPTY_ONLINE_SERVER_IDS: string[] = [];
@@ -146,6 +148,7 @@ async function submitDraftCreateRequest(input: {
   client: DaemonClient | null;
   workspaceDirectory: string | null;
   workspaceId: string | null;
+  titleLanguage: NonNullable<FirstAgentContext["titleLanguage"]>;
   autoSubmitConfig: AutoSubmitConfig | null;
   composerState: {
     selectedProvider: string | null;
@@ -167,6 +170,7 @@ async function submitDraftCreateRequest(input: {
     client,
     workspaceDirectory,
     workspaceId,
+    titleLanguage,
     autoSubmitConfig,
     composerState,
   } = input;
@@ -198,6 +202,11 @@ async function submitDraftCreateRequest(input: {
 
   const imagesData = await encodeImages(images);
   const attachmentsArray = Array.isArray(attachments) ? attachments : undefined;
+  const firstAgentContext = buildWorkspaceDraftFirstAgentContext({
+    text,
+    attachments: attachmentsArray ?? [],
+    titleLanguage,
+  });
   const result = await client.createAgent({
     config,
     workspaceId,
@@ -205,6 +214,7 @@ async function submitDraftCreateRequest(input: {
     clientMessageId: attempt.clientMessageId,
     ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
     ...(attachmentsArray && attachmentsArray.length > 0 ? { attachments: attachmentsArray } : {}),
+    firstAgentContext,
   });
 
   return {
@@ -342,6 +352,7 @@ export function WorkspaceDraftAgentTab({
   onOpenImportSheet,
 }: WorkspaceDraftAgentTabProps) {
   const { t } = useTranslation();
+  const titleLanguage = useAppLocale();
   const insets = useSafeAreaInsets();
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
@@ -519,6 +530,7 @@ export function WorkspaceDraftAgentTab({
         client,
         workspaceDirectory: draftWorkingDirectory,
         workspaceId: workspaceFields?.id ?? null,
+        titleLanguage,
         autoSubmitConfig,
         composerState,
         hostDisconnectedMessage: t("workspace.terminal.hostDisconnected"),
