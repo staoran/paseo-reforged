@@ -17,27 +17,28 @@
 | file path          | `mydocs/micro_specs/0120_F43_Android发布可靠性与APK交付规格.md` |
 | parent spec        | `mydocs/micro_specs/0118_自定义功能重做与迁移分析.md`           |
 | related spec       | `mydocs/micro_specs/0119_F42_Reforged产品身份与发布规格.md`     |
-| created / updated  | `2026-09-23`                                                    |
+| created / updated  | `2026-09-23 / 2026-09-24`                                       |
 
 ## 1. 目标与完成契约
 
-- 当前理解：F43 需要在 `upstream/main@90737e1de` 基线上重新确定 Android APK 发布链，重点解决历史版本反复出现的构建内存超限和发布失败
+- 当前理解：F43 已在 `upstream/main@6016ed705` 基线上实施 Android APK 发布链；首次 hosted runner 演练在 SDK 初始化时失败，修复后 runner 于编译阶段失联，APK 尚未产出
 - 核心目标：把历史优化拆成可验证的构建资源、产物架构、发布路径和诊断门禁，明确哪些保留、哪些丢弃、哪些必须按当前基线重做
 - Done Contract：本规格包含历史优化审查表、F42/F43 分工、Android 产物边界、OOM 验收门禁、实施顺序和外部资源前置条件；普通 GitHub APK 由 GitHub Actions 执行 EAS local build 并使用托管签名，fallback 暂不启用，source map 必须保持开启并在构建中验证
 
 ## 2. 基线与现状
 
-| 项目              | 当前事实                                                                                                                           | 对 F43 的影响                                                        |
-| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| 代码基线          | `upstream/main@90737e1de`                                                                                                          | 历史实现只能作为证据和候选方案，不能整体 cherry-pick                 |
-| EAS profiles      | `production-apk` 供 GitHub runner 使用 EAS local build；`production` 保留给 AAB/商店并使用 `resourceClass: large`                  | APK 不使用 EAS 云构建资源；`large` 不代表 APK 的构建资源             |
-| 当前 app config   | F42 已改为 Reforged 包名和 owner，并通过 `EAS_PROJECT_ID` 注入 project                                                             | project 归属和证书仍需实际构建验证                                   |
-| 当前 APK workflow | `.github/workflows/android-apk-release.yml` 在 GitHub Actions 执行 `eas build --local`，从 EAS 获取托管 Android 签名凭据           | 使用 arm64-only、串行 Gradle、资源校验和稳定缓存；fallback 暂不启用  |
-| 当前 Gradle 内存  | APK profile 将 `expo-gradle-jvmargs` 设为 `3072m/768m`；其他构建维持 `4096m/1024m`                                                 | JVM heap 不是整机内存上限，仍需约束 Node、Kotlin、Hermes 和并发      |
-| 历史 OOM 背景     | release 同时执行原生 ABI 编译和 Hermes bundling；历史发布文档记录过 worker 内存耗尽和 Hermes exit code 137                         | F43 必须以 cgroup 峰值和 OOM 事件验收，不能只看 Gradle exit code     |
-| 历史资源基线      | 0068 run `31862057595` 的 `hermesc` RSS 峰值约 `12.9 GiB`、cgroup 峰值 `14957 MiB`、最低 `SwapFree=37 MiB`；`memory.events` 无 OOM | 这是高压力成功基线，不是 OOM run；新基线要固定 runner、commit 和输入 |
-| 历史 cache 对照   | seed/hit cgroup peak 分别约 `14957 MiB` / `14862 MiB`，hit run 由约 `1041s` 降至 `697s`                                            | cache 有耗时收益，但旧数据未证明它能明显降低峰值                     |
-| 历史成功证据      | arm64-only APK、Gradle cache seed/hit、资源观测和 source map 关闭均曾在旧发布链验证                                                | 可保留目标和验收方法，但实现要重新适配当前基线                       |
+| 项目              | 当前事实                                                                                                                                                              | 对 F43 的影响                                                                                  |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| 代码基线          | `upstream/main@6016ed705`；F42/F43 身份与 APK 实现提交 `cfa0db9ff`                                                                                                    | 历史实现只能作为证据和候选方案，不能整体 cherry-pick                                           |
+| EAS profiles      | `production-apk` 供 GitHub runner 使用 EAS local build；`production` 保留给 AAB/商店并使用 `resourceClass: large`                                                     | APK 不使用 EAS 云构建资源；`large` 不代表 APK 的构建资源                                       |
+| 当前 app config   | F42 已改为 Reforged 包名和 owner，并通过 `EAS_PROJECT_ID` 注入 project                                                                                                | project 归属和证书仍需实际构建验证                                                             |
+| 当前 APK workflow | `.github/workflows/android-apk-release.yml` 在 GitHub Actions 执行 `eas build --local`，从 EAS 获取托管 Android 签名凭据；Android SDK setup 只安装 `platform-tools`   | 使用 arm64-only、串行 Gradle、资源校验和稳定缓存；fallback 暂不启用                            |
+| 当前 Gradle 内存  | APK profile 将 `expo-gradle-jvmargs` 设为 `3072m/768m`；其他构建维持 `4096m/1024m`                                                                                    | JVM heap 不是整机内存上限，仍需约束 Node、Kotlin、Hermes 和并发                                |
+| 历史 OOM 背景     | release 同时执行原生 ABI 编译和 Hermes bundling；历史发布文档记录过 worker 内存耗尽和 Hermes exit code 137                                                            | F43 必须以 cgroup 峰值和 OOM 事件验收，不能只看 Gradle exit code                               |
+| 历史资源基线      | 0068 run `31862057595` 的 `hermesc` RSS 峰值约 `12.9 GiB`、cgroup 峰值 `14957 MiB`、最低 `SwapFree=37 MiB`；`memory.events` 无 OOM                                    | 这是高压力成功基线，不是 OOM run；新基线要固定 runner、commit 和输入                           |
+| 历史 cache 对照   | seed/hit cgroup peak 分别约 `14957 MiB` / `14862 MiB`，hit run 由约 `1041s` 降至 `697s`                                                                               | cache 有耗时收益，但旧数据未证明它能明显降低峰值                                               |
+| 历史成功证据      | arm64-only APK、Gradle cache seed/hit、资源观测和 source map 关闭均曾在旧发布链验证                                                                                   | 可保留目标和验收方法，但实现要重新适配当前基线                                                 |
+| 当前 hosted 演练  | run `35961939948` 因已退役的 Android SDK `tools` 包安装失败；移除该包后，run `35962271079` 的 attempt 2 通过 SDK、依赖、EAS 和身份门禁，但 runner 在 APK 编译阶段失联 | workflow 修复已合入；没有 APK、资源遥测、source map 或签名校验结果，不能归类为已验证成功或 OOM |
 
 ## 3. F42 与 F43 的边界
 
@@ -181,4 +182,4 @@ F43 当前进入实施，普通 GitHub APK 仍需满足以下门禁后才允许�
 
 ## 10. 当前判断
 
-F43 已按本次决策进入实施。普通 GitHub APK 固定为 `arm64-v8a`，由 GitHub Actions 执行 EAS local build，EAS 提供托管签名；fallback 暂不启用，source map 保持开启并作为发布门禁。F-Droid ABI 分片保持独立。剩余验证集中在 EAS project 归属及证书指纹、GitHub runner 的资源峰值、Firebase 配置、APK 身份校验、source map 产出和 GitHub Release 写权限。
+F43 已按本次决策进入实施。普通 GitHub APK 固定为 `arm64-v8a`，由 GitHub Actions 执行 EAS local build，EAS 提供托管签名；fallback 暂不启用，source map 保持开启并作为发布门禁。F-Droid ABI 分片保持独立。`android-v0.9.2-beta.1` 的首次 run 因 `android-actions/setup-android@v3` 默认安装已退役的 `tools` 包而失败；`1543f4cbc` 将其改为只安装 `platform-tools`。相同不可变 tag 的 workflow dispatch 通过 Android SDK、npm 依赖、EAS 凭据和 Reforged 身份检查，但 APK build step 运行约 63 分钟后，GitHub 将 hosted runner 标记为 lost communication，后续 APK、source map、签名及上传步骤均未执行。run `35962271079` 的 attempt 2 日志无法下载，故 OOM、RSS、swap 和 Gradle 退出原因未知；本次不能证明 APK 编译成功，也不能据此断定为 OOM。当前继续保留 no-fallback 和上传前门禁；下一次资源调优应先取得 runner 日志或用可持续的 runner 复现资源峰值。
