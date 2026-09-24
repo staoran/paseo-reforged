@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.2-beta.1 - 2026-09-24
+
+### Changed
+
+- Renamed the app and desktop distribution to Paseo Reforged, with separate mobile package IDs and update sources
+- Added a GitHub-built arm64 Android APK with EAS-managed signing and pre-upload identity checks
+
 ## 0.9.1 - 2026-09-22
 
 ### Added
