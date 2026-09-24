@@ -2,16 +2,18 @@
 
 ## App variants
 
-Controlled by `APP_VARIANT` in `packages/app/app.config.js` (vanilla Expo, no custom Gradle plugin):
+Controlled by `APP_VARIANT` in `packages/app/app.config.js`:
 
-| Variant       | App name    | Package ID       |
-| ------------- | ----------- | ---------------- |
-| `production`  | Paseo       | `sh.paseo`       |
-| `development` | Paseo Debug | `sh.paseo.debug` |
+| Variant       | App name             | Package ID                |
+| ------------- | -------------------- | ------------------------- |
+| `production`  | Paseo Reforged       | `sh.paseo.reforged`       |
+| `development` | Paseo Reforged Debug | `sh.paseo.reforged.debug` |
 
-EAS profiles: `development`, `production`, and `production-apk` in `packages/app/eas.json`.
+EAS profiles: `development`, `production`, and `production-apk` in `packages/app/eas.json`. The GitHub APK workflow runs `production-apk` with `eas build --local`: compilation stays on the GitHub runner, and EAS supplies the managed Android signing credentials.
 
 `development` uses Android `debug`.
+
+Set `EAS_PROJECT_ID` only to the separately verified Reforged project when building for EAS or Updates. Without it, Expo Updates stays disabled; the upstream project ID is rejected.
 
 ## Version codes
 
@@ -75,10 +77,10 @@ For a production-ID release APK that local Android profiling tools can attach to
 PASEO_PROFILE_BUILD=1 npm run android:production
 ```
 
-This keeps the `sh.paseo` package id, release Hermes bundle, and release optimizations. It adds
+This keeps the `sh.paseo.reforged` package id, release Hermes bundle, and release optimizations. It adds
 `<profileable android:shell="true" />` and enables local Android trace markers for workspace mounts
 and daemon WebSocket traffic. The markers contain message types and sizes, never payload contents,
-and emit only while a system trace records the `sh.paseo` app (`perfetto -a sh.paseo ...`).
+and emit only while a system trace records the `sh.paseo.reforged` app (`perfetto -a sh.paseo.reforged ...`).
 
 Or from `packages/app`:
 
@@ -156,7 +158,7 @@ Supported values are `armeabi-v7a`, `arm64-v8a`, `x86`, and `x86_64`. The F-Droi
 
 Keep the excluded npm packages installed. Normal builds use them, while the F-Droid profile removes only their Android native modules and config plugins. Paseo always applies `expo-gradle-jvmargs` with `-Xmx4096m` and `-XX:MaxMetaspaceSize=1024m` so local Expo prebuilds have enough Gradle heap whether they use precompiled AARs or source-built Expo modules.
 
-The EAS `production-apk` profile uses the large Android resource class. Release builds compile the native ABIs and run Hermes bundling in the same Gradle invocation; the default worker can exhaust its remaining memory and kill Hermes with exit code 137 even when Gradle's own heap is correctly sized.
+The GitHub APK workflow uses EAS local build with EAS-managed signing credentials on a GitHub-hosted runner. It fixes the APK to `arm64-v8a`, limits Gradle to one worker, sets Node and APK-only Gradle heap limits, and records cgroup memory, swap, process RSS, elapsed time, and OOM events. Native compilation and Hermes bundling still share the Gradle invocation, so the recorded runner peak must be reviewed before treating the current limits as sufficient. React Native's default release Hermes flags generate source maps; the workflow requires a nonempty map and retains it for 90 days. A failed build never switches to a cloud build or an old artifact.
 
 ### F-Droid store metadata
 
@@ -199,23 +201,27 @@ Keep `react` and `react-dom` pinned to the React version embedded by the current
 adb exec-out screencap -p > screenshot.png
 ```
 
-## Cloud build + submit (EAS)
+## Build and submit
 
 Stable tag pushes like `v0.1.0` trigger:
 
-- The EAS GitHub app on Expo servers (iOS + Android production builds + store submit). There is no workflow file in this repo for it.
-- `.github/workflows/android-apk-release.yml` on GitHub Actions (APK asset on GitHub Release).
+- The EAS GitHub app on Expo servers (iOS + Android production builds + store submit). EAS remains the path for AAB, store submission, and Expo Updates.
+- `.github/workflows/android-apk-release.yml` on GitHub Actions (arm64-only APK asset on GitHub Release). This workflow calls `eas build --local` with the `production-apk` profile. EAS supplies hosted signing credentials; compilation and APK validation run on GitHub.
 
 iOS auto-submits to App Store review via a Fastlane lane after EAS uploads to TestFlight. Android auto-submits to the Play Store via EAS-managed credentials.
 
-Beta tags like `v0.1.1-beta.1` only trigger the GitHub APK workflow. They publish a GitHub prerelease APK for testing and do not submit to the stores.
+Beta tags like `v0.1.1-beta.1` only trigger the GitHub APK workflow. They publish a GitHub prerelease APK for testing and do not submit to the stores. The APK workflow has no fallback path: a build, signing, source map, or artifact validation failure stops the run.
 
-`android-v*` tags also trigger only the GitHub APK workflow — useful when you want to ship an APK without going through stores. The GitHub APK workflow supports `workflow_dispatch` with an existing `tag` input so you can rebuild without cutting a new tag.
+`android-v*` tags also trigger only the GitHub APK workflow — useful when you want to ship an APK without going through stores. The workflow runs only in `staoran/paseo-reforged`, checks the Expo app name and package ID before compiling, fixes `arm64-v8a`, keeps release source maps enabled, and checks the signature, version, and native ABI before upload. It supports `workflow_dispatch` with an existing `tag` input so you can rebuild without cutting a new tag.
+
+Configure `EXPO_TOKEN` as a repository secret and `EAS_PROJECT_ID` as a repository variable for the Reforged project. The `production-apk` profile requests remote Android credentials; the workflow compares the built APK certificate SHA-256 with the historical Reforged APK certificate before publishing. The EAS project and hosted certificate still require a real runner build to verify their match. Firebase configuration, if needed for this APK, must be supplied for the Reforged application through the app config's `GOOGLE_SERVICES_FILE_PROD` input or an available local secret file; its presence has not been verified. The workflow retains release source maps as an Actions artifact for 90 days and removes the local EAS build directory after the run.
 
 ### Useful commands
 
 ```bash
 cd packages/app
+
+# APK builds use EAS local on GitHub Actions; these commands inspect EAS cloud builds
 
 # Recent builds
 npx eas build:list --limit 10 --non-interactive --json | jq '.[] | {platform, status, appVersion, gitCommitHash}'

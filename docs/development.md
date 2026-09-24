@@ -37,8 +37,8 @@ The flake exposes `packages.<system>.desktop` on Linux and macOS:
 nix build .#desktop
 ```
 
-Linux produces the `paseo-desktop` launcher and desktop entry. macOS produces
-`Applications/Paseo.app` plus the `paseo-desktop` launcher. Both use the nixpkgs
+Linux produces the `paseo-desktop` launcher and `paseo-reforged-desktop` desktop entry. macOS produces
+`Applications/Paseo Reforged.app` plus the `paseo-desktop` launcher. Both use the nixpkgs
 Electron runtime and the checkout's built daemon, client, and renderer rather
 than downloading a published desktop release.
 
@@ -552,7 +552,7 @@ npm run cli -- ls -a -g              # List all agents globally
 npm run cli -- ls -a -g --json       # Same, as JSON
 npm run cli -- inspect <id>          # Show detailed agent info
 npm run cli -- logs <id>             # View agent timeline
-npm run cli -- agent open <id>       # Focus an existing agent in Paseo Desktop
+npm run cli -- agent open <id>       # Focus an existing agent in Paseo Reforged Desktop
 npm run cli -- daemon status         # Check daemon status
 npm run cli -- clone owner/repo --dir ~/workspace # Clone GitHub repo and register project
 ```

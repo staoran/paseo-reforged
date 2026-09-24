@@ -25,18 +25,18 @@
     "production-apk": {
       "extends": "production",
       "distribution": "internal",
+      "credentialsSource": "remote",
+      "env": {
+        "PASEO_GITHUB_APK_BUILD": "1"
+      },
       "android": {
-        "resourceClass": "large",
         "buildType": "apk",
-        "gradleCommand": ":app:assembleRelease -x lint -x lintVitalAnalyzeRelease -x lintVitalRelease -x generateReleaseLintModel -x generateReleaseLintVitalModel"
+        "gradleCommand": ":app:assembleRelease --no-daemon --max-workers=1 -Dorg.gradle.parallel=false -x lint -x lintVitalAnalyzeRelease -x lintVitalRelease -x generateReleaseLintModel -x generateReleaseLintVitalModel"
       }
     }
   },
   "submit": {
     "production": {
-      "ios": {
-        "ascAppId": "6758887924"
-      },
       "android": {
         "track": "production",
         "releaseStatus": "completed"

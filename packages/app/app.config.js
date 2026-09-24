@@ -10,6 +10,13 @@ const { getNativeReleaseVersion } = require("./native-release-version");
 const appVariant = process.env.APP_VARIANT ?? "production";
 const isFdroidBuild = process.env.PASEO_FDROID_BUILD === "1";
 const isProfileBuild = process.env.PASEO_PROFILE_BUILD === "1";
+// Selects the APK runner's smaller Gradle memory budget
+const isGithubApkReleaseBuild = process.env.PASEO_GITHUB_APK_BUILD === "1";
+// Selects the Reforged EAS project without falling back to the upstream project
+const easProjectId = process.env.EAS_PROJECT_ID?.trim();
+if (easProjectId === "0e7f65ce-0367-46c8-a238-2b65963d235a") {
+  throw new Error("The upstream EAS project cannot be used for Paseo Reforged");
+}
 
 const buildProfile = isFdroidBuild
   ? {
@@ -67,8 +74,8 @@ function resolveSecretFile(params) {
 
 const variants = {
   production: {
-    name: "Paseo",
-    packageId: "sh.paseo",
+    name: "Paseo Reforged",
+    packageId: "sh.paseo.reforged",
     googleServicesFile: resolveSecretFile({
       envKey: "GOOGLE_SERVICES_FILE_PROD",
       fallbackRelativePath: "./.secrets/google-services.prod.json",
@@ -79,8 +86,8 @@ const variants = {
     }),
   },
   development: {
-    name: "Paseo Debug",
-    packageId: "sh.paseo.debug",
+    name: "Paseo Reforged Debug",
+    packageId: "sh.paseo.reforged.debug",
     googleServicesFile: resolveSecretFile({
       envKey: "GOOGLE_SERVICES_FILE_DEBUG",
       fallbackRelativePath: "./.secrets/google-services.debug.json",
@@ -98,11 +105,13 @@ const nativeReleaseVersion = getNativeReleaseVersion(pkg.version);
 export default {
   expo: {
     name: variant.name,
-    slug: "voice-mobile",
+    slug: "paseo-reforged",
     version: nativeReleaseVersion.appVersion,
     orientation: "portrait",
     icon: "./assets/images/icon.png",
     scheme: "paseo",
+    runtimeVersion: { policy: "appVersion" },
+    updates: easProjectId ? { url: `https://u.expo.dev/${easProjectId}` } : { enabled: false },
     userInterfaceStyle: "automatic",
     newArchEnabled: true,
     ios: {
@@ -162,8 +171,8 @@ export default {
       [
         "expo-gradle-jvmargs",
         {
-          xmx: "4096m",
-          maxMetaspace: "1024m",
+          xmx: isGithubApkReleaseBuild ? "3072m" : "4096m",
+          maxMetaspace: isGithubApkReleaseBuild ? "768m" : "1024m",
         },
       ],
       [
@@ -189,10 +198,8 @@ export default {
       fdroidBuild: isFdroidBuild,
       profileBuild: isProfileBuild,
       router: {},
-      eas: {
-        projectId: "0e7f65ce-0367-46c8-a238-2b65963d235a",
-      },
+      ...(easProjectId ? { eas: { projectId: easProjectId } } : {}),
     },
-    owner: "getpaseo",
+    owner: "tao-team",
   },
 };

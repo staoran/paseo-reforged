@@ -13,26 +13,279 @@ on:
         type: string
 
 concurrency:
-  group: android-apk-release-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+  group: android-apk-release-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 env:
   SOURCE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
 
 jobs:
-  ensure-release:
+  build-and-publish:
     permissions:
       contents: write
+      packages: read
     runs-on: ubuntu-latest
+    env:
+      APP_VARIANT: production
+      EAS_PROJECT_ID: ${{ vars.EAS_PROJECT_ID }}
+      EXPECTED_SIGNING_CERT_SHA256: cda6905cbfc3a949444f67ccc03c4ef4fe842efb4325966a021a34f40a2cf963
+      ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a
+      NODE_OPTIONS: --max-old-space-size=3072
+
     steps:
       - uses: actions/checkout@v4
         with:
-          sparse-checkout: scripts
+          fetch-depth: 0
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+
+      - name: Validate Reforged GitHub repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REPOSITORY" != "staoran/paseo-reforged" ]]; then
+            echo "::error::Android APK releases must run from staoran/paseo-reforged, got $GITHUB_REPOSITORY."
+            exit 1
+          fi
 
       - name: Resolve release tag
         shell: bash
         run: node scripts/emit-release-env.mjs --source-tag "$SOURCE_TAG" >> "$GITHUB_ENV"
+
+      - name: Verify immutable tag checkout
+        id: release-source
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          expected_commit="$(git rev-list -n 1 "$SOURCE_TAG")"
+          actual_commit="$(git rev-parse HEAD)"
+          if [[ "$actual_commit" != "$expected_commit" ]]; then
+            echo "::error::Expected $SOURCE_TAG at $expected_commit, checked out $actual_commit."
+            exit 1
+          fi
+
+          echo "commit=$actual_commit" >> "$GITHUB_OUTPUT"
+          echo "Verified immutable source: $SOURCE_TAG -> $actual_commit"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@boudra"
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Restore Gradle cache
+        id: gradle-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: paseo-android-gradle-v1-${{ runner.os }}-${{ runner.arch }}-java21-production-apk-arm64-${{ steps.release-source.outputs.commit }}
+          restore-keys: |
+            paseo-android-gradle-v1-${{ runner.os }}-${{ runner.arch }}-java21-production-apk-arm64-
+
+      - name: Install JS dependencies
+        run: node scripts/npm-retry.mjs ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate EAS credentials prerequisites
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "$EXPO_TOKEN" || -z "$EAS_PROJECT_ID" ]]; then
+            echo "::error::EXPO_TOKEN and EAS_PROJECT_ID are required for EAS-managed signing."
+            exit 1
+          fi
+          npx --no-install eas whoami > /dev/null
+          (cd packages/app && npx --no-install eas project:info > /dev/null)
+
+      - name: Validate Reforged Android identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          config_path="$RUNNER_TEMP/paseo-expo-config.json"
+          (cd packages/app && npx --no-install expo config --type prebuild --json) > "$config_path"
+          node - "$config_path" <<'NODE'
+          const fs = require("node:fs");
+          const config = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          if (config.name !== "Paseo Reforged" || config.android?.package !== "sh.paseo.reforged" || config.extra?.eas?.projectId !== process.env.EAS_PROJECT_ID) {
+            console.error("Unexpected Reforged Android or EAS project identity");
+            process.exit(1);
+          }
+          NODE
+
+      - name: Build signed arm64 APK on GitHub runner
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EAS_LOCAL_BUILD_WORKINGDIR: ${{ runner.temp }}/paseo-eas-local-build
+          EAS_LOCAL_BUILD_SKIP_CLEANUP: "1"
+        shell: bash
+        run: |
+          set -euo pipefail
+          asset_path="$RUNNER_TEMP/Paseo-Reforged-${RELEASE_TAG}-android.apk"
+          cd packages/app
+          android_perf_prefix="[ANDROID-PERF]"
+          monitor_interval_seconds=15
+          cgroup_dir=/sys/fs/cgroup
+          relative_cgroup="$(awk -F: '$1 == "0" { print $3; exit }' /proc/self/cgroup 2>/dev/null || true)"
+          if [[ -n "$relative_cgroup" && -r "/sys/fs/cgroup${relative_cgroup}/memory.current" ]]; then
+            cgroup_dir="/sys/fs/cgroup${relative_cgroup}"
+          fi
+          if [[ ! -r "$cgroup_dir/memory.events" || ! -r "$cgroup_dir/memory.peak" ]]; then
+            echo "::error::GitHub runner cgroup memory telemetry is unavailable."
+            exit 1
+          fi
+          oom_before="$(awk '$1 == "oom" { print $2 }' "$cgroup_dir/memory.events")"
+          oom_kill_before="$(awk '$1 == "oom_kill" { print $2 }' "$cgroup_dir/memory.events")"
+
+          monitor_build_resources() {
+            local sample=0
+            while true; do
+              sample=$((sample + 1))
+              local available_mib swap_free_mib temp_free_mib memory_current_mib memory_peak_mib memory_events
+              available_mib="$(awk '/MemAvailable:/ { printf "%d", $2 / 1024 }' /proc/meminfo 2>/dev/null || true)"
+              swap_free_mib="$(awk '/SwapFree:/ { printf "%d", $2 / 1024 }' /proc/meminfo 2>/dev/null || true)"
+              temp_free_mib="$(df -Pm "$RUNNER_TEMP" 2>/dev/null | awk 'NR == 2 { print $4 }' || true)"
+              memory_current_mib="$(awk '{ printf "%d", $1 / 1024 / 1024 }' "$cgroup_dir/memory.current" 2>/dev/null || printf unavailable)"
+              memory_peak_mib="$(awk '{ printf "%d", $1 / 1024 / 1024 }' "$cgroup_dir/memory.peak" 2>/dev/null || printf unavailable)"
+              memory_events="$(tr '\n' ',' < "$cgroup_dir/memory.events" 2>/dev/null || printf unavailable)"
+              echo "$android_perf_prefix sample=$sample available_mib=${available_mib:-unavailable} swap_free_mib=${swap_free_mib:-unavailable} temp_free_mib=${temp_free_mib:-unavailable} cgroup_current_mib=$memory_current_mib cgroup_peak_mib=$memory_peak_mib memory_events=$memory_events"
+              ps -eo rss=,comm= --sort=-rss 2>/dev/null | awk '$2 ~ /^(java|node|hermesc?|cmake|ninja|gradle|gradlew|kotlin|kotlinc)$/ && count++ < 10 { printf "[ANDROID-PERF] process=%s rss_kib=%s\n", $2, $1 }'
+              sleep "$monitor_interval_seconds"
+            done
+          }
+
+          build_started_epoch="$(date -u +%s)"
+          monitor_build_resources &
+          monitor_pid=$!
+          stop_build_monitor() {
+            kill "$monitor_pid" 2>/dev/null || true
+            wait "$monitor_pid" 2>/dev/null || true
+          }
+          trap stop_build_monitor EXIT
+
+          if npx --no-install eas build \
+            --platform android \
+            --profile production-apk \
+            --local \
+            --non-interactive \
+            --freeze-credentials \
+            --output "$asset_path"; then
+            build_exit_code=0
+          else
+            build_exit_code=$?
+          fi
+          build_finished_epoch="$(date -u +%s)"
+          echo "$android_perf_prefix phase=eas-local-build elapsed_s=$((build_finished_epoch - build_started_epoch)) exit_code=$build_exit_code"
+          stop_build_monitor
+          trap - EXIT
+          oom_after="$(awk '$1 == "oom" { print $2 }' "$cgroup_dir/memory.events")"
+          oom_kill_after="$(awk '$1 == "oom_kill" { print $2 }' "$cgroup_dir/memory.events")"
+          echo "$android_perf_prefix oom_before=$oom_before oom_after=$oom_after oom_kill_before=$oom_kill_before oom_kill_after=$oom_kill_after"
+          if ((build_exit_code != 0)); then
+            exit "$build_exit_code"
+          fi
+          if [[ ! "$oom_before" =~ ^[0-9]+$ || ! "$oom_after" =~ ^[0-9]+$ || ! "$oom_kill_before" =~ ^[0-9]+$ || ! "$oom_kill_after" =~ ^[0-9]+$ || "$oom_after" -gt "$oom_before" || "$oom_kill_after" -gt "$oom_kill_before" ]]; then
+            echo "::error::Android build cgroup reported an OOM event."
+            exit 1
+          fi
+
+          test -s "$asset_path"
+
+          source_map_dir="$RUNNER_TEMP/paseo-reforged-source-maps"
+          mkdir -p "$source_map_dir"
+          source_map_count=0
+          while IFS= read -r -d '' source_map; do
+            source_map_count=$((source_map_count + 1))
+            cp "$source_map" "$source_map_dir/${source_map_count}-$(basename "$source_map")"
+          done < <(find "$EAS_LOCAL_BUILD_WORKINGDIR" -type f -size +0c -path '*/android/app/build/generated/sourcemaps/react/release/*.map' -print0)
+          if ((source_map_count == 0)); then
+            echo "::error::Release source map was not generated."
+            exit 1
+          fi
+          echo "Generated Android release source map(s):"
+          find "$source_map_dir" -type f -name '*.map' -print
+
+          echo "APK_PATH=$asset_path" >> "$GITHUB_ENV"
+
+      - name: Save Gradle cache
+        if: ${{ success() && steps.gradle-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: paseo-android-gradle-v1-${{ runner.os }}-${{ runner.arch }}-java21-production-apk-arm64-${{ steps.release-source.outputs.commit }}
+
+      - name: Validate Android APK
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          build_tools_dir="$(find "${ANDROID_HOME:?}/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          apksigner="$build_tools_dir/apksigner"
+          aapt="$build_tools_dir/aapt"
+          if [[ ! -x "$apksigner" || ! -x "$aapt" ]]; then
+            echo "::error::Android build tools are missing apksigner or aapt."
+            exit 1
+          fi
+
+          "$apksigner" verify --verbose --print-certs "$APK_PATH"
+          actual_cert_sha256="$("$apksigner" verify --print-certs "$APK_PATH" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')"
+          expected_cert_sha256="$(printf '%s' "$EXPECTED_SIGNING_CERT_SHA256" | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')"
+          if [[ "$actual_cert_sha256" != "$expected_cert_sha256" ]]; then
+            echo "::error::APK signing certificate does not match the Reforged production certificate."
+            exit 1
+          fi
+
+          badging="$("$aapt" dump badging "$APK_PATH")"
+          package_line="$(sed -n '1p' <<< "$badging")"
+          native_code_line="$(sed -n '/^native-code:/p' <<< "$badging")"
+          expected_version_code="$(node -e "const pkg=require('./packages/app/package.json'); const {getNativeReleaseVersion}=require('./packages/app/native-release-version'); process.stdout.write(String(getNativeReleaseVersion(pkg.version).androidVersionCode))")"
+          echo "$package_line"
+          echo "$native_code_line"
+
+          if ! grep -Fq "name='sh.paseo.reforged'" <<< "$package_line"; then
+            echo "::error::Expected package sh.paseo.reforged."
+            exit 1
+          fi
+          if ! grep -Fq "versionName='$RELEASE_BASE_VERSION'" <<< "$package_line"; then
+            echo "::error::Expected versionName $RELEASE_BASE_VERSION."
+            exit 1
+          fi
+          if ! grep -Fq "versionCode='$expected_version_code'" <<< "$package_line"; then
+            echo "::error::Expected versionCode $expected_version_code."
+            exit 1
+          fi
+          if [[ "$native_code_line" != "native-code: 'arm64-v8a'" ]]; then
+            echo "::error::Expected only arm64-v8a native code, got: ${native_code_line:-<missing>}"
+            exit 1
+          fi
+
+          echo "Verified package=sh.paseo.reforged versionName=$RELEASE_BASE_VERSION nativeCode=arm64-v8a"
+
+      - name: Retain release source maps for diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: Paseo-Reforged-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}-android-source-maps
+          path: ${{ runner.temp }}/paseo-reforged-source-maps
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Ensure GitHub release exists
         env:
@@ -48,103 +301,32 @@ jobs:
           release_args=(
             release create "$RELEASE_TAG"
             --repo "${{ github.repository }}"
-            --title "Paseo $RELEASE_TAG"
+            --title "Paseo Reforged $RELEASE_TAG"
             --notes ""
             --draft
           )
-
           if [[ "$IS_PRERELEASE" == "true" ]]; then
             release_args+=(--prerelease)
           fi
 
           if ! gh "${release_args[@]}"; then
-            echo "Release creation raced with another workflow; continuing."
             node scripts/github-release.mjs --repo "${{ github.repository }}" --tag "$RELEASE_TAG" >/dev/null
           fi
-
-  publish-android-apk:
-    needs: [ensure-release]
-    permissions:
-      contents: write
-      packages: read
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
-
-      - name: Resolve release tag
-        shell: bash
-        run: node scripts/emit-release-env.mjs --source-tag "$SOURCE_TAG" >> "$GITHUB_ENV"
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: "npm"
-          registry-url: "https://npm.pkg.github.com"
-          scope: "@boudra"
-
-      - name: Install JS dependencies
-        run: node scripts/npm-retry.mjs ci
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Setup Expo and EAS
-        uses: expo/expo-github-action@v8
-        with:
-          eas-version: latest
-          token: ${{ secrets.EXPO_TOKEN }}
-
-      - name: Build Android APK on EAS
-        id: eas_build
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd packages/app
-
-          build_json="$(npx eas build --platform android --profile production-apk --non-interactive --wait --json)"
-          echo "$build_json" > "$RUNNER_TEMP/eas-build.json"
-
-          build_id="$(jq -r 'if type == "array" then .[0].id // empty else .id // empty end' "$RUNNER_TEMP/eas-build.json")"
-          if [ -z "$build_id" ]; then
-            echo "Failed to determine EAS build ID."
-            cat "$RUNNER_TEMP/eas-build.json"
-            exit 1
-          fi
-
-          echo "build_id=$build_id" >> "$GITHUB_OUTPUT"
-
-      - name: Resolve APK artifact URL
-        id: artifact
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd packages/app
-
-          build_view_json="$(npx eas build:view '${{ steps.eas_build.outputs.build_id }}' --json)"
-          echo "$build_view_json" > "$RUNNER_TEMP/eas-build-view.json"
-
-          artifact_url="$(jq -r '.artifacts.buildUrl // .artifacts.applicationArchiveUrl // empty' "$RUNNER_TEMP/eas-build-view.json")"
-          if [ -z "$artifact_url" ]; then
-            echo "Failed to determine APK artifact URL."
-            cat "$RUNNER_TEMP/eas-build-view.json"
-            exit 1
-          fi
-
-          asset_name="paseo-${RELEASE_TAG}-android.apk"
-          asset_path="$RUNNER_TEMP/$asset_name"
-
-          curl --fail --location --output "$asset_path" "$artifact_url"
-
-          echo "asset_name=$asset_name" >> "$GITHUB_OUTPUT"
-          echo "asset_path=$asset_path" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK to GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
         run: |
+          set -euo pipefail
+
           release_lookup="$(node scripts/github-release.mjs --repo "${{ github.repository }}" --tag "$RELEASE_TAG")"
-          gh release upload "$release_lookup" "${{ steps.artifact.outputs.asset_path }}" --clobber --repo "${{ github.repository }}"
+          gh release upload "$release_lookup" "$APK_PATH" --clobber --repo "${{ github.repository }}"
+
+      - name: Remove local EAS build credentials
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          if [[ -n "$RUNNER_TEMP" ]]; then
+            rm -rf -- "$RUNNER_TEMP/paseo-eas-local-build"
+          fi
