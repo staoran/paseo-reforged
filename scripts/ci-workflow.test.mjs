@@ -2,9 +2,13 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { relative as relativePath } from "node:path";
 import test from "node:test";
+import { load as loadYaml } from "js-yaml";
 
 const repoRoot = new URL("../", import.meta.url);
 const ciWorkflowPath = new URL(".github/workflows/ci.yml", repoRoot);
+// Android release inputs checked together because the profile supplies the Gradle command
+const androidReleaseWorkflowPath = new URL(".github/workflows/android-apk-release.yml", repoRoot);
+const easConfigPath = new URL("packages/app/eas.json", repoRoot);
 const dockerWorkflowPath = new URL(".github/workflows/docker.yml", repoRoot);
 const nixWorkflowPath = new URL(".github/workflows/nix.yml", repoRoot);
 const filtersPath = new URL(".github/ci-paths.yml", repoRoot);
@@ -108,6 +112,41 @@ test("change gating allows superseded workflow runs to cancel", () => {
       "always() keeps jobs alive after concurrency cancellation; use !cancelled() for fail-open gating",
     );
   }
+});
+
+// Checks that failed builds can seed a retry without occupying the successful cache key
+test("Android APK task cache separates partial and complete builds", () => {
+  const workflow = loadYaml(readFileSync(androidReleaseWorkflowPath, "utf8"));
+  const steps = workflow.jobs["build-and-publish"].steps;
+  const profile = JSON.parse(readFileSync(easConfigPath, "utf8")).build["production-apk"];
+  const restore = steps.find((step) => step.name === "Restore Gradle cache");
+  const build = steps.find((step) => step.id === "apk-build");
+  const complete = steps.find((step) => step.name === "Save successful Gradle cache");
+  const partial = steps.find(
+    (step) => step.name === "Save partial Gradle cache after failed build",
+  );
+
+  assert.match(profile.android.gradleCommand, /-Dorg\.gradle\.caching=true/);
+  assert.match(profile.android.gradleCommand, /--max-workers=1 -Dorg\.gradle\.parallel=false/);
+  assert.match(restore.with.key, /-complete-\$\{\{ steps\.release-source\.outputs\.commit \}\}$/);
+  assert.deepEqual(
+    restore.with["restore-keys"]
+      .trim()
+      .split("\n")
+      .map((key) => key.trim()),
+    [
+      restore.with.key.replace("-complete-", "-partial-"),
+      restore.with.key.split("-complete-")[0] + "-complete-",
+      restore.with.key.replace("-v2-", "-v1-").split("-complete-")[0] + "-",
+    ],
+  );
+  assert.match(build.run, /cgroup_swap_current_mib/);
+  assert.match(build.run, /memory_peak_after_mib/);
+  assert.equal(complete.with.key, "${{ steps.gradle-cache.outputs.cache-primary-key }}");
+  assert.match(complete.if, /success\(\).*cache-hit != 'true'/);
+  assert.equal(partial.with.key, restore.with.key.replace("-complete-", "-partial-"));
+  assert.match(partial.if, /!cancelled\(\).*steps\.apk-build\.outcome == 'failure'/);
+  assert.match(partial.if, /!endsWith\(steps\.gradle-cache\.outputs\.cache-matched-key/);
 });
 
 test("focused contracts stay inside existing required checks", () => {

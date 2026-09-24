@@ -32,7 +32,7 @@
       },
       "android": {
         "buildType": "apk",
-        "gradleCommand": ":app:assembleRelease --no-daemon --max-workers=1 -Dorg.gradle.parallel=false -x lint -x lintVitalAnalyzeRelease -x lintVitalRelease -x generateReleaseLintModel -x generateReleaseLintVitalModel"
+        "gradleCommand": ":app:assembleRelease --no-daemon --max-workers=1 -Dorg.gradle.parallel=false -Dorg.gradle.caching=true -x lint -x lintVitalAnalyzeRelease -x lintVitalRelease -x generateReleaseLintModel -x generateReleaseLintVitalModel"
       }
     }
   },
