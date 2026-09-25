@@ -87,31 +87,33 @@ function planDesktopOpenTargets(input: {
   }
   const workspacePath = resolvedDirectory?.absolutePath ?? input.workspaceDirectory;
 
-  return input.desktopTargets.map((target) => {
-    if (!input.resolvedFile) {
+  return input.desktopTargets
+    .filter((target) => !input.resolvedFile || target.kind !== "terminal")
+    .map((target) => {
+      if (!input.resolvedFile) {
+        return {
+          source: "desktop",
+          id: target.id,
+          label: target.label,
+          editorId: target.id,
+          icon: target.icon,
+          openInput: { editorId: target.id, workspacePath },
+        };
+      }
       return {
         source: "desktop",
         id: target.id,
         label: target.label,
         editorId: target.id,
         icon: target.icon,
-        openInput: { editorId: target.id, workspacePath },
+        openInput: {
+          editorId: target.id,
+          workspacePath,
+          filePath: input.resolvedFile.absolutePath,
+          ...(input.activeFile?.lineStart ? { line: input.activeFile.lineStart } : {}),
+        },
       };
-    }
-    return {
-      source: "desktop",
-      id: target.id,
-      label: target.label,
-      editorId: target.id,
-      icon: target.icon,
-      openInput: {
-        editorId: target.id,
-        workspacePath,
-        filePath: input.resolvedFile.absolutePath,
-        ...(input.activeFile?.lineStart ? { line: input.activeFile.lineStart } : {}),
-      },
-    };
-  });
+    });
 }
 
 function buildForgeWebUrl(

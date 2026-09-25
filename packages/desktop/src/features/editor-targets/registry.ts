@@ -25,6 +25,7 @@ import { vscodiumTarget } from "./targets/vscodium.js";
 import { vscodeInsidersTarget } from "./targets/vscode-insiders.js";
 import { vscodeTarget } from "./targets/vscode.js";
 import { webstormTarget } from "./targets/webstorm.js";
+import { windowsTerminalTarget } from "./targets/windows-terminal.js";
 import { zedTarget } from "./targets/zed.js";
 
 export const EDITOR_TARGETS: readonly EditorTarget[] = [
@@ -49,6 +50,7 @@ export const EDITOR_TARGETS: readonly EditorTarget[] = [
   rubymineTarget,
   rustroverTarget,
   webstormTarget,
+  windowsTerminalTarget,
   finderTarget,
   explorerTarget,
   fileManagerTarget,

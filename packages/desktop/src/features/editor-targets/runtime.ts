@@ -64,14 +64,21 @@ function resolveExecutable(
     platform: NodeJS.Platform;
   },
 ): string | null {
+  const pathValue = input.env.PATH ?? input.env.Path ?? input.env.path ?? "";
+  const pathDelimiter = input.platform === "win32" ? ";" : ":";
+  // Store app execution aliases can exist even when WindowsApps is absent from PATH
+  const directories = [
+    ...pathValue.split(pathDelimiter),
+    ...(input.platform === "win32" && input.env.LOCALAPPDATA
+      ? [`${input.env.LOCALAPPDATA}/Microsoft/WindowsApps`]
+      : []),
+  ];
   for (const command of commands) {
     if (isAbsolutePath(command, input.platform) && input.pathExists(command)) {
       return command;
     }
 
-    const pathValue = input.env.PATH ?? input.env.Path ?? input.env.path ?? "";
-    const pathDelimiter = input.platform === "win32" ? ";" : ":";
-    for (const directory of pathValue.split(pathDelimiter)) {
+    for (const directory of directories) {
       if (!directory) continue;
       const candidate = `${directory}/${command}`;
       if (input.platform !== "win32") {

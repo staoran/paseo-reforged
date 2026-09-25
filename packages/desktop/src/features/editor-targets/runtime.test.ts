@@ -11,6 +11,19 @@ interface SpawnRecord {
 }
 
 describe("editor target runtime", () => {
+  it("resolves WindowsApps execution aliases outside PATH", () => {
+    const runtime = createEditorTargetRuntime({
+      platform: "win32",
+      env: { PATH: "C:/Tools", LOCALAPPDATA: "C:/Users/me/AppData/Local" },
+      pathExists: (targetPath) =>
+        targetPath === "C:/Users/me/AppData/Local/Microsoft/WindowsApps/wt.exe",
+    });
+
+    expect(runtime.resolveCommand(["wt.exe"])).toBe(
+      "C:/Users/me/AppData/Local/Microsoft/WindowsApps/wt.exe",
+    );
+  });
+
   it("resolves command aliases and safely launches Windows command scripts", async () => {
     const records: SpawnRecord[] = [];
     const runtime = createEditorTargetRuntime({

@@ -8,6 +8,7 @@ import { intellijIdeaTarget } from "./targets/intellij-idea.js";
 import { pycharmTarget } from "./targets/pycharm.js";
 import { vscodeTarget } from "./targets/vscode.js";
 import { webstormTarget } from "./targets/webstorm.js";
+import { windowsTerminalTarget } from "./targets/windows-terminal.js";
 import { zedTarget } from "./targets/zed.js";
 
 interface RecordedLaunch {
@@ -197,6 +198,25 @@ describe("editor target registry", () => {
         args: ["--line", "6", "C:/repo", "C:/repo/src/app.py"],
       },
     ]);
+  });
+
+  it("opens a Windows workspace in Windows Terminal", async () => {
+    const runtime = new FakeEditorTargets("win32");
+    runtime.installCommand("wt.exe", "C:/Users/me/AppData/Local/Microsoft/WindowsApps/wt.exe");
+    runtime.addPath("C:/repo");
+
+    expect(await windowsTerminalTarget.isInstalled(runtime)).toBe(true);
+    await openEditorTarget({ editorId: "windows-terminal", workspacePath: "C:/repo" }, runtime, [
+      windowsTerminalTarget,
+    ]);
+
+    expect(runtime.launches).toEqual([
+      {
+        command: "C:/Users/me/AppData/Local/Microsoft/WindowsApps/wt.exe",
+        args: ["-d", "C:/repo"],
+      },
+    ]);
+    expect(await windowsTerminalTarget.isInstalled(new FakeEditorTargets("linux"))).toBe(false);
   });
 
   it("detects and launches the macOS application when the command is absent", async () => {
