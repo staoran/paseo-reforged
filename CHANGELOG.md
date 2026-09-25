@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.9.2-beta.2 - 2026-09-26
+
+### Added
+
+- Show the provider's retry reason while an agent is waiting to resume ([7149424](https://github.com/staoran/paseo-reforged/commit/714942434))
+- Reuse the imported session title when creating a workspace ([3615836](https://github.com/staoran/paseo-reforged/commit/36158363f))
+- Add saved prompt presets to the composer ([76949c8](https://github.com/staoran/paseo-reforged/commit/76949c83e))
+- Open a workspace in Windows Terminal ([a1821b0](https://github.com/staoran/paseo-reforged/commit/a1821b02b))
+
+### Improved
+
+- Generate initial agent titles in the current language and ignore outdated title results ([e117c84](https://github.com/staoran/paseo-reforged/commit/e117c847d))
+- Insert selected assistant text into the composer ([c451309](https://github.com/staoran/paseo-reforged/commit/c4513092b))
+- Color agent modes by permission risk ([4d08b25](https://github.com/staoran/paseo-reforged/commit/4d08b2576))
+
 ## 0.9.2-beta.1 - 2026-09-24
 
 ### Added
