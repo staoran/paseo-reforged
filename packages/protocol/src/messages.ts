@@ -2491,6 +2491,7 @@ export const PaseoWorktreeArchiveRequestSchema = z.object({
 export const FirstAgentContextSchema = z.object({
   prompt: z.string().optional(),
   attachments: AgentAttachmentsSchema,
+  locale: z.string().optional(),
 });
 
 export const CreatePaseoWorktreeRequestSchema = z.object({

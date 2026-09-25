@@ -44,13 +44,41 @@ const BranchNameSchema = z.object({
   branch: z.string().min(1).max(100),
 });
 
+/** Accept only client-supported language tags as title generation instructions */
+function titleLanguageForLocale(locale: string | undefined): string | null {
+  switch (locale) {
+    case "ar":
+      return "Arabic";
+    case "en":
+      return "English";
+    case "es":
+      return "Spanish";
+    case "fr":
+      return "French";
+    case "ja":
+      return "Japanese";
+    case "ko":
+      return "Korean";
+    case "pt-BR":
+      return "Brazilian Portuguese";
+    case "ru":
+      return "Russian";
+    case "zh-CN":
+      return "Simplified Chinese";
+    default:
+      return null;
+  }
+}
+
 async function buildPrompt(
   seed: string,
   options: {
     cwd: string;
     workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
+    locale?: string;
   },
 ): Promise<string> {
+  const titleLanguage = titleLanguageForLocale(options.locale);
   return buildMetadataPrompt({
     cwd: options.cwd,
     workspaceGitService: options.workspaceGitService,
@@ -60,6 +88,9 @@ async function buildPrompt(
       "Do not read files, write files, run tools, or execute commands.",
       "The branch must be a valid git ref: lowercase letters, numbers, hyphens, and slashes only, with no spaces, no uppercase, no leading or trailing hyphen, and no consecutive hyphens.",
       "The branch is generated directly from the prompt — it is NEVER derived from or slugified from the title.",
+      ...(titleLanguage
+        ? [`Write the title in ${titleLanguage}. Keep the branch name in ASCII.`]
+        : []),
     ].join("\n"),
     styles: [
       {
@@ -116,6 +147,7 @@ export async function generateBranchNameFromFirstAgentContext(
       prompt: await buildPrompt(seed, {
         cwd: options.cwd,
         workspaceGitService: options.workspaceGitService,
+        locale: options.firstAgentContext?.locale,
       }),
       schema: BranchNameSchema,
       schemaName: "BranchName",

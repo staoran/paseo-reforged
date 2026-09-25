@@ -170,7 +170,8 @@ function isNewWorkspacePending(input: {
 function buildFirstAgentContext(input: {
   prompt: string;
   attachments: AgentAttachment[];
-}): { prompt?: string; attachments?: AgentAttachment[] } | undefined {
+  locale: string;
+}): { prompt?: string; attachments?: AgentAttachment[]; locale: string } | undefined {
   const trimmedPrompt = input.prompt.trim();
   if (!trimmedPrompt && input.attachments.length === 0) {
     return undefined;
@@ -179,6 +180,7 @@ function buildFirstAgentContext(input: {
   return {
     ...(trimmedPrompt ? { prompt: trimmedPrompt } : {}),
     attachments: input.attachments,
+    locale: input.locale,
   };
 }
 
@@ -812,6 +814,7 @@ async function createMultiplicityWorkspace(input: {
   onEvent?: (snapshot: CreationSnapshot) => void;
   prompt: string;
   attachments: AgentAttachment[];
+  locale: string;
   mergeWorkspaces: (
     serverId: string,
     workspaces: ReturnType<typeof normalizeWorkspaceDescriptor>[],
@@ -825,6 +828,7 @@ async function createMultiplicityWorkspace(input: {
   const firstAgentContext = buildFirstAgentContext({
     prompt: input.prompt,
     attachments: input.attachments,
+    locale: input.locale,
   });
   const payload = await input.client.createWorkspace({
     idempotencyKey: input.idempotencyKey,
@@ -1632,7 +1636,7 @@ export function NewWorkspaceScreen({
 }: NewWorkspaceScreenProps) {
   const queryClient = useQueryClient();
   const { theme } = useUnistyles();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const isCompact = useIsCompactFormFactor();
   const toast = useToast();
   const mergeWorkspaces = useCallback(
@@ -2077,6 +2081,7 @@ export function NewWorkspaceScreen({
         withInitialAgent: input.withInitialAgent,
         prompt: input.prompt,
         attachments: input.attachments,
+        locale: i18n.resolvedLanguage ?? i18n.language,
         agent: input.agent,
         onEvent: input.onEvent,
         mergeWorkspaces,
@@ -2090,6 +2095,8 @@ export function NewWorkspaceScreen({
       creationIdentity,
       creationResult,
       effectiveIsolation,
+      i18n.language,
+      i18n.resolvedLanguage,
       mergeWorkspaces,
       queryClient,
       selectedItem,

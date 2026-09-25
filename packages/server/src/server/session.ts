@@ -3668,6 +3668,7 @@ export class Session {
     );
 
     try {
+      this.workspaceAutoName.invalidateWorkspaceTitle(workspaceId);
       const trimmed = title?.trim() ?? "";
       const nextTitle = trimmed.length === 0 ? null : trimmed;
       const updatedAt = new Date().toISOString();

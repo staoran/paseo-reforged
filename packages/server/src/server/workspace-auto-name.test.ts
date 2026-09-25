@@ -64,3 +64,50 @@ test("auto-name preserves workspace archival that lands during its metadata writ
     archivedAt,
   });
 });
+
+test("a manual rename invalidates an auto-name result even when the title is unchanged", async () => {
+  let workspace = createPersistedWorkspaceRecord({
+    workspaceId: "manual-title",
+    projectId: "project-auto-name",
+    cwd: "/workspace",
+    kind: "directory",
+    displayName: "workspace",
+    title: "Name this workspace",
+    createdAt: "2026-08-08T00:00:00.000Z",
+    updatedAt: "2026-08-08T00:00:00.000Z",
+  });
+  const mutationStarted = deferred();
+  const allowMutation = deferred();
+  const updateEmitted = deferred();
+  const autoName = new WorkspaceAutoName({
+    agentManager: {} as AgentManager,
+    workspaceRegistry: {
+      update: async (_workspaceId, updater) => {
+        mutationStarted.resolve();
+        await allowMutation.promise;
+        workspace = updater(workspace);
+        return workspace;
+      },
+    },
+    workspaceGitService: {} as WorkspaceGitService,
+    providerSnapshotManager: {} as ProviderSnapshotManager,
+    readDaemonConfig: () => ({}),
+    gitMutation: { notifyGitMutation: async () => {} },
+    emitWorkspaceUpdateForCwd: async () => {},
+    emitWorkspaceUpdateForWorkspaceId: async () => updateEmitted.resolve(),
+    logger: pino({ level: "silent" }),
+    generateWorkspaceName: async () => ({ title: "Generated title", branch: null }),
+  });
+
+  autoName.scheduleForDirectory({
+    workspaceId: workspace.workspaceId,
+    cwd: workspace.cwd,
+    firstAgentContext: { prompt: "Name this workspace" },
+  });
+  await mutationStarted.promise;
+  autoName.invalidateWorkspaceTitle(workspace.workspaceId);
+  allowMutation.resolve();
+  await updateEmitted.promise;
+
+  expect(workspace.title).toBe("Name this workspace");
+});
