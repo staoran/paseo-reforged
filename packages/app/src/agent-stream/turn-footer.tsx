@@ -1,5 +1,6 @@
 import React, { memo, useCallback, useMemo, type ReactNode } from "react";
-import { View } from "react-native";
+import { useTranslation } from "react-i18next";
+import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { SPACING, type Theme } from "@/styles/theme";
@@ -44,6 +45,7 @@ export type InFlightTurnForkHandler = (target: AssistantForkTarget) => Promise<v
 
 export const TurnFooter = memo(function TurnFooter({
   isRunning,
+  providerRetryMessage,
   inFlightTurnStartedAt,
   host,
   strategy,
@@ -52,6 +54,7 @@ export const TurnFooter = memo(function TurnFooter({
   onForkInFlightTurn,
 }: {
   isRunning: boolean;
+  providerRetryMessage: string | null;
   inFlightTurnStartedAt: Date | null;
   host: TurnFooterHost | null;
   strategy: TurnContentStrategy;
@@ -64,6 +67,7 @@ export const TurnFooter = memo(function TurnFooter({
       <TurnFooterRow>
         <RunningTurnFooter
           inFlightTurnStartedAt={inFlightTurnStartedAt}
+          providerRetryMessage={providerRetryMessage}
           onForkInFlightTurn={onForkInFlightTurn}
         />
       </TurnFooterRow>
@@ -115,12 +119,18 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
 
 const WorkingIndicator = memo(function WorkingIndicator({
   inFlightTurnStartedAt = null,
+  providerRetryMessage,
   onForkInFlightTurn,
 }: {
   inFlightTurnStartedAt?: Date | null;
+  providerRetryMessage: string | null;
   onForkInFlightTurn?: InFlightTurnForkHandler;
 }) {
+  const { t } = useTranslation();
   const active = useRetainedPanelActive();
+  const retryLabel = providerRetryMessage
+    ? `${t("agentStream.retrying")} ${providerRetryMessage}`
+    : null;
   return (
     <View style={stylesheet.turnFooterContent}>
       <View style={stylesheet.workingLoader}>
@@ -136,21 +146,35 @@ const WorkingIndicator = memo(function WorkingIndicator({
           testID="turn-working-elapsed"
         />
       ) : null}
+      {retryLabel ? (
+        <Text
+          style={stylesheet.providerRetryMessage}
+          numberOfLines={1}
+          ellipsizeMode="tail"
+          accessibilityLabel={retryLabel}
+          testID="turn-provider-retry-message"
+        >
+          {retryLabel}
+        </Text>
+      ) : null}
     </View>
   );
 });
 
 function RunningTurnFooter({
   inFlightTurnStartedAt,
+  providerRetryMessage,
   onForkInFlightTurn,
 }: {
   inFlightTurnStartedAt: Date | null;
+  providerRetryMessage: string | null;
   onForkInFlightTurn?: InFlightTurnForkHandler;
 }) {
   return (
     <View style={stylesheet.turnFooterSlot} testID="turn-working-indicator">
       <WorkingIndicator
         inFlightTurnStartedAt={inFlightTurnStartedAt}
+        providerRetryMessage={providerRetryMessage}
         onForkInFlightTurn={onForkInFlightTurn}
       />
     </View>
@@ -243,5 +267,11 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   workingLoader: {
     marginLeft: -2,
+  },
+  providerRetryMessage: {
+    color: theme.colors.statusWarning,
+    fontSize: STREAM_METADATA_FONT_SIZE,
+    flexShrink: 1,
+    maxWidth: 240,
   },
 }));

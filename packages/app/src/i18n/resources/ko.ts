@@ -227,6 +227,7 @@ export const ko: TranslationResources = {
     },
   },
   agentStream: {
+    retrying: "재시도 중:",
     empty: "이 에이전트와 대화를 시작하세요...",
     scrollToBottom: "맨 아래로 스크롤",
     historyLoadFailed: "에이전트 기록을 로드할 수 없습니다.",

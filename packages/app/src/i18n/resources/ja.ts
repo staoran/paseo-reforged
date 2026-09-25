@@ -229,6 +229,7 @@ export const ja: TranslationResources = {
     },
   },
   agentStream: {
+    retrying: "再試行中：",
     empty: "このエージェントとチャットを始めましょう...",
     scrollToBottom: "下にスクロール",
     historyLoadFailed: "エージェントの履歴を読み込めませんでした",

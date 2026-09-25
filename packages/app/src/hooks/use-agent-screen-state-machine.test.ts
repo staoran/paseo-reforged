@@ -158,6 +158,44 @@ describe("deriveAgentScreenViewState", () => {
     expect(ready.sync.status).toBe("reconnecting");
   });
 
+  it("shows retry reasons only for synchronized authoritative running state", () => {
+    const retryingAgent = { ...createAgent("agent-1"), providerRetryMessage: "rate limited" };
+    const baseInput = { ...createBaseInput(), agent: retryingAgent };
+    const ready = expectReadyState(
+      deriveAgentScreenViewState({ input: baseInput, memory: createBaseMemory() }).state,
+    );
+    const disconnected = expectReadyState(
+      deriveAgentScreenViewState({
+        input: { ...baseInput, isConnected: false },
+        memory: createBaseMemory(),
+      }).state,
+    );
+    const catchingUp = expectReadyState(
+      deriveAgentScreenViewState({
+        input: { ...baseInput, needsAuthoritativeSync: true, hasHydratedHistoryBefore: true },
+        memory: createBaseMemory({ hasRenderedReady: true, lastReadyAgent: retryingAgent }),
+      }).state,
+    );
+    const idle = expectReadyState(
+      deriveAgentScreenViewState({
+        input: { ...baseInput, agent: { ...retryingAgent, status: "idle" } },
+        memory: createBaseMemory(),
+      }).state,
+    );
+    const stale = expectReadyState(
+      deriveAgentScreenViewState({
+        input: createBaseInput(),
+        memory: createBaseMemory({ hasRenderedReady: true, lastReadyAgent: retryingAgent }),
+      }).state,
+    );
+
+    expect(ready.agent.providerRetryMessage).toBe("rate limited");
+    expect(disconnected.agent.providerRetryMessage).toBeNull();
+    expect(catchingUp.agent.providerRetryMessage).toBeNull();
+    expect(idle.agent.providerRetryMessage).toBeNull();
+    expect(stale.agent.providerRetryMessage).toBeNull();
+  });
+
   it("shows overlay catching-up state for first open while loading history", () => {
     const memory = createBaseMemory({
       hasRenderedReady: true,

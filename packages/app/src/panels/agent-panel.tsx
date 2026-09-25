@@ -115,6 +115,7 @@ interface ChatAgentStateShape {
   runtimeInfo?: Agent["runtimeInfo"];
   features?: Agent["features"];
   lastError?: Agent["lastError"] | null;
+  providerRetryMessage?: Agent["providerRetryMessage"];
 }
 
 interface ChatAgentSelectedState extends ChatAgentStateShape {
@@ -148,6 +149,7 @@ const EMPTY_CHAT_AGENT_STATE: ChatAgentSelectedState = {
   status: null,
   cwd: null,
   lastError: null,
+  providerRetryMessage: null,
   archivedAt: null,
   requiresAttention: false,
   attentionReason: null,
@@ -174,6 +176,7 @@ function selectChatAgentState(
     runtimeInfo: agent.runtimeInfo,
     features: agent.features,
     lastError: agent.lastError ?? null,
+    providerRetryMessage: agent.providerRetryMessage ?? null,
     archivedAt: agent.archivedAt ?? null,
     requiresAttention: agent.requiresAttention ?? false,
     attentionReason: agent.attentionReason ?? null,
@@ -201,6 +204,7 @@ function buildChatAgentFromState(
     runtimeInfo: state.runtimeInfo,
     features: state.features,
     lastError: state.lastError ?? null,
+    providerRetryMessage: state.providerRetryMessage ?? null,
     projectPlacement,
   };
 }

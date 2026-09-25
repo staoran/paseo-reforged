@@ -228,6 +228,7 @@ export const ptBR: TranslationResources = {
     },
   },
   agentStream: {
+    retrying: "Tentando novamente:",
     empty: "Comece a conversar com este agente...",
     scrollToBottom: "Rolar para o fim",
     historyLoadFailed: "Não foi possível carregar o histórico do agente",

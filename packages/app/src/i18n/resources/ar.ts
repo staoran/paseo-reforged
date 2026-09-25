@@ -227,6 +227,7 @@ export const ar: TranslationResources = {
     },
   },
   agentStream: {
+    retrying: "إعادة المحاولة:",
     empty: "ابدأ الدردشة مع هذا الوكيل...",
     scrollToBottom: "قم بالتمرير إلى الأسفل",
     historyLoadFailed: "تعذر تحميل سجل الوكيل",

@@ -947,6 +947,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         isTurnActive || bottomTurnFooterHost ? (
           <TurnFooter
             isRunning={isTurnActive}
+            providerRetryMessage={context.providerRetryMessage ?? null}
             inFlightTurnStartedAt={baseRenderModel.turnTiming.runningStartedAt}
             host={bottomTurnFooterHost}
             strategy={streamRenderStrategy}
@@ -960,6 +961,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         handleForkInFlightTurn,
         readOnly,
         isTurnActive,
+        context.providerRetryMessage,
         baseRenderModel.turnTiming.runningStartedAt,
         bottomTurnFooterHost,
         streamRenderStrategy,
@@ -1217,6 +1219,9 @@ function collectAgentScreenAgentDiffs(left: AgentScreenAgent, right: AgentScreen
     reasons.push("agent.capabilities");
   }
   if (left.lastError !== right.lastError) reasons.push("agent.lastError");
+  if (left.providerRetryMessage !== right.providerRetryMessage) {
+    reasons.push("agent.providerRetryMessage");
+  }
   reasons.push(...collectAgentSetupDiffs(left, right));
   reasons.push(...collectAgentProjectPlacementDiffs(left.projectPlacement, right.projectPlacement));
   return reasons;

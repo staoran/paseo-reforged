@@ -5066,6 +5066,114 @@ test("session config drift events update state through the stream channel", asyn
   expect(streams.map((event) => event.type)).toEqual([]);
 });
 
+test("keeps provider retry state live, turn-scoped, and out of durable history", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-retry-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let capturedSession: TestAgentSession | null = null;
+  class RetryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      capturedSession = new TestAgentSession(config);
+      return capturedSession;
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new RetryClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000218",
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const session = capturedSession!;
+    const states: ManagedAgent[] = [];
+    const streams: AgentStreamEvent[] = [];
+    manager.subscribe(
+      (event) => {
+        if (event.type === "agent_state") states.push(event.agent);
+        if (event.type === "agent_stream") streams.push(event.event);
+      },
+      { agentId: agent.id, replayState: false },
+    );
+
+    session.pushEvent({
+      type: "provider_retry",
+      provider: "codex",
+      turnId: "turn-1",
+      message: "ignored while idle",
+    });
+    session.pushEvent({ type: "turn_started", provider: "codex", turnId: "turn-1" });
+    await manager.flush();
+    await storage.flush();
+    const storedBeforeRetry = await storage.get(agent.id);
+    const stateCount = states.length;
+
+    session.pushEvent({
+      type: "provider_retry",
+      provider: "codex",
+      turnId: "old-turn",
+      message: "stale",
+    });
+    session.pushEvent({
+      type: "provider_retry",
+      provider: "codex",
+      turnId: "turn-1",
+      message: "rate limited",
+    });
+    session.pushEvent({
+      type: "provider_retry",
+      provider: "codex",
+      turnId: "turn-1",
+      message: "rate limited",
+    });
+    await manager.flush();
+    await storage.flush();
+
+    expect(states).toHaveLength(stateCount + 1);
+    expect(states.at(-1)?.providerRetryMessage).toBe("rate limited");
+    expect(toAgentPayload(manager.getAgent(agent.id)!).providerRetryMessage).toBe("rate limited");
+    expect(manager.getTimeline(agent.id)).toEqual([]);
+    expect(streams.some((event) => event.type === "provider_retry")).toBe(false);
+    expect(await storage.get(agent.id)).toEqual(storedBeforeRetry);
+
+    session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "old-turn" });
+    await manager.flush();
+    expect(manager.getAgent(agent.id)?.providerRetryMessage).toBe("rate limited");
+
+    session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "turn-1" });
+    await manager.flush();
+    expect(manager.getAgent(agent.id)?.providerRetryMessage).toBeNull();
+    session.pushEvent({
+      type: "provider_retry",
+      provider: "codex",
+      turnId: "turn-1",
+      message: "too late",
+    });
+    await manager.flush();
+    expect(manager.getAgent(agent.id)?.providerRetryMessage).toBeNull();
+
+    session.pushEvent({ type: "turn_started", provider: "codex", turnId: "turn-2" });
+    session.pushEvent({
+      type: "provider_retry",
+      provider: "codex",
+      turnId: "turn-2",
+      message: "connection lost",
+    });
+    await manager.flush();
+    await manager.closeAgent(agent.id);
+    expect(states.at(-1)).toMatchObject({
+      lifecycle: "closed",
+      providerRetryMessage: null,
+    });
+  } finally {
+    await manager.flush();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("setLabels merges and persists labels", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-set-labels-"));
   const storagePath = join(workdir, "agents");

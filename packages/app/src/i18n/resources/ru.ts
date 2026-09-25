@@ -229,6 +229,7 @@ export const ru: TranslationResources = {
     },
   },
   agentStream: {
+    retrying: "Повторная попытка:",
     empty: "Начните общаться с этим агентом...",
     scrollToBottom: "Прокрутить вниз",
     historyLoadFailed: "Не удалось загрузить историю агента",

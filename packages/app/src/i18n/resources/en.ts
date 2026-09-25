@@ -223,6 +223,7 @@ export const en = {
     },
   },
   agentStream: {
+    retrying: "Retrying:",
     empty: "Start chatting with this agent...",
     scrollToBottom: "Scroll to bottom",
     historyLoadFailed: "Couldn't load agent history",

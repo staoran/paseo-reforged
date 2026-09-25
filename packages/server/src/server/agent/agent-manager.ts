@@ -429,6 +429,8 @@ interface ManagedAgentBase {
   activeTurnStartedAt: Date | null;
   lastUsage?: AgentUsage;
   lastError?: string;
+  /** Live provider retry reason for the active turn */
+  providerRetryMessage: string | null;
   attention: AttentionState;
   foregroundTurnWaiters: Set<ForegroundTurnWaiter>;
   finalizedForegroundTurnIds: Set<string>;
@@ -1906,6 +1908,7 @@ export class AgentManager {
         lastUserMessageAt: record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null,
         lastUsage: undefined,
         lastError: record.lastError ?? undefined,
+        providerRetryMessage: null,
         attention,
         internal: record.internal,
         labels: record.labels,
@@ -3650,6 +3653,7 @@ export class AgentManager {
       lastUserMessageAt: options?.lastUserMessageAt ?? null,
       lastUsage: options?.lastUsage,
       lastError: options?.lastError,
+      providerRetryMessage: null,
       attention: resolveInitialAttention(options?.attention),
       internal: config.internal ?? false,
       labels: options?.labels ?? {},
@@ -3698,6 +3702,7 @@ export class AgentManager {
       bufferedPermissionResolutions: new Map(),
       inFlightPermissionResponses: new Set(),
       pendingReplacement: false,
+      providerRetryMessage: null,
       foregroundTurnWaiters: new Set(),
       finalizedForegroundTurnIds: new Set(),
       unsubscribeSession: null,
@@ -4132,6 +4137,7 @@ export class AgentManager {
     options?: HandleStreamEventOptions,
   ): Promise<boolean> {
     event = limitAgentStreamEventContent(event);
+    if (this.handleProviderRetryEvent(agent, event, options)) return false;
     const identified = attachManagedTurnIdentity(agent, event, options?.fromHistory === true);
     event = identified.event;
     const eventTurnId = identified.turnId;
@@ -4153,6 +4159,7 @@ export class AgentManager {
         return false;
       }
       this.agentStreamCoalescer.flushFor(agent.id);
+      this.clearProviderRetryOnTurnBoundary(agent, event, eventTurnId);
     }
 
     let terminalDisposition: ActiveTurnTerminalDisposition = "untracked";
@@ -4195,6 +4202,41 @@ export class AgentManager {
     this.traceHandleStreamEventEnd(agent, event, eventTurnId, flags);
 
     return flags.shouldNotifyWaiters;
+  }
+
+  /** Apply live retry updates without publishing stream or durable rows */
+  private handleProviderRetryEvent(
+    agent: ActiveManagedAgent,
+    event: AgentStreamEvent,
+    options?: HandleStreamEventOptions,
+  ): boolean {
+    if (event.type !== "provider_retry") return false;
+    if (
+      !options?.fromHistory &&
+      agent.lifecycle === "running" &&
+      event.turnId === (agent.activeForegroundTurnId ?? agent.activeTurnId) &&
+      event.message !== agent.providerRetryMessage
+    ) {
+      agent.providerRetryMessage = event.message;
+      this.touchUpdatedAt(agent);
+      this.emitState(agent, { persist: false });
+    }
+    return true;
+  }
+
+  /** End the live retry with its own turn, leaving stale terminals untouched */
+  private clearProviderRetryOnTurnBoundary(
+    agent: ActiveManagedAgent,
+    event: AgentStreamEvent,
+    eventTurnId: string | undefined,
+  ): void {
+    if (agent.providerRetryMessage === null) return;
+    const endsCurrentTurn =
+      isTurnTerminalEvent(event) &&
+      eventTurnId === (agent.activeForegroundTurnId ?? agent.activeTurnId);
+    if (event.type !== "turn_started" && !endsCurrentTurn) return;
+    agent.providerRetryMessage = null;
+    this.emitState(agent, { persist: false });
   }
 
   private traceHandleStreamEventStart(

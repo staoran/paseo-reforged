@@ -227,6 +227,7 @@ export const zhCN: TranslationResources = {
     },
   },
   agentStream: {
+    retrying: "正在重试：",
     empty: "开始和这个 Agent 对话...",
     scrollToBottom: "滚动到底部",
     historyLoadFailed: "无法加载智能体历史记录",
