@@ -1224,6 +1224,21 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
       composerState,
     ],
   );
+  const handleComposeSelection = useCallback(
+    (text: string, action: "ask" | "rewrite") => {
+      const quote = text
+        .split("\n")
+        .map((line) => `> ${line}`)
+        .join("\n");
+      const next =
+        action === "rewrite"
+          ? `${quote}\n\n${t("message.actions.rewriteInstruction")}`
+          : `${quote}\n\n`;
+      const current = agentInputDraft.textSource.getSnapshot();
+      agentInputDraft.replaceText(current ? `${current}\n\n${next}` : next);
+    },
+    [agentInputDraft, t],
+  );
   const composerSection = (
     <RenderProfile id={`AgentComposerSection:${agentId}`}>
       <AgentComposerSection
@@ -1257,6 +1272,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
           hasVisibleAgentTracks={hasVisibleAgentTracks}
           toast={toastApi}
           onOpenWorkspaceFile={onOpenWorkspaceFile}
+          onComposeSelection={handleComposeSelection}
         />
       </RenderProfile>
       {hasActiveComposer ? (
@@ -1382,6 +1398,7 @@ const AgentStreamSection = memo(function AgentStreamSection({
   hasVisibleAgentTracks,
   toast,
   onOpenWorkspaceFile,
+  onComposeSelection,
 }: {
   streamViewRef: React.RefObject<AgentStreamViewHandle | null>;
   serverId: string;
@@ -1394,6 +1411,7 @@ const AgentStreamSection = memo(function AgentStreamSection({
   hasVisibleAgentTracks: boolean;
   toast: ReturnType<typeof useToastHost>["api"];
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
+  onComposeSelection?: (text: string, action: "ask" | "rewrite") => void;
 }) {
   const isCompactFormFactor = useIsCompactFormFactor();
   const hasWorkspaceDiffStat = useWorkspaceHasDiffStat(serverId, workspaceId);
@@ -1466,6 +1484,7 @@ const AgentStreamSection = memo(function AgentStreamSection({
       pendingMessageSubmissions={pendingMessageSubmissions}
       turnPresentation={turnPresentation}
       onOpenWorkspaceFile={onOpenWorkspaceFile}
+      onComposeSelection={onComposeSelection}
     />
   );
 });

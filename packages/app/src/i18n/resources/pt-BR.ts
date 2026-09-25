@@ -329,6 +329,9 @@ export const ptBR: TranslationResources = {
     },
     actions: {
       copyCode: "Copiar código",
+      ask: "Perguntar sobre a seleção",
+      rewrite: "Reescrever a seleção",
+      rewriteInstruction: "Reescreva este texto",
       copyTurn: "Copiar turno",
       copyMessage: "Copiar mensagem",
       forkMenu: "Bifurcar mensagem",

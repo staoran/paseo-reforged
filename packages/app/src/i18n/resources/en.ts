@@ -322,6 +322,9 @@ export const en = {
     },
     actions: {
       copyCode: "Copy code",
+      ask: "Ask about selection",
+      rewrite: "Rewrite selection",
+      rewriteInstruction: "Rewrite this text",
       copyTurn: "Copy turn",
       copyMessage: "Copy message",
       forkMenu: "Fork chat from here",

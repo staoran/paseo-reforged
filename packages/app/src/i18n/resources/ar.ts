@@ -325,6 +325,9 @@ export const ar: TranslationResources = {
     },
     actions: {
       copyCode: "نسخ الرمز",
+      ask: "اسأل عن النص المحدد",
+      rewrite: "أعد صياغة النص المحدد",
+      rewriteInstruction: "أعد صياغة هذا النص",
       copyTurn: "نسخ بدوره",
       copyMessage: "انسخ الرسالة",
       forkMenu: "تفريع الرسالة",

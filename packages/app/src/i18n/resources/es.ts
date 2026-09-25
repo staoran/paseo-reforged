@@ -330,6 +330,9 @@ export const es: TranslationResources = {
     },
     actions: {
       copyCode: "Copiar código",
+      ask: "Preguntar sobre la selección",
+      rewrite: "Reescribir la selección",
+      rewriteInstruction: "Reescribe este texto",
       copyTurn: "Copiar turno",
       copyMessage: "Copiar mensaje",
       forkMenu: "Bifurcar mensaje",

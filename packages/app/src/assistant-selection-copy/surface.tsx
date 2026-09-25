@@ -4,6 +4,7 @@ import { View, type StyleProp, type ViewStyle } from "react-native";
 interface AssistantSelectionCopySurfaceProps {
   children: ReactNode;
   style?: StyleProp<ViewStyle>;
+  onComposeSelection?: (text: string, action: "ask" | "rewrite") => void;
 }
 
 export function AssistantSelectionCopySurface({
