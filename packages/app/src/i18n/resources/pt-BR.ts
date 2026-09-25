@@ -114,6 +114,17 @@ export const ptBR: TranslationResources = {
     },
   },
   composer: {
+    presets: {
+      title: "Prompts salvos",
+      editTitle: "Editar prompt",
+      name: "Nome",
+      content: "Prompt",
+      new: "Salvar prompt",
+      empty: "Nenhum prompt salvo",
+      edit: "Editar",
+      delete: "Excluir",
+      save: "Salvar",
+    },
     placeholders: {
       desktop: "Envie uma mensagem ao agente, marque @files ou use /commands e /skills",
       mobile: "Mensagem, @files, /commands",

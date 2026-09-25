@@ -113,6 +113,17 @@ export const ar: TranslationResources = {
     },
   },
   composer: {
+    presets: {
+      title: "قوالب المطالبات",
+      editTitle: "تحرير قالب المطالبة",
+      name: "الاسم",
+      content: "المطالبة",
+      new: "حفظ المطالبة",
+      empty: "لا توجد مطالبات محفوظة",
+      edit: "تحرير",
+      delete: "حذف",
+      save: "حفظ",
+    },
     placeholders: {
       desktop: "أرسل رسالة إلى الوكيل أو ضع علامة على @files أو استخدم /commands و /skills",
       mobile: "الرسالة، @files ، /commands",

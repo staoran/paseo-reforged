@@ -114,6 +114,17 @@ export const ja: TranslationResources = {
     },
   },
   composer: {
+    presets: {
+      title: "プロンプトプリセット",
+      editTitle: "プリセットを編集",
+      name: "名前",
+      content: "プロンプト",
+      new: "プロンプトを保存",
+      empty: "保存したプロンプトはありません",
+      edit: "編集",
+      delete: "削除",
+      save: "保存",
+    },
     placeholders: {
       desktop: "エージェントにメッセージ、@ファイル、/コマンドや/スキルを入力",
       mobile: "メッセージ、@ファイル、/コマンド",

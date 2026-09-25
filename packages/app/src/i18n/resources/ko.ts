@@ -113,6 +113,17 @@ export const ko: TranslationResources = {
     },
   },
   composer: {
+    presets: {
+      title: "프롬프트 프리셋",
+      editTitle: "프리셋 편집",
+      name: "이름",
+      content: "프롬프트",
+      new: "프롬프트 저장",
+      empty: "저장된 프롬프트가 없습니다",
+      edit: "편집",
+      delete: "삭제",
+      save: "저장",
+    },
     placeholders: {
       desktop: "에이전트에게 메시지를 보내거나 @files 태그, /commands, /skills를 사용하세요",
       mobile: "메시지, @files, /commands",

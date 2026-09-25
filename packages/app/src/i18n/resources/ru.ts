@@ -114,6 +114,17 @@ export const ru: TranslationResources = {
     },
   },
   composer: {
+    presets: {
+      title: "Шаблоны запросов",
+      editTitle: "Изменить шаблон",
+      name: "Название",
+      content: "Запрос",
+      new: "Сохранить запрос",
+      empty: "Нет сохранённых запросов",
+      edit: "Изменить",
+      delete: "Удалить",
+      save: "Сохранить",
+    },
     placeholders: {
       desktop: "Напишите агенту сообщение, отметьте @files или используйте /commands и /skills.",
       mobile: "Сообщение,@files,/commands",

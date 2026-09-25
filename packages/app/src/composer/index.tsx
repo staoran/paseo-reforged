@@ -39,7 +39,9 @@ import {
   Image as ImageIcon,
   ClipboardPaste,
   Paperclip,
+  BookText,
 } from "lucide-react-native";
+import { PromptPresetsSheet } from "@/composer/prompt-presets-sheet";
 import * as Clipboard from "expo-clipboard";
 import { FOOTER_HEIGHT, MAX_CONTENT_WIDTH } from "@/constants/layout";
 import {
@@ -1384,6 +1386,8 @@ function ComposerContentImpl({
   const [sendError, setSendError] = useState<string | null>(null);
   const [isMessageInputFocused, setIsMessageInputFocused] = useState(false);
   const [isGithubPickerOpen, setIsGithubPickerOpen] = useState(false);
+  const [isPromptPresetsOpen, setIsPromptPresetsOpen] = useState(false);
+  const [promptPresetSource, setPromptPresetSource] = useState("");
   const [githubSearchQuery, setGithubSearchQuery] = useState("");
   const [lightboxMetadata, setLightboxMetadata] = useState<AttachmentMetadata | null>(null);
   const attachButtonRef = useRef<View | null>(null);
@@ -1415,6 +1419,19 @@ function ComposerContentImpl({
       onChangeText(text);
     },
     [onChangeText],
+  );
+  const openPromptPresets = useCallback(() => {
+    setPromptPresetSource(messageInputRef.current?.getText() ?? textSource.getSnapshot());
+    setIsPromptPresetsOpen(true);
+  }, [textSource]);
+  const closePromptPresets = useCallback(() => setIsPromptPresetsOpen(false), []);
+  const insertPromptPreset = useCallback(
+    (content: string) => {
+      const existing = messageInputRef.current?.getText() ?? textSource.getSnapshot();
+      replaceUserInput(existing ? `${existing}\n\n${content}` : content);
+      messageInputRef.current?.focus();
+    },
+    [replaceUserInput, textSource],
   );
 
   const runClientSlashCommand = useCallback(
@@ -2176,6 +2193,16 @@ function ComposerContentImpl({
       });
     }
     items.push(
+      ...(inputMode === "chat"
+        ? [
+            {
+              id: "prompt-presets",
+              label: t("composer.presets.title"),
+              icon: <ThemedBookText size={ICON_SIZE.md} uniProps={iconForegroundMutedMapping} />,
+              onSelect: openPromptPresets,
+            },
+          ]
+        : []),
       {
         id: "github",
         label: t("composer.attachments.addIssueOrPr", {
@@ -2202,6 +2229,8 @@ function ComposerContentImpl({
     handlePasteImage,
     handlePickFile,
     handlePickImage,
+    inputMode,
+    openPromptPresets,
     pluginAttachments.menuItems,
     t,
   ]);
@@ -2401,6 +2430,12 @@ function ComposerContentImpl({
 
   return (
     <>
+      <PromptPresetsSheet
+        visible={isPromptPresetsOpen}
+        currentText={promptPresetSource}
+        onClose={closePromptPresets}
+        onInsert={insertPromptPreset}
+      />
       <ComposerKeyboardRegistration
         handlerId={keyboardHandlerIdRef.current}
         messageInputRef={messageInputRef}
@@ -2659,6 +2694,7 @@ const ThemedGitPullRequest = withUnistyles(GitPullRequest);
 const ThemedCircleDot = withUnistyles(CircleDot);
 const ThemedAudioLines = withUnistyles(AudioLines);
 const ThemedPaperclip = withUnistyles(Paperclip);
+const ThemedBookText = withUnistyles(BookText);
 const ThemedImageIcon = withUnistyles(ImageIcon);
 const ThemedClipboardPaste = withUnistyles(ClipboardPaste);
 const ThemedFileText = withUnistyles(FileText);

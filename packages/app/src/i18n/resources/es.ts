@@ -114,6 +114,17 @@ export const es: TranslationResources = {
     },
   },
   composer: {
+    presets: {
+      title: "Plantillas de instrucciones",
+      editTitle: "Editar plantilla",
+      name: "Nombre",
+      content: "Instrucción",
+      new: "Guardar instrucción",
+      empty: "No hay instrucciones guardadas",
+      edit: "Editar",
+      delete: "Eliminar",
+      save: "Guardar",
+    },
     placeholders: {
       desktop: "Envíe un mensaje al agente, etiquete@fileso use/commandsy/skills",
       mobile: "Mensaje,@files,/commands",

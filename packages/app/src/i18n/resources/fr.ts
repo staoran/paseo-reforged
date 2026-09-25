@@ -116,6 +116,17 @@ export const fr: TranslationResources = {
     },
   },
   composer: {
+    presets: {
+      title: "Prompts enregistrés",
+      editTitle: "Modifier le prompt",
+      name: "Nom",
+      content: "Prompt",
+      new: "Enregistrer le prompt",
+      empty: "Aucun prompt enregistré",
+      edit: "Modifier",
+      delete: "Supprimer",
+      save: "Enregistrer",
+    },
     placeholders: {
       desktop: "Envoyez un message à l'agent, marquez@filesou utilisez/commandset/skills",
       mobile: "Message,@files,/commands",

@@ -109,6 +109,17 @@ export const en = {
     },
   },
   composer: {
+    presets: {
+      title: "Prompt presets",
+      editTitle: "Edit prompt preset",
+      name: "Name",
+      content: "Prompt",
+      new: "Save prompt",
+      empty: "No saved prompts",
+      edit: "Edit",
+      delete: "Delete",
+      save: "Save",
+    },
     placeholders: {
       desktop: "Message the agent, tag @files, or use /commands and /skills",
       mobile: "Message, @files, /commands",
