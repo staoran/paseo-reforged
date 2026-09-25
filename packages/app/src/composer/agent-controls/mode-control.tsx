@@ -27,6 +27,8 @@ import { showProviderNoticeToast } from "@/utils/provider-notice-toast";
 import type { AgentMode } from "@getpaseo/protocol/agent-types";
 import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import { getAgentModeIcon, getAgentModeOptionIcon } from "@/agent-controls/icons";
+import { resolveAgentModeColor } from "@/agent-controls/policy";
+import { getModeVisuals } from "@getpaseo/protocol/provider-manifest";
 interface ModeComboboxOptionProps {
   option: ComboboxOption;
   selected: boolean;
@@ -102,7 +104,11 @@ export function AgentModeControl({
   }, [modeOptions, selectedModeId]);
 
   const Icon = getAgentModeIcon(provider, selectedMode?.id ?? "", providerDefinitions);
-  const iconColor = theme.colors.foregroundMuted;
+  const iconColor = resolveAgentModeColor(
+    selectedMode?.colorTier ??
+      getModeVisuals(provider, selectedMode?.id ?? "", providerDefinitions)?.colorTier,
+    theme.colors,
+  );
   const selectedModeLabel = selectedMode ? formatAgentModeLabel(selectedMode) : "";
 
   const allOptions = useMemo<ComboboxOption[]>(
@@ -171,10 +177,14 @@ export function AgentModeControl({
         onPress={args.onPress}
         provider={provider}
         providerDefinitions={providerDefinitions}
-        iconColor={theme.colors.foreground}
+        iconColor={resolveAgentModeColor(
+          modeOptions.find((mode) => mode.id === args.option.id)?.colorTier ??
+            getModeVisuals(provider, args.option.id, providerDefinitions)?.colorTier,
+          theme.colors,
+        )}
       />
     ),
-    [provider, providerDefinitions, theme.colors.foreground],
+    [modeOptions, provider, providerDefinitions, theme.colors],
   );
 
   const sheetHeader = useMemo<SheetHeader>(
