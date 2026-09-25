@@ -31,6 +31,7 @@ export interface ResolveOrCreateWorkspaceIdInput {
 export interface ImportWorkspaceInput {
   cwd: string;
   requestedWorkspaceId?: string;
+  workspaceTitle?: string;
 }
 
 export interface ImportWorkspaceResult<T> {
@@ -57,7 +58,10 @@ export interface WorkspaceProvisioningService {
     input: ImportWorkspaceInput,
     operation: (workspace: PersistedWorkspaceRecord) => Promise<T>,
   ): Promise<ImportWorkspaceResult<T>>;
-  findOrCreateWorkspaceForDirectory(cwd: string): Promise<PersistedWorkspaceRecord>;
+  findOrCreateWorkspaceForDirectory(
+    cwd: string,
+    initialTitle?: string,
+  ): Promise<PersistedWorkspaceRecord>;
   resolveOrCreateWorkspaceIdForCreateAgent(input: ResolveOrCreateWorkspaceIdInput): Promise<string>;
   createWorkspaceForDirectory(
     cwd: string,
@@ -142,7 +146,7 @@ export function createWorkspaceProvisioningService(deps: {
       projectRegistry.list(),
       workspaceRegistry.list(),
     ]);
-    const workspace = await findOrCreateWorkspaceForDirectory(input.cwd);
+    const workspace = await findOrCreateWorkspaceForDirectory(input.cwd, input.workspaceTitle);
     const createdWorkspace = workspacesBeforeImport.some(
       (candidate) => candidate.workspaceId === workspace.workspaceId,
     )
@@ -318,7 +322,10 @@ export function createWorkspaceProvisioningService(deps: {
     return refreshProjectKind(project);
   }
 
-  async function findOrCreateWorkspaceForDirectory(cwd: string): Promise<PersistedWorkspaceRecord> {
+  async function findOrCreateWorkspaceForDirectory(
+    cwd: string,
+    initialTitle?: string,
+  ): Promise<PersistedWorkspaceRecord> {
     const normalizedCwd = resolve(cwd);
     const workspaces = await workspaceRegistry.list();
     const active = workspaces
@@ -344,7 +351,7 @@ export function createWorkspaceProvisioningService(deps: {
       const project = await projectRegistry.get(archived.projectId);
       if (project && !project.archivedAt) return ensureWorkspaceRecordUnarchived(archived);
     }
-    return createWorkspaceForDirectory(normalizedCwd);
+    return createWorkspaceForDirectory(normalizedCwd, initialTitle);
   }
 
   async function resolveOrCreateWorkspaceIdForCreateAgent(

@@ -625,7 +625,7 @@ test("runInImportWorkspace reuses an active workspace for an untargeted import",
   const workspace = await provisioning.createWorkspaceForDirectory(cwd);
 
   const result = await provisioning.runInImportWorkspace(
-    { cwd },
+    { cwd, workspaceTitle: "Imported title" },
     async (target) => target.workspaceId,
   );
 
@@ -757,11 +757,12 @@ test("runInImportWorkspace creates one fresh workspace for an untargeted import"
   mkdirSync(cwd);
 
   const result = await provisioning.runInImportWorkspace(
-    { cwd },
+    { cwd, workspaceTitle: "Imported title" },
     async (workspace) => workspace.workspaceId,
   );
 
   expect(result.value).toBe(result.createdWorkspace?.workspaceId);
+  expect(result.createdWorkspace?.title).toBe("Imported title");
   expect(await workspaceRegistry.list()).toEqual([result.createdWorkspace]);
 });
 

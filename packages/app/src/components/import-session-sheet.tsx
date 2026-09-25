@@ -605,6 +605,9 @@ export function ImportSessionSheet({
         providerHandleId: entry.providerHandleId,
         cwd: entry.cwd,
         ...(target.workspaceId ? { workspaceId: target.workspaceId } : {}),
+        ...(!target.workspaceId && (entry.title?.trim() || entry.firstPromptPreview?.trim())
+          ? { workspaceTitle: entry.title?.trim() || entry.firstPromptPreview?.trim() }
+          : {}),
       });
       return { agent, target };
     },
