@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { relative as relativePath } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { load as loadYaml } from "js-yaml";
 
 const repoRoot = new URL("../", import.meta.url);
@@ -26,10 +27,6 @@ const gatedCiJobs = new Map([
   ["desktop-tests-windows", { name: "desktop-tests (windows-latest)", contract: "desktop" }],
   ["app-tests", { name: "app-tests", contract: "app" }],
   ["sdk-tests", { name: "sdk-tests", contract: "sdk" }],
-  ["playwright-1", { name: "playwright (shard 1/4)", contract: "browser" }],
-  ["playwright-2", { name: "playwright (shard 2/4)", contract: "browser" }],
-  ["playwright-3", { name: "playwright (shard 3/4)", contract: "browser" }],
-  ["playwright-4", { name: "playwright (shard 4/4)", contract: "browser" }],
   ["relay-tests", { name: "relay-tests", contract: "relay" }],
   ["cli-tests-1", { name: "cli-tests (shard 1/3)", contract: "cli" }],
   ["cli-tests-2", { name: "cli-tests (shard 2/3)", contract: "cli" }],
@@ -74,7 +71,7 @@ function filesUnder(relativeDirectory, predicate) {
   return readdirSync(directory, { recursive: true, withFileTypes: true })
     .filter((entry) => entry.isFile())
     .map((entry) =>
-      [relativeDirectory, relativePath(directory.pathname, entry.parentPath), entry.name]
+      [relativeDirectory, relativePath(fileURLToPath(directory), entry.parentPath), entry.name]
         .filter(Boolean)
         .join("/")
         .replaceAll("\\", "/"),
@@ -156,17 +153,27 @@ test("focused contracts stay inside existing required checks", () => {
   const desktop = jobs.get("desktop-tests-ubuntu")?.join("\n") ?? "";
 
   assert.match(changes, /scripts\/daemon-launch-contract\.test\.mjs/);
-  assert.doesNotMatch(changes, /Install dependencies|npm run build/);
+  assert.doesNotMatch(changes, /npm run build/);
 
   assert.match(server, /test:hub-cli-contract/);
   assert.match(server, /npm run test --workspace=@getpaseo\/server/);
   assert.ok(!jobs.has("hub-cli-contract"));
 
-  assert.match(desktop, /test:e2e:renderer/);
-  assert.match(desktop, /test:e2e:browser-tabs/);
   assert.match(desktop, /npm run test --workspace=@getpaseo\/desktop/);
+  assert.doesNotMatch(desktop, /test:e2e|lifecycle\.e2e/);
   assert.ok(!jobs.has("desktop-browser-bridge"));
   assert.ok(!jobs.has("playwright-desktop"));
+});
+
+test("browser shards and desktop E2E stay out of automatic CI", () => {
+  const jobs = jobBlocks(readFileSync(ciWorkflowPath, "utf8"));
+  const desktopWindows = jobs.get("desktop-tests-windows")?.join("\n") ?? "";
+
+  for (const shard of [1, 2, 3, 4]) {
+    assert.ok(!jobs.has(`playwright-${shard}`));
+  }
+  assert.match(desktopWindows, /\*desktop_test_steps/);
+  assert.doesNotMatch(desktopWindows, /test:e2e|lifecycle\.e2e/);
 });
 
 test("server builds exclude test utilities at every domain depth", () => {
@@ -216,28 +223,6 @@ test("PR routing declares stable behavior ownership", () => {
       "packages/client/**",
       "packages/highlight/**",
       "packages/protocol/**",
-    ],
-    browser: [
-      "packages/server/src/server/agent/provider-snapshot-manager.ts",
-      "packages/server/src/server/session/provider/provider-catalog-session.ts",
-      "packages/client/src/compat/normalize-provider-models.ts",
-      "packages/protocol/src/client-capabilities.ts",
-      "packages/server/src/server/agent/provider-registry.ts",
-      "packages/server/src/server/agent/agent-sdk-types.ts",
-      "packages/server/src/server/agent/providers/codex-app-server-agent.ts",
-      "packages/server/src/server/agent/providers/claude/agent.ts",
-      "packages/server/src/server/agent/plugin-provider.ts",
-      "packages/server/src/server/plugins/{index,plugin-process,plugin-process-protocol,runtime}.ts",
-      "packages/server/src/executable-resolution/**",
-      "packages/plugin/src/server/provider.ts",
-      "packages/app/src/!(desktop)/**",
-      "packages/app/e2e/browser/**",
-      "packages/app/e2e/support/**",
-      "packages/app/assets/**",
-      "packages/app/public/**",
-      "packages/app/index.ts",
-      "packages/app/*config.{cjs,js,ts}",
-      "packages/app/package.json",
     ],
     relay: ["packages/relay/**"],
     cli: ["packages/cli/**"],
@@ -297,47 +282,26 @@ test("browser and desktop tests have exclusive, directory-owned suites", () => {
     "packages/app/*config.{cjs,js,ts}",
     "packages/app/package.json",
   ]);
-  assert.deepEqual(filters.browser, [
-    "packages/server/src/server/agent/provider-snapshot-manager.ts",
-    "packages/server/src/server/session/provider/provider-catalog-session.ts",
-    "packages/client/src/compat/normalize-provider-models.ts",
-    "packages/protocol/src/client-capabilities.ts",
-    "packages/server/src/server/agent/provider-registry.ts",
-    "packages/server/src/server/agent/agent-sdk-types.ts",
-    "packages/server/src/server/agent/providers/codex-app-server-agent.ts",
-    "packages/server/src/server/agent/providers/claude/agent.ts",
-    "packages/server/src/server/agent/plugin-provider.ts",
-    "packages/server/src/server/plugins/{index,plugin-process,plugin-process-protocol,runtime}.ts",
-    "packages/server/src/executable-resolution/**",
-    "packages/plugin/src/server/provider.ts",
-    "packages/app/src/!(desktop)/**",
-    "packages/app/e2e/browser/**",
-    "packages/app/e2e/support/**",
-    "packages/app/assets/**",
-    "packages/app/public/**",
-    "packages/app/index.ts",
-    "packages/app/*config.{cjs,js,ts}",
-    "packages/app/package.json",
-  ]);
 });
 
-test("packaging runs on main without allocating pull-request runners", () => {
-  for (const workflowPath of [dockerWorkflowPath, nixWorkflowPath]) {
-    const source = readFileSync(workflowPath, "utf8");
-    const trigger = source.split("jobs:", 1)[0];
-    assert.match(trigger, /push:\s*\n\s+branches: \[main\]/);
-    assert.doesNotMatch(trigger, /pull_request/);
-    assert.doesNotMatch(source, /dorny\/paths-filter/);
+test("packaging checks run only on demand while Docker releases still run on version tags", () => {
+  const manualWorkflows = [
+    new URL(".github/workflows/desktop-packages.yml", repoRoot),
+    nixWorkflowPath,
+    new URL(".github/workflows/nix-update-hash.yml", repoRoot),
+  ];
+  for (const workflowPath of manualWorkflows) {
+    const workflow = loadYaml(readFileSync(workflowPath, "utf8"));
+    assert.deepEqual(Object.keys(workflow.on), ["workflow_dispatch"]);
   }
+
+  const docker = loadYaml(readFileSync(dockerWorkflowPath, "utf8"));
+  assert.deepEqual(docker.on.push, { tags: ["v*"] });
+  assert.ok(Object.hasOwn(docker.on, "workflow_dispatch"));
 });
 
-test("desktop packaging smokes main pushes and only the pull requests that touch packaging", () => {
+test("desktop packaging keeps pinned actions for manual smoke", () => {
   const source = readFileSync(new URL(".github/workflows/desktop-packages.yml", repoRoot), "utf8");
-  const trigger = source.split("jobs:", 1)[0];
-  assert.match(trigger, /push:\s*\n\s+branches: \[main\]/);
-  assert.match(trigger, /pull_request:\s*\n\s+branches: \[main\]\s*\n\s+paths:/);
-  assert.match(trigger, /- "packages\/desktop\/\*\*"/);
-  assert.doesNotMatch(source, /dorny\/paths-filter/);
   for (const action of ["actions/checkout", "actions/setup-node", "actions/upload-artifact"]) {
     assert.match(source, new RegExp(`${action}@[0-9a-f]{40} # v\\d+\\.\\d+\\.\\d+`));
   }
