@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.2-beta.4 - 2026-09-26
+
+### Fixed
+
+- Accept verified Android V2 signing certificates during APK validation ([91e1427](https://github.com/staoran/paseo-reforged/commit/91e142799))
+
 ## 0.9.2-beta.3 - 2026-09-26
 
 ### Improved
