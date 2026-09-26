@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.2-beta.3 - 2026-09-26
+
+### Improved
+
+- Reduce Android APK compilation memory while retaining release source maps ([b042321](https://github.com/staoran/paseo-reforged/commit/b0423219d))
+
+### Fixed
+
+- Find Reforged draft releases by tag when uploading Windows and Android builds ([e3171a](https://github.com/staoran/paseo-reforged/commit/e3171ada5))
+
 ## 0.9.2-beta.2 - 2026-09-26
 
 ### Added
