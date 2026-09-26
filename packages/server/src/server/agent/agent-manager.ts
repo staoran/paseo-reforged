@@ -1413,6 +1413,7 @@ export class AgentManager {
     providerHandleId: string;
     cwd: string;
     workspaceId: string;
+    title?: string;
     labels?: Record<string, string>;
   }): Promise<ManagedAgent> {
     return this.trackAgentRegistrationOperation(this.importProviderSessionInternal(input));
@@ -1423,6 +1424,7 @@ export class AgentManager {
     providerHandleId: string;
     cwd: string;
     workspaceId: string;
+    title?: string;
     labels?: Record<string, string>;
   }): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
@@ -1464,7 +1466,10 @@ export class AgentManager {
         stripInternalPaseoMcpServer(imported.config),
       );
       const timelineRows = buildImportedTimelineRows(imported.timeline);
-      const initialTitle = resolveImportedAgentTitle(importedConfig, timelineRows);
+      const initialTitle =
+        input.title !== undefined
+          ? input.title
+          : resolveImportedAgentTitle(importedConfig, timelineRows);
 
       handedToRegistration = true;
       const agent = await this.registerSession(imported.session, importedConfig, resolvedAgentId, {
