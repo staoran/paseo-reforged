@@ -114,6 +114,23 @@ export const es: TranslationResources = {
     },
   },
   composer: {
+    selection: {
+      ask: "Preguntar",
+      askInNewWindow: "Preguntar en ventana nueva",
+      savePreset: "Guardar como predefinido",
+      savedPreset: "Guardado como predefinido",
+    },
+    presets: {
+      title: "Plantillas de instrucciones",
+      editTitle: "Editar plantilla",
+      name: "Nombre",
+      content: "Instrucción",
+      new: "Guardar instrucción",
+      empty: "No hay instrucciones guardadas",
+      edit: "Editar",
+      delete: "Eliminar",
+      save: "Guardar",
+    },
     placeholders: {
       desktop: "Envíe un mensaje al agente, etiquete@fileso use/commandsy/skills",
       mobile: "Mensaje,@files,/commands",
@@ -229,6 +246,7 @@ export const es: TranslationResources = {
     },
   },
   agentStream: {
+    retrying: "Reintentando:",
     empty: "Comience a chatear con este agente...",
     scrollToBottom: "Desplazarse hacia abajo",
     historyLoadFailed: "No se pudo cargar el historial del agente",

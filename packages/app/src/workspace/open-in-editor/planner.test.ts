@@ -84,6 +84,26 @@ describe("planWorkspaceOpenTargets", () => {
     });
   });
 
+  it("offers terminal for a directory but excludes it when opening a file", () => {
+    const terminal = {
+      id: "windows-terminal",
+      label: "Windows Terminal",
+      kind: "terminal" as const,
+      icon: { kind: "symbol" as const, name: "terminal" as const },
+    };
+    const input = {
+      workspaceDirectory: "/repo",
+      desktopTargets: [terminal],
+      canUseDesktopBridge: true,
+      isLocalExecution: true,
+    };
+
+    expect(planWorkspaceOpenTargets(input)).toMatchObject([
+      { id: "windows-terminal", openInput: { workspacePath: "/repo" } },
+    ]);
+    expect(planWorkspaceOpenTargets({ ...input, activeFile: { path: "src/app.ts" } })).toEqual([]);
+  });
+
   it("plans a nested directory as the editor workspace", () => {
     const targets = planWorkspaceOpenTargets({
       workspaceDirectory: "/specs",

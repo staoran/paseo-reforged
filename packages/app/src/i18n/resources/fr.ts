@@ -116,6 +116,23 @@ export const fr: TranslationResources = {
     },
   },
   composer: {
+    selection: {
+      ask: "Demander",
+      askInNewWindow: "Demander dans une nouvelle fenêtre",
+      savePreset: "Enregistrer comme préréglage",
+      savedPreset: "Enregistré comme préréglage",
+    },
+    presets: {
+      title: "Prompts enregistrés",
+      editTitle: "Modifier le prompt",
+      name: "Nom",
+      content: "Prompt",
+      new: "Enregistrer le prompt",
+      empty: "Aucun prompt enregistré",
+      edit: "Modifier",
+      delete: "Supprimer",
+      save: "Enregistrer",
+    },
     placeholders: {
       desktop: "Envoyez un message à l'agent, marquez@filesou utilisez/commandset/skills",
       mobile: "Message,@files,/commands",
@@ -231,6 +248,7 @@ export const fr: TranslationResources = {
     },
   },
   agentStream: {
+    retrying: "Nouvelle tentative :",
     empty: "Commencez à discuter avec cet agent...",
     scrollToBottom: "Faire défiler vers le bas",
     historyLoadFailed: "Impossible de charger l’historique de l’agent",

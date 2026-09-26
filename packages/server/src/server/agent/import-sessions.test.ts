@@ -735,13 +735,19 @@ class ProviderImportHarness {
     };
   }
 
-  import(input: { providerHandleId: string; cwd?: string; labels?: Record<string, string> }) {
+  import(input: {
+    providerHandleId: string;
+    cwd?: string;
+    workspaceTitle?: string;
+    labels?: Record<string, string>;
+  }) {
     return importProviderSession({
       request: {
         requestId: "import-thread",
         provider: "codex",
         providerHandleId: input.providerHandleId,
         cwd: input.cwd,
+        workspaceTitle: input.workspaceTitle,
         labels: input.labels,
       },
       workspaceProvisioning: createImportWorkspace("ws-restored"),
@@ -779,6 +785,26 @@ test("importProviderSession uses the provider import path with the requested lab
     timelineSize: 2,
     createdWorkspace: null,
   });
+});
+
+test("importProviderSession preserves the selected provider title for the agent", async () => {
+  const harness = await ProviderImportHarness.create();
+  await harness.import({
+    providerHandleId: "thread-imported",
+    cwd: "/tmp/imported-agent",
+    workspaceTitle: "Selected Codex thread name",
+  });
+
+  expect(harness.freshImports).toEqual([
+    {
+      provider: "codex",
+      providerHandleId: "thread-imported",
+      cwd: "/tmp/imported-agent",
+      workspaceId: "ws-restored",
+      title: "Selected Codex thread name",
+      labels: undefined,
+    },
+  ]);
 });
 
 test("importProviderSession rejects a provider session with an active stored owner", async () => {

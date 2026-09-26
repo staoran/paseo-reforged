@@ -24,6 +24,7 @@ export interface AgentScreenAgent {
   } | null;
   features?: readonly AgentFeature[];
   lastError?: string | null;
+  providerRetryMessage?: string | null;
   projectPlacement?: {
     projectKey?: string;
     projectName?: string;
@@ -298,11 +299,19 @@ export function deriveAgentScreenViewState({
     input,
     hadInitialSyncFailure: nextMemory.hadInitialSyncFailure,
   });
+  const providerRetryMessage =
+    source === "authoritative" && sync.status === "idle" && displayAgent.status === "running"
+      ? (displayAgent.providerRetryMessage ?? null)
+      : null;
+  const screenAgent =
+    displayAgent.providerRetryMessage === providerRetryMessage
+      ? displayAgent
+      : { ...displayAgent, providerRetryMessage };
 
   return {
     state: {
       tag: "ready",
-      agent: displayAgent,
+      agent: screenAgent,
       source,
       sync,
       isArchiving: input.isArchivingCurrentAgent,

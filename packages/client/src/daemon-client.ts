@@ -196,6 +196,7 @@ const PROJECT_GITHUB_CLONE_TIMEOUT_MS = 5 * 60 * 1000;
 interface ImportAgentInputBase {
   cwd?: string;
   workspaceId?: string;
+  workspaceTitle?: string;
   labels?: Record<string, string>;
 }
 
@@ -384,6 +385,7 @@ export interface CreateAgentRequestOptions extends AgentConfigOverrides {
   workspaceId?: string;
   callerAgentId?: string;
   initialPrompt?: string;
+  firstAgentContext?: CreateAgentRequestMessage["firstAgentContext"];
   idempotencyKey?: string;
   clientMessageId?: string;
   outputSchema?: Record<string, unknown>;
@@ -2775,6 +2777,7 @@ export class DaemonClient {
       ...(options.workspaceId !== undefined ? { workspaceId: options.workspaceId } : {}),
       ...(options.callerAgentId !== undefined ? { callerAgentId: options.callerAgentId } : {}),
       ...(options.initialPrompt ? { initialPrompt: options.initialPrompt } : {}),
+      ...(options.firstAgentContext ? { firstAgentContext: options.firstAgentContext } : {}),
       idempotencyKey: options.idempotencyKey,
       ...(options.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
       ...(options.outputSchema ? { outputSchema: options.outputSchema } : {}),
@@ -3069,6 +3072,7 @@ export class DaemonClient {
         : { provider: input.provider, sessionId: input.sessionId }),
       ...(input.cwd ? { cwd: input.cwd } : {}),
       ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
+      ...(input.workspaceTitle ? { workspaceTitle: input.workspaceTitle } : {}),
       ...(input.labels && Object.keys(input.labels).length > 0 ? { labels: input.labels } : {}),
     });
 
@@ -6710,6 +6714,7 @@ function resolveAgentConfig(options: CreateAgentRequestOptions): AgentSessionCon
     env: _env,
     workspaceId: _workspaceId,
     initialPrompt: _initialPrompt,
+    firstAgentContext: _firstAgentContext,
     images: _images,
     git: _git,
     worktreeName: _worktreeName,

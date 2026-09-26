@@ -171,6 +171,112 @@ function createSession(
   return session;
 }
 
+/** Collect transient retry updates without unrelated provider events */
+function retryUpdates(events: AgentStreamEvent[]) {
+  return events.filter((event) => event.type === "provider_retry");
+}
+
+describe("Codex provider retries", () => {
+  test("shows the current root retry until Codex resumes or completes", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const internals = castInternals<CodexSessionTestAccess>(session);
+    internals.handleNotification("turn/started", {
+      threadId: "test-thread",
+      turn: { id: "native-turn" },
+    });
+
+    internals.handleNotification("error", {
+      threadId: "test-thread",
+      turnId: "old-turn",
+      willRetry: true,
+      error: { message: "stale error" },
+    });
+    internals.handleNotification("error", {
+      threadId: "child-thread",
+      turnId: "native-turn",
+      willRetry: true,
+      error: { message: "child retry" },
+    });
+    internals.handleNotification("error", {
+      threadId: "test-thread",
+      turnId: "native-turn",
+      willRetry: true,
+      error: { message: "rate limited" },
+    });
+    internals.handleNotification("warning", {
+      threadId: "test-thread",
+      message: "Resumed on fallback route",
+    });
+    internals.handleNotification("error", {
+      threadId: "test-thread",
+      turnId: "native-turn",
+      willRetry: true,
+      error: { message: "connection reset" },
+    });
+    internals.handleNotification("turn/completed", {
+      threadId: "test-thread",
+      turn: { id: "old-turn", status: "completed" },
+    });
+    expect(retryUpdates(events).at(-1)).toMatchObject({ message: "connection reset" });
+    internals.handleNotification("turn/completed", {
+      threadId: "test-thread",
+      turn: { id: "native-turn", status: "completed" },
+    });
+
+    expect(retryUpdates(events)).toMatchObject([
+      {
+        turnId: "test-turn",
+        message: "rate limited",
+      },
+      {
+        turnId: "test-turn",
+        message: null,
+      },
+      {
+        turnId: "test-turn",
+        message: "connection reset",
+      },
+      { turnId: "test-turn", message: null },
+    ]);
+    expect(events.some((event) => event.type === "timeline")).toBe(false);
+    expect(events.at(-1)).toMatchObject({ type: "turn_completed" });
+    await session.close();
+  });
+
+  test("clears an exhausted retry before the failed turn", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const internals = castInternals<CodexSessionTestAccess>(session);
+    internals.handleNotification("turn/started", {
+      threadId: "test-thread",
+      turn: { id: "native-turn" },
+    });
+    internals.handleNotification("error", {
+      threadId: "test-thread",
+      turnId: "native-turn",
+      willRetry: true,
+      error: { message: "temporary failure" },
+    });
+    internals.handleNotification("error", {
+      threadId: "test-thread",
+      turnId: "native-turn",
+      willRetry: false,
+      error: { message: "retry limit reached" },
+    });
+    internals.handleNotification("turn/completed", {
+      threadId: "test-thread",
+      turn: { id: "native-turn", status: "failed", error: { message: "retry limit reached" } },
+    });
+
+    expect(retryUpdates(events).map((event) => event.message)).toEqual(["temporary failure", null]);
+    expect(events.at(-1)).toMatchObject({ type: "turn_failed", error: "retry limit reached" });
+    await session.close();
+  });
+});
+
 function createProviderWithFakeAppServer(appServer: FakeCodexAppServer): CodexAppServerAgentClient {
   const provider = new CodexAppServerAgentClient(createTestLogger());
   const internals = castInternals<{

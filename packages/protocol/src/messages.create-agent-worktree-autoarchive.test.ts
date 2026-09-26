@@ -3,6 +3,19 @@ import { describe, expect, test } from "vitest";
 import { SessionInboundMessageSchema } from "./messages.js";
 
 describe("create_agent_request worktree and autoArchive fields", () => {
+  test.each(["create_agent_request", "agent.create.request"])(
+    "preserves optional locale context on %s",
+    (type) => {
+      const parsed = SessionInboundMessageSchema.parse({
+        type,
+        requestId: "localized-create",
+        config: { provider: "codex", cwd: "/repo" },
+        firstAgentContext: { prompt: "Fix login", locale: "zh-CN" },
+      });
+      expect(parsed).toMatchObject({ firstAgentContext: { prompt: "Fix login", locale: "zh-CN" } });
+    },
+  );
+
   test("accepts optional worktree branch-off target and autoArchive", () => {
     const parsed = SessionInboundMessageSchema.parse({
       type: "create_agent_request",

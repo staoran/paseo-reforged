@@ -3,11 +3,14 @@ import { describe, expect, it } from "vitest";
 import { listAvailableEditorTargets, openEditorTarget } from "./registry.js";
 import type { EditorTargetIcon, EditorTargetRuntime } from "./target.js";
 import { cursorTarget } from "./targets/cursor.js";
+import { datagripTarget } from "./targets/datagrip.js";
 import { explorerTarget, fileManagerTarget, finderTarget } from "./targets/file-manager.js";
 import { intellijIdeaTarget } from "./targets/intellij-idea.js";
 import { pycharmTarget } from "./targets/pycharm.js";
 import { vscodeTarget } from "./targets/vscode.js";
+import { vscodeInsidersTarget } from "./targets/vscode-insiders.js";
 import { webstormTarget } from "./targets/webstorm.js";
+import { windowsTerminalTarget } from "./targets/windows-terminal.js";
 import { zedTarget } from "./targets/zed.js";
 
 interface RecordedLaunch {
@@ -197,6 +200,41 @@ describe("editor target registry", () => {
         args: ["--line", "6", "C:/repo", "C:/repo/src/app.py"],
       },
     ]);
+  });
+
+  it("opens a Windows workspace in Windows Terminal", async () => {
+    const runtime = new FakeEditorTargets("win32");
+    runtime.installCommand("wt.exe", "C:/Users/me/AppData/Local/Microsoft/WindowsApps/wt.exe");
+    runtime.addPath("C:/repo");
+
+    expect(await windowsTerminalTarget.isInstalled(runtime)).toBe(true);
+    await openEditorTarget({ editorId: "windows-terminal", workspacePath: "C:/repo" }, runtime, [
+      windowsTerminalTarget,
+    ]);
+
+    expect(runtime.launches).toEqual([
+      {
+        command: "C:/Users/me/AppData/Local/Microsoft/WindowsApps/wt.exe",
+        args: ["-d", "C:/repo"],
+      },
+    ]);
+    expect(await windowsTerminalTarget.isInstalled(new FakeEditorTargets("linux"))).toBe(false);
+  });
+
+  it("uses branded icons for Windows Terminal, VS Code Insiders, and DataGrip", async () => {
+    const runtime = new FakeEditorTargets("win32");
+    expect((await windowsTerminalTarget.describe(runtime)).icon).toEqual({
+      kind: "image",
+      dataUrl: "data:image/png;base64,windows-terminal.png",
+    });
+    expect((await vscodeInsidersTarget.describe(runtime)).icon).toEqual({
+      kind: "image",
+      dataUrl: "data:image/png;base64,vscode-insiders.png",
+    });
+    expect((await datagripTarget.describe(runtime)).icon).toEqual({
+      kind: "image",
+      dataUrl: "data:image/png;base64,datagrip.png",
+    });
   });
 
   it("detects and launches the macOS application when the command is absent", async () => {

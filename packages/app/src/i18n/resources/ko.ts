@@ -113,6 +113,23 @@ export const ko: TranslationResources = {
     },
   },
   composer: {
+    selection: {
+      ask: "질문하기",
+      askInNewWindow: "새 창에서 질문하기",
+      savePreset: "프리셋으로 저장",
+      savedPreset: "프리셋으로 저장됨",
+    },
+    presets: {
+      title: "프롬프트 프리셋",
+      editTitle: "프리셋 편집",
+      name: "이름",
+      content: "프롬프트",
+      new: "프롬프트 저장",
+      empty: "저장된 프롬프트가 없습니다",
+      edit: "편집",
+      delete: "삭제",
+      save: "저장",
+    },
     placeholders: {
       desktop: "에이전트에게 메시지를 보내거나 @files 태그, /commands, /skills를 사용하세요",
       mobile: "메시지, @files, /commands",
@@ -227,6 +244,7 @@ export const ko: TranslationResources = {
     },
   },
   agentStream: {
+    retrying: "재시도 중:",
     empty: "이 에이전트와 대화를 시작하세요...",
     scrollToBottom: "맨 아래로 스크롤",
     historyLoadFailed: "에이전트 기록을 로드할 수 없습니다.",

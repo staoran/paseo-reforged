@@ -8,6 +8,7 @@ import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { ReactElement, ReactNode, RefObject } from "react";
 import { useTranslation } from "react-i18next";
+import { useAppLocale } from "@/i18n/provider";
 import type { TFunction } from "i18next";
 import { Pressable, Text, View } from "react-native";
 import type { PressableStateCallbackType } from "react-native";
@@ -170,7 +171,8 @@ function isNewWorkspacePending(input: {
 function buildFirstAgentContext(input: {
   prompt: string;
   attachments: AgentAttachment[];
-}): { prompt?: string; attachments?: AgentAttachment[] } | undefined {
+  locale: string;
+}): { prompt?: string; attachments?: AgentAttachment[]; locale: string } | undefined {
   const trimmedPrompt = input.prompt.trim();
   if (!trimmedPrompt && input.attachments.length === 0) {
     return undefined;
@@ -179,6 +181,7 @@ function buildFirstAgentContext(input: {
   return {
     ...(trimmedPrompt ? { prompt: trimmedPrompt } : {}),
     attachments: input.attachments,
+    locale: input.locale,
   };
 }
 
@@ -812,6 +815,7 @@ async function createMultiplicityWorkspace(input: {
   onEvent?: (snapshot: CreationSnapshot) => void;
   prompt: string;
   attachments: AgentAttachment[];
+  locale: string;
   mergeWorkspaces: (
     serverId: string,
     workspaces: ReturnType<typeof normalizeWorkspaceDescriptor>[],
@@ -825,10 +829,11 @@ async function createMultiplicityWorkspace(input: {
   const firstAgentContext = buildFirstAgentContext({
     prompt: input.prompt,
     attachments: input.attachments,
+    locale: input.locale,
   });
   const payload = await input.client.createWorkspace({
     idempotencyKey: input.idempotencyKey,
-    agent: input.agent,
+    agent: input.agent ? { ...input.agent, firstAgentContext } : undefined,
     onEvent: input.onEvent,
     source: isWorktree
       ? {
@@ -1633,6 +1638,7 @@ export function NewWorkspaceScreen({
   const queryClient = useQueryClient();
   const { theme } = useUnistyles();
   const { t } = useTranslation();
+  const locale = useAppLocale();
   const isCompact = useIsCompactFormFactor();
   const toast = useToast();
   const mergeWorkspaces = useCallback(
@@ -2077,6 +2083,7 @@ export function NewWorkspaceScreen({
         withInitialAgent: input.withInitialAgent,
         prompt: input.prompt,
         attachments: input.attachments,
+        locale,
         agent: input.agent,
         onEvent: input.onEvent,
         mergeWorkspaces,
@@ -2090,6 +2097,7 @@ export function NewWorkspaceScreen({
       creationIdentity,
       creationResult,
       effectiveIsolation,
+      locale,
       mergeWorkspaces,
       queryClient,
       selectedItem,

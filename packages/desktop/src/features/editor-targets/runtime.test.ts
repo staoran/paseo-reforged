@@ -11,6 +11,43 @@ interface SpawnRecord {
 }
 
 describe("editor target runtime", () => {
+  it("resolves WindowsApps execution aliases outside PATH", () => {
+    const runtime = createEditorTargetRuntime({
+      platform: "win32",
+      env: { PATH: "C:/Tools", LOCALAPPDATA: "C:/Users/me/AppData/Local" },
+      pathExists: (targetPath) =>
+        targetPath === "C:/Users/me/AppData/Local/Microsoft/WindowsApps/wt.exe",
+    });
+
+    expect(runtime.resolveCommand(["wt.exe"])).toBe(
+      "C:/Users/me/AppData/Local/Microsoft/WindowsApps/wt.exe",
+    );
+  });
+
+  it("uses access when WindowsApps aliases fail existsSync", () => {
+    const alias = "C:/Users/me/AppData/Local/Microsoft/WindowsApps/wt.exe";
+    const runtime = createEditorTargetRuntime({
+      platform: "win32",
+      env: { PATH: "C:/Tools", LOCALAPPDATA: "C:/Users/me/AppData/Local" },
+      pathExists: () => false,
+      pathAccessible: (candidate) => candidate === alias,
+    });
+
+    expect(runtime.resolveCommand(["wt.exe"])).toBe(alias);
+    expect(runtime.resolveCommand(["missing.exe"])).toBeNull();
+  });
+
+  it("does not use access for ordinary PATH executables", () => {
+    const runtime = createEditorTargetRuntime({
+      platform: "win32",
+      env: { PATH: "C:/Tools" },
+      pathExists: () => false,
+      pathAccessible: () => true,
+    });
+
+    expect(runtime.resolveCommand(["tool.exe"])).toBeNull();
+  });
+
   it("resolves command aliases and safely launches Windows command scripts", async () => {
     const records: SpawnRecord[] = [];
     const runtime = createEditorTargetRuntime({

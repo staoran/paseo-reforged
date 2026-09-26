@@ -113,6 +113,23 @@ export const ar: TranslationResources = {
     },
   },
   composer: {
+    selection: {
+      ask: "اسأل",
+      askInNewWindow: "اسأل في نافذة جديدة",
+      savePreset: "حفظ كإعداد مسبق",
+      savedPreset: "تم الحفظ كإعداد مسبق",
+    },
+    presets: {
+      title: "قوالب المطالبات",
+      editTitle: "تحرير قالب المطالبة",
+      name: "الاسم",
+      content: "المطالبة",
+      new: "حفظ المطالبة",
+      empty: "لا توجد مطالبات محفوظة",
+      edit: "تحرير",
+      delete: "حذف",
+      save: "حفظ",
+    },
     placeholders: {
       desktop: "أرسل رسالة إلى الوكيل أو ضع علامة على @files أو استخدم /commands و /skills",
       mobile: "الرسالة، @files ، /commands",
@@ -227,6 +244,7 @@ export const ar: TranslationResources = {
     },
   },
   agentStream: {
+    retrying: "إعادة المحاولة:",
     empty: "ابدأ الدردشة مع هذا الوكيل...",
     scrollToBottom: "قم بالتمرير إلى الأسفل",
     historyLoadFailed: "تعذر تحميل سجل الوكيل",

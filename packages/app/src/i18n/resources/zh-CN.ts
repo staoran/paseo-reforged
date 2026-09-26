@@ -113,6 +113,23 @@ export const zhCN: TranslationResources = {
     },
   },
   composer: {
+    selection: {
+      ask: "提问",
+      askInNewWindow: "新窗口提问",
+      savePreset: "保存为预设",
+      savedPreset: "已保存为预设",
+    },
+    presets: {
+      title: "提示词预设",
+      editTitle: "编辑提示词预设",
+      name: "名称",
+      content: "提示词",
+      new: "保存提示词",
+      empty: "暂无保存的提示词",
+      edit: "编辑",
+      delete: "删除",
+      save: "保存",
+    },
     placeholders: {
       desktop: "给 Agent 发消息，标记 @files，或使用 /commands 和 /skills",
       mobile: "发消息，@files，/commands",
@@ -227,6 +244,7 @@ export const zhCN: TranslationResources = {
     },
   },
   agentStream: {
+    retrying: "正在重试：",
     empty: "开始和这个 Agent 对话...",
     scrollToBottom: "滚动到底部",
     historyLoadFailed: "无法加载智能体历史记录",

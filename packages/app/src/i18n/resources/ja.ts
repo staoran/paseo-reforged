@@ -114,6 +114,23 @@ export const ja: TranslationResources = {
     },
   },
   composer: {
+    selection: {
+      ask: "質問",
+      askInNewWindow: "新しいウィンドウで質問",
+      savePreset: "プリセットとして保存",
+      savedPreset: "プリセットとして保存しました",
+    },
+    presets: {
+      title: "プロンプトプリセット",
+      editTitle: "プリセットを編集",
+      name: "名前",
+      content: "プロンプト",
+      new: "プロンプトを保存",
+      empty: "保存したプロンプトはありません",
+      edit: "編集",
+      delete: "削除",
+      save: "保存",
+    },
     placeholders: {
       desktop: "エージェントにメッセージ、@ファイル、/コマンドや/スキルを入力",
       mobile: "メッセージ、@ファイル、/コマンド",
@@ -229,6 +246,7 @@ export const ja: TranslationResources = {
     },
   },
   agentStream: {
+    retrying: "再試行中：",
     empty: "このエージェントとチャットを始めましょう...",
     scrollToBottom: "下にスクロール",
     historyLoadFailed: "エージェントの履歴を読み込めませんでした",

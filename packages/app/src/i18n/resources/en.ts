@@ -109,6 +109,23 @@ export const en = {
     },
   },
   composer: {
+    selection: {
+      ask: "Ask",
+      askInNewWindow: "Ask in new window",
+      savePreset: "Save as preset",
+      savedPreset: "Saved as preset",
+    },
+    presets: {
+      title: "Prompt presets",
+      editTitle: "Edit prompt preset",
+      name: "Name",
+      content: "Prompt",
+      new: "Save prompt",
+      empty: "No saved prompts",
+      edit: "Edit",
+      delete: "Delete",
+      save: "Save",
+    },
     placeholders: {
       desktop: "Message the agent, tag @files, or use /commands and /skills",
       mobile: "Message, @files, /commands",
@@ -223,6 +240,7 @@ export const en = {
     },
   },
   agentStream: {
+    retrying: "Retrying:",
     empty: "Start chatting with this agent...",
     scrollToBottom: "Scroll to bottom",
     historyLoadFailed: "Couldn't load agent history",

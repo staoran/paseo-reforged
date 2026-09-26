@@ -483,6 +483,9 @@ jobs:
             "${RELEASE_CHANNEL}-linux.yml"
             "${RELEASE_CHANNEL}.yml"
           )
+          if [[ "$SOURCE_TAG" == desktop-windows-v* ]]; then
+            expected_manifests=("${RELEASE_CHANNEL}.yml")
+          fi
           release_lookup="$(node ../scripts/github-release.mjs --repo "${{ github.repository }}" --tag "$RELEASE_TAG" --cleanup-duplicates)"
           existing_assets="$(gh release view "$release_lookup" --repo "${{ github.repository }}" --json assets --jq '.assets[].name')"
           for manifest_name in "${expected_manifests[@]}"; do
@@ -551,6 +554,11 @@ jobs:
           if (( ${#missing_manifests[@]} > 0 )); then
             echo "::error::Missing updater manifests: ${missing_manifests[*]}; the release remains a draft"
             exit 1
+          fi
+
+          if [[ "$SOURCE_TAG" == desktop-windows-v* ]]; then
+            echo "Windows manifest is ready; the release remains a draft for the Android APK"
+            exit 0
           fi
 
           publish_args=(release edit "$release_lookup" --tag "$RELEASE_TAG" --draft=false --repo "${{ github.repository }}")

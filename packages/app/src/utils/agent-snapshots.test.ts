@@ -30,6 +30,9 @@ function createSnapshot(
     availableModes: input.availableModes ?? [],
     pendingPermissions: input.pendingPermissions ?? [],
     persistence: input.persistence ?? null,
+    ...(input.providerRetryMessage !== undefined
+      ? { providerRetryMessage: input.providerRetryMessage }
+      : {}),
     title: input.title ?? null,
     labels: (input.labels ?? {}) as AgentSnapshotPayload["labels"],
   };
@@ -113,5 +116,17 @@ describe("normalizeAgentSnapshot", () => {
     expect(missing.parentAgentId).toBeNull();
     expect(empty.parentAgentId).toBeNull();
     expect(nonString.parentAgentId).toBeNull();
+  });
+
+  it("keeps optional live retry messages across the snapshot boundary", () => {
+    const missing = normalizeAgentSnapshot(createSnapshot(), "server-1");
+    const retrying = normalizeAgentSnapshot(
+      createSnapshot({ providerRetryMessage: " rate limited " }),
+      "server-1",
+    );
+
+    expect(missing.providerRetryMessage).toBeNull();
+    expect(retrying.providerRetryMessage).toBe(" rate limited ");
+    expect(projectAgentSnapshot(retrying).providerRetryMessage).toBe(" rate limited ");
   });
 });

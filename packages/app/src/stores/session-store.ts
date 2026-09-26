@@ -87,6 +87,8 @@ export interface Agent {
   runtimeInfo?: AgentRuntimeInfo;
   lastUsage?: AgentUsage;
   lastError?: string | null;
+  /** Transient reason while the provider retries the active turn */
+  providerRetryMessage?: string | null;
   title: string | null;
   cwd: string;
   workspaceId?: string;

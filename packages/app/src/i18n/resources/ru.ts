@@ -114,6 +114,23 @@ export const ru: TranslationResources = {
     },
   },
   composer: {
+    selection: {
+      ask: "Спросить",
+      askInNewWindow: "Спросить в новом окне",
+      savePreset: "Сохранить как шаблон",
+      savedPreset: "Сохранено как шаблон",
+    },
+    presets: {
+      title: "Шаблоны запросов",
+      editTitle: "Изменить шаблон",
+      name: "Название",
+      content: "Запрос",
+      new: "Сохранить запрос",
+      empty: "Нет сохранённых запросов",
+      edit: "Изменить",
+      delete: "Удалить",
+      save: "Сохранить",
+    },
     placeholders: {
       desktop: "Напишите агенту сообщение, отметьте @files или используйте /commands и /skills.",
       mobile: "Сообщение,@files,/commands",
@@ -229,6 +246,7 @@ export const ru: TranslationResources = {
     },
   },
   agentStream: {
+    retrying: "Повторная попытка:",
     empty: "Начните общаться с этим агентом...",
     scrollToBottom: "Прокрутить вниз",
     historyLoadFailed: "Не удалось загрузить историю агента",

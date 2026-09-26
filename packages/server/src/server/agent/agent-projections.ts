@@ -137,6 +137,9 @@ export function toAgentPayload(
     features: normalizeFeatures(agent.features),
     pendingPermissions: sanitizePendingPermissions(agent.pendingPermissions),
     persistence: projectPersistenceHandleForWire(agent.persistence),
+    ...(agent.providerRetryMessage !== null
+      ? { providerRetryMessage: agent.providerRetryMessage }
+      : {}),
     title: options?.title ?? null,
     labels: agent.labels,
   };

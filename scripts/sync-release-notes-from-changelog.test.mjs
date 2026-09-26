@@ -35,6 +35,25 @@ test("uses the untagged URL slug for draft release CLI operations", () => {
   );
 });
 
+test("finds a draft release by tag even when its title changes", () => {
+  const draft = {
+    id: 311163621,
+    draft: true,
+    name: "Paseo Reforged v0.9.2-beta.3",
+    tag_name: "v0.9.2-beta.3",
+  };
+  const release = getGitHubRelease("staoran/paseo-reforged", draft.tag_name, (command, args) => {
+    assert.equal(command, "gh");
+    if (args[1] === "repos/staoran/paseo-reforged/releases/tags/v0.9.2-beta.3") {
+      throw notFoundError();
+    }
+    assert.match(args.at(-1), /\.tag_name == "v0\.9\.2-beta\.3"/);
+    return JSON.stringify([draft]);
+  });
+
+  assert.deepEqual(release, draft);
+});
+
 test("does not treat GitHub authentication failures as missing releases", () => {
   const calls = [];
   const authError = Object.assign(new Error("authentication failed"), {

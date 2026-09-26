@@ -2877,6 +2877,7 @@ test("sends create_agent_request with workspace and caller identity", async () =
     workspaceId: "ws-feature-a",
     callerAgentId: "parent-agent",
     title: "Compat agent",
+    firstAgentContext: { prompt: "Fix the login flow", locale: "zh-CN" },
     modeId: "default",
   });
 
@@ -2888,6 +2889,7 @@ test("sends create_agent_request with workspace and caller identity", async () =
       idempotencyKey: "one-creation",
       workspaceId: "ws-feature-a",
       callerAgentId: "parent-agent",
+      firstAgentContext: { prompt: "Fix the login flow", locale: "zh-CN" },
     }),
   );
 
@@ -5011,6 +5013,7 @@ test("imports an agent by provider handle id", async () => {
     providerId: "custom-codex",
     providerHandleId: "thread-1",
     cwd: "/tmp/repo",
+    workspaceTitle: "Imported checkout",
   });
 
   expect(mock.sent).toHaveLength(1);
@@ -5023,6 +5026,7 @@ test("imports an agent by provider handle id", async () => {
       providerHandleId?: string;
       sessionId?: string;
       cwd?: string;
+      workspaceTitle?: string;
     };
   };
   expect(request.message).toMatchObject({
@@ -5030,6 +5034,7 @@ test("imports an agent by provider handle id", async () => {
     providerId: "custom-codex",
     providerHandleId: "thread-1",
     cwd: "/tmp/repo",
+    workspaceTitle: "Imported checkout",
   });
   expect(request.message).not.toHaveProperty("sessionId");
 

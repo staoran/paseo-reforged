@@ -67,7 +67,7 @@ export interface DesktopOpenerBridge {
 export interface DesktopEditorTargetDescriptor {
   id: string;
   label: string;
-  kind: "editor" | "file-manager";
+  kind: "editor" | "file-manager" | "terminal";
   icon: { kind: "image"; dataUrl: string } | { kind: "symbol"; name: "folder" | "terminal" };
 }
 

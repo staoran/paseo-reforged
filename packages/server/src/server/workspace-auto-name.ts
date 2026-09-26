@@ -50,6 +50,8 @@ export class WorkspaceAutoName {
   private readonly emitWorkspaceUpdateForWorkspaceId: (workspaceId: string) => Promise<void>;
   private readonly logger: pino.Logger;
   private readonly generateWorkspaceName: WorkspaceNameGenerator;
+  // Only the latest pending generation may set a workspace title
+  private readonly titleGenerationByWorkspace = new Map<string, symbol>();
 
   constructor(options: WorkspaceAutoNameOptions) {
     this.agentManager = options.agentManager;
@@ -72,15 +74,20 @@ export class WorkspaceAutoName {
     },
     context: ScheduleContext = {},
   ): void {
+    const generation = Symbol();
+    this.titleGenerationByWorkspace.set(input.workspace.workspaceId, generation);
     this.schedule(
       () =>
         this.maybeAutoNameWorkspaceBranchForFirstAgent({
           ...input,
+          generation,
           currentSelection: context.currentSelection ?? null,
         }),
       {
         cwd: input.workspace.cwd,
         message: "Failed to auto-name worktree branch",
+        workspaceId: input.workspace.workspaceId,
+        generation,
       },
     );
   }
@@ -93,20 +100,34 @@ export class WorkspaceAutoName {
     },
     context: ScheduleContext = {},
   ): void {
+    const generation = Symbol();
+    this.titleGenerationByWorkspace.set(input.workspaceId, generation);
     this.schedule(
       () =>
         this.maybeAutoNameDirectoryWorkspaceTitle({
           ...input,
+          generation,
           currentSelection: context.currentSelection ?? null,
         }),
-      { cwd: input.cwd, message: "Failed to auto-name directory workspace title" },
+      {
+        cwd: input.cwd,
+        message: "Failed to auto-name directory workspace title",
+        workspaceId: input.workspaceId,
+        generation,
+      },
     );
+  }
+
+  /** Invalidate pending title generation after an explicit user rename */
+  invalidateWorkspaceTitle(workspaceId: string): void {
+    this.titleGenerationByWorkspace.delete(workspaceId);
   }
 
   private async maybeAutoNameWorkspaceBranchForFirstAgent(input: {
     workspace: PersistedWorkspaceRecord;
     firstAgentContext: FirstAgentContext;
     currentSelection: CurrentSelection;
+    generation: symbol;
   }): Promise<void> {
     const worktreeRoot = input.workspace.worktreeRoot ?? input.workspace.cwd;
     let generated: GeneratedWorkspaceName | null = null;
@@ -133,7 +154,10 @@ export class WorkspaceAutoName {
       });
     }
     const generatedTitle = generated?.title ?? null;
-    if (!generatedTitle) {
+    if (
+      !generatedTitle ||
+      this.titleGenerationByWorkspace.get(input.workspace.workspaceId) !== input.generation
+    ) {
       return;
     }
 
@@ -141,11 +165,15 @@ export class WorkspaceAutoName {
     // that happened between workspace creation and this async path is not clobbered.
     // When the first-agent rename changed the git branch too, persist that branch
     // alongside the title — both are this path's own fields.
-    await this.applyGeneratedWorkspaceTitle(input.workspace.workspaceId, {
-      title: generatedTitle,
-      ...(result.renamed ? { branch: result.branchName } : {}),
-      promptTitle: resolveFirstAgentPromptTitle(input.firstAgentContext),
-    });
+    await this.applyGeneratedWorkspaceTitle(
+      input.workspace.workspaceId,
+      {
+        title: generatedTitle,
+        ...(result.renamed ? { branch: result.branchName } : {}),
+        promptTitle: resolveFirstAgentPromptTitle(input.firstAgentContext),
+      },
+      input.generation,
+    );
     if (result.renamed) {
       await this.gitMutation.notifyGitMutation(worktreeRoot, "rename-branch");
     }
@@ -157,6 +185,7 @@ export class WorkspaceAutoName {
     cwd: string;
     firstAgentContext: FirstAgentContext;
     currentSelection: CurrentSelection;
+    generation: symbol;
   }): Promise<void> {
     const generated = await this.generateFromContext({
       cwd: input.cwd,
@@ -164,23 +193,31 @@ export class WorkspaceAutoName {
       currentSelection: input.currentSelection,
     });
     const title = generated?.title ?? null;
-    if (!title) {
+    if (!title || this.titleGenerationByWorkspace.get(input.workspaceId) !== input.generation) {
       return;
     }
     // K4: applyGeneratedWorkspaceTitle re-reads from the registry before writing.
     // Directory workspaces have no branch — write only the title.
-    await this.applyGeneratedWorkspaceTitle(input.workspaceId, {
-      title,
-      promptTitle: resolveFirstAgentPromptTitle(input.firstAgentContext),
-    });
+    await this.applyGeneratedWorkspaceTitle(
+      input.workspaceId,
+      {
+        title,
+        promptTitle: resolveFirstAgentPromptTitle(input.firstAgentContext),
+      },
+      input.generation,
+    );
     await this.emitWorkspaceUpdateForWorkspaceId(input.workspaceId);
   }
 
   private async applyGeneratedWorkspaceTitle(
     workspaceId: string,
     input: { title: string; branch?: string | null; promptTitle?: string | null },
+    generation: symbol,
   ): Promise<void> {
     await this.workspaceRegistry.update(workspaceId, (current) => {
+      if (this.titleGenerationByWorkspace.get(workspaceId) !== generation) {
+        return current;
+      }
       let title = current.title;
       if (!title || (input.promptTitle && title === input.promptTitle)) {
         title = input.title;
@@ -211,11 +248,20 @@ export class WorkspaceAutoName {
     });
   }
 
-  private schedule(run: () => Promise<void>, context: { cwd: string; message: string }): void {
+  private schedule(
+    run: () => Promise<void>,
+    context: { cwd: string; message: string; workspaceId: string; generation: symbol },
+  ): void {
     setTimeout(() => {
-      void run().catch((error) => {
-        this.logger.warn({ err: error, cwd: context.cwd }, context.message);
-      });
+      void run()
+        .catch((error) => {
+          this.logger.warn({ err: error, cwd: context.cwd }, context.message);
+        })
+        .finally(() => {
+          if (this.titleGenerationByWorkspace.get(context.workspaceId) === context.generation) {
+            this.titleGenerationByWorkspace.delete(context.workspaceId);
+          }
+        });
     }, 0);
   }
 }

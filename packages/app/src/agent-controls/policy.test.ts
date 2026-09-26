@@ -1,6 +1,21 @@
 import { describe, expect, it } from "vitest";
 import type { AgentMode } from "@getpaseo/protocol/agent-types";
-import { isPlanningAgentMode, resolveNonPlanningModeId } from "./policy";
+import { darkTheme, lightTheme } from "@/styles/theme";
+import { isPlanningAgentMode, resolveAgentModeColor, resolveNonPlanningModeId } from "./policy";
+
+describe("resolveAgentModeColor", () => {
+  it("uses legacy mode accents and keeps safe and unknown modes muted", () => {
+    for (const colors of [darkTheme.colors, lightTheme.colors]) {
+      expect(resolveAgentModeColor("default", "safe", colors)).toBe(colors.foregroundMuted);
+      expect(resolveAgentModeColor("edit", "moderate", colors)).toBe(colors.modeModerate);
+      expect(resolveAgentModeColor("bypass", "dangerous", colors)).toBe(colors.modeDanger);
+      expect(resolveAgentModeColor("plan", "planning", colors)).toBe(colors.modePlanning);
+      expect(resolveAgentModeColor("acceptEdits", "moderate", colors)).toBe(colors.modeAcceptEdits);
+      expect(resolveAgentModeColor("acceptEdits", "#ff6b6b", colors)).toBe("#ff6b6b");
+      expect(resolveAgentModeColor("unknown", "#invalid", colors)).toBe(colors.foregroundMuted);
+    }
+  });
+});
 
 describe("isPlanningAgentMode", () => {
   it("prefers planning metadata and recognizes existing provider ids", () => {

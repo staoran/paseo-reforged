@@ -647,6 +647,7 @@ describe("ImportSessionSheet", () => {
       providerId: "claude",
       providerHandleId: "provider-thread-1",
       cwd: "/repo/paseo",
+      workspaceTitle: "Import me",
     });
     expect(onImportedAgent).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
@@ -935,6 +936,7 @@ describe("ImportSessionSheet", () => {
         providerId: "claude",
         providerHandleId: "provider-thread-1",
         cwd: "/home/me/work/other-project",
+        workspaceTitle: "Import me",
       });
     });
     expect(onImported).toHaveBeenCalledTimes(1);
@@ -1271,6 +1273,7 @@ describe("ImportSessionSheet", () => {
         providerId: "claude",
         providerHandleId: "foreign-thread",
         cwd: "/home/me/work/other-project",
+        workspaceTitle: "Foreign session",
       });
     });
     expect(onImported).toHaveBeenCalledWith(expect.objectContaining({ id: "agent-imported" }));

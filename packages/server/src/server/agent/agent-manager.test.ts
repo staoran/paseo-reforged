@@ -4193,148 +4193,155 @@ test("resumeAgentFromPersistence keeps metadata config, applies overrides, and p
   });
 });
 
-test("importProviderSession imports the selected session without listing and publishes ready state", async () => {
-  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-import-session-"));
-  const storagePath = join(workdir, "agents");
-  const storage = new AgentStorage(storagePath, logger);
-  const session = new TestAgentSession({ provider: "codex", cwd: workdir });
-  const events: AgentManagerEvent[] = [];
+test.each([undefined, "Selected provider thread name"])(
+  "importProviderSession imports the selected session without listing and publishes ready state with title %s",
+  async (title) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-import-session-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+    const session = new TestAgentSession({ provider: "codex", cwd: workdir });
+    const events: AgentManagerEvent[] = [];
 
-  class ImportClient extends TestAgentClient {
-    listCalls = 0;
-    importInput: unknown = null;
-    importLaunchContext: AgentLaunchContext | undefined;
+    class ImportClient extends TestAgentClient {
+      listCalls = 0;
+      importInput: unknown = null;
+      importLaunchContext: AgentLaunchContext | undefined;
 
-    async listImportableSessions() {
-      this.listCalls += 1;
-      return [];
-    }
+      async listImportableSessions() {
+        this.listCalls += 1;
+        return [];
+      }
 
-    async importSession(input: ImportProviderSessionInput, context: ImportProviderSessionContext) {
-      this.importInput = input;
-      this.importLaunchContext = context.launchContext;
-      return {
-        session,
-        config: { provider: "codex" as const, cwd: workdir },
-        persistence: {
-          provider: "codex" as const,
-          sessionId: input.providerHandleId,
-          nativeHandle: input.providerHandleId,
-          metadata: { provider: "codex", cwd: workdir },
-        },
-        timeline: [
-          {
-            item: { type: "user_message" as const, text: "Trace provider imports" },
-            timestamp: "2026-01-02T00:00:00.000Z",
+      async importSession(
+        input: ImportProviderSessionInput,
+        context: ImportProviderSessionContext,
+      ) {
+        this.importInput = input;
+        this.importLaunchContext = context.launchContext;
+        return {
+          session,
+          config: { provider: "codex" as const, cwd: workdir },
+          persistence: {
+            provider: "codex" as const,
+            sessionId: input.providerHandleId,
+            nativeHandle: input.providerHandleId,
+            metadata: { provider: "codex", cwd: workdir },
           },
-          {
-            item: { type: "assistant_message" as const, text: "Done" },
-            timestamp: "2026-01-02T00:00:01.000Z",
-          },
-          {
-            item: {
-              type: "tool_call" as const,
-              callId: "large-shell-result",
-              name: "shell",
-              status: "completed" as const,
-              error: null,
-              detail: {
-                type: "shell" as const,
-                command: "print output",
-                output: "x".repeat(1024 * 1024),
-                exitCode: 0,
+          timeline: [
+            {
+              item: { type: "user_message" as const, text: "Trace provider imports" },
+              timestamp: "2026-01-02T00:00:00.000Z",
+            },
+            {
+              item: { type: "assistant_message" as const, text: "Done" },
+              timestamp: "2026-01-02T00:00:01.000Z",
+            },
+            {
+              item: {
+                type: "tool_call" as const,
+                callId: "large-shell-result",
+                name: "shell",
+                status: "completed" as const,
+                error: null,
+                detail: {
+                  type: "shell" as const,
+                  command: "print output",
+                  output: "x".repeat(1024 * 1024),
+                  exitCode: 0,
+                },
+              },
+              timestamp: "2026-01-02T00:00:02.000Z",
+            },
+          ],
+          providerSubagentEvents: [
+            {
+              type: "provider_subagent" as const,
+              provider: "codex" as const,
+              event: {
+                type: "upsert" as const,
+                id: "thread-child",
+                title: "Imported child",
+                status: "completed" as const,
               },
             },
-            timestamp: "2026-01-02T00:00:02.000Z",
-          },
-        ],
-        providerSubagentEvents: [
-          {
-            type: "provider_subagent" as const,
-            provider: "codex" as const,
-            event: {
-              type: "upsert" as const,
-              id: "thread-child",
-              title: "Imported child",
-              status: "completed" as const,
+            {
+              type: "provider_subagent" as const,
+              provider: "codex" as const,
+              event: {
+                type: "timeline" as const,
+                id: "thread-child",
+                item: { type: "assistant_message" as const, text: "Child result" },
+              },
             },
-          },
-          {
-            type: "provider_subagent" as const,
-            provider: "codex" as const,
-            event: {
-              type: "timeline" as const,
-              id: "thread-child",
-              item: { type: "assistant_message" as const, text: "Child result" },
-            },
-          },
-        ],
-      };
+          ],
+        };
+      }
     }
-  }
 
-  const client = new ImportClient();
-  const manager = new AgentManager({
-    clients: {
-      codex: client,
-    },
-    registry: storage,
-    logger,
-  });
-  manager.subscribe((event) => events.push(event), { replayState: false });
-
-  const imported = await manager.importProviderSession({
-    provider: "codex",
-    providerHandleId: "thread-selected",
-    cwd: workdir,
-    workspaceId: "ws-imported",
-  });
-
-  expect(client.listCalls).toBe(0);
-  expect(client.importInput).toEqual({ providerHandleId: "thread-selected", cwd: workdir });
-  expect(client.importLaunchContext).toEqual({
-    agentId: imported.id,
-    env: {
-      PASEO_AGENT_ID: imported.id,
-      PASEO_AGENT_CWD: workdir,
-    },
-  });
-  expect(imported.lifecycle).toBe("idle");
-  expect(imported.historyPrimed).toBe(true);
-  expect(manager.getTimeline(imported.id)).toEqual([
-    { type: "user_message", text: "Trace provider imports" },
-    { type: "assistant_message", text: "Done" },
-    {
-      type: "tool_call",
-      callId: "large-shell-result",
-      name: "shell",
-      status: "completed",
-      error: null,
-      detail: {
-        type: "shell",
-        command: "print output",
-        output: "x".repeat(64 * 1024),
-        exitCode: 0,
+    const client = new ImportClient();
+    const manager = new AgentManager({
+      clients: {
+        codex: client,
       },
-    },
-  ]);
-  expect(manager.listProviderSubagents(imported.id)).toEqual([
-    expect.objectContaining({ id: "thread-child", title: "Imported child", status: "completed" }),
-  ]);
-  expect(manager.fetchProviderSubagentTimeline(imported.id, "thread-child").rows).toEqual([
-    expect.objectContaining({ item: { type: "assistant_message", text: "Child result" } }),
-  ]);
-  expect(events).toHaveLength(3);
-  expect(events[0]).toMatchObject({
-    type: "agent_state",
-    agent: {
-      id: imported.id,
-      lifecycle: "idle",
-      persistence: { nativeHandle: "thread-selected" },
-    },
-  });
-  expect((await storage.get(imported.id))?.title).toBe("Trace provider imports");
-});
+      registry: storage,
+      logger,
+    });
+    manager.subscribe((event) => events.push(event), { replayState: false });
+
+    const imported = await manager.importProviderSession({
+      provider: "codex",
+      providerHandleId: "thread-selected",
+      cwd: workdir,
+      workspaceId: "ws-imported",
+      title,
+    });
+
+    expect(client.listCalls).toBe(0);
+    expect(client.importInput).toEqual({ providerHandleId: "thread-selected", cwd: workdir });
+    expect(client.importLaunchContext).toEqual({
+      agentId: imported.id,
+      env: {
+        PASEO_AGENT_ID: imported.id,
+        PASEO_AGENT_CWD: workdir,
+      },
+    });
+    expect(imported.lifecycle).toBe("idle");
+    expect(imported.historyPrimed).toBe(true);
+    expect(manager.getTimeline(imported.id)).toEqual([
+      { type: "user_message", text: "Trace provider imports" },
+      { type: "assistant_message", text: "Done" },
+      {
+        type: "tool_call",
+        callId: "large-shell-result",
+        name: "shell",
+        status: "completed",
+        error: null,
+        detail: {
+          type: "shell",
+          command: "print output",
+          output: "x".repeat(64 * 1024),
+          exitCode: 0,
+        },
+      },
+    ]);
+    expect(manager.listProviderSubagents(imported.id)).toEqual([
+      expect.objectContaining({ id: "thread-child", title: "Imported child", status: "completed" }),
+    ]);
+    expect(manager.fetchProviderSubagentTimeline(imported.id, "thread-child").rows).toEqual([
+      expect.objectContaining({ item: { type: "assistant_message", text: "Child result" } }),
+    ]);
+    expect(events).toHaveLength(3);
+    expect(events[0]).toMatchObject({
+      type: "agent_state",
+      agent: {
+        id: imported.id,
+        lifecycle: "idle",
+        persistence: { nativeHandle: "thread-selected" },
+      },
+    });
+    expect((await storage.get(imported.id))?.title).toBe(title ?? "Trace provider imports");
+  },
+);
 
 test("reloadAgentSession passes daemon launch env through the provider launch context", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-context-"));
@@ -5064,6 +5071,114 @@ test("session config drift events update state through the stream channel", asyn
     thinkingOptionId: "high",
   });
   expect(streams.map((event) => event.type)).toEqual([]);
+});
+
+test("keeps provider retry state live, turn-scoped, and out of durable history", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-retry-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let capturedSession: TestAgentSession | null = null;
+  class RetryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      capturedSession = new TestAgentSession(config);
+      return capturedSession;
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new RetryClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000218",
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const session = capturedSession!;
+    const states: ManagedAgent[] = [];
+    const streams: AgentStreamEvent[] = [];
+    manager.subscribe(
+      (event) => {
+        if (event.type === "agent_state") states.push(event.agent);
+        if (event.type === "agent_stream") streams.push(event.event);
+      },
+      { agentId: agent.id, replayState: false },
+    );
+
+    session.pushEvent({
+      type: "provider_retry",
+      provider: "codex",
+      turnId: "turn-1",
+      message: "ignored while idle",
+    });
+    session.pushEvent({ type: "turn_started", provider: "codex", turnId: "turn-1" });
+    await manager.flush();
+    await storage.flush();
+    const storedBeforeRetry = await storage.get(agent.id);
+    const stateCount = states.length;
+
+    session.pushEvent({
+      type: "provider_retry",
+      provider: "codex",
+      turnId: "old-turn",
+      message: "stale",
+    });
+    session.pushEvent({
+      type: "provider_retry",
+      provider: "codex",
+      turnId: "turn-1",
+      message: "rate limited",
+    });
+    session.pushEvent({
+      type: "provider_retry",
+      provider: "codex",
+      turnId: "turn-1",
+      message: "rate limited",
+    });
+    await manager.flush();
+    await storage.flush();
+
+    expect(states).toHaveLength(stateCount + 1);
+    expect(states.at(-1)?.providerRetryMessage).toBe("rate limited");
+    expect(toAgentPayload(manager.getAgent(agent.id)!).providerRetryMessage).toBe("rate limited");
+    expect(manager.getTimeline(agent.id)).toEqual([]);
+    expect(streams.some((event) => event.type === "provider_retry")).toBe(false);
+    expect(await storage.get(agent.id)).toEqual(storedBeforeRetry);
+
+    session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "old-turn" });
+    await manager.flush();
+    expect(manager.getAgent(agent.id)?.providerRetryMessage).toBe("rate limited");
+
+    session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "turn-1" });
+    await manager.flush();
+    expect(manager.getAgent(agent.id)?.providerRetryMessage).toBeNull();
+    session.pushEvent({
+      type: "provider_retry",
+      provider: "codex",
+      turnId: "turn-1",
+      message: "too late",
+    });
+    await manager.flush();
+    expect(manager.getAgent(agent.id)?.providerRetryMessage).toBeNull();
+
+    session.pushEvent({ type: "turn_started", provider: "codex", turnId: "turn-2" });
+    session.pushEvent({
+      type: "provider_retry",
+      provider: "codex",
+      turnId: "turn-2",
+      message: "connection lost",
+    });
+    await manager.flush();
+    await manager.closeAgent(agent.id);
+    expect(states.at(-1)).toMatchObject({
+      lifecycle: "closed",
+      providerRetryMessage: null,
+    });
+  } finally {
+    await manager.flush();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 test("setLabels merges and persists labels", async () => {

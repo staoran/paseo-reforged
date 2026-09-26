@@ -20,6 +20,7 @@ import {
   type LayoutChangeEvent,
   type PressableStateCallbackType,
   type StyleProp,
+  type TextStyle,
   type ViewStyle,
 } from "react-native";
 import { createPortal } from "react-dom";
@@ -228,6 +229,7 @@ export function SearchInput({
 
 export interface ComboboxItemProps {
   label: string;
+  labelStyle?: StyleProp<TextStyle>;
   description?: string;
   kind?: "directory" | "file";
   leadingSlot?: ReactNode;
@@ -244,6 +246,7 @@ export interface ComboboxItemProps {
 
 export function ComboboxItem({
   label,
+  labelStyle,
   description,
   kind,
   leadingSlot,
@@ -302,7 +305,7 @@ export function ComboboxItem({
     >
       {leadingContent}
       <View style={itemContentStyle}>
-        <Text numberOfLines={1} style={styles.comboboxItemLabel}>
+        <Text numberOfLines={1} style={[styles.comboboxItemLabel, labelStyle]}>
           {label}
         </Text>
         {description ? (

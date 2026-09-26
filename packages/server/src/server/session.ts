@@ -3668,6 +3668,7 @@ export class Session {
     );
 
     try {
+      this.workspaceAutoName.invalidateWorkspaceTitle(workspaceId);
       const trimmed = title?.trim() ?? "";
       const nextTitle = trimmed.length === 0 ? null : trimmed;
       const updatedAt = new Date().toISOString();
@@ -4051,7 +4052,12 @@ export class Session {
               {
                 ...request,
                 firstAgentContext: agentInput
-                  ? { prompt: agentInput.initialPrompt, attachments: agentInput.attachments }
+                  ? {
+                      ...request.firstAgentContext,
+                      ...agentInput.firstAgentContext,
+                      prompt: agentInput.initialPrompt,
+                      attachments: agentInput.attachments,
+                    }
                   : request.firstAgentContext,
               },
               id,
@@ -4082,6 +4088,10 @@ export class Session {
                 return this.createSessionAgent(
                   {
                     ...agentInput,
+                    firstAgentContext: {
+                      ...request.firstAgentContext,
+                      ...agentInput.firstAgentContext,
+                    },
                     type: "create_agent_request",
                     requestId,
                     config: {
@@ -4223,15 +4233,16 @@ export class Session {
         throw new Error(`Working directory does not exist or is not a directory: ${requestedCwd}`);
       }
       const trimmedPrompt = initialPrompt?.trim();
-      const { provisionalTitle } = resolveCreateAgentTitles({
-        configTitle: config.title,
-        initialPrompt: trimmedPrompt,
-      });
-
       const firstAgentContext: FirstAgentContext = {
+        ...msg.firstAgentContext,
         ...(trimmedPrompt ? { prompt: trimmedPrompt } : {}),
         ...(attachments && attachments.length > 0 ? { attachments } : {}),
       };
+      const { provisionalTitle } = resolveCreateAgentTitles({
+        configTitle: config.title,
+        initialPrompt: trimmedPrompt,
+        locale: firstAgentContext.locale,
+      });
       const workspacePromptTitle = resolveFirstAgentPromptTitle(firstAgentContext);
       const createdWorktree = await this.createAgentLifecycleDispatch.createWorktreeForRequest({
         cwd: config.cwd,

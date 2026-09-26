@@ -2185,6 +2185,19 @@ const TurnCompletedNotificationSchema = z
   })
   .passthrough();
 
+const CodexErrorNotificationSchema = z
+  .object({
+    threadId: z.string(),
+    turnId: z.string(),
+    willRetry: z.boolean(),
+    error: z.object({ message: z.string() }).passthrough(),
+  })
+  .passthrough();
+
+const CodexWarningNotificationSchema = z
+  .object({ threadId: z.string().nullable().optional(), message: z.string() })
+  .passthrough();
+
 const TurnPlanUpdatedNotificationSchema = z
   .object({
     threadId: z.string().optional(),
@@ -2463,10 +2476,19 @@ type ParsedCodexNotification =
   | { kind: "turn_started"; turnId: string; threadId: string | null }
   | {
       kind: "turn_completed";
+      turnId: string | null;
       status: string;
       errorMessage: string | null;
       threadId: string | null;
     }
+  | {
+      kind: "provider_error";
+      threadId: string;
+      turnId: string;
+      willRetry: boolean;
+      message: string;
+    }
+  | { kind: "provider_warning"; threadId: string | null }
   | {
       kind: "plan_updated";
       plan: Array<{ step: string | null; status: string | null }>;
@@ -2615,12 +2637,42 @@ const CodexNotificationSchema = z.union([
     .transform(
       ({ params }): ParsedCodexNotification => ({
         kind: "turn_completed",
+        turnId: params.turn.id ?? null,
         status: params.turn.status,
         errorMessage: params.turn.error?.message ?? null,
         threadId: params.threadId ?? null,
       }),
     ),
   z.object({ method: z.literal("turn/completed"), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({
+      kind: "invalid_payload",
+      method,
+      params,
+    }),
+  ),
+  z.object({ method: z.literal("error"), params: CodexErrorNotificationSchema }).transform(
+    ({ params }): ParsedCodexNotification => ({
+      kind: "provider_error",
+      threadId: params.threadId,
+      turnId: params.turnId,
+      willRetry: params.willRetry,
+      message: params.error.message,
+    }),
+  ),
+  z.object({ method: z.literal("error"), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({
+      kind: "invalid_payload",
+      method,
+      params,
+    }),
+  ),
+  z.object({ method: z.literal("warning"), params: CodexWarningNotificationSchema }).transform(
+    ({ params }): ParsedCodexNotification => ({
+      kind: "provider_warning",
+      threadId: params.threadId ?? null,
+    }),
+  ),
+  z.object({ method: z.literal("warning"), params: z.unknown() }).transform(
     ({ method, params }): ParsedCodexNotification => ({
       kind: "invalid_payload",
       method,
@@ -3039,6 +3091,7 @@ const CodexNotificationSchema = z.union([
     .transform(
       ({ params }): ParsedCodexNotification => ({
         kind: "turn_completed",
+        turnId: null,
         status: "interrupted",
         errorMessage: null,
         threadId: getCodexEventThreadId(params),
@@ -3059,6 +3112,7 @@ const CodexNotificationSchema = z.union([
     .transform(
       ({ params }): ParsedCodexNotification => ({
         kind: "turn_completed",
+        turnId: null,
         status: "completed",
         errorMessage: null,
         threadId: getCodexEventThreadId(params),
@@ -3357,6 +3411,8 @@ export class CodexAppServerAgentSession implements AgentSession {
   private resolvedSandboxPolicy: Record<string, unknown> | null = null;
   private currentThreadId: string | null = null;
   private currentTurnId: string | null = null;
+  /** Live retry reason scoped to the active root turn */
+  private providerRetryMessage: string | null = null;
   private pendingForegroundTurnIdentification: {
     foregroundTurnId: string;
     promise: Promise<string | null>;
@@ -3605,6 +3661,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     const hasActiveRootTurn = this.activeForegroundTurnId !== null || this.currentTurnId !== null;
     this.clearPendingPermissions({ preservePlanApprovals: !hasActiveRootTurn });
     if (hasActiveRootTurn) {
+      this.emitProviderRetryMessage(null);
       this.emitEvent({
         type: "turn_failed",
         provider: CODEX_PROVIDER,
@@ -4887,6 +4944,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       if (!isCodexAlreadyIdleInterrupt(error)) {
         throw error;
       }
+      this.emitProviderRetryMessage(null);
       this.activeForegroundTurnId = null;
       this.activeClientMessageId = null;
       this.currentTurnId = null;
@@ -4899,6 +4957,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.closed = true;
     this.clearPendingPermissions();
     this.pendingSubAgentNotificationsByThreadId.clear();
+    this.emitProviderRetryMessage(null);
     this.subscribers.clear();
     this.activeForegroundTurnId = null;
     this.activeClientMessageId = null;
@@ -5295,7 +5354,34 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.dispatchSubAgentNotification(parsed, route.callId);
       return;
     }
+    if (parsed.kind === "provider_error") {
+      this.handleProviderErrorNotification(parsed);
+      return;
+    }
+    this.clearProviderRetryOnRootProgress(parsed);
     this.dispatchParsedNotification(parsed);
+  }
+
+  /** A root notification after a retry means Codex resumed work */
+  private clearProviderRetryOnRootProgress(parsed: ParsedCodexNotification): void {
+    if (this.providerRetryMessage === null || this.loadingPersistedHistory) return;
+    if (parsed.kind === "thread_started") {
+      this.emitProviderRetryMessage(null);
+      return;
+    }
+    if (parsed.kind === "invalid_payload" || parsed.kind === "unknown_method") return;
+    if (
+      this.currentTurnId === null ||
+      getCodexNotificationThreadId(parsed) !== this.currentThreadId
+    )
+      return;
+    if (
+      parsed.kind === "turn_completed" &&
+      parsed.turnId !== null &&
+      parsed.turnId !== this.currentTurnId
+    )
+      return;
+    this.emitProviderRetryMessage(null);
   }
 
   private dispatchSubAgentNotification(parsed: ParsedCodexNotification, callId: string): void {
@@ -5352,6 +5438,8 @@ export class CodexAppServerAgentSession implements AgentSession {
         return;
       case "turn_completed":
         this.handleTurnCompletedNotification(parsed);
+        return;
+      case "provider_warning":
         return;
       case "plan_updated":
         this.handlePlanUpdatedNotification(parsed);
@@ -5962,7 +6050,9 @@ export class CodexAppServerAgentSession implements AgentSession {
   private handleThreadStartedNotification(
     parsed: Extract<ParsedCodexNotification, { kind: "thread_started" }>,
   ): void {
+    this.emitProviderRetryMessage(null);
     this.currentThreadId = parsed.threadId;
+    this.currentTurnId = null;
     this.emitEvent({
       type: "thread_started",
       provider: CODEX_PROVIDER,
@@ -5978,6 +6068,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.emitSubAgentActivityUpdate(subAgentCallId, "running", { reopen: true });
       return;
     }
+    if (this.currentTurnId !== parsed.turnId) this.emitProviderRetryMessage(null);
     this.currentTurnId = parsed.turnId;
     const pendingIdentification = this.pendingForegroundTurnIdentification;
     if (
@@ -6005,7 +6096,9 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.emitSubAgentActivityUpdate(subAgentCallId, status);
       return;
     }
+    if (parsed.turnId !== null && parsed.turnId !== this.currentTurnId) return;
     this.completePendingRootCompactions();
+    this.emitProviderRetryMessage(null);
     if (parsed.status === "failed") {
       this.emitEvent({
         type: "turn_failed",
@@ -6032,6 +6125,33 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.pendingForegroundTurnIdentification = null;
     this.pendingSubAgentNotificationsByThreadId.clear();
     this.resetTurnTrackingState();
+  }
+
+  /** Ignore stale and child errors, then expose Codex's active recovery reason */
+  private handleProviderErrorNotification(
+    parsed: Extract<ParsedCodexNotification, { kind: "provider_error" }>,
+  ): void {
+    if (
+      this.loadingPersistedHistory ||
+      this.activeForegroundTurnId === null ||
+      parsed.threadId !== this.currentThreadId ||
+      parsed.turnId !== this.currentTurnId
+    )
+      return;
+    this.emitProviderRetryMessage(parsed.willRetry ? parsed.message : null);
+  }
+
+  /** Publish retry changes as transient Agent state, never timeline rows */
+  private emitProviderRetryMessage(message: string | null): void {
+    if (message === this.providerRetryMessage) return;
+    this.providerRetryMessage = message;
+    if (this.activeForegroundTurnId === null) return;
+    this.notifySubscribers({
+      type: "provider_retry",
+      provider: CODEX_PROVIDER,
+      turnId: this.activeForegroundTurnId,
+      message,
+    });
   }
 
   private resetTurnTrackingState(): void {

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
+import { useAppLocale } from "@/i18n/provider";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { Composer } from "@/composer";
@@ -99,6 +100,7 @@ async function callWorkspaceCreation({
   return connectedClient.createWorkspace({
     idempotencyKey: creationId,
     agent: input.agent,
+    firstAgentContext: input.agent?.firstAgentContext,
     source:
       creationMethod === "create_worktree"
         ? { kind: "worktree", cwd: input.cwd, worktreeSlug }
@@ -123,6 +125,7 @@ function buildCreateAgentOptions({
   workspaceDirectory,
   workspaceId,
   provider,
+  locale,
 }: {
   composerState: {
     modeOptions: { id: string }[];
@@ -136,6 +139,7 @@ function buildCreateAgentOptions({
   workspaceDirectory: string;
   workspaceId: string;
   provider: CreateAgentRequestOptions["provider"];
+  locale: string;
 }): CreateAgentRequestOptions {
   // Reconcile the selected mode against the discovered modes. The mode picker
   // shows modeOptions[0] when the stored mode isn't in the list (e.g. a stale
@@ -158,11 +162,17 @@ function buildCreateAgentOptions({
     ...(text.trim() ? { initialPrompt: text.trim() } : {}),
     ...(encodedImages && encodedImages.length > 0 ? { images: encodedImages } : {}),
     ...(attachments.length > 0 ? { attachments } : {}),
+    firstAgentContext: {
+      ...(text.trim() ? { prompt: text.trim() } : {}),
+      attachments,
+      locale,
+    },
   };
 }
 
 export function WorkspaceSetupDialog() {
   const { t } = useTranslation();
+  const locale = useAppLocale();
   const toast = useToast();
   const pendingWorkspaceSetup = useWorkspaceSetupStore((state) => state.pendingWorkspaceSetup);
   const clearWorkspaceSetup = useWorkspaceSetupStore((state) => state.clearWorkspaceSetup);
@@ -343,6 +353,7 @@ export function WorkspaceSetupDialog() {
           workspaceDirectory: cwd,
           workspaceId: "",
           provider: composerState.selectedProvider,
+          locale,
         });
         const ensuredWorkspace = await ensureWorkspace({
           cwd,
@@ -390,6 +401,7 @@ export function WorkspaceSetupDialog() {
       t,
       toast,
       supportsForgeSearch,
+      locale,
     ],
   );
 

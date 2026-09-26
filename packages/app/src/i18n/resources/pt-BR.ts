@@ -114,6 +114,23 @@ export const ptBR: TranslationResources = {
     },
   },
   composer: {
+    selection: {
+      ask: "Perguntar",
+      askInNewWindow: "Perguntar em nova janela",
+      savePreset: "Salvar como predefinição",
+      savedPreset: "Salvo como predefinição",
+    },
+    presets: {
+      title: "Prompts salvos",
+      editTitle: "Editar prompt",
+      name: "Nome",
+      content: "Prompt",
+      new: "Salvar prompt",
+      empty: "Nenhum prompt salvo",
+      edit: "Editar",
+      delete: "Excluir",
+      save: "Salvar",
+    },
     placeholders: {
       desktop: "Envie uma mensagem ao agente, marque @files ou use /commands e /skills",
       mobile: "Mensagem, @files, /commands",
@@ -228,6 +245,7 @@ export const ptBR: TranslationResources = {
     },
   },
   agentStream: {
+    retrying: "Tentando novamente:",
     empty: "Comece a conversar com este agente...",
     scrollToBottom: "Rolar para o fim",
     historyLoadFailed: "Não foi possível carregar o histórico do agente",
