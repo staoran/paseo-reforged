@@ -1,6 +1,10 @@
 import type { ChildProcess, SpawnOptions } from "node:child_process";
 import { spawn as nodeSpawn } from "node:child_process";
-import { existsSync as nodeExistsSync } from "node:fs";
+import {
+  accessSync as nodeAccessSync,
+  constants as nodeFsConstants,
+  existsSync as nodeExistsSync,
+} from "node:fs";
 import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path, { posix, win32 } from "node:path";
@@ -24,6 +28,7 @@ export interface EditorTargetRuntimeOptions {
   platform?: NodeJS.Platform;
   env?: NodeJS.ProcessEnv;
   pathExists?: (path: string) => boolean;
+  pathAccessible?: (path: string) => boolean;
   spawn?: (command: string, args: string[], options: SpawnOptions) => SpawnedProcess;
   openPath?: (path: string) => Promise<string>;
   revealPath?: (path: string) => void;
@@ -56,11 +61,46 @@ function isAbsolutePath(value: string, platform: NodeJS.Platform): boolean {
   return platform === "win32" ? win32.isAbsolute(value) : posix.isAbsolute(value);
 }
 
+/** Check Windows execution aliases that reject an ordinary stat lookup */
+function isPathAccessible(value: string): boolean {
+  try {
+    nodeAccessSync(value, nodeFsConstants.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Limit the access fallback to executable aliases in WindowsApps */
+function isWindowsAppsExecutionAlias(candidate: string, platform: NodeJS.Platform): boolean {
+  return (
+    platform === "win32" &&
+    win32.basename(win32.dirname(win32.normalize(candidate))).toLowerCase() === "windowsapps" &&
+    win32.extname(candidate).toLowerCase() === ".exe"
+  );
+}
+
+/** Resolve ordinary files and accessible WindowsApps execution aliases */
+function isCommandCandidateAvailable(
+  candidate: string,
+  input: {
+    pathExists: (path: string) => boolean;
+    pathAccessible: (path: string) => boolean;
+    platform: NodeJS.Platform;
+  },
+): boolean {
+  return (
+    input.pathExists(candidate) ||
+    (isWindowsAppsExecutionAlias(candidate, input.platform) && input.pathAccessible(candidate))
+  );
+}
+
 function resolveExecutable(
   commands: readonly string[],
   input: {
     env: NodeJS.ProcessEnv;
     pathExists: (path: string) => boolean;
+    pathAccessible: (path: string) => boolean;
     platform: NodeJS.Platform;
   },
 ): string | null {
@@ -74,7 +114,7 @@ function resolveExecutable(
       : []),
   ];
   for (const command of commands) {
-    if (isAbsolutePath(command, input.platform) && input.pathExists(command)) {
+    if (isAbsolutePath(command, input.platform) && isCommandCandidateAvailable(command, input)) {
       return command;
     }
 
@@ -90,7 +130,7 @@ function resolveExecutable(
       const extensions = hasExtension ? [""] : [".exe", ".cmd", ".bat", ".com", ""];
       for (const extension of extensions) {
         const windowsCandidate = `${candidate}${extension}`;
-        if (input.pathExists(windowsCandidate)) return windowsCandidate;
+        if (isCommandCandidateAvailable(windowsCandidate, input)) return windowsCandidate;
       }
     }
   }
@@ -136,6 +176,7 @@ export function createEditorTargetRuntime(
   const platform = options.platform ?? process.platform;
   const env = options.env ?? process.env;
   const pathExists = options.pathExists ?? nodeExistsSync;
+  const pathAccessible = options.pathAccessible ?? isPathAccessible;
   const spawn = options.spawn ?? spawnProcess;
   const openPath = options.openPath ?? ((targetPath) => shell.openPath(targetPath));
   const revealPath = options.revealPath ?? ((targetPath) => shell.showItemInFolder(targetPath));
@@ -147,7 +188,8 @@ export function createEditorTargetRuntime(
     env,
     pathExists,
     isAbsolutePath: (targetPath) => isAbsolutePath(targetPath, platform),
-    resolveCommand: (commands) => resolveExecutable(commands, { env, pathExists, platform }),
+    resolveCommand: (commands) =>
+      resolveExecutable(commands, { env, pathExists, pathAccessible, platform }),
     async spawnDetached({ command, args }) {
       const commandScript = isWindowsCommandScript(command, platform);
       const launchCommand = commandScript ? escapeWindowsCmdValue(command) : command;

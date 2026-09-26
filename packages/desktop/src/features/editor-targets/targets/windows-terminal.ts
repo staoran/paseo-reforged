@@ -3,12 +3,12 @@ import type { EditorTarget } from "../target.js";
 /** Open a local workspace directory in Windows Terminal */
 export const windowsTerminalTarget: EditorTarget = {
   id: "windows-terminal",
-  async describe() {
+  async describe(runtime) {
     return {
       id: this.id,
       label: "Windows Terminal",
       kind: "terminal",
-      icon: { kind: "symbol", name: "terminal" },
+      icon: await runtime.loadIcon("windows-terminal.png"),
     };
   },
   async isInstalled(runtime) {
