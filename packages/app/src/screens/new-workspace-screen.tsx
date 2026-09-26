@@ -8,6 +8,7 @@ import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { ReactElement, ReactNode, RefObject } from "react";
 import { useTranslation } from "react-i18next";
+import { useAppLocale } from "@/i18n/provider";
 import type { TFunction } from "i18next";
 import { Pressable, Text, View } from "react-native";
 import type { PressableStateCallbackType } from "react-native";
@@ -832,7 +833,7 @@ async function createMultiplicityWorkspace(input: {
   });
   const payload = await input.client.createWorkspace({
     idempotencyKey: input.idempotencyKey,
-    agent: input.agent,
+    agent: input.agent ? { ...input.agent, firstAgentContext } : undefined,
     onEvent: input.onEvent,
     source: isWorktree
       ? {
@@ -1636,7 +1637,8 @@ export function NewWorkspaceScreen({
 }: NewWorkspaceScreenProps) {
   const queryClient = useQueryClient();
   const { theme } = useUnistyles();
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
+  const locale = useAppLocale();
   const isCompact = useIsCompactFormFactor();
   const toast = useToast();
   const mergeWorkspaces = useCallback(
@@ -2081,7 +2083,7 @@ export function NewWorkspaceScreen({
         withInitialAgent: input.withInitialAgent,
         prompt: input.prompt,
         attachments: input.attachments,
-        locale: i18n.resolvedLanguage ?? i18n.language,
+        locale,
         agent: input.agent,
         onEvent: input.onEvent,
         mergeWorkspaces,
@@ -2095,8 +2097,7 @@ export function NewWorkspaceScreen({
       creationIdentity,
       creationResult,
       effectiveIsolation,
-      i18n.language,
-      i18n.resolvedLanguage,
+      locale,
       mergeWorkspaces,
       queryClient,
       selectedItem,

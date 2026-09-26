@@ -14,6 +14,7 @@ import { buildAgentBranchNameSeed } from "./agent/prompt-attachments.js";
 import { buildMetadataPrompt } from "../utils/build-metadata-prompt.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
+import { titleMatchesRequestedLanguage } from "./agent/create-agent-title.js";
 
 interface BranchNameGeneratorLogger {
   info: (obj: object, msg?: string) => void;
@@ -38,11 +39,6 @@ export interface GenerateBranchNameFromFirstAgentContextOptions {
     generateStructuredAgentResponseWithFallback?: typeof generateStructuredAgentResponseWithFallback;
   };
 }
-
-const BranchNameSchema = z.object({
-  title: z.string().min(1).max(80),
-  branch: z.string().min(1).max(100),
-});
 
 /** Accept only client-supported language tags as title generation instructions */
 function titleLanguageForLocale(locale: string | undefined): string | null {
@@ -70,6 +66,25 @@ function titleLanguageForLocale(locale: string | undefined): string | null {
   }
 }
 
+/** Reuse structured generation retries when the title violates a known script constraint */
+function createBranchNameSchema(locale: string | undefined) {
+  const language = titleLanguageForLocale(locale);
+  const title = z.string().min(1).max(80);
+  return z.object({
+    title:
+      locale && language
+        ? title
+            .describe(
+              `Workspace title wording must be ${language}. Preserve necessary technical identifiers.`,
+            )
+            .refine((value) => titleMatchesRequestedLanguage(value, locale), {
+              message: `Workspace title must contain ${language} wording`,
+            })
+        : title,
+    branch: z.string().min(1).max(100),
+  });
+}
+
 async function buildPrompt(
   seed: string,
   options: {
@@ -89,7 +104,10 @@ async function buildPrompt(
       "The branch must be a valid git ref: lowercase letters, numbers, hyphens, and slashes only, with no spaces, no uppercase, no leading or trailing hyphen, and no consecutive hyphens.",
       "The branch is generated directly from the prompt — it is NEVER derived from or slugified from the title.",
       ...(titleLanguage
-        ? [`Write the title in ${titleLanguage}. Keep the branch name in ASCII.`]
+        ? [
+            `Write the title in ${titleLanguage}. Keep the branch name in ASCII.`,
+            "Use the requested language for task wording even when the prompt or title style uses another language, preserving only necessary technical identifiers.",
+          ]
         : []),
     ].join("\n"),
     styles: [
@@ -110,7 +128,12 @@ async function buildPrompt(
           "A short task-shaped slug preserving the operation, target, and explicit identifier when present.",
       },
     ],
-    after: "Return JSON only with fields 'title' and 'branch'.",
+    after: [
+      ...(titleLanguage
+        ? ["Before returning JSON, verify that the title follows the required title language."]
+        : []),
+      "Return JSON only with fields 'title' and 'branch'.",
+    ].join("\n"),
     trailing: seed,
   });
 }
@@ -149,7 +172,7 @@ export async function generateBranchNameFromFirstAgentContext(
         workspaceGitService: options.workspaceGitService,
         locale: options.firstAgentContext?.locale,
       }),
-      schema: BranchNameSchema,
+      schema: createBranchNameSchema(options.firstAgentContext?.locale),
       schemaName: "BranchName",
       maxRetries: 2,
       providers,

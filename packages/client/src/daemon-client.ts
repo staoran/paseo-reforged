@@ -385,6 +385,7 @@ export interface CreateAgentRequestOptions extends AgentConfigOverrides {
   workspaceId?: string;
   callerAgentId?: string;
   initialPrompt?: string;
+  firstAgentContext?: CreateAgentRequestMessage["firstAgentContext"];
   idempotencyKey?: string;
   clientMessageId?: string;
   outputSchema?: Record<string, unknown>;
@@ -2776,6 +2777,7 @@ export class DaemonClient {
       ...(options.workspaceId !== undefined ? { workspaceId: options.workspaceId } : {}),
       ...(options.callerAgentId !== undefined ? { callerAgentId: options.callerAgentId } : {}),
       ...(options.initialPrompt ? { initialPrompt: options.initialPrompt } : {}),
+      ...(options.firstAgentContext ? { firstAgentContext: options.firstAgentContext } : {}),
       idempotencyKey: options.idempotencyKey,
       ...(options.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
       ...(options.outputSchema ? { outputSchema: options.outputSchema } : {}),
@@ -6712,6 +6714,7 @@ function resolveAgentConfig(options: CreateAgentRequestOptions): AgentSessionCon
     env: _env,
     workspaceId: _workspaceId,
     initialPrompt: _initialPrompt,
+    firstAgentContext: _firstAgentContext,
     images: _images,
     git: _git,
     worktreeName: _worktreeName,

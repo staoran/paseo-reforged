@@ -24,7 +24,11 @@ import { Session } from "./session.js";
 import type { SessionOptions } from "./session.js";
 import { OWNER_PERMISSIONS } from "./authorization/index.js";
 import type { AgentUpdatesService } from "./session/agent-updates/agent-updates-service.js";
-import type { AgentSnapshotPayload, SessionOutboundMessage } from "@getpaseo/protocol/messages";
+import type {
+  AgentSnapshotPayload,
+  CreateAgentRequestMessage,
+  SessionOutboundMessage,
+} from "@getpaseo/protocol/messages";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { createTerminalManager } from "../terminal/terminal-manager.js";
 import { AgentManager, type AgentManagerEvent, type ManagedAgent } from "./agent/agent-manager.js";
@@ -158,6 +162,7 @@ interface SessionTestAccess {
   }>;
   handleArchiveAgentRequest(agentId: string, requestId: string): Promise<unknown>;
   handleMessage(message: unknown, source?: object): Promise<unknown>;
+  createSessionAgent(message: CreateAgentRequestMessage): Promise<AgentSnapshotPayload>;
   handleCreatePaseoWorktreeRequest(params: unknown): Promise<unknown>;
   listAgentPayloads(...args: unknown[]): Promise<unknown[]>;
   listFetchWorkspacesEntries(params: unknown): Promise<ListFetchResult>;
@@ -9380,6 +9385,58 @@ test("workspace.create.response persists the first prompt as the initial title",
   expect(persisted?.title).toBe("Add retries to the payments flow");
   expect(filterByType(emitted, "workspace_update")).toHaveLength(1);
 });
+
+test.each(["workspace", "agent"])(
+  "workspace creation preserves the %s locale with an initial agent",
+  async (contextOwner) => {
+    const emitted: SessionOutboundMessage[] = [];
+    const workspaces = new Map<string, PersistedWorkspaceRecord>();
+    const session = createSessionForWorkspaceTests({
+      onMessage: (message) => emitted.push(message),
+      generateWorkspaceName: async () => null,
+      workspaceRegistry: {
+        initialize: async () => {},
+        existsOnDisk: async () => true,
+        list: async () => Array.from(workspaces.values()),
+        get: async (id) => workspaces.get(id) ?? null,
+        upsert: async (record) => {
+          workspaces.set(record.workspaceId, record);
+        },
+        archive: async () => {},
+        remove: async () => {},
+      },
+    });
+    const createAgent = vi.fn(async (message: CreateAgentRequestMessage) =>
+      makeAgent({
+        id: "agent-locale",
+        cwd: message.config.cwd,
+        workspaceId: message.workspaceId,
+        status: "idle",
+        updatedAt: "2026-09-26T10:00:00.000Z",
+      }),
+    );
+    session.createSessionAgent = createAgent;
+    session.listAgentPayloads = async () => [];
+
+    await session.handleMessage({
+      type: "workspace.create.request",
+      requestId: `localized-${contextOwner}`,
+      source: { kind: "directory", path: REPO_CWD },
+      ...(contextOwner === "workspace" ? { firstAgentContext: { locale: "zh-CN" } } : {}),
+      agent: {
+        config: { provider: "codex", cwd: REPO_CWD },
+        initialPrompt: "Fix the login flow",
+        ...(contextOwner === "agent" ? { firstAgentContext: { locale: "zh-CN" } } : {}),
+      },
+    });
+
+    const response = findByType(emitted, "workspace.create.response");
+    expect(response?.payload.error).toBeNull();
+    expect(response?.payload.workspace?.title).toBe("新会话");
+    expect(createAgent).toHaveBeenCalledOnce();
+    expect(createAgent.mock.calls[0]![0].firstAgentContext?.locale).toBe("zh-CN");
+  },
+);
 
 test("workspace create emits through a matching workspace subscription", async () => {
   const emitted: SessionOutboundMessage[] = [];

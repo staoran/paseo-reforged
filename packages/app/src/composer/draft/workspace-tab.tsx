@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { Keyboard, ScrollView, StyleSheet as RNStyleSheet, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
+import { useAppLocale } from "@/i18n/provider";
 import { StyleSheet } from "react-native-unistyles";
 import { ComposerDock } from "@/composer/dock";
 import { useContainerWidthBelow } from "@/hooks/use-container-width";
@@ -144,6 +145,7 @@ async function submitDraftCreateRequest(input: {
   client: DaemonClient | null;
   workspaceDirectory: string | null;
   workspaceId: string | null;
+  locale: string;
   autoSubmitConfig: AutoSubmitConfig | null;
   composerState: {
     selectedProvider: string | null;
@@ -201,6 +203,7 @@ async function submitDraftCreateRequest(input: {
     config,
     workspaceId,
     initialPrompt: text,
+    firstAgentContext: { prompt: text, attachments: attachmentsArray, locale: input.locale },
     clientMessageId: attempt.clientMessageId,
     ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
     ...(attachmentsArray && attachmentsArray.length > 0 ? { attachments: attachmentsArray } : {}),
@@ -327,6 +330,7 @@ export function WorkspaceDraftAgentTab({
   onOpenImportSheet,
 }: WorkspaceDraftAgentTabProps) {
   const { t } = useTranslation();
+  const locale = useAppLocale();
   const client = useHostRuntimeClient(serverId);
   const workspaceFields = useWorkspaceFields(serverId, workspaceId, (w) => ({
     workspaceDirectory: w.workspaceDirectory,
@@ -501,6 +505,7 @@ export function WorkspaceDraftAgentTab({
         client,
         workspaceDirectory: draftWorkingDirectory,
         workspaceId: workspaceFields?.id ?? null,
+        locale,
         autoSubmitConfig,
         composerState,
         hostDisconnectedMessage: t("workspace.terminal.hostDisconnected"),

@@ -1680,6 +1680,12 @@ export const CreateAgentWorktreeTargetSchema = z.discriminatedUnion("mode", [
 
 export type CreateAgentWorktreeTarget = z.infer<typeof CreateAgentWorktreeTargetSchema>;
 
+export const FirstAgentContextSchema = z.object({
+  prompt: z.string().optional(),
+  attachments: AgentAttachmentsSchema,
+  locale: z.string().optional(),
+});
+
 export const CreateAgentRequestMessageSchema = z.object({
   type: z.literal("create_agent_request"),
   // Legacy create_agent_request uses a separate initial-message receipt when keyed.
@@ -1692,6 +1698,7 @@ export const CreateAgentRequestMessageSchema = z.object({
   callerAgentId: z.string().optional(),
   worktreeName: z.string().optional(),
   initialPrompt: z.string().optional(),
+  firstAgentContext: FirstAgentContextSchema.optional(),
   clientMessageId: z.string().optional(),
   outputSchema: z.record(z.string(), z.unknown()).optional(),
   images: z.array(ImageAttachmentSchema).optional(),
@@ -2486,12 +2493,6 @@ export const PaseoWorktreeArchiveRequestSchema = z.object({
   // retained for wire parse-compat, drop when floor >= v0.1.97.
   deleteWorktreeFromDisk: z.boolean().optional().default(false),
   requestId: z.string(),
-});
-
-export const FirstAgentContextSchema = z.object({
-  prompt: z.string().optional(),
-  attachments: AgentAttachmentsSchema,
-  locale: z.string().optional(),
 });
 
 export const CreatePaseoWorktreeRequestSchema = z.object({

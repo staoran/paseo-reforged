@@ -139,6 +139,13 @@ describe("generateBranchNameFromFirstAgentContext", () => {
     expect(structured.calls[0]?.prompt).toContain(
       "Write the title in Simplified Chinese. Keep the branch name in ASCII.",
     );
+    const schema = structured.calls[0]!.schema;
+    expect(schema.safeParse({ title: "Fix login flow", branch: "fix-login-flow" }).success).toBe(
+      false,
+    );
+    expect(schema.safeParse({ title: "修复登录流程", branch: "fix-login-flow" }).success).toBe(
+      true,
+    );
   });
 
   test("wraps a slash-only first-agent prompt as naming input", async () => {

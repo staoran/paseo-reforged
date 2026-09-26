@@ -2877,6 +2877,7 @@ test("sends create_agent_request with workspace and caller identity", async () =
     workspaceId: "ws-feature-a",
     callerAgentId: "parent-agent",
     title: "Compat agent",
+    firstAgentContext: { prompt: "Fix the login flow", locale: "zh-CN" },
     modeId: "default",
   });
 
@@ -2888,6 +2889,7 @@ test("sends create_agent_request with workspace and caller identity", async () =
       idempotencyKey: "one-creation",
       workspaceId: "ws-feature-a",
       callerAgentId: "parent-agent",
+      firstAgentContext: { prompt: "Fix the login flow", locale: "zh-CN" },
     }),
   );
 
