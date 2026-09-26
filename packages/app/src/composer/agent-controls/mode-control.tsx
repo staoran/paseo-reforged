@@ -1,7 +1,15 @@
-import { useCallback, useMemo, useRef, useState, type ReactElement } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ReactElement,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useShallow } from "zustand/shallow";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { type SheetHeader } from "@/components/adaptive-modal-sheet";
@@ -29,6 +37,7 @@ import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manife
 import { getAgentModeIcon, getAgentModeOptionIcon } from "@/agent-controls/icons";
 import { resolveAgentModeColor } from "@/agent-controls/policy";
 import { getModeVisuals } from "@getpaseo/protocol/provider-manifest";
+import type { Theme } from "@/styles/theme";
 interface ModeComboboxOptionProps {
   option: ComboboxOption;
   selected: boolean;
@@ -36,7 +45,8 @@ interface ModeComboboxOptionProps {
   onPress: () => void;
   provider: string;
   providerDefinitions: AgentProviderDefinition[];
-  iconColor: string;
+  colorTier?: string;
+  theme: Theme;
 }
 
 function ModeComboboxOption({
@@ -46,16 +56,27 @@ function ModeComboboxOption({
   onPress,
   provider,
   providerDefinitions,
-  iconColor,
+  colorTier,
+  theme,
 }: ModeComboboxOptionProps) {
+  const modeColor = resolveAgentModeColor(option.id, colorTier, theme.colors);
+  // Text follows the same theme accent as the mode icon
+  const labelStyle = useMemo(
+    () => ({
+      color: modeColor,
+      fontWeight: modeColor === theme.colors.foregroundMuted ? undefined : theme.fontWeight.bold,
+    }),
+    [modeColor, theme.colors.foregroundMuted, theme.fontWeight.bold],
+  );
   const IconComponent = getAgentModeOptionIcon(provider, option.id, providerDefinitions);
   const leadingSlot = useMemo(
-    () => (IconComponent ? <IconComponent size={16} color={iconColor} /> : null),
-    [IconComponent, iconColor],
+    () => (IconComponent ? <IconComponent size={16} color={modeColor} /> : null),
+    [IconComponent, modeColor],
   );
   return (
     <ComboboxItem
       label={option.label}
+      labelStyle={labelStyle}
       selected={selected}
       active={active}
       onPress={onPress}
@@ -63,6 +84,37 @@ function ModeComboboxOption({
     />
   );
 }
+
+// Theme updates repaint only the mode option and trigger leaves
+const ThemedModeComboboxOption = withUnistyles(ModeComboboxOption, (theme) => ({ theme }));
+
+type ModeControlTriggerProps = Omit<
+  ComponentProps<typeof AgentControlTrigger>,
+  "iconColor" | "valueStyle"
+> & {
+  modeId: string;
+  colorTier?: string;
+  theme: Theme;
+};
+
+/** Keep the trigger icon and current value on the same risk accent */
+const ModeControlTrigger = forwardRef<View, ModeControlTriggerProps>(function ModeControlTrigger(
+  { modeId, colorTier, theme, ...props },
+  ref,
+) {
+  const color = resolveAgentModeColor(modeId, colorTier, theme.colors);
+  // Preserve the trigger style reference while its risk accent stays unchanged
+  const valueStyle = useMemo(
+    () => ({
+      color,
+      fontWeight: color === theme.colors.foregroundMuted ? undefined : theme.fontWeight.bold,
+    }),
+    [color, theme.colors.foregroundMuted, theme.fontWeight.bold],
+  );
+  return <AgentControlTrigger {...props} ref={ref} iconColor={color} valueStyle={valueStyle} />;
+});
+
+const ThemedModeControlTrigger = withUnistyles(ModeControlTrigger, (theme) => ({ theme }));
 
 export interface AgentModeControlValue {
   provider: string;
@@ -87,7 +139,6 @@ export function AgentModeControl({
   surface = "toolbar",
   onClose,
 }: AgentModeControlValue & { surface?: "toolbar" | "sheet"; onClose?: () => void }) {
-  const { theme } = useUnistyles();
   const { presentation } = useComposerControlLayout();
   const { t } = useTranslation();
   const { isActiveComposer } = useComposerKeyboardScope();
@@ -104,11 +155,6 @@ export function AgentModeControl({
   }, [modeOptions, selectedModeId]);
 
   const Icon = getAgentModeIcon(provider, selectedMode?.id ?? "", providerDefinitions);
-  const iconColor = resolveAgentModeColor(
-    selectedMode?.colorTier ??
-      getModeVisuals(provider, selectedMode?.id ?? "", providerDefinitions)?.colorTier,
-    theme.colors,
-  );
   const selectedModeLabel = selectedMode ? formatAgentModeLabel(selectedMode) : "";
 
   const allOptions = useMemo<ComboboxOption[]>(
@@ -170,21 +216,20 @@ export function AgentModeControl({
       active: boolean;
       onPress: () => void;
     }): ReactElement => (
-      <ModeComboboxOption
+      <ThemedModeComboboxOption
         option={args.option}
         selected={args.selected}
         active={args.active}
         onPress={args.onPress}
         provider={provider}
         providerDefinitions={providerDefinitions}
-        iconColor={resolveAgentModeColor(
+        colorTier={
           modeOptions.find((mode) => mode.id === args.option.id)?.colorTier ??
-            getModeVisuals(provider, args.option.id, providerDefinitions)?.colorTier,
-          theme.colors,
-        )}
+          getModeVisuals(provider, args.option.id, providerDefinitions)?.colorTier
+        }
       />
     ),
-    [modeOptions, provider, providerDefinitions, theme.colors],
+    [modeOptions, provider, providerDefinitions],
   );
 
   const sheetHeader = useMemo<SheetHeader>(
@@ -205,10 +250,14 @@ export function AgentModeControl({
     <>
       <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
         <TooltipTrigger asChild triggerRefProp="ref">
-          <AgentControlTrigger
+          <ThemedModeControlTrigger
             ref={anchorRef}
             icon={Icon}
-            iconColor={iconColor}
+            modeId={selectedMode.id}
+            colorTier={
+              selectedMode.colorTier ??
+              getModeVisuals(provider, selectedMode.id, providerDefinitions)?.colorTier
+            }
             surface={surface}
             label={t("agentControls.mode.title")}
             value={selectedModeLabel}

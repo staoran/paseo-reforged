@@ -151,12 +151,28 @@ const lightStatusColors = {
   statusMerged: "#7347af",
 };
 
+// Mode colors carry readable risk labels on light interactive surfaces
+const lightModeColors = {
+  modeDanger: "#b91c1c",
+  modeModerate: "#b45309",
+  modeAcceptEdits: "#7c3aed",
+  modePlanning: "#0e7490",
+};
+
 const darkStatusColors = {
   // L=0.70, chroma 55% of gamut max
   statusSuccess: "#6cb17b",
   statusDanger: "#d8847b",
   statusWarning: "#c09664",
   statusMerged: "#a890d5",
+};
+
+// Mode colors carry readable risk labels on dark interactive surfaces
+const darkModeColors = {
+  modeDanger: "#fca5a5",
+  modeModerate: "#f59e0b",
+  modeAcceptEdits: "#d8b4fe",
+  modePlanning: "#06b6d4",
 };
 
 // Status *dot* colors — the small filled discs on a sidebar row, and the glyphs that stand in
@@ -289,6 +305,7 @@ export function buildLightSemanticColors(tint: LightThemeConfig) {
 
     ...lightDiffColors,
     ...lightStatusColors,
+    ...lightModeColors,
     ...lightStatusDotColors,
 
     terminal: {
@@ -420,6 +437,7 @@ export function buildDarkSemanticColors(tint: DarkThemeConfig) {
 
     ...darkDiffColors,
     ...darkStatusColors,
+    ...darkModeColors,
     ...darkStatusDotColors,
 
     terminal: {

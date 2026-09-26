@@ -6,21 +6,21 @@ export const FAST_MODE_FEATURE_ID = "fast_mode";
 
 /** Resolve a mode's risk signal against the active theme */
 export function resolveAgentModeColor(
+  modeId: string,
   colorTier: string | undefined,
   colors: Theme["colors"],
 ): string {
   if (colorTier?.startsWith("#") && /^#[\da-fA-F]{3}(?:[\da-fA-F]{3})?$/u.test(colorTier)) {
     return colorTier;
   }
+  if (modeId === "acceptEdits") return colors.modeAcceptEdits;
   switch (colorTier) {
-    case "safe":
-      return colors.statusSuccess;
     case "moderate":
-      return colors.statusWarning;
+      return colors.modeModerate;
     case "dangerous":
-      return colors.statusDanger;
+      return colors.modeDanger;
     case "planning":
-      return colors.statusMerged;
+      return colors.modePlanning;
     default:
       return colors.foregroundMuted;
   }

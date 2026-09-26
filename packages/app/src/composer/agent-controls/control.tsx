@@ -1,5 +1,11 @@
 import { forwardRef, useCallback, type ComponentProps } from "react";
-import { Text, View, type PressableStateCallbackType } from "react-native";
+import {
+  Text,
+  View,
+  type PressableStateCallbackType,
+  type StyleProp,
+  type TextStyle,
+} from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { useComposerControlLayout } from "@/composer/agent-controls/layout-context";
@@ -15,6 +21,7 @@ type AgentControlTriggerProps = Omit<
   surface: "toolbar" | "sheet";
   label: string;
   value?: string;
+  valueStyle?: StyleProp<TextStyle>;
   showToolbarLabel?: boolean;
   showCaret?: boolean;
   open?: boolean;
@@ -30,6 +37,7 @@ export const AgentControlTrigger = forwardRef<View, AgentControlTriggerProps>(
       surface,
       label,
       value,
+      valueStyle,
       showToolbarLabel = true,
       showCaret = false,
       open = false,
@@ -85,7 +93,10 @@ export const AgentControlTrigger = forwardRef<View, AgentControlTriggerProps>(
           </Text>
         ) : null}
         {showValue ? (
-          <Text style={isSheet ? styles.sheetValue : styles.toolbarValue} numberOfLines={1}>
+          <Text
+            style={[isSheet ? styles.sheetValue : styles.toolbarValue, valueStyle]}
+            numberOfLines={1}
+          >
             {value ?? label}
           </Text>
         ) : null}
