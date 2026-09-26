@@ -256,6 +256,14 @@ jobs:
             ~/.gradle/wrapper
           key: paseo-android-gradle-v2-${{ runner.os }}-${{ runner.arch }}-java21-production-apk-arm64-partial-${{ steps.release-source.outputs.commit }}
 
+      - name: Retain release source maps for diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: Paseo-Reforged-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}-android-source-maps
+          path: ${{ runner.temp }}/paseo-reforged-source-maps
+          if-no-files-found: error
+          retention-days: 90
+
       - name: Validate Android APK
         shell: bash
         run: |
@@ -270,7 +278,8 @@ jobs:
           fi
 
           "$apksigner" verify --verbose --print-certs "$APK_PATH"
-          actual_cert_sha256="$("$apksigner" verify --print-certs "$APK_PATH" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')"
+          cert_details="$("$apksigner" verify --print-certs "$APK_PATH")"
+          actual_cert_sha256="$(awk '/certificate SHA-256 digest:/ { print $NF; exit }' <<< "$cert_details" | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')"
           expected_cert_sha256="$(printf '%s' "$EXPECTED_SIGNING_CERT_SHA256" | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')"
           if [[ "$actual_cert_sha256" != "$expected_cert_sha256" ]]; then
             echo "::error::APK signing certificate does not match the Reforged production certificate."
@@ -302,14 +311,6 @@ jobs:
           fi
 
           echo "Verified package=sh.paseo.reforged versionName=$RELEASE_BASE_VERSION nativeCode=arm64-v8a"
-
-      - name: Retain release source maps for diagnostics
-        uses: actions/upload-artifact@v4
-        with:
-          name: Paseo-Reforged-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}-android-source-maps
-          path: ${{ runner.temp }}/paseo-reforged-source-maps
-          if-no-files-found: error
-          retention-days: 90
 
       - name: Ensure GitHub release exists
         env:
