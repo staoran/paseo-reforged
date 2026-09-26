@@ -114,6 +114,12 @@ export const ptBR: TranslationResources = {
     },
   },
   composer: {
+    selection: {
+      ask: "Perguntar",
+      askInNewWindow: "Perguntar em nova janela",
+      savePreset: "Salvar como predefinição",
+      savedPreset: "Salvo como predefinição",
+    },
     presets: {
       title: "Prompts salvos",
       editTitle: "Editar prompt",
@@ -340,9 +346,6 @@ export const ptBR: TranslationResources = {
     },
     actions: {
       copyCode: "Copiar código",
-      ask: "Perguntar sobre a seleção",
-      rewrite: "Reescrever a seleção",
-      rewriteInstruction: "Reescreva este texto",
       copyTurn: "Copiar turno",
       copyMessage: "Copiar mensagem",
       forkMenu: "Bifurcar mensagem",

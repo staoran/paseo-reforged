@@ -109,6 +109,12 @@ export const en = {
     },
   },
   composer: {
+    selection: {
+      ask: "Ask",
+      askInNewWindow: "Ask in new window",
+      savePreset: "Save as preset",
+      savedPreset: "Saved as preset",
+    },
     presets: {
       title: "Prompt presets",
       editTitle: "Edit prompt preset",
@@ -333,9 +339,6 @@ export const en = {
     },
     actions: {
       copyCode: "Copy code",
-      ask: "Ask about selection",
-      rewrite: "Rewrite selection",
-      rewriteInstruction: "Rewrite this text",
       copyTurn: "Copy turn",
       copyMessage: "Copy message",
       forkMenu: "Fork chat from here",

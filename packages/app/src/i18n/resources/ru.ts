@@ -114,6 +114,12 @@ export const ru: TranslationResources = {
     },
   },
   composer: {
+    selection: {
+      ask: "Спросить",
+      askInNewWindow: "Спросить в новом окне",
+      savePreset: "Сохранить как шаблон",
+      savedPreset: "Сохранено как шаблон",
+    },
     presets: {
       title: "Шаблоны запросов",
       editTitle: "Изменить шаблон",
@@ -340,9 +346,6 @@ export const ru: TranslationResources = {
     },
     actions: {
       copyCode: "Скопировать код",
-      ask: "Спросить о выделенном",
-      rewrite: "Переписать выделенное",
-      rewriteInstruction: "Перепиши этот текст",
       copyTurn: "Скопировать ответ",
       copyMessage: "Копировать сообщение",
       forkMenu: "Форкнуть чат отсюда",

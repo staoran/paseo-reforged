@@ -43,16 +43,16 @@ describe("assistant selection actions", () => {
     vi.unstubAllGlobals();
   });
 
-  it("shows ask and rewrite only for a valid assistant selection and clears after action", async () => {
-    const onComposeSelection = vi.fn();
+  it("shows the three legacy actions for chat text and clears after each action", async () => {
+    const onSelectionAction = vi.fn();
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
     act(() => {
       root?.render(
-        <AssistantSelectionCopySurface onComposeSelection={onComposeSelection}>
-          <div data-testid="assistant-message">
-            <span>Selected answer</span>
+        <AssistantSelectionCopySurface enabled onSelectionAction={onSelectionAction}>
+          <div data-testid="agent-chat-scroll">
+            <span>Selected chat text</span>
           </div>
         </AssistantSelectionCopySurface>,
       );
@@ -62,28 +62,51 @@ describe("assistant selection actions", () => {
     await updateSelection();
 
     const ask = document.querySelector<HTMLButtonElement>('[data-testid="chat-selection-ask"]');
-    const rewrite = document.querySelector<HTMLButtonElement>(
-      '[data-testid="chat-selection-rewrite"]',
+    const askNew = document.querySelector<HTMLButtonElement>(
+      '[data-testid="chat-selection-ask-new-window"]',
     );
-    expect(ask?.textContent).toBe(i18n.t("message.actions.ask"));
-    expect(rewrite?.textContent).toBe(i18n.t("message.actions.rewrite"));
+    const save = document.querySelector<HTMLButtonElement>(
+      '[data-testid="chat-selection-save-preset"]',
+    );
+    expect(ask?.textContent).toBe(i18n.t("composer.selection.ask"));
+    expect(askNew?.textContent).toBe(i18n.t("composer.selection.askInNewWindow"));
+    expect(save?.textContent).toBe(i18n.t("composer.selection.savePreset"));
 
     await act(async () => ask?.click());
-    expect(onComposeSelection).toHaveBeenCalledWith("Selected answer", "ask");
+    expect(onSelectionAction).toHaveBeenCalledWith("Selected chat text", "ask");
     expect(window.getSelection()?.rangeCount).toBe(0);
     expect(document.querySelector('[data-testid="chat-selection-actions"]')).toBeNull();
+
+    selectText(container.querySelector("span")!);
+    await updateSelection();
+    await act(async () =>
+      document
+        .querySelector<HTMLButtonElement>('[data-testid="chat-selection-ask-new-window"]')
+        ?.click(),
+    );
+    expect(onSelectionAction).toHaveBeenCalledWith("Selected chat text", "askInNewWindow");
+
+    selectText(container.querySelector("span")!);
+    await updateSelection();
+    await act(async () =>
+      document
+        .querySelector<HTMLButtonElement>('[data-testid="chat-selection-save-preset"]')
+        ?.click(),
+    );
+    expect(onSelectionAction).toHaveBeenCalledWith("Selected chat text", "savePreset");
+    expect(onSelectionAction).toHaveBeenCalledTimes(3);
   });
 
   it("does not expose actions for a selection outside the surface", async () => {
-    const onComposeSelection = vi.fn();
+    const onSelectionAction = vi.fn();
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
     act(() => {
       root?.render(
         <>
-          <AssistantSelectionCopySurface onComposeSelection={onComposeSelection}>
-            <div data-testid="assistant-message">
+          <AssistantSelectionCopySurface enabled onSelectionAction={onSelectionAction}>
+            <div data-testid="agent-chat-scroll">
               <span>Inside answer</span>
             </div>
           </AssistantSelectionCopySurface>
@@ -95,5 +118,39 @@ describe("assistant selection actions", () => {
     selectText(container.querySelector('[data-testid="outside"]')!);
     await updateSelection();
     expect(document.querySelector('[data-testid="chat-selection-actions"]')).toBeNull();
+  });
+
+  it("rejects selections across chat streams and clears when the pane loses focus", async () => {
+    const onSelectionAction = vi.fn();
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    const render = (enabled: boolean) => (
+      <AssistantSelectionCopySurface enabled={enabled} onSelectionAction={onSelectionAction}>
+        <div data-testid="agent-chat-scroll">
+          <span>First message</span>
+        </div>
+        <div data-testid="agent-chat-scroll">
+          <span>Second message</span>
+        </div>
+      </AssistantSelectionCopySurface>
+    );
+    act(() => root?.render(render(true)));
+
+    const spans = container.querySelectorAll("span");
+    const range = document.createRange();
+    range.setStart(spans[0]!.firstChild!, 0);
+    range.setEnd(spans[1]!.firstChild!, spans[1]!.textContent!.length);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+    await updateSelection();
+    expect(document.querySelector('[data-testid="chat-selection-actions"]')).toBeNull();
+
+    selectText(spans[0]!);
+    await updateSelection();
+    expect(document.querySelector('[data-testid="chat-selection-actions"]')).not.toBeNull();
+    act(() => root?.render(render(false)));
+    expect(document.querySelector('[data-testid="chat-selection-actions"]')).toBeNull();
+    expect(window.getSelection()?.rangeCount).toBe(0);
   });
 });

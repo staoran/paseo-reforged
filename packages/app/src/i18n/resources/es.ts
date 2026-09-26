@@ -114,6 +114,12 @@ export const es: TranslationResources = {
     },
   },
   composer: {
+    selection: {
+      ask: "Preguntar",
+      askInNewWindow: "Preguntar en ventana nueva",
+      savePreset: "Guardar como predefinido",
+      savedPreset: "Guardado como predefinido",
+    },
     presets: {
       title: "Plantillas de instrucciones",
       editTitle: "Editar plantilla",
@@ -341,9 +347,6 @@ export const es: TranslationResources = {
     },
     actions: {
       copyCode: "Copiar código",
-      ask: "Preguntar sobre la selección",
-      rewrite: "Reescribir la selección",
-      rewriteInstruction: "Reescribe este texto",
       copyTurn: "Copiar turno",
       copyMessage: "Copiar mensaje",
       forkMenu: "Bifurcar mensaje",

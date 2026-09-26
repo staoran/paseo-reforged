@@ -21,6 +21,8 @@ import invariant from "tiny-invariant";
 import { shallow, useShallow } from "zustand/shallow";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { AgentStreamView, type AgentStreamViewHandle } from "@/agent-stream/view";
+import type { ChatSelectionAction } from "@/assistant-selection-copy/actions";
+import { openSeededDraftWindow } from "@/assistant-selection-copy/open-seeded-draft-window";
 import { ArchivedAgentCallout } from "@/components/archived-agent-callout";
 import { ComposerDock } from "@/composer/dock";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
@@ -79,6 +81,7 @@ import { WorkspaceDraftAgentTab } from "@/composer/draft/workspace-tab";
 import { AgentTracks, hasAgentTracks } from "@/panels/agent-tracks";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { buildDraftStoreKey, generateDraftId } from "@/stores/draft-keys";
+import { usePromptPresetsStore } from "@/stores/prompt-presets-store";
 import {
   selectAgentTimelineState,
   selectAgentTurnPresentation,
@@ -1161,6 +1164,8 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
 }) {
   const { t } = useTranslation();
+  const isCompactFormFactor = useIsCompactFormFactor();
+  const saveSelectionPreset = usePromptPresetsStore((state) => state.saveSelectionPreset);
   const subagentRows = useSubagentsForParent({ serverId, parentAgentId: agentId });
   const tasks = useSessionStore((state): TodoEntry[] | undefined =>
     state.sessions[serverId]?.agentTasks.get(agentId),
@@ -1224,20 +1229,19 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
       composerState,
     ],
   );
-  const handleComposeSelection = useCallback(
-    (text: string, action: "ask" | "rewrite") => {
-      const quote = text
-        .split("\n")
-        .map((line) => `> ${line}`)
-        .join("\n");
-      const next =
-        action === "rewrite"
-          ? `${quote}\n\n${t("message.actions.rewriteInstruction")}`
-          : `${quote}\n\n`;
-      const current = agentInputDraft.textSource.getSnapshot();
-      agentInputDraft.replaceText(current ? `${current}\n\n${next}` : next);
+  const handleSelectionAction = useCallback(
+    (text: string, action: ChatSelectionAction) => {
+      if (action === "ask") {
+        const current = agentInputDraft.textSource.getSnapshot();
+        agentInputDraft.replaceText(current.trim() ? `${current}\n${text}` : text);
+      } else if (action === "askInNewWindow") {
+        openSeededDraftWindow({ serverId, workspaceId, text, splitRight: !isCompactFormFactor });
+      } else {
+        saveSelectionPreset(text);
+        toastApi.show(t("composer.selection.savedPreset"), { variant: "success" });
+      }
     },
-    [agentInputDraft, t],
+    [agentInputDraft, isCompactFormFactor, saveSelectionPreset, serverId, t, toastApi, workspaceId],
   );
   const composerSection = (
     <RenderProfile id={`AgentComposerSection:${agentId}`}>
@@ -1272,7 +1276,8 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
           hasVisibleAgentTracks={hasVisibleAgentTracks}
           toast={toastApi}
           onOpenWorkspaceFile={onOpenWorkspaceFile}
-          onComposeSelection={handleComposeSelection}
+          selectionEnabled={isPaneFocused}
+          onSelectionAction={handleSelectionAction}
         />
       </RenderProfile>
       {hasActiveComposer ? (
@@ -1398,7 +1403,8 @@ const AgentStreamSection = memo(function AgentStreamSection({
   hasVisibleAgentTracks,
   toast,
   onOpenWorkspaceFile,
-  onComposeSelection,
+  selectionEnabled,
+  onSelectionAction,
 }: {
   streamViewRef: React.RefObject<AgentStreamViewHandle | null>;
   serverId: string;
@@ -1411,7 +1417,8 @@ const AgentStreamSection = memo(function AgentStreamSection({
   hasVisibleAgentTracks: boolean;
   toast: ReturnType<typeof useToastHost>["api"];
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
-  onComposeSelection?: (text: string, action: "ask" | "rewrite") => void;
+  selectionEnabled: boolean;
+  onSelectionAction?: (text: string, action: ChatSelectionAction) => void;
 }) {
   const isCompactFormFactor = useIsCompactFormFactor();
   const hasWorkspaceDiffStat = useWorkspaceHasDiffStat(serverId, workspaceId);
@@ -1484,7 +1491,8 @@ const AgentStreamSection = memo(function AgentStreamSection({
       pendingMessageSubmissions={pendingMessageSubmissions}
       turnPresentation={turnPresentation}
       onOpenWorkspaceFile={onOpenWorkspaceFile}
-      onComposeSelection={onComposeSelection}
+      selectionEnabled={selectionEnabled}
+      onSelectionAction={onSelectionAction}
     />
   );
 });

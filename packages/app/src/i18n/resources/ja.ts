@@ -114,6 +114,12 @@ export const ja: TranslationResources = {
     },
   },
   composer: {
+    selection: {
+      ask: "質問",
+      askInNewWindow: "新しいウィンドウで質問",
+      savePreset: "プリセットとして保存",
+      savedPreset: "プリセットとして保存しました",
+    },
     presets: {
       title: "プロンプトプリセット",
       editTitle: "プリセットを編集",
@@ -341,9 +347,6 @@ export const ja: TranslationResources = {
     },
     actions: {
       copyCode: "コードをコピー",
-      ask: "選択範囲について質問",
-      rewrite: "選択範囲を書き換え",
-      rewriteInstruction: "この文章を書き換えてください",
       copyTurn: "ターンをコピー",
       copyMessage: "メッセージをコピー",
       forkMenu: "メッセージをフォーク",

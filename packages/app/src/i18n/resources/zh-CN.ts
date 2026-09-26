@@ -113,6 +113,12 @@ export const zhCN: TranslationResources = {
     },
   },
   composer: {
+    selection: {
+      ask: "提问",
+      askInNewWindow: "新窗口提问",
+      savePreset: "保存为预设",
+      savedPreset: "已保存为预设",
+    },
     presets: {
       title: "提示词预设",
       editTitle: "编辑提示词预设",
@@ -336,9 +342,6 @@ export const zhCN: TranslationResources = {
     },
     actions: {
       copyCode: "复制代码",
-      ask: "追问选中内容",
-      rewrite: "改写选中内容",
-      rewriteInstruction: "请改写这段文字",
       copyTurn: "复制回合",
       copyMessage: "复制消息",
       forkMenu: "分叉消息",

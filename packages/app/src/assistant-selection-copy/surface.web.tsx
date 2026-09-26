@@ -22,11 +22,13 @@ import {
 import { StyleSheet } from "react-native-unistyles";
 import { getOverlayRoot, useOverlayLayer } from "@/lib/overlay-root";
 import { createAssistantSelectionClipboardContent } from "./content.web";
+import type { ChatSelectionAction } from "./actions";
 
 interface AssistantSelectionCopySurfaceProps {
   children: ReactNode;
   style?: StyleProp<ViewStyle>;
-  onComposeSelection?: (text: string, action: "ask" | "rewrite") => void;
+  enabled?: boolean;
+  onSelectionAction?: (text: string, action: ChatSelectionAction) => void;
 }
 
 interface SelectionAction {
@@ -36,6 +38,14 @@ interface SelectionAction {
 
 const DISPLAY_CONTENTS: CSSProperties = { display: "contents" };
 const VIEWPORT_GAP = 8;
+const CHAT_SCROLL_SELECTOR = '[data-testid="agent-chat-scroll"]';
+
+/** Locate the chat stream for a text or element selection endpoint */
+function closestChatStream(node: Node | null): Element | null {
+  if (!node) return null;
+  const element = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
+  return element?.closest(CHAT_SCROLL_SELECTOR) ?? null;
+}
 
 /** Keep the selected text intact until a toolbar action runs */
 function preserveSelection(event: MouseEvent<HTMLDivElement>): void {
@@ -73,16 +83,18 @@ function getSelectionActionPosition(
   };
 }
 
-/** Preserve rich copy behavior and expose selected assistant text actions on web */
+/** Preserve rich copy behavior and expose selected chat text actions on web */
 export function AssistantSelectionCopySurface({
   children,
   style,
-  onComposeSelection,
+  enabled = true,
+  onSelectionAction,
 }: AssistantSelectionCopySurfaceProps) {
   const { t } = useTranslation();
   const overlayLayer = useOverlayLayer("floating");
   const rootRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<number | null>(null);
+  const wasEnabledRef = useRef(enabled);
   const [selectionAction, setSelectionAction] = useState<SelectionAction | null>(null);
   const [toolbarSize, setToolbarSize] = useState({ width: 0, height: 0 });
 
@@ -90,8 +102,10 @@ export function AssistantSelectionCopySurface({
     const selection = window.getSelection();
     const root = rootRef.current;
     if (
-      !onComposeSelection ||
+      !enabled ||
+      !onSelectionAction ||
       !selection ||
+      selection.isCollapsed ||
       selection.rangeCount !== 1 ||
       !root ||
       !selection.anchorNode ||
@@ -102,8 +116,14 @@ export function AssistantSelectionCopySurface({
       setSelectionAction(null);
       return;
     }
+    const anchorStream = closestChatStream(selection.anchorNode);
+    const focusStream = closestChatStream(selection.focusNode);
+    if (!anchorStream || anchorStream !== focusStream || !root.contains(anchorStream)) {
+      setSelectionAction(null);
+      return;
+    }
     const text = selection.toString().trim();
-    if (!text || !createAssistantSelectionClipboardContent(selection)) {
+    if (!text) {
       setSelectionAction(null);
       return;
     }
@@ -116,13 +136,16 @@ export function AssistantSelectionCopySurface({
       text,
       rect: { top: bounds.top, bottom: bounds.bottom, left: bounds.left, width: bounds.width },
     });
-  }, [onComposeSelection]);
+  }, [enabled, onSelectionAction]);
 
   useEffect(() => {
-    if (!onComposeSelection) {
+    if (!enabled || !onSelectionAction) {
+      if (wasEnabledRef.current && !enabled) window.getSelection()?.removeAllRanges();
+      wasEnabledRef.current = enabled;
       setSelectionAction(null);
       return;
     }
+    wasEnabledRef.current = enabled;
     const scheduleUpdate = () => {
       if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
       frameRef.current = requestAnimationFrame(() => {
@@ -142,19 +165,20 @@ export function AssistantSelectionCopySurface({
       window.removeEventListener("resize", scheduleUpdate);
       window.removeEventListener("blur", clearSelection);
     };
-  }, [onComposeSelection, updateSelection]);
+  }, [enabled, onSelectionAction, updateSelection]);
 
   const compose = useCallback(
-    (action: "ask" | "rewrite") => {
+    (action: ChatSelectionAction) => {
       if (!selectionAction) return;
-      onComposeSelection?.(selectionAction.text, action);
+      onSelectionAction?.(selectionAction.text, action);
       window.getSelection()?.removeAllRanges();
       setSelectionAction(null);
     },
-    [onComposeSelection, selectionAction],
+    [onSelectionAction, selectionAction],
   );
   const handleAsk = useCallback(() => compose("ask"), [compose]);
-  const handleRewrite = useCallback(() => compose("rewrite"), [compose]);
+  const handleAskInNewWindow = useCallback(() => compose("askInNewWindow"), [compose]);
+  const handleSavePreset = useCallback(() => compose("savePreset"), [compose]);
   const handleToolbarLayout = useCallback((event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;
     setToolbarSize((current) =>
@@ -185,7 +209,7 @@ export function AssistantSelectionCopySurface({
       style={DISPLAY_CONTENTS}
     >
       <View style={style}>{children}</View>
-      {selectionAction && onComposeSelection && actionStyle
+      {selectionAction && onSelectionAction && actionStyle
         ? createPortal(
             <div style={actionStyle} onMouseDown={preserveSelection}>
               <View
@@ -199,16 +223,25 @@ export function AssistantSelectionCopySurface({
                   accessibilityRole="button"
                   testID="chat-selection-ask"
                 >
-                  <Text style={styles.actionText}>{t("message.actions.ask")}</Text>
+                  <Text style={styles.actionText}>{t("composer.selection.ask")}</Text>
                 </Pressable>
                 <View style={styles.divider} />
                 <Pressable
-                  onPress={handleRewrite}
+                  onPress={handleAskInNewWindow}
                   style={styles.action}
                   accessibilityRole="button"
-                  testID="chat-selection-rewrite"
+                  testID="chat-selection-ask-new-window"
                 >
-                  <Text style={styles.actionText}>{t("message.actions.rewrite")}</Text>
+                  <Text style={styles.actionText}>{t("composer.selection.askInNewWindow")}</Text>
+                </Pressable>
+                <View style={styles.divider} />
+                <Pressable
+                  onPress={handleSavePreset}
+                  style={styles.action}
+                  accessibilityRole="button"
+                  testID="chat-selection-save-preset"
+                >
+                  <Text style={styles.actionText}>{t("composer.selection.savePreset")}</Text>
                 </Pressable>
               </View>
             </div>,

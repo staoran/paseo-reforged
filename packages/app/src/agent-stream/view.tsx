@@ -87,6 +87,7 @@ import {
 } from "./bottom-anchor-controller";
 import { createAssistantImageOccurrenceKey } from "@/assistant-image/acquisition-cache";
 import { AssistantSelectionCopySurface } from "@/assistant-selection-copy/surface";
+import type { ChatSelectionAction } from "@/assistant-selection-copy/actions";
 import {
   AssistantFileLinkResolverProvider,
   normalizeInlinePathTarget,
@@ -286,7 +287,8 @@ export interface AgentStreamViewProps {
   bottomOverlayControlClearance?: number;
   toast?: ToastApi | null;
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
-  onComposeSelection?: (text: string, action: "ask" | "rewrite") => void;
+  selectionEnabled?: boolean;
+  onSelectionAction?: (text: string, action: ChatSelectionAction) => void;
   readOnly?: boolean;
   historyPagination?: {
     hasOlder: boolean;
@@ -341,7 +343,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       bottomOverlayControlClearance,
       toast,
       onOpenWorkspaceFile,
-      onComposeSelection,
+      selectionEnabled,
+      onSelectionAction,
       readOnly = false,
       historyPagination,
     },
@@ -1112,7 +1115,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         <ToolCallSheetProvider>
           <AssistantSelectionCopySurface
             style={stylesheet.container}
-            onComposeSelection={onComposeSelection}
+            enabled={selectionEnabled === true}
+            onSelectionAction={onSelectionAction}
           >
             <MessageOuterSpacingProvider disableOuterSpacing>
               {streamRenderStrategy.render({
@@ -1280,7 +1284,8 @@ function agentStreamViewPropsEqual(
   }
   if (left.toast !== right.toast) reasons.push("toast");
   if (left.onOpenWorkspaceFile !== right.onOpenWorkspaceFile) reasons.push("onOpenWorkspaceFile");
-  if (left.onComposeSelection !== right.onComposeSelection) reasons.push("onComposeSelection");
+  if (left.selectionEnabled !== right.selectionEnabled) reasons.push("selectionEnabled");
+  if (left.onSelectionAction !== right.onSelectionAction) reasons.push("onSelectionAction");
   if (left.readOnly !== right.readOnly) reasons.push("readOnly");
   if (!historyPaginationPropsEqual(left.historyPagination, right.historyPagination)) {
     reasons.push("historyPagination");

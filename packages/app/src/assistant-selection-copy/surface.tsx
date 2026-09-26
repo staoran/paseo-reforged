@@ -1,10 +1,12 @@
 import type { ReactNode } from "react";
 import { View, type StyleProp, type ViewStyle } from "react-native";
+import type { ChatSelectionAction } from "./actions";
 
 interface AssistantSelectionCopySurfaceProps {
   children: ReactNode;
   style?: StyleProp<ViewStyle>;
-  onComposeSelection?: (text: string, action: "ask" | "rewrite") => void;
+  enabled?: boolean;
+  onSelectionAction?: (text: string, action: ChatSelectionAction) => void;
 }
 
 export function AssistantSelectionCopySurface({

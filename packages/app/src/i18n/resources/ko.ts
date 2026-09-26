@@ -113,6 +113,12 @@ export const ko: TranslationResources = {
     },
   },
   composer: {
+    selection: {
+      ask: "질문하기",
+      askInNewWindow: "새 창에서 질문하기",
+      savePreset: "프리셋으로 저장",
+      savedPreset: "프리셋으로 저장됨",
+    },
     presets: {
       title: "프롬프트 프리셋",
       editTitle: "프리셋 편집",
@@ -337,9 +343,6 @@ export const ko: TranslationResources = {
     },
     actions: {
       copyCode: "코드 복사",
-      ask: "선택 내용에 대해 질문",
-      rewrite: "선택 내용 다시 쓰기",
-      rewriteInstruction: "이 텍스트를 다시 써 주세요",
       copyTurn: "턴 복사",
       copyMessage: "메시지 복사",
       forkMenu: "여기에서 채팅 분기",

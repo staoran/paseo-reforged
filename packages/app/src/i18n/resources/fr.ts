@@ -116,6 +116,12 @@ export const fr: TranslationResources = {
     },
   },
   composer: {
+    selection: {
+      ask: "Demander",
+      askInNewWindow: "Demander dans une nouvelle fenêtre",
+      savePreset: "Enregistrer comme préréglage",
+      savedPreset: "Enregistré comme préréglage",
+    },
     presets: {
       title: "Prompts enregistrés",
       editTitle: "Modifier le prompt",
@@ -342,9 +348,6 @@ export const fr: TranslationResources = {
     },
     actions: {
       copyCode: "Copier le code",
-      ask: "Questionner la sélection",
-      rewrite: "Réécrire la sélection",
-      rewriteInstruction: "Réécris ce texte",
       copyTurn: "Copier le tour",
       copyMessage: "Copier le message",
       forkMenu: "Dupliquer le message",

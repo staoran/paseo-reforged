@@ -113,6 +113,12 @@ export const ar: TranslationResources = {
     },
   },
   composer: {
+    selection: {
+      ask: "اسأل",
+      askInNewWindow: "اسأل في نافذة جديدة",
+      savePreset: "حفظ كإعداد مسبق",
+      savedPreset: "تم الحفظ كإعداد مسبق",
+    },
     presets: {
       title: "قوالب المطالبات",
       editTitle: "تحرير قالب المطالبة",
@@ -336,9 +342,6 @@ export const ar: TranslationResources = {
     },
     actions: {
       copyCode: "نسخ الرمز",
-      ask: "اسأل عن النص المحدد",
-      rewrite: "أعد صياغة النص المحدد",
-      rewriteInstruction: "أعد صياغة هذا النص",
       copyTurn: "نسخ بدوره",
       copyMessage: "انسخ الرسالة",
       forkMenu: "تفريع الرسالة",

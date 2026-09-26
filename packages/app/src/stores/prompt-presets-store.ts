@@ -20,6 +20,7 @@ export type PromptPreset = z.infer<typeof PromptPresetSchema>;
 interface PromptPresetsState {
   presets: PromptPreset[];
   savePreset: (input: { id?: string; title: string; content: string }) => void;
+  saveSelectionPreset: (content: string) => void;
   deletePreset: (id: string) => void;
 }
 
@@ -37,6 +38,19 @@ export const usePromptPresetsStore = create<PromptPresetsState>()(
               id && state.presets.some((preset) => preset.id === id)
                 ? state.presets.map((preset) => (preset.id === id ? next : preset))
                 : [...state.presets, next],
+          };
+        }),
+      saveSelectionPreset: (content) =>
+        set((state) => {
+          const text = content.trim();
+          if (!text || state.presets.some((preset) => preset.content === text)) return state;
+          const title = text
+            .split(/\r?\n/u)
+            .find((line) => line.trim())!
+            .trim()
+            .slice(0, 60);
+          return {
+            presets: [...state.presets, { id: generateMessageId(), title, content: text }],
           };
         }),
       deletePreset: (id) =>

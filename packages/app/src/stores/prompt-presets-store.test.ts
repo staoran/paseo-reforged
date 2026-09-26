@@ -49,3 +49,13 @@ test("saves, edits, rehydrates, and deletes a prompt without changing its format
   store.deletePreset(created!.id);
   expect(usePromptPresetsStore.getState().presets).toEqual([]);
 });
+
+test("saves selected chat text once and keeps it available for composer insertion", () => {
+  usePromptPresetsStore.setState({ presets: [] });
+  const store = usePromptPresetsStore.getState();
+  store.saveSelectionPreset("  First line\nSecond line  ");
+  store.saveSelectionPreset("First line\nSecond line");
+  expect(usePromptPresetsStore.getState().presets).toMatchObject([
+    { title: "First line", content: "First line\nSecond line" },
+  ]);
+});
