@@ -41,6 +41,16 @@ function createRecordingClipboard(
 }
 
 describe("createMarkdownClipboardContent", () => {
+  it("formats adjacent-punctuation strong in rich html and preserves the markdown source", () => {
+    const markdown = "**外发员工预请款要单列一条线。**例如财务先给员工运营款 300 元";
+    const content = createMarkdownClipboardContent(markdown);
+
+    expect(content.plainText).toBe(markdown);
+    expect(content.html).toContain(
+      "<strong>外发员工预请款要单列一条线。</strong>例如财务先给员工运营款 300 元",
+    );
+  });
+
   it("renders markdown structures to clipboard html", () => {
     const markdown = [
       "# Heading",

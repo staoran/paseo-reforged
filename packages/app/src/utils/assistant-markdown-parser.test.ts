@@ -1,7 +1,52 @@
 import { describe, expect, it } from "vitest";
 import { createAssistantMarkdownParser } from "./assistant-markdown-parser";
+import { createMarkdownParser } from "./markdown-parser";
 
 describe("createAssistantMarkdownParser", () => {
+  it.each([
+    ["completed", false],
+    ["streaming", true],
+  ])("renders the reported adjacent-punctuation strong in %s text", (_phase, streaming) => {
+    const parser = createAssistantMarkdownParser({ streaming });
+    const source =
+      "**外发员工预请款要单列一条线。**例如财务先给员工运营款 300 元，员工现场付承运方 220 元，再退回 80 元";
+
+    expect(parser.renderInline(source)).toBe(
+      "<strong>外发员工预请款要单列一条线。</strong>例如财务先给员工运营款 300 元，员工现场付承运方 220 元，再退回 80 元",
+    );
+  });
+
+  it("keeps strong stable while the punctuation-adjacent closing marker arrives", () => {
+    const parser = createAssistantMarkdownParser({ streaming: true });
+
+    for (const source of ["**外发。", "**外发。*", "**外发。**"]) {
+      expect(parser.renderInline(source)).toBe("<strong>外发。</strong>");
+    }
+    expect(parser.renderInline("**外发。**例如")).toBe("<strong>外发。</strong>例如");
+  });
+
+  it.each([
+    ["**核销”**这些", "<strong>核销”</strong>这些"],
+    ["前文。**后续**", "前文。<strong>后续</strong>"],
+    [
+      "[**句末。**后续](https://example.com)",
+      '<a href="https://example.com"><strong>句末。</strong>后续</a>',
+    ],
+  ])("pairs adjacent strong without changing surrounding Markdown: %s", (source, expected) => {
+    expect(createAssistantMarkdownParser().renderInline(source)).toBe(expected);
+  });
+
+  it("keeps the tolerance in assistant prose and leaves literal stars alone", () => {
+    const parser = createAssistantMarkdownParser();
+    const source = "**外发。**例如";
+
+    expect(createMarkdownParser({ linkify: true }).renderInline(source)).toBe(source);
+    expect(parser.renderInline("\\*\\*外发。\\*\\*例如")).toBe(source);
+    expect(parser.renderInline("`**外发。**例如`")).toBe("<code>**外发。**例如</code>");
+    expect(parser.render("```md\n**外发。**例如\n```")).not.toContain("<strong>");
+    expect(parser.render("```md\n**外发。**例如\n```")).toContain(source);
+  });
+
   it("keeps bold text bold through every partial closing marker", () => {
     const parser = createAssistantMarkdownParser({ streaming: true });
 

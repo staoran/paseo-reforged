@@ -3,6 +3,10 @@ import { createCompactMarkdownStyles, createMarkdownStyles } from "./markdown-st
 import { darkTheme } from "./theme";
 
 describe("createMarkdownStyles", () => {
+  it("uses bold weight for Markdown strong", () => {
+    expect(createMarkdownStyles(darkTheme).strong.fontWeight).toBe(darkTheme.fontWeight.bold);
+  });
+
   it("uses the content size for conversation prose and list markers", () => {
     const styles = createMarkdownStyles(darkTheme);
     const proseLineHeight = Math.round(darkTheme.fontSize.content * 1.4);
