@@ -6,25 +6,45 @@ export interface WorkspaceAgentActivity {
   agentId: string;
   status: WorkspaceDescriptor["status"];
   enteredAt: Date | null;
+  hasUnreadAttention: boolean;
+  hasClearableAttention: boolean;
+  hasMarkUnreadCandidate: boolean;
 }
 
+export interface WorkspaceReadActionAvailability {
+  hasClearableAttention: boolean;
+  canMarkUnread: boolean;
+}
+
+type WorkspaceAgentReadFacts = Pick<
+  WorkspaceAgentActivity,
+  "hasUnreadAttention" | "hasClearableAttention" | "hasMarkUnreadCandidate"
+>;
+
+/** Uses live turn phase when an Agent status snapshot lags behind its current work */
 function workspaceAgentStatus(agent: Agent): Agent["status"] {
   if (agent.turn.phase === "open") return "running";
   return agent.status === "running" ? "idle" : agent.status;
 }
 
+/** Projects root Agent activity and independent read facts once per Agent directory update */
 export function buildWorkspaceAgentActivityIndex(
   agents: ReadonlyMap<string, Agent>,
   previous?: ReadonlyMap<string, WorkspaceAgentActivity>,
 ): Map<string, WorkspaceAgentActivity> {
   const activityByWorkspaceId = new Map<string, WorkspaceAgentActivity>();
   const latestActivityAtByWorkspaceId = new Map<string, Date>();
+  const readFactsByWorkspaceId = new Map<string, WorkspaceAgentReadFacts>();
 
   for (const agent of agents.values()) {
-    const parentAgent = agent.parentAgentId ? agents.get(agent.parentAgentId) : undefined;
-    if (agent.archivedAt || !agent.workspaceId || !isWorkspaceRootAgent(agent, parentAgent)) {
+    if (agent.archivedAt || !agent.workspaceId) {
       continue;
     }
+
+    const parentAgent = agent.parentAgentId ? agents.get(agent.parentAgentId) : undefined;
+    const isRoot = isWorkspaceRootAgent(agent, parentAgent);
+    recordWorkspaceAgentReadFacts(agent, agent.workspaceId, isRoot, readFactsByWorkspaceId);
+    if (!isRoot) continue;
 
     const enteredAt = agent.attentionTimestamp ?? agent.updatedAt;
     const latestActivityAt = latestActivityAtByWorkspaceId.get(agent.workspaceId);
@@ -43,17 +63,21 @@ export function buildWorkspaceAgentActivityIndex(
       agentId: agent.id,
       status,
       enteredAt,
+      hasUnreadAttention: false,
+      hasClearableAttention: false,
+      hasMarkUnreadCandidate: false,
     });
   }
 
   for (const [workspaceId, activity] of activityByWorkspaceId) {
-    const previousActivity = previous?.get(workspaceId);
-    if (
-      previousActivity?.agentId === activity.agentId &&
-      previousActivity.status === activity.status
-    ) {
-      activityByWorkspaceId.set(workspaceId, previousActivity);
-    }
+    activityByWorkspaceId.set(
+      workspaceId,
+      reconcileWorkspaceAgentActivity(
+        activity,
+        readFactsByWorkspaceId.get(workspaceId),
+        previous?.get(workspaceId),
+      ),
+    );
   }
 
   if (previous && areWorkspaceAgentActivityIndexesIdentical(previous, activityByWorkspaceId)) {
@@ -62,6 +86,78 @@ export function buildWorkspaceAgentActivityIndex(
   return activityByWorkspaceId;
 }
 
+/** Tracks unread visual state for roots while keeping clearable child attention available */
+function recordWorkspaceAgentReadFacts(
+  agent: Agent,
+  workspaceId: string,
+  isRoot: boolean,
+  factsByWorkspaceId: Map<string, WorkspaceAgentReadFacts>,
+): void {
+  const facts = factsByWorkspaceId.get(workspaceId) ?? {
+    hasUnreadAttention: false,
+    hasClearableAttention: false,
+    hasMarkUnreadCandidate: false,
+  };
+  factsByWorkspaceId.set(workspaceId, facts);
+
+  if (
+    agent.requiresAttention === true &&
+    agent.pendingPermissions.length === 0 &&
+    agent.attentionReason !== "permission"
+  ) {
+    facts.hasClearableAttention = true;
+  }
+  if (!isRoot) return;
+
+  if (agent.requiresAttention === true) {
+    facts.hasUnreadAttention = true;
+  } else if (
+    (agent.status === "idle" || agent.status === "closed") &&
+    agent.pendingPermissions.length === 0
+  ) {
+    facts.hasMarkUnreadCandidate = true;
+  }
+}
+
+/** Preserves the current bucket entry time when only read facts change */
+function reconcileWorkspaceAgentActivity(
+  activity: WorkspaceAgentActivity,
+  facts: WorkspaceAgentReadFacts | undefined,
+  previous: WorkspaceAgentActivity | undefined,
+): WorkspaceAgentActivity {
+  const next = { ...activity, ...facts };
+  if (previous?.agentId !== next.agentId || previous.status !== next.status) return next;
+
+  next.enteredAt = previous.enteredAt;
+  if (
+    previous.hasUnreadAttention === next.hasUnreadAttention &&
+    previous.hasClearableAttention === next.hasClearableAttention &&
+    previous.hasMarkUnreadCandidate === next.hasMarkUnreadCandidate
+  ) {
+    return previous;
+  }
+  return next;
+}
+
+/** Exposes read actions only when the Agent facts and Workspace priority allow them */
+export function deriveWorkspaceReadActionAvailability(input: {
+  status: WorkspaceDescriptor["status"] | null;
+  activity: WorkspaceAgentActivity | null;
+  supportsMarkUnread: boolean;
+}): WorkspaceReadActionAvailability {
+  const { status, activity, supportsMarkUnread } = input;
+  const hasClearableAttention =
+    Boolean(activity?.hasClearableAttention) &&
+    (status === "attention" || status === "failed" || status === "done");
+  const canMarkUnread =
+    supportsMarkUnread &&
+    Boolean(activity?.hasMarkUnreadCandidate) &&
+    !activity?.hasClearableAttention &&
+    (status === "attention" || status === "done");
+  return { hasClearableAttention, canMarkUnread };
+}
+
+/** Reuses the index when every Workspace kept the same projected activity object */
 function areWorkspaceAgentActivityIndexesIdentical(
   previous: ReadonlyMap<string, WorkspaceAgentActivity>,
   next: ReadonlyMap<string, WorkspaceAgentActivity>,

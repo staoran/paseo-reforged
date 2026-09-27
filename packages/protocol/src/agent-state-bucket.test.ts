@@ -50,6 +50,18 @@ describe("deriveAgentStateBucket", () => {
     ).toBe("attention");
   });
 
+  it("keeps a read idle agent ready for review", () => {
+    expect(deriveAgentStateBucket({ status: "idle", requiresAttention: false })).toBe("attention");
+  });
+
+  it("keeps an unread closed agent ready for review", () => {
+    expect(deriveAgentStateBucket({ status: "closed", requiresAttention: true })).toBe("attention");
+  });
+
+  it("treats a read closed agent as done", () => {
+    expect(deriveAgentStateBucket({ status: "closed", requiresAttention: false })).toBe("done");
+  });
+
   it("does not count initializing agents as running for workspace buckets", () => {
     expect(
       deriveAgentStateBucket({

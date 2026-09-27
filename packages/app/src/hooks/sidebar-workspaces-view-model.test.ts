@@ -695,6 +695,8 @@ function agent(input: {
   updatedAt?: Date;
   parentAgentId?: string | null;
   archivedAt?: Date | null;
+  requiresAttention?: boolean;
+  attentionReason?: Agent["attentionReason"];
 }): Agent {
   return {
     serverId: "srv",
@@ -720,9 +722,56 @@ function agent(input: {
     model: null,
     parentAgentId: input.parentAgentId ?? null,
     archivedAt: input.archivedAt ?? null,
+    requiresAttention: input.requiresAttention ?? false,
+    attentionReason: input.attentionReason ?? null,
     labels: {},
   };
 }
+
+describe("createSidebarWorkspaceEntry unread presentation", () => {
+  it("keeps read idle Workspace in Ready without unread emphasis", () => {
+    const activity = buildWorkspaceAgentActivityIndex(
+      new Map([["root", agent({ id: "root", workspaceId: "ws-1", status: "idle" })]]),
+    );
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: projectWorkspace("ws-1", "attention"),
+      workspaceAgentActivity: activity,
+    });
+
+    expect(entry.statusBucket).toBe("attention");
+    expect(entry.hasUnreadAttention).toBe(false);
+  });
+
+  it("surfaces unread attention from another root even when the latest Agent is read", () => {
+    const activity = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "unread",
+          agent({
+            id: "unread",
+            workspaceId: "ws-1",
+            status: "closed",
+            updatedAt: new Date(1_000),
+            requiresAttention: true,
+            attentionReason: "finished",
+          }),
+        ],
+        [
+          "latest",
+          agent({ id: "latest", workspaceId: "ws-1", status: "idle", updatedAt: new Date(2_000) }),
+        ],
+      ]),
+    );
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: projectWorkspace("ws-1", "attention"),
+      workspaceAgentActivity: activity,
+    });
+
+    expect(entry.hasUnreadAttention).toBe(true);
+  });
+});
 
 function sessionWith(input: {
   workspaces: WorkspaceDescriptor[];

@@ -158,6 +158,8 @@ Agent lifecycle status stays literal: a parent agent is `idle` when its own turn
 
 Workspace status is an aggregate activity signal computed **per `workspaceId`**. Ownership is never derived from `cwd` — many workspaces may share one directory, and same-`cwd` siblings do not clump under one status. Root agents and cross-workspace subagents contribute their normal state bucket to their own workspace. Same-workspace descendants contribute `running` to the nearest ancestor in that workspace; their non-running attention, permission, and error states stay in the parent's subagents track. This makes a cross-workspace subagent behave like a detached agent for workspace visibility and status without removing its parent relationship.
 
+An `idle` workspace-root agent keeps its workspace in Ready to review after its attention is cleared. Unread attention controls the Ready row's emphasis and read action; it does not move an idle agent to Done. A read `closed` root contributes Done. Clearing attention within Ready preserves `statusEnteredAt`; a transition to Done records the transition time.
+
 Running provider-native subagents contribute `running` to the workspace owned by their parent agent. Their completed, failed, and canceled states stay in the parent's subagents track.
 
 A finished workspace can be marked unread after it has been reviewed. The daemon restores

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { Agent } from "@/stores/session-store";
-import { buildWorkspaceAgentActivityIndex } from "./workspace-agent-activity";
+import {
+  buildWorkspaceAgentActivityIndex,
+  deriveWorkspaceReadActionAvailability,
+} from "./workspace-agent-activity";
 
 function agent(input: {
   id: string;
@@ -144,6 +147,9 @@ describe("workspace agent activity index", () => {
             agentId: "permission",
             status: "needs_input",
             enteredAt: new Date("2026-06-01T10:01:00.000Z"),
+            hasUnreadAttention: false,
+            hasClearableAttention: false,
+            hasMarkUnreadCandidate: false,
           },
         ],
         [
@@ -152,6 +158,9 @@ describe("workspace agent activity index", () => {
             agentId: "attention",
             status: "attention",
             enteredAt: new Date("2026-06-01T10:02:00.000Z"),
+            hasUnreadAttention: true,
+            hasClearableAttention: true,
+            hasMarkUnreadCandidate: false,
           },
         ],
       ]),
@@ -198,6 +207,9 @@ describe("workspace agent activity index", () => {
       agentId: "root",
       status: "running",
       enteredAt: new Date("2026-06-01T10:00:00.000Z"),
+      hasUnreadAttention: false,
+      hasClearableAttention: false,
+      hasMarkUnreadCandidate: false,
     });
   });
 
@@ -231,8 +243,11 @@ describe("workspace agent activity index", () => {
           "workspace-a",
           {
             agentId: "parent",
-            status: "done",
+            status: "attention",
             enteredAt: new Date("2026-06-01T10:00:00.000Z"),
+            hasUnreadAttention: false,
+            hasClearableAttention: false,
+            hasMarkUnreadCandidate: true,
           },
         ],
         [
@@ -241,6 +256,9 @@ describe("workspace agent activity index", () => {
             agentId: "child",
             status: "running",
             enteredAt: new Date("2026-06-01T10:03:00.000Z"),
+            hasUnreadAttention: false,
+            hasClearableAttention: false,
+            hasMarkUnreadCandidate: false,
           },
         ],
       ]),
@@ -317,6 +335,127 @@ describe("workspace agent activity index", () => {
       agentId: "root",
       status: "needs_input",
       enteredAt: new Date("2026-06-01T10:05:00.000Z"),
+      hasUnreadAttention: false,
+      hasClearableAttention: false,
+      hasMarkUnreadCandidate: false,
     });
+  });
+
+  it("keeps an older root's unread attention when a newer root supplies the status", () => {
+    const index = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "unread",
+          agent({
+            id: "unread",
+            workspaceId: "workspace-a",
+            status: "closed",
+            updatedAt: "2026-06-01T10:00:00.000Z",
+            requiresAttention: true,
+            attentionReason: "finished",
+          }),
+        ],
+        [
+          "latest",
+          agent({
+            id: "latest",
+            workspaceId: "workspace-a",
+            status: "idle",
+            updatedAt: "2026-06-01T10:05:00.000Z",
+          }),
+        ],
+      ]),
+    );
+
+    expect(index.get("workspace-a")).toMatchObject({
+      agentId: "latest",
+      status: "attention",
+      hasUnreadAttention: true,
+      hasClearableAttention: true,
+      hasMarkUnreadCandidate: true,
+    });
+    expect(
+      deriveWorkspaceReadActionAvailability({
+        status: "attention",
+        activity: index.get("workspace-a") ?? null,
+        supportsMarkUnread: true,
+      }),
+    ).toEqual({ hasClearableAttention: true, canMarkUnread: false });
+  });
+
+  it("refreshes unread facts without changing the Ready entry time", () => {
+    const previous = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "root",
+          agent({
+            id: "root",
+            workspaceId: "workspace-a",
+            status: "idle",
+            updatedAt: "2026-06-01T10:00:00.000Z",
+            requiresAttention: true,
+            attentionReason: "finished",
+          }),
+        ],
+      ]),
+    );
+    const next = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "root",
+          agent({
+            id: "root",
+            workspaceId: "workspace-a",
+            status: "idle",
+            updatedAt: "2026-06-01T10:05:00.000Z",
+          }),
+        ],
+      ]),
+      previous,
+    );
+
+    expect(next).not.toBe(previous);
+    expect(next.get("workspace-a")).toMatchObject({
+      status: "attention",
+      enteredAt: new Date("2026-06-01T10:00:00.000Z"),
+      hasUnreadAttention: false,
+      hasClearableAttention: false,
+      hasMarkUnreadCandidate: true,
+    });
+    expect(
+      deriveWorkspaceReadActionAvailability({
+        status: "attention",
+        activity: next.get("workspace-a") ?? null,
+        supportsMarkUnread: true,
+      }),
+    ).toEqual({ hasClearableAttention: false, canMarkUnread: true });
+  });
+
+  it("does not offer mark unread for permission, failure, or running buckets", () => {
+    const activity = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "root",
+          agent({
+            id: "root",
+            workspaceId: "workspace-a",
+            status: "idle",
+            updatedAt: "2026-06-01T10:00:00.000Z",
+          }),
+        ],
+      ]),
+    ).get("workspace-a")!;
+    for (const status of ["needs_input", "failed", "running"] as const) {
+      expect(
+        deriveWorkspaceReadActionAvailability({ status, activity, supportsMarkUnread: true }),
+      ).toEqual({ hasClearableAttention: false, canMarkUnread: false });
+    }
+    expect(
+      deriveWorkspaceReadActionAvailability({
+        status: "attention",
+        activity,
+        supportsMarkUnread: false,
+      }),
+    ).toEqual({ hasClearableAttention: false, canMarkUnread: false });
   });
 });

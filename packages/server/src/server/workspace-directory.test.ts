@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { createTestLogger } from "../test-utils/test-logger.js";
 import type { AgentSnapshotPayload, WorkspaceDescriptorPayload } from "./messages.js";
@@ -101,6 +101,13 @@ class WorkspaceStatus {
         workspaceId: this.workspace.workspaceId,
       }),
     );
+  }
+
+  /** Changes a seeded Agent without replacing the directory or its bucket history */
+  updateAgent(id: string, patch: Partial<AgentSnapshotPayload>): void {
+    const agent = this.agents.find((entry) => entry.id === id);
+    if (!agent) throw new Error(`Agent not found: ${id}`);
+    Object.assign(agent, patch);
   }
 
   hasSiblingWorkspaceSameCwd(): void {
@@ -293,6 +300,97 @@ function createAgent(
 }
 
 describe("WorkspaceDirectory", () => {
+  test("keeps read idle agents ready and read closed agents done", async () => {
+    const workspace = new WorkspaceStatus();
+    workspace.hasRootAgent({ id: "idle-read", status: "idle" });
+    await expect(workspace.workspaceStatus()).resolves.toBe("attention");
+
+    workspace.updateAgent("idle-read", { status: "closed" });
+    await expect(workspace.workspaceStatus()).resolves.toBe("done");
+  });
+
+  test("preserves Ready entry time when attention changes and refreshes it on bucket changes", async () => {
+    const workspace = new WorkspaceStatus();
+    workspace.hasRootAgent({ id: "root-agent", status: "idle" });
+    const first = await workspace.workspaceDescriptor();
+    expect(first.status).toBe("attention");
+    expect(first.statusEnteredAt).toBe(NOW);
+
+    workspace.updateAgent("root-agent", {
+      requiresAttention: true,
+      attentionReason: "finished",
+      attentionTimestamp: "2026-03-01T12:30:00.000Z",
+    });
+    const unread = await workspace.workspaceDescriptor();
+    expect(unread.status).toBe("attention");
+    expect(unread.statusEnteredAt).toBe(NOW);
+
+    workspace.updateAgent("root-agent", { status: "closed" });
+    const closedUnread = await workspace.workspaceDescriptor();
+    expect(closedUnread.status).toBe("attention");
+    expect(closedUnread.statusEnteredAt).toBe(NOW);
+
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-03-02T12:00:00.000Z"));
+      workspace.updateAgent("root-agent", {
+        requiresAttention: false,
+        attentionReason: null,
+        attentionTimestamp: null,
+      });
+      const done = await workspace.workspaceDescriptor();
+      expect(done.status).toBe("done");
+      expect(done.statusEnteredAt).toBe("2026-03-02T12:00:00.000Z");
+
+      vi.setSystemTime(new Date("2026-03-03T12:00:00.000Z"));
+      workspace.updateAgent("root-agent", { status: "idle" });
+      const reopened = await workspace.workspaceDescriptor();
+      expect(reopened.status).toBe("attention");
+      expect(reopened.statusEnteredAt).toBe("2026-03-03T12:00:00.000Z");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("ignores a same-workspace idle child for both bucket and initial entry time", async () => {
+    const workspace = new WorkspaceStatus();
+    workspace.hasRootAgent({ id: "parent-agent", status: "idle" });
+    workspace.hasDelegatedAgent({ id: "child-agent", status: "idle", requiresAttention: true });
+    workspace.updateAgent("child-agent", { updatedAt: "2026-03-01T13:00:00.000Z" });
+
+    const descriptor = await workspace.workspaceDescriptor();
+    expect(descriptor.status).toBe("attention");
+    expect(descriptor.statusEnteredAt).toBe(NOW);
+
+    workspace.updateAgent("parent-agent", { status: "closed" });
+    await expect(workspace.workspaceStatus()).resolves.toBe("done");
+  });
+
+  test("treats an idle cross-workspace child as Ready in its own workspace", async () => {
+    const workspace = new WorkspaceStatus();
+    workspace.hasWorktreeWorkspace();
+    workspace.hasRootAgent({ id: "parent-agent", status: "closed" });
+    workspace.hasDelegatedAgentInWorktree({ id: "child-agent", status: "idle" });
+
+    await expect(workspace.workspaceStatuses()).resolves.toEqual({
+      "workspace-1": "done",
+      "workspace-worktree": "attention",
+    });
+  });
+
+  test("keeps the highest-priority bucket across multiple root agents", async () => {
+    const workspace = new WorkspaceStatus();
+    workspace.hasRootAgent({ id: "ready", status: "idle" });
+    workspace.hasRootAgent({ id: "working", status: "running" });
+    await expect(workspace.workspaceStatus()).resolves.toBe("running");
+
+    workspace.hasRootAgent({ id: "failed", status: "error" });
+    await expect(workspace.workspaceStatus()).resolves.toBe("failed");
+
+    workspace.hasRootAgent({ id: "permission", status: "idle", pendingPermissionCount: 1 });
+    await expect(workspace.workspaceStatus()).resolves.toBe("needs_input");
+  });
+
   test("uses root agent activity, not delegated child activity, for workspace status", async () => {
     const workspace = new WorkspaceStatus();
 
@@ -404,7 +502,7 @@ describe("WorkspaceDirectory", () => {
     });
 
     await expect(workspace.workspaceStatuses()).resolves.toEqual({
-      "workspace-1": "done",
+      "workspace-1": "attention",
       "workspace-worktree": "running",
     });
   });
@@ -433,7 +531,7 @@ describe("WorkspaceDirectory", () => {
     workspace.hasDelegatedAgentInWorktree({ id: "child-agent", status: "running" });
 
     await expect(workspace.workspaceStatuses()).resolves.toEqual({
-      "workspace-1": "done",
+      "workspace-1": "attention",
       "workspace-worktree": "running",
     });
   });
@@ -450,7 +548,7 @@ describe("WorkspaceDirectory", () => {
     });
 
     await expect(workspace.workspaceStatuses()).resolves.toEqual({
-      "workspace-1": "done",
+      "workspace-1": "attention",
       "workspace-worktree": "needs_input",
     });
   });
@@ -463,7 +561,7 @@ describe("WorkspaceDirectory", () => {
     workspace.hasDetachedAgentInWorktree({ id: "child-agent", status: "running" });
 
     await expect(workspace.workspaceStatuses()).resolves.toEqual({
-      "workspace-1": "done",
+      "workspace-1": "attention",
       "workspace-worktree": "running",
     });
   });

@@ -6480,7 +6480,7 @@ test("buildWorkspaceDescriptorMap computes statusEnteredAt from runtime agent fi
   const owned = (input: Parameters<typeof makeAgent>[0]) =>
     makeAgent({ ...input, workspaceId: "ws-status-entered" });
 
-  // 2. Single idle agent (derives to "done") — statusEnteredAt uses the
+  // 2. Single idle agent (derives to "attention") — statusEnteredAt uses the
   // agent's updatedAt as a best-effort timestamp.
   {
     const { session, workspace } = setupSession();
@@ -6494,7 +6494,7 @@ test("buildWorkspaceDescriptorMap computes statusEnteredAt from runtime agent fi
       }),
     ];
     const descriptor = await buildDescriptor(session, workspace.workspaceId);
-    expect(descriptor.status).toBe("done");
+    expect(descriptor.status).toBe("attention");
     expect(descriptor.statusEnteredAt).toBe(updatedAt);
   }
 
@@ -6517,7 +6517,7 @@ test("buildWorkspaceDescriptorMap computes statusEnteredAt from runtime agent fi
   }
 
   // 4. Highest-priority across all buckets: a "needs_input" agent beats
-  // a "running" agent beats a "done" agent. statusEnteredAt is the winning
+  // a "running" agent beats an "attention" agent. statusEnteredAt is the winning
   // bucket's newest agent timestamp.
   {
     const { session, workspace } = setupSession();
@@ -6565,7 +6565,7 @@ test("buildWorkspaceDescriptorMap computes statusEnteredAt from runtime agent fi
       }),
     ];
     const first = await buildDescriptor(session, workspace.workspaceId);
-    expect(first.status).toBe("done");
+    expect(first.status).toBe("attention");
     expect(first.statusEnteredAt).toBe(earlyUpdatedAt);
 
     // Second call: same winning bucket, newer agent updatedAt must not move
@@ -6585,7 +6585,7 @@ test("buildWorkspaceDescriptorMap computes statusEnteredAt from runtime agent fi
       }),
     ];
     const second = await buildDescriptor(session, workspace.workspaceId);
-    expect(second.status).toBe("done");
+    expect(second.status).toBe("attention");
     expect(second.statusEnteredAt).toBe(earlyUpdatedAt);
   }
 
@@ -6625,7 +6625,7 @@ test("buildWorkspaceDescriptorMap computes statusEnteredAt from runtime agent fi
       }),
     ];
     const second = await buildDescriptor(session, workspace.workspaceId);
-    expect(second.status).toBe("done");
+    expect(second.status).toBe("attention");
     expect(second.statusEnteredAt).toBe(unmaskTime);
     vi.useRealTimers();
   }
@@ -6745,7 +6745,7 @@ test("buildWorkspaceDescriptorMap keeps a done workspace recent after its agents
       id: "agent-done",
       cwd: workspace.cwd,
       workspaceId: workspace.workspaceId,
-      status: "idle",
+      status: "closed",
       updatedAt: doneEnteredAt,
     }),
   ];
@@ -6760,7 +6760,7 @@ test("buildWorkspaceDescriptorMap keeps a done workspace recent after its agents
         id: "agent-done",
         cwd: workspace.cwd,
         workspaceId: workspace.workspaceId,
-        status: "idle",
+        status: "closed",
         updatedAt: doneEnteredAt,
       }),
       archivedAt,

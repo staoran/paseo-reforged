@@ -26,6 +26,7 @@ function workspace(
     currentBranch: "main",
     statusBucket: "done",
     statusEnteredAt: null,
+    hasUnreadAttention: false,
     archivingAt: null,
     diffStat: null,
     prHint: null,

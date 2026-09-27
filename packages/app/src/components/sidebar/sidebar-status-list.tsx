@@ -902,6 +902,16 @@ function StatusWorkspaceRowInnerContent({
                 shortcutNumber={shortcutNumber}
                 showShortcutBadge={showShortcutBadge}
                 reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
+                emphasizeTitle={
+                  inStatusGroup &&
+                  workspace.statusBucket === "attention" &&
+                  workspace.hasUnreadAttention
+                }
+                suppressProjectStatusBadge={
+                  inStatusGroup &&
+                  workspace.statusBucket === "attention" &&
+                  !workspace.hasUnreadAttention
+                }
               >
                 {renderSlot ? (
                   <StatusWorkspaceActionSlot

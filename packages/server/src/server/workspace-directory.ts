@@ -47,6 +47,11 @@ interface WorkspaceBucketTimestampEntry {
   changedAtIso: string;
 }
 
+interface WorkspaceAgentBucketContribution {
+  agent: AgentSnapshotPayload;
+  bucket: WorkspaceStateBucket;
+}
+
 type FetchWorkspacesRequestMessage = Extract<
   SessionInboundMessage,
   { type: "fetch_workspaces_request" }
@@ -238,7 +243,6 @@ export class WorkspaceDirectory {
     const activeRecords = activeWorkspaceRecords(persistedWorkspaces, persistedProjects);
     const descriptorsByWorkspaceId = new Map<string, WorkspaceDescriptorPayload>();
     const workspaceIds = options.workspaceIds ? new Set(options.workspaceIds) : null;
-    const activeWorkspaceIds = new Set(activeRecords.map((workspace) => workspace.workspaceId));
     const includedWorkspaces = activeRecords.filter(
       (workspace) => !workspaceIds || workspaceIds.has(workspace.workspaceId),
     );
@@ -265,7 +269,7 @@ export class WorkspaceDirectory {
     const activeAgents = agents.filter(
       (agent) => !agent.archivedAt && this.deps.isProviderVisibleToClient(agent.provider),
     );
-    this.applyAgentBucketContributions({
+    const contributingAgentsByWorkspaceId = this.applyAgentBucketContributions({
       activeAgents,
       descriptorsByWorkspaceId,
     });
@@ -281,11 +285,6 @@ export class WorkspaceDirectory {
       descriptorsByWorkspaceId,
       activityEntriesByWorkspaceId,
     });
-
-    const contributingAgentsByWorkspaceId = groupAgentsByWorkspaceId(
-      activeAgents,
-      activeWorkspaceIds,
-    );
 
     // Resolve the workspace-level `statusEnteredAt` (see aggregate semantics
     // on `resolveStatusEnteredAt`).
@@ -356,17 +355,14 @@ export class WorkspaceDirectory {
     }
   }
 
-  // Aggregate each agent's state bucket into its owning workspace descriptor,
-  // keeping the highest-priority bucket. A record's owner IS its `workspaceId`;
-  // status never fans out to same-cwd siblings. A subagent in another workspace
-  // is a root for that workspace. Same-workspace descendants contribute only
-  // running activity to the nearest ancestor in that workspace.
+  /** Aggregates each Agent's bucket and records only sources that contributed to Workspace state */
   private applyAgentBucketContributions(params: {
     activeAgents: AgentSnapshotPayload[];
     descriptorsByWorkspaceId: Map<string, WorkspaceDescriptorPayload>;
-  }): void {
+  }): Map<string, WorkspaceAgentBucketContribution[]> {
     const { activeAgents, descriptorsByWorkspaceId } = params;
     const activeAgentsById = new Map(activeAgents.map((agent) => [agent.id, agent] as const));
+    const contributionsByWorkspaceId = new Map<string, WorkspaceAgentBucketContribution[]>();
 
     for (const agent of activeAgents) {
       const workspaceAgent = resolveWorkspaceRootAgent(agent, activeAgentsById);
@@ -394,12 +390,16 @@ export class WorkspaceDirectory {
       if (!existing) {
         continue;
       }
+      const contributions = contributionsByWorkspaceId.get(workspaceId) ?? [];
+      contributions.push({ agent, bucket });
+      contributionsByWorkspaceId.set(workspaceId, contributions);
       if (
         getWorkspaceStateBucketPriority(bucket) < getWorkspaceStateBucketPriority(existing.status)
       ) {
         existing.status = bucket;
       }
     }
+    return contributionsByWorkspaceId;
   }
 
   // Apply working terminal contributions to descriptor statuses and seed the
@@ -451,7 +451,7 @@ export class WorkspaceDirectory {
   private resolveStatusEnteredAt(params: {
     workspaceId: string;
     winningBucket: WorkspaceStateBucket;
-    contributingAgents: AgentSnapshotPayload[];
+    contributingAgents: WorkspaceAgentBucketContribution[];
     activityEntries: WorkspaceBucketTimestampEntry[];
     previous: WorkspaceBucketHistoryEntry | null;
     workspaceCreatedAt: string | null;
@@ -521,21 +521,13 @@ export class WorkspaceDirectory {
   //   - `updatedAt` as a general fallback for any bucket
   // Returns `null` if no matching contributor has a parseable timestamp.
   private findNewestTimestampInBucket(
-    contributingAgents: AgentSnapshotPayload[],
+    contributingAgents: WorkspaceAgentBucketContribution[],
     activityEntries: WorkspaceBucketTimestampEntry[],
     winningBucket: WorkspaceStateBucket,
   ): string | null {
     const agentTimestamps = contributingAgents
-      .filter((agent) => {
-        const derived = deriveAgentStateBucket({
-          status: agent.status,
-          pendingPermissionCount: agent.pendingPermissions?.length ?? 0,
-          requiresAttention: agent.requiresAttention,
-          attentionReason: agent.attentionReason ?? null,
-        });
-        return derived === winningBucket;
-      })
-      .map((agent) => {
+      .filter((contribution) => contribution.bucket === winningBucket)
+      .map(({ agent }) => {
         // Prefer attentionTimestamp when the agent has attention set — this is
         // the most accurate "entered current status" signal.
         if (agent.attentionTimestamp) {
@@ -695,23 +687,6 @@ export class WorkspaceDirectory {
       },
     };
   }
-}
-
-function groupAgentsByWorkspaceId(
-  agents: AgentSnapshotPayload[],
-  activeWorkspaceIds: ReadonlySet<string>,
-): Map<string, AgentSnapshotPayload[]> {
-  const byWorkspaceId = new Map<string, AgentSnapshotPayload[]>();
-  for (const agent of agents) {
-    const workspaceId = agent.workspaceId;
-    if (!workspaceId || !activeWorkspaceIds.has(workspaceId)) {
-      continue;
-    }
-    const entries = byWorkspaceId.get(workspaceId) ?? [];
-    entries.push(agent);
-    byWorkspaceId.set(workspaceId, entries);
-  }
-  return byWorkspaceId;
 }
 
 export function resolveWorkspaceRootAgent(
