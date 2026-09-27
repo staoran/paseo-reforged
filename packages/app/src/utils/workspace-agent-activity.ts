@@ -1,3 +1,4 @@
+import { getWorkspaceStateBucketPriority } from "@getpaseo/protocol/agent-state-bucket";
 import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
 import { isWorkspaceRootAgent } from "@/subagents/policies";
 import { deriveSidebarStateBucket } from "./sidebar-agent-state";
@@ -33,7 +34,6 @@ export function buildWorkspaceAgentActivityIndex(
   previous?: ReadonlyMap<string, WorkspaceAgentActivity>,
 ): Map<string, WorkspaceAgentActivity> {
   const activityByWorkspaceId = new Map<string, WorkspaceAgentActivity>();
-  const latestActivityAtByWorkspaceId = new Map<string, Date>();
   const readFactsByWorkspaceId = new Map<string, WorkspaceAgentReadFacts>();
 
   for (const agent of agents.values()) {
@@ -46,19 +46,24 @@ export function buildWorkspaceAgentActivityIndex(
     recordWorkspaceAgentReadFacts(agent, agent.workspaceId, isRoot, readFactsByWorkspaceId);
     if (!isRoot) continue;
 
-    const enteredAt = agent.attentionTimestamp ?? agent.updatedAt;
-    const latestActivityAt = latestActivityAtByWorkspaceId.get(agent.workspaceId);
-    if (latestActivityAt && enteredAt <= latestActivityAt) {
-      continue;
-    }
-    latestActivityAtByWorkspaceId.set(agent.workspaceId, enteredAt);
-
     const status = deriveSidebarStateBucket({
       status: workspaceAgentStatus(agent),
       pendingPermissionCount: agent.pendingPermissions.length,
       requiresAttention: agent.requiresAttention,
       attentionReason: agent.attentionReason,
     });
+    const enteredAt = agent.attentionTimestamp ?? agent.updatedAt;
+    const current = activityByWorkspaceId.get(agent.workspaceId);
+    if (current) {
+      const priority = getWorkspaceStateBucketPriority(status);
+      const currentPriority = getWorkspaceStateBucketPriority(current.status);
+      if (
+        priority > currentPriority ||
+        (priority === currentPriority && current.enteredAt && enteredAt <= current.enteredAt)
+      ) {
+        continue;
+      }
+    }
     activityByWorkspaceId.set(agent.workspaceId, {
       agentId: agent.id,
       status,
@@ -126,10 +131,11 @@ function reconcileWorkspaceAgentActivity(
   previous: WorkspaceAgentActivity | undefined,
 ): WorkspaceAgentActivity {
   const next = { ...activity, ...facts };
-  if (previous?.agentId !== next.agentId || previous.status !== next.status) return next;
+  if (previous?.status !== next.status) return next;
 
   next.enteredAt = previous.enteredAt;
   if (
+    previous.agentId === next.agentId &&
     previous.hasUnreadAttention === next.hasUnreadAttention &&
     previous.hasClearableAttention === next.hasClearableAttention &&
     previous.hasMarkUnreadCandidate === next.hasMarkUnreadCandidate
@@ -142,7 +148,7 @@ function reconcileWorkspaceAgentActivity(
 /** Exposes read actions only when the Agent facts and Workspace priority allow them */
 export function deriveWorkspaceReadActionAvailability(input: {
   status: WorkspaceDescriptor["status"] | null;
-  activity: WorkspaceAgentActivity | null;
+  activity: Pick<WorkspaceAgentActivity, "hasClearableAttention" | "hasMarkUnreadCandidate"> | null;
   supportsMarkUnread: boolean;
 }): WorkspaceReadActionAvailability {
   const { status, activity, supportsMarkUnread } = input;

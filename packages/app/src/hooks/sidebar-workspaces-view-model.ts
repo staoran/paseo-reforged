@@ -2,7 +2,7 @@ import type { PrHint } from "@/git/pr-hint";
 import { selectPrHintFromStatus } from "@/git/pr-hint";
 import { type HostProjectListItem } from "@/projects/host-project-model";
 import type { PendingCreateAttempt } from "@/stores/create-flow-store";
-import type { WorkspaceDescriptor } from "@/stores/session-store";
+import type { DaemonServerInfo, WorkspaceDescriptor } from "@/stores/session-store";
 import type {
   WorkspaceStructureHostPlacement,
   WorkspaceStructureProject,
@@ -53,6 +53,9 @@ export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
   scripts: WorkspaceDescriptor["scripts"];
   hasRunningScripts: boolean;
   hasUnreadAttention: boolean;
+  hasClearableAttention: boolean;
+  hasMarkUnreadCandidate: boolean;
+  supportsMarkUnread: boolean;
 }
 
 export interface SidebarProjectEntry {
@@ -74,11 +77,13 @@ export interface SidebarWorkspaceSession {
   serverId: string;
   workspaces: Map<string, WorkspaceDescriptor>;
   workspaceAgentActivity: Map<string, WorkspaceAgentActivity>;
+  supportsMarkUnread: boolean;
 }
 
 interface SidebarWorkspaceSessionSource {
   workspaces: Map<string, WorkspaceDescriptor>;
   workspaceAgentActivity: Map<string, WorkspaceAgentActivity>;
+  serverInfo: Pick<DaemonServerInfo, "features"> | null;
 }
 
 export function selectSidebarWorkspaceSessions(
@@ -95,6 +100,7 @@ export function selectSidebarWorkspaceSessions(
       serverId,
       workspaces: session.workspaces,
       workspaceAgentActivity: session.workspaceAgentActivity,
+      supportsMarkUnread: session.serverInfo?.features?.workspaceMarkUnread === true,
     });
   }
   return selected;
@@ -115,7 +121,8 @@ export function areSidebarWorkspaceSessionsEqual(
       !rightSession ||
       leftSession.serverId !== rightSession.serverId ||
       leftSession.workspaces !== rightSession.workspaces ||
-      leftSession.workspaceAgentActivity !== rightSession.workspaceAgentActivity
+      leftSession.workspaceAgentActivity !== rightSession.workspaceAgentActivity ||
+      leftSession.supportsMarkUnread !== rightSession.supportsMarkUnread
     ) {
       return false;
     }
@@ -151,9 +158,11 @@ export function createSidebarWorkspaceEntry(input: {
   projectViewKey?: string;
   pendingCreateAttempts?: Record<string, PendingCreateAttempt>;
   workspaceAgentActivity?: ReadonlyMap<string, WorkspaceAgentActivity>;
+  supportsMarkUnread?: boolean;
 }): SidebarWorkspaceEntry {
   const projectViewKey = input.projectViewKey ?? input.workspace.projectId;
   const effectiveStatus = deriveEffectiveWorkspaceStatus(input);
+  const activity = input.workspaceAgentActivity?.get(input.workspace.id);
   return {
     workspaceKey: `${input.serverId}:${input.workspace.id}`,
     serverId: input.serverId,
@@ -173,8 +182,10 @@ export function createSidebarWorkspaceEntry(input: {
     currentBranch: normalizeCurrentBranch(input.workspace.gitRuntime?.currentBranch),
     statusBucket: effectiveStatus.status,
     statusEnteredAt: effectiveStatus.enteredAt,
-    hasUnreadAttention:
-      input.workspaceAgentActivity?.get(input.workspace.id)?.hasUnreadAttention ?? false,
+    hasUnreadAttention: activity?.hasUnreadAttention ?? false,
+    hasClearableAttention: activity?.hasClearableAttention ?? false,
+    hasMarkUnreadCandidate: activity?.hasMarkUnreadCandidate ?? false,
+    supportsMarkUnread: input.supportsMarkUnread ?? false,
     archivingAt: input.workspace.archivingAt,
     diffStat: input.workspace.diffStat,
     prHint: selectPrHintFromStatus(
@@ -395,6 +406,7 @@ export function buildSidebarWorkspaceEntries(input: {
       projectViewKey: placement.projectViewKey,
       pendingCreateAttempts: input.pendingCreateAttempts,
       workspaceAgentActivity: session.workspaceAgentActivity,
+      supportsMarkUnread: session.supportsMarkUnread,
     });
     const previousEntry = input.previousEntries?.get(placement.workspaceKey);
     entries.set(

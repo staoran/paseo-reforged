@@ -19,6 +19,7 @@ function sidebarSession(input?: Partial<Omit<SidebarWorkspaceSession, "serverId"
   return {
     workspaces: input?.workspaces ?? workspaceMap(),
     workspaceAgentActivity: input?.workspaceAgentActivity ?? activityMap(),
+    serverInfo: input?.supportsMarkUnread ? { features: { workspaceMarkUnread: true } } : null,
   };
 }
 
@@ -42,11 +43,13 @@ describe("sidebar workspace session selection", () => {
         serverId: "host-b",
         workspaces: hostB.workspaces,
         workspaceAgentActivity: hostB.workspaceAgentActivity,
+        supportsMarkUnread: false,
       },
       {
         serverId: "host-a",
         workspaces: hostA.workspaces,
         workspaceAgentActivity: hostA.workspaceAgentActivity,
+        supportsMarkUnread: false,
       },
     ]);
   });
@@ -79,6 +82,24 @@ describe("sidebar workspace session selection", () => {
       ["host-a"],
     );
 
+    expect(areSidebarWorkspaceSessionsEqual(previous, next)).toBe(false);
+  });
+
+  it("updates row read actions when the host gains mark-unread support", () => {
+    const workspaces = workspaceMap();
+    const workspaceAgentActivity = activityMap();
+    const previous = selectSidebarWorkspaceSessions(
+      { "host-a": sidebarSession({ workspaces, workspaceAgentActivity }) },
+      ["host-a"],
+    );
+    const next = selectSidebarWorkspaceSessions(
+      {
+        "host-a": sidebarSession({ workspaces, workspaceAgentActivity, supportsMarkUnread: true }),
+      },
+      ["host-a"],
+    );
+
+    expect(next[0]?.supportsMarkUnread).toBe(true);
     expect(areSidebarWorkspaceSessionsEqual(previous, next)).toBe(false);
   });
 });

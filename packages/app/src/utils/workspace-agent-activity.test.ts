@@ -167,6 +167,67 @@ describe("workspace agent activity index", () => {
     );
   });
 
+  it("keeps an older idle root Ready when a newer root is closed and read", () => {
+    const previous = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "older",
+          agent({
+            id: "older",
+            workspaceId: "workspace-a",
+            status: "idle",
+            updatedAt: "2026-06-01T10:00:00.000Z",
+          }),
+        ],
+        [
+          "newer",
+          agent({
+            id: "newer",
+            workspaceId: "workspace-a",
+            status: "closed",
+            updatedAt: "2026-06-01T10:05:00.000Z",
+          }),
+        ],
+      ]),
+    );
+
+    expect(previous.get("workspace-a")).toMatchObject({
+      agentId: "older",
+      status: "attention",
+      enteredAt: new Date("2026-06-01T10:00:00.000Z"),
+    });
+
+    const next = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "older",
+          agent({
+            id: "older",
+            workspaceId: "workspace-a",
+            status: "closed",
+            updatedAt: "2026-06-01T10:00:00.000Z",
+          }),
+        ],
+        [
+          "newer",
+          agent({
+            id: "newer",
+            workspaceId: "workspace-a",
+            status: "idle",
+            updatedAt: "2026-06-01T10:10:00.000Z",
+          }),
+        ],
+      ]),
+      previous,
+    );
+
+    expect(next.get("workspace-a")).toMatchObject({
+      agentId: "newer",
+      status: "attention",
+      enteredAt: new Date("2026-06-01T10:00:00.000Z"),
+    });
+  });
+
   it("does not let archived or child agents change root workspace activity", () => {
     const index = buildWorkspaceAgentActivityIndex(
       new Map([

@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
 import type { WorkspaceStructureProject } from "@/projects/workspace-structure";
-import { buildWorkspaceAgentActivityIndex } from "@/utils/workspace-agent-activity";
+import {
+  buildWorkspaceAgentActivityIndex,
+  deriveWorkspaceReadActionAvailability,
+} from "@/utils/workspace-agent-activity";
 import {
   appendMissingOrderKeys,
   applyStoredOrdering,
@@ -322,6 +325,7 @@ describe("shared sidebar workspace model", () => {
         {
           serverId: "host-a",
           workspaceAgentActivity: new Map(),
+          supportsMarkUnread: false,
           workspaces: new Map([
             [
               "main",
@@ -338,6 +342,7 @@ describe("shared sidebar workspace model", () => {
         {
           serverId: "host-b",
           workspaceAgentActivity: new Map(),
+          supportsMarkUnread: false,
           workspaces: new Map([
             [
               "feature",
@@ -425,6 +430,7 @@ describe("shared sidebar workspace model", () => {
         {
           serverId: "srv",
           workspaceAgentActivity: new Map(),
+          supportsMarkUnread: false,
           workspaces: new Map([
             ["one", one],
             ["two", two],
@@ -438,6 +444,7 @@ describe("shared sidebar workspace model", () => {
         {
           serverId: "srv",
           workspaceAgentActivity: new Map(),
+          supportsMarkUnread: false,
           workspaces: new Map([
             ["one", one],
             ["two", { ...two, status: "running" }],
@@ -462,6 +469,7 @@ describe("shared sidebar workspace model", () => {
         {
           serverId: "srv",
           workspaceAgentActivity: new Map(),
+          supportsMarkUnread: false,
           workspaces: new Map([
             [
               "clone-a",
@@ -770,6 +778,79 @@ describe("createSidebarWorkspaceEntry unread presentation", () => {
     });
 
     expect(entry.hasUnreadAttention).toBe(true);
+  });
+
+  it("uses an older Ready root and its read facts while the daemon still reports Done", () => {
+    const activity = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "ready",
+          agent({ id: "ready", workspaceId: "ws-1", status: "idle", updatedAt: new Date(1_000) }),
+        ],
+        [
+          "closed",
+          agent({
+            id: "closed",
+            workspaceId: "ws-1",
+            status: "closed",
+            updatedAt: new Date(2_000),
+          }),
+        ],
+      ]),
+    );
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: projectWorkspace("ws-1", "done"),
+      workspaceAgentActivity: activity,
+      supportsMarkUnread: true,
+    });
+
+    expect(entry.statusBucket).toBe("attention");
+    expect(entry.statusEnteredAt).toEqual(new Date(1_000));
+    expect(entry.hasMarkUnreadCandidate).toBe(true);
+    expect(
+      deriveWorkspaceReadActionAvailability({
+        status: entry.statusBucket,
+        activity: entry,
+        supportsMarkUnread: entry.supportsMarkUnread,
+      }),
+    ).toEqual({ hasClearableAttention: false, canMarkUnread: true });
+  });
+
+  it("hides read actions when the row is Working but the daemon still reports Done", () => {
+    const activity = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "read",
+          agent({ id: "read", workspaceId: "ws-1", status: "idle", updatedAt: new Date(1_000) }),
+        ],
+        [
+          "working",
+          agent({
+            id: "working",
+            workspaceId: "ws-1",
+            status: "running",
+            updatedAt: new Date(2_000),
+          }),
+        ],
+      ]),
+    );
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: projectWorkspace("ws-1", "done"),
+      workspaceAgentActivity: activity,
+      supportsMarkUnread: true,
+    });
+
+    expect(entry.statusBucket).toBe("running");
+    expect(entry.hasMarkUnreadCandidate).toBe(true);
+    expect(
+      deriveWorkspaceReadActionAvailability({
+        status: entry.statusBucket,
+        activity: entry,
+        supportsMarkUnread: entry.supportsMarkUnread,
+      }),
+    ).toEqual({ hasClearableAttention: false, canMarkUnread: false });
   });
 });
 
