@@ -372,6 +372,8 @@ export const ko: TranslationResources = {
       header: "말함",
     },
     activity: {
+      completed: "처리 완료",
+      completedWithDuration: "처리 시간 {{duration}}",
       details: "세부 정보",
     },
     dictation: {
@@ -2078,6 +2080,10 @@ export const ko: TranslationResources = {
         label: "터미널 스크롤백",
         description: "내장 터미널 버퍼에 보관되는 줄 수",
         accessibilityLabel: "터미널 스크롤백 줄 수",
+      },
+      autoExpandActivity: {
+        label: "Activity 항상 펼치기",
+        description: "완료된 에이전트 Activity를 기본으로 펼쳐 표시",
       },
       autoExpandReasoning: {
         label: "추론 항상 펼치기",

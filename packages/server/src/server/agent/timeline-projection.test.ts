@@ -8,6 +8,52 @@ import {
 } from "./timeline-projection.js";
 
 describe("projectTimelineRows", () => {
+  test("retains phase on chunks and accepts metadata-only final completion", () => {
+    const rows: AgentTimelineRow[] = [
+      {
+        seq: 1,
+        timestamp: "2026-09-26T00:00:00.000Z",
+        item: {
+          type: "assistant_message",
+          text: "Working",
+          messageId: "process",
+          phase: "commentary",
+        },
+      },
+      {
+        seq: 2,
+        timestamp: "2026-09-26T00:00:01.000Z",
+        item: { type: "assistant_message", text: "Answer", messageId: "final" },
+      },
+      {
+        seq: 3,
+        timestamp: "2026-09-26T00:00:02.000Z",
+        item: { type: "assistant_message", text: "", messageId: "final", phase: "final_answer" },
+      },
+    ];
+    const projected = projectTimelineRows({ rows, mode: "projected" });
+    expect(projected.map((row) => row.item)).toEqual([
+      { type: "assistant_message", text: "Working", messageId: "process", phase: "commentary" },
+      { type: "assistant_message", text: "Answer", messageId: "final", phase: "final_answer" },
+    ]);
+    expect(projected[1]?.seqEnd).toBe(3);
+  });
+
+  test("does not merge anonymous assistant messages across phase boundaries", () => {
+    const rows: AgentTimelineRow[] = [
+      {
+        seq: 1,
+        timestamp: "2026-09-26T00:00:00.000Z",
+        item: { type: "assistant_message", text: "Working", phase: "commentary" },
+      },
+      {
+        seq: 2,
+        timestamp: "2026-09-26T00:00:01.000Z",
+        item: { type: "assistant_message", text: "Answer", phase: "final_answer" },
+      },
+    ];
+    expect(projectTimelineRows({ rows, mode: "projected" })).toHaveLength(2);
+  });
   test("merges adjacent assistant chunks in projected mode", () => {
     const rows: AgentTimelineRow[] = [
       {

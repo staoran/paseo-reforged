@@ -371,6 +371,8 @@ export const ar: TranslationResources = {
       header: "تكلم",
     },
     activity: {
+      completed: "تمت المعالجة",
+      completedWithDuration: "تمت المعالجة خلال {{duration}}",
       details: "تفاصيل",
     },
     dictation: {
@@ -2066,6 +2068,10 @@ export const ar: TranslationResources = {
         label: "التمرير Terminal",
         description: "يتم الاحتفاظ بالخطوط في المخزن المؤقت الطرفي المدمج",
         accessibilityLabel: "خطوط التمرير Terminal",
+      },
+      autoExpandActivity: {
+        label: "توسيع النشاط دائمًا",
+        description: "عرض نشاط الوكيل المكتمل موسعًا افتراضيًا",
       },
       autoExpandReasoning: {
         label: "عرض التفكير دائماً",

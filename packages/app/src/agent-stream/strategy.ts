@@ -72,6 +72,8 @@ export interface StreamHistoryRowRevision {
 export interface StreamRenderInput {
   agentId: string;
   segments: StreamRenderSegments;
+  /** Source message aliases for members inside Activity hosts */
+  messageHostIds?: ReadonlyMap<string, string>;
   historyRowRevision?: StreamHistoryRowRevision;
   liveHeadRowRevision?: unknown;
   boundary: StreamHistoryBoundary;

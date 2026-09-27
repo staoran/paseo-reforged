@@ -384,10 +384,13 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   const chatFindRowIndexes = useMemo(() => {
     if (!chatFindMessageId) return null;
     const indexes = segments.historyVirtualized.flatMap((item, index) =>
-      getStreamItemMessageId(item) === chatFindMessageId ? [index] : [],
+      getStreamItemMessageId(item) === chatFindMessageId ||
+      item.id === props.messageHostIds?.get(chatFindMessageId)
+        ? [index]
+        : [],
     );
     return indexes.length > 0 ? indexes : null;
-  }, [chatFindMessageId, segments.historyVirtualized]);
+  }, [chatFindMessageId, segments.historyVirtualized, props.messageHostIds]);
   const rangeExtractor = useCallback(
     (range: VirtualRange) => {
       const visible = defaultRangeExtractor(range);
@@ -763,6 +766,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     scrollContainerRef,
     rowVirtualizer,
     historyVirtualized: segments.historyVirtualized,
+    messageHostIds: props.messageHostIds,
     cancelPendingStickToBottom,
     setFollowOutput,
     onNearBottomChange,
@@ -1223,26 +1227,34 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       <div
         key={item.id}
         data-history-row-id={item.id}
-        data-message-id={getStreamItemMessageId(item)}
+        data-message-id={
+          props.messageHostIds?.get(getStreamItemMessageId(item)) === item.id
+            ? undefined
+            : getStreamItemMessageId(item)
+        }
         style={streamRowStyle}
       >
         {renderHistoryMountedRow(item, index, segments.historyMounted)}
       </div>
     ));
-  }, [renderHistoryMountedRow, segments.historyMounted]);
+  }, [renderHistoryMountedRow, segments.historyMounted, props.messageHostIds]);
   const liveHeadRows = useMemo(() => {
     void liveHeadRowRevision;
     return segments.liveHead.map((item, index) => (
       <div
         key={item.id}
         data-history-row-id={item.id}
-        data-message-id={getStreamItemMessageId(item)}
+        data-message-id={
+          props.messageHostIds?.get(getStreamItemMessageId(item)) === item.id
+            ? undefined
+            : getStreamItemMessageId(item)
+        }
         style={streamRowStyle}
       >
         {renderLiveHeadRow(item, index, segments.liveHead)}
       </div>
     ));
-  }, [liveHeadRowRevision, renderLiveHeadRow, segments.liveHead]);
+  }, [liveHeadRowRevision, renderLiveHeadRow, segments.liveHead, props.messageHostIds]);
   const mountedRows = useMemo(
     () => [...mountedHistoryRows, ...liveHeadRows],
     [liveHeadRows, mountedHistoryRows],
@@ -1291,7 +1303,11 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
                     key={virtualRow.key}
                     data-index={virtualRow.index}
                     data-history-row-id={item.id}
-                    data-message-id={getStreamItemMessageId(item)}
+                    data-message-id={
+                      props.messageHostIds?.get(getStreamItemMessageId(item)) === item.id
+                        ? undefined
+                        : getStreamItemMessageId(item)
+                    }
                     ref={measureVirtualizedRowElement}
                     style={renderVirtualRowStyle(virtualRow.start)}
                   >

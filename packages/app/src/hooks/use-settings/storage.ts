@@ -86,6 +86,8 @@ export interface AppSettings {
   /** Top-level sidebar rows in display order; empty means the default order, all visible. */
   sidebarNavItems: SidebarNavPreference[];
   autoExpandReasoning: boolean;
+  /** Default expansion of completed Activity segments */
+  autoExpandActivity: boolean;
   toolCallDetailLevel: ToolCallDetailLevel;
   chatOutlineEnabled: boolean;
   vimKeybindings: boolean;
@@ -139,6 +141,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   sidebarChecksDisplay: DEFAULT_SIDEBAR_CHECKS_DISPLAY,
   sidebarNavItems: [],
   autoExpandReasoning: false,
+  autoExpandActivity: false,
   toolCallDetailLevel: "detailed",
   chatOutlineEnabled: true,
   vimKeybindings: false,
@@ -228,6 +231,7 @@ const StoredAppSettingsSchema = z
       .catch(DEFAULT_SIDEBAR_CHECKS_DISPLAY),
     sidebarNavItems: z.array(z.object({ key: z.string(), visible: z.boolean() })).catch([]),
     autoExpandReasoning: z.boolean().catch(false),
+    autoExpandActivity: z.boolean().catch(false),
     toolCallDetailLevel: z
       .enum(["overview", "detailed"])
       .or(z.literal("concise").transform(() => "overview" as const))

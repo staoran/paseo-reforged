@@ -773,6 +773,7 @@ function replaceLiveAssistantWithProjectedText(params: {
   next[index] = {
     ...current,
     text: event.item.text,
+    ...(event.item.phase ? { phase: event.item.phase } : {}),
     timestamp,
     timelineCursor,
   };
@@ -823,6 +824,9 @@ function reconcileOverlappingProjectedAssistant(params: {
     id: match.current.id,
     ...(messageId !== undefined ? { messageId } : {}),
     text: projectedText,
+    ...((unit.event.item.phase ?? match.current.phase)
+      ? { phase: unit.event.item.phase ?? match.current.phase }
+      : {}),
     timestamp: unit.timestamp,
     timelineCursor: { epoch: params.epoch, seq: unit.seqEnd },
   };

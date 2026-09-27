@@ -42,6 +42,7 @@ function isReusableBlock(block: AssistantMessageItem, source: AssistantMessageIt
   return (
     block.id === id &&
     block.turnId === source.turnId &&
+    block.phase === source.phase &&
     block.timestamp.getTime() === source.timestamp.getTime() &&
     block.timelineCursor?.epoch === source.timelineCursor?.epoch &&
     block.timelineCursor?.seq === source.timelineCursor?.seq
@@ -95,7 +96,11 @@ export function createStreamPresentation() {
     const previous = previousSource && blocksBySource.get(previousSource);
     // Parse only the growing last block on append, as the old live reducer did.
     // Canonical text replacements are parsed afresh instead of joining fragments.
-    const isAppend = previousSource && previous && item.text.startsWith(previousSource.text);
+    const isAppend =
+      previousSource &&
+      previous &&
+      previousSource.phase === item.phase &&
+      item.text.startsWith(previousSource.text);
     let prefix: AssistantMessageItem[] = [];
     let growingText = item.text;
     if (isAppend) {

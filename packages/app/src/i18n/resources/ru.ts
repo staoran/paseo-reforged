@@ -375,6 +375,8 @@ export const ru: TranslationResources = {
       header: "Сказал",
     },
     activity: {
+      completed: "Обработано",
+      completedWithDuration: "Обработано за {{duration}}",
       details: "Подробности",
     },
     dictation: {
@@ -2103,6 +2105,10 @@ export const ru: TranslationResources = {
         label: "Буфер прокрутки терминала",
         description: "Количество строк, сохраняемых во встроенном буфере терминала",
         accessibilityLabel: "Количество строк в буфере прокрутки терминала",
+      },
+      autoExpandActivity: {
+        label: "Всегда раскрывать активность",
+        description: "Раскрывать завершённую активность агента по умолчанию",
       },
       autoExpandReasoning: {
         label: "Всегда разворачивать размышления",

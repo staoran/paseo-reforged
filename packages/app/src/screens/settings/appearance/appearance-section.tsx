@@ -243,6 +243,19 @@ function AutoExpandReasoningRow({ value, onChange }: AutoExpandReasoningRowProps
   );
 }
 
+/** Controls the default expansion of completed Activity segments */
+function AutoExpandActivityRow({ value, onChange }: AutoExpandReasoningRowProps) {
+  const { t } = useTranslation();
+  return (
+    <SettingsSwitch
+      label={t("settings.general.autoExpandActivity.label")}
+      hint={t("settings.general.autoExpandActivity.description")}
+      value={value}
+      onValueChange={onChange}
+    />
+  );
+}
+
 interface ChatOutlineRowProps {
   value: boolean;
   onChange: (value: boolean) => void;
@@ -563,6 +576,14 @@ export function AppearanceSection() {
     [updateSettings],
   );
 
+  /** Persists Activity defaults independently from reasoning defaults */
+  const handleAutoExpandActivityChange = useCallback(
+    (autoExpandActivity: boolean) => {
+      void updateSettings({ autoExpandActivity });
+    },
+    [updateSettings],
+  );
+
   const handleToolCallDetailLevelChange = useCallback(
     (toolCallDetailLevel: AppSettings["toolCallDetailLevel"]) => {
       void updateSettings({ toolCallDetailLevel });
@@ -682,6 +703,10 @@ export function AppearanceSection() {
       </SettingsSection>
       <SettingsSection title={t("settings.appearance.detailLevel.title")}>
         <SettingsCard>
+          <AutoExpandActivityRow
+            value={settings.autoExpandActivity}
+            onChange={handleAutoExpandActivityChange}
+          />
           <AutoExpandReasoningRow
             value={settings.autoExpandReasoning}
             onChange={handleAutoExpandReasoningChange}

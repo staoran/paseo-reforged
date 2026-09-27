@@ -21,5 +21,6 @@
 | 0118 | 已收口 | micro-spec | 已同步        | [自定义功能重做与迁移分析](micro_specs/0118_自定义功能重做与迁移分析.md)                        | 2026-09-27   | F24 经 0123 修正后：必做 1、重做 13、放弃 21、讨论 8、冻结 2；基线 `upstream/main@90737e1de`        |
 | 0119 | 实施中 | micro-spec | 已同步        | [F42 Reforged 产品身份与发布规格](micro_specs/0119_F42_Reforged产品身份与发布规格.md)           | 2026-09-24   | 产品身份已改造；EAS 归属、签名、商店与跨平台安装仍待验收                                            |
 | 0120 | 实施中 | micro-spec | 已同步        | [F43 Android 发布可靠性与 APK 交付规格](micro_specs/0120_F43_Android发布可靠性与APK交付规格.md) | 2026-09-24   | GitHub runner 使用 EAS local 与托管签名，arm64-only、source map 开启，fallback 关闭；待真实构建验收 |
+| 0121 | 已完成 | micro-spec | 已同步        | [F07 Activity 整轮过程折叠](micro_specs/0121_F07_Activity整轮过程折叠.md)                       | 2026-09-27   | Codex 显式 final 分段折叠已实现；typecheck、lint 和定向测试通过，Web/Native 视觉验收未做            |
 | 0123 | 已完成 | micro-spec | 已同步        | [F24 Windows 文件链接与行号](micro_specs/0123_F24_Windows文件链接与行号.md)                     | 2026-09-27   | Windows 中文路径、工具卡行号和 file:///...:1 已修复；定向测试、typecheck、lint 通过；未跑 E2E       |
 | 0124 | 已完成 | micro-spec | 已同步        | [侧边栏 Workspace 工作状态分组](micro_specs/0124_侧边栏任务与工作状态变化.md)                   | 2026-09-27   | 已读 idle 保持 Ready；状态组独立未读视觉和读状态菜单已实现；定向测试及浏览器视觉用例通过            |

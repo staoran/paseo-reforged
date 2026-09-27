@@ -1,5 +1,6 @@
 import type {
   AgentProvider,
+  AgentMessagePhase,
   AgentTimelineItem,
   JsonValue,
   ToolCallDetail,
@@ -706,6 +707,8 @@ export interface AssistantMessageItem {
   kind: "assistant_message";
   id: string;
   messageId?: string;
+  /** Provider-declared boundary between process text and final answer */
+  phase?: AgentMessagePhase;
   turnId?: string;
   timelineCursor?: TimelinePosition;
   text: string;
@@ -909,29 +912,38 @@ function appendUserMessage(
   return upsertUserMessage(state, nextItem);
 }
 
+/** Anonymous streams can join only while their explicit phase remains the same */
+function isSameAssistantMessage(
+  item: StreamItem | undefined,
+  messageId: string | undefined,
+  phase: AgentMessagePhase | undefined,
+): item is AssistantMessageItem {
+  if (!item || item.kind !== "assistant_message") return false;
+  if (messageId !== undefined) return item.messageId === messageId;
+  return item.phase === phase;
+}
+
 function appendAssistantMessage(
   state: StreamItem[],
   text: string,
   timestamp: Date,
   source: StreamUpdateSource,
   messageId?: string,
+  phase?: AssistantMessageItem["phase"],
   reservedItemIds?: ReadonlySet<string>,
   timelineCursor?: TimelinePosition,
 ): StreamItem[] {
   const { chunk, hasContent } = normalizeChunk(text);
-  if (!chunk) {
+  if (!chunk && !phase) {
     return state;
   }
 
   const last = state[state.length - 1];
-  const shouldAppendToLast =
-    last &&
-    last.kind === "assistant_message" &&
-    (messageId === undefined || last.messageId === messageId);
-  if (shouldAppendToLast) {
+  if (isSameAssistantMessage(last, messageId, phase)) {
     const updated: AssistantMessageItem = {
       ...last,
       text: `${last.text}${chunk}`,
+      phase: phase ?? last.phase,
       timestamp,
       ...(timelineCursor ? { timelineCursor } : {}),
     };
@@ -944,12 +956,12 @@ function appendAssistantMessage(
   if (
     source === "live" &&
     last?.kind === "user_message" &&
-    secondLast?.kind === "assistant_message" &&
-    (messageId === undefined || secondLast.messageId === messageId)
+    isSameAssistantMessage(secondLast, messageId, phase)
   ) {
     const updated: AssistantMessageItem = {
       ...secondLast,
       text: `${secondLast.text}${chunk}`,
+      phase: phase ?? secondLast.phase,
       timestamp,
       ...(timelineCursor ? { timelineCursor } : {}),
     };
@@ -966,6 +978,7 @@ function appendAssistantMessage(
     kind: "assistant_message",
     id: entryId,
     ...(messageId ? { messageId } : {}),
+    phase,
     ...(timelineCursor ? { timelineCursor } : {}),
     text: chunk,
     timestamp,
@@ -1522,6 +1535,7 @@ function reduceTimelineEvent(
           timestamp,
           source,
           item.messageId,
+          item.phase,
           reservedItemIds,
           timelineCursor,
         ),

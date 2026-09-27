@@ -376,6 +376,8 @@ export const ja: TranslationResources = {
       header: "読み上げ済み",
     },
     activity: {
+      completed: "処理済み",
+      completedWithDuration: "処理時間 {{duration}}",
       details: "詳細",
     },
     dictation: {
@@ -2085,6 +2087,10 @@ export const ja: TranslationResources = {
         label: "ターミナルスクロールバック",
         description: "組み込みターミナルバッファに保持する行数",
         accessibilityLabel: "ターミナルスクロールバック行数",
+      },
+      autoExpandActivity: {
+        label: "Activity を常に展開",
+        description: "完了したエージェントの Activity をデフォルトで展開",
       },
       autoExpandReasoning: {
         label: "常に思考プロセスを展開",

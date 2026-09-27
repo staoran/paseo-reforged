@@ -114,6 +114,25 @@ function toolCall(options?: {
 }
 
 describe("AgentStreamCoalescer", () => {
+  test("flushes buffered text before forwarding phase-only completion", () => {
+    const { coalescer, flushes } = createHarness();
+    primeLeadingEdge(coalescer, flushes);
+    coalescer.handle("agent-1", assistant("Answer", { messageId: "final" }));
+    expect(
+      coalescer.handle(
+        "agent-1",
+        timeline({
+          type: "assistant_message",
+          text: "",
+          messageId: "final",
+          phase: "final_answer",
+        }),
+      ),
+    ).toBe(false);
+    expect(flushes.map((flush) => flush.item)).toEqual([
+      { type: "assistant_message", text: "Answer", messageId: "final" },
+    ]);
+  });
   beforeEach(() => {
     vi.useFakeTimers();
   });

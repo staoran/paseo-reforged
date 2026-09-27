@@ -23,6 +23,57 @@ import { timelineItemIdentity } from "@getpaseo/protocol/timeline-identity";
 
 type CanonicalToolStatus = "running" | "completed" | "failed" | "canceled";
 
+it("retains assistant phase during deltas, phase-only completion and history hydration", () => {
+  const event: AgentStreamEventPayload = {
+    type: "timeline",
+    provider: "codex",
+    item: { type: "assistant_message", text: "Answer", messageId: "final", phase: "final_answer" },
+  };
+  const first = reduceStreamUpdate([], event, new Date(1000));
+  expect(first[0]).toMatchObject({ phase: "final_answer", text: "Answer" });
+  const latePhase = reduceStreamUpdate(
+    [],
+    { ...event, item: { type: "assistant_message", text: "Answer", messageId: "final" } },
+    new Date(1000),
+  );
+  const completed = reduceStreamUpdate(
+    latePhase,
+    {
+      ...event,
+      item: { type: "assistant_message", text: "", messageId: "final", phase: "final_answer" },
+    },
+    new Date(2000),
+  );
+  expect(completed).toHaveLength(1);
+  expect(completed[0]).toMatchObject({ phase: "final_answer", text: "Answer" });
+  expect(hydrateStreamState([{ event, timestamp: new Date(2000) }])).toMatchObject([
+    { phase: "final_answer", text: "Answer" },
+  ]);
+});
+
+it("keeps anonymous commentary separate from a final answer", () => {
+  const process: AgentStreamEventPayload = {
+    type: "timeline",
+    provider: "codex",
+    item: { type: "assistant_message", text: "Working", phase: "commentary" },
+  };
+  const first = reduceStreamUpdate([], process, new Date(1000));
+  const completed = reduceStreamUpdate(
+    first,
+    {
+      type: "timeline",
+      provider: "codex",
+      item: { type: "assistant_message", text: "Answer", phase: "final_answer" },
+    },
+    new Date(2000),
+  );
+  expect(completed).toHaveLength(2);
+  expect(completed).toMatchObject([
+    { text: "Working", phase: "commentary" },
+    { text: "Answer", phase: "final_answer" },
+  ]);
+});
+
 it("updates a resolved Claude plan at its proposal position across a follow-up", () => {
   const proposal = {
     type: "timeline",

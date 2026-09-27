@@ -368,6 +368,8 @@ export const en = {
       header: "Spoke",
     },
     activity: {
+      completed: "Processed",
+      completedWithDuration: "Processed in {{duration}}",
       details: "Details",
     },
     dictation: {
@@ -2187,6 +2189,10 @@ export const en = {
         label: "Terminal scrollback",
         description: "Lines kept in the built-in terminal buffer",
         accessibilityLabel: "Terminal scrollback lines",
+      },
+      autoExpandActivity: {
+        label: "Always expand Activity",
+        description: "Show completed agent Activity expanded by default",
       },
       autoExpandReasoning: {
         label: "Always expand reasoning",

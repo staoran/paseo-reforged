@@ -267,6 +267,13 @@ function mergeAssistantChunks(entries: readonly WorkingEntry[]): WorkingEntry[] 
       output.push(entry);
       continue;
     }
+    if (
+      entryAssistant.messageId === undefined &&
+      previousAssistant.phase !== entryAssistant.phase
+    ) {
+      output.push(entry);
+      continue;
+    }
 
     const collapsedKinds = new Set<TimelineProjectionKind>([
       ...previous.collapsed,
@@ -280,6 +287,9 @@ function mergeAssistantChunks(entries: readonly WorkingEntry[]): WorkingEntry[] 
         type: "assistant_message",
         text: `${previousAssistant.text}${entryAssistant.text}`,
         ...(previousAssistant.messageId ? { messageId: previousAssistant.messageId } : {}),
+        ...((entryAssistant.phase ?? previousAssistant.phase)
+          ? { phase: entryAssistant.phase ?? previousAssistant.phase }
+          : {}),
       },
       timestamp: entry.timestamp,
       seqEnd: entry.seqEnd,

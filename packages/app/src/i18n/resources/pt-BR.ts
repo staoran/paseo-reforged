@@ -375,6 +375,8 @@ export const ptBR: TranslationResources = {
       header: "Falou",
     },
     activity: {
+      completed: "Processado",
+      completedWithDuration: "Processado em {{duration}}",
       details: "Detalhes",
     },
     dictation: {
@@ -2101,6 +2103,10 @@ export const ptBR: TranslationResources = {
         label: "Scrollback do terminal",
         description: "Linhas mantidas no buffer do terminal integrado",
         accessibilityLabel: "Linhas do scrollback do terminal",
+      },
+      autoExpandActivity: {
+        label: "Sempre expandir atividade",
+        description: "Mostrar a atividade concluída do agente expandida por padrão",
       },
       autoExpandReasoning: {
         label: "Sempre expandir raciocínio",

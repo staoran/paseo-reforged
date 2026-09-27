@@ -470,6 +470,32 @@ function assistantMessage(
 }
 
 describe("timeline presentation", () => {
+  it("updates every Markdown block when the final phase arrives after the text", () => {
+    const present = createStreamPresentation();
+    const source = { ...assistantMessage("answer", 1), text: "First\n\nSecond" };
+    const initial = rows(
+      present({
+        ...presentationOptions,
+        tail: [],
+        head: [source],
+        transform: undefined,
+      }),
+    );
+    const final = rows(
+      present({
+        ...presentationOptions,
+        tail: [],
+        head: [{ ...source, phase: "final_answer" }],
+        transform: undefined,
+      }),
+    );
+    expect(final.map((item) => item.id)).toEqual(initial.map((item) => item.id));
+    expect(final).toMatchObject([
+      { text: "First", phase: "final_answer" },
+      { text: "Second", phase: "final_answer" },
+    ]);
+  });
+
   const present = createStreamPresentation();
   function projectTimelineItems(items: StreamItem[], transform?: TimelineItemTransform) {
     return present({ ...presentationOptions, tail: items, head: [], transform }).tail;

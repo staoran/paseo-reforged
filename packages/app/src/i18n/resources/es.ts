@@ -376,6 +376,8 @@ export const es: TranslationResources = {
       header: "Habló",
     },
     activity: {
+      completed: "Procesado",
+      completedWithDuration: "Procesado en {{duration}}",
       details: "Detalles",
     },
     dictation: {
@@ -2117,6 +2119,10 @@ export const es: TranslationResources = {
         label: "Historial de terminal",
         description: "Líneas mantenidas en el búfer de terminal incorporado",
         accessibilityLabel: "Líneas del historial de terminal",
+      },
+      autoExpandActivity: {
+        label: "Expandir siempre la actividad",
+        description: "Mostrar la actividad completada del agente expandida por defecto",
       },
       autoExpandReasoning: {
         label: "Siempre expandir razonamiento",

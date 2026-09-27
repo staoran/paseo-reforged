@@ -371,6 +371,8 @@ export const zhCN: TranslationResources = {
       header: "已朗读",
     },
     activity: {
+      completed: "已处理",
+      completedWithDuration: "已处理 {{duration}}",
       details: "详情",
     },
     dictation: {
@@ -2043,6 +2045,10 @@ export const zhCN: TranslationResources = {
         label: "终端回滚",
         description: "内置终端缓冲区保留的行数",
         accessibilityLabel: "终端回滚行数",
+      },
+      autoExpandActivity: {
+        label: "始终展开 Activity",
+        description: "默认展开已完成的 Agent Activity",
       },
       autoExpandReasoning: {
         label: "始终展开推理过程",

@@ -4681,7 +4681,7 @@ describe("Codex app-server provider", () => {
     ]);
   });
 
-  test("preserves Codex app-server assistant item ids in persisted history", async () => {
+  test("preserves Codex app-server assistant item ids and phase in persisted history", async () => {
     const session = createSession();
     session.client = {
       request: vi.fn(async (method: string) => {
@@ -4697,11 +4697,13 @@ describe("Codex app-server provider", () => {
                     type: "agentMessage",
                     id: "before-tool-message",
                     text: "I checked the workspace.",
+                    phase: "commentary",
                   },
                   {
                     type: "agentMessage",
                     id: "after-tool-message",
                     text: "The tests are green.",
+                    phase: "final_answer",
                   },
                 ],
               },
@@ -4726,6 +4728,7 @@ describe("Codex app-server provider", () => {
           type: "assistant_message",
           text: "I checked the workspace.",
           messageId: "before-tool-message",
+          phase: "commentary",
         },
       },
       {
@@ -4735,6 +4738,7 @@ describe("Codex app-server provider", () => {
           type: "assistant_message",
           text: "The tests are green.",
           messageId: "after-tool-message",
+          phase: "final_answer",
         },
       },
     ]);
@@ -5845,6 +5849,33 @@ describe("Codex app-server provider", () => {
         item: { type: "assistant_message", text: "lo", messageId: "assistant-item-1" },
       },
     ]);
+  });
+
+  test("preserves Codex phase from item start and late final completion", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    asInternals(session).handleNotification("item/started", {
+      item: { id: "phase-commentary", type: "agentMessage", text: "", phase: "commentary" },
+    });
+    asInternals(session).handleNotification("item/agentMessage/delta", {
+      itemId: "phase-commentary",
+      delta: "Working",
+    });
+    asInternals(session).handleNotification("item/completed", {
+      item: { id: "phase-commentary", type: "agentMessage", text: "Working", phase: "commentary" },
+    });
+    asInternals(session).handleNotification("item/agentMessage/delta", {
+      itemId: "phase-final",
+      delta: "Answer",
+    });
+    asInternals(session).handleNotification("item/completed", {
+      item: { id: "phase-final", type: "agentMessage", text: "Answer", phase: "final_answer" },
+    });
+    expect(events[0]).toMatchObject({ item: { phase: "commentary", text: "Working" } });
+    expect(events.at(-1)).toMatchObject({
+      item: { messageId: "phase-final", phase: "final_answer", text: "" },
+    });
   });
 
   test("emits only the missing assistant suffix when completed text extends streamed deltas", () => {

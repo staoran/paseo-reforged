@@ -377,6 +377,8 @@ export const fr: TranslationResources = {
       header: "Rayon",
     },
     activity: {
+      completed: "Traité",
+      completedWithDuration: "Traité en {{duration}}",
       details: "Détails",
     },
     dictation: {
@@ -2121,6 +2123,10 @@ export const fr: TranslationResources = {
         label: "DéfilementTerminal",
         description: "Lignes conservées dans le tampon du terminal intégré",
         accessibilityLabel: "Lignes de défilementTerminal",
+      },
+      autoExpandActivity: {
+        label: "Toujours développer l'activité",
+        description: "Développer par défaut l'activité terminée de l'agent",
       },
       autoExpandReasoning: {
         label: "Toujours afficher le raisonnement",
