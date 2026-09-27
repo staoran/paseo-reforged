@@ -200,6 +200,11 @@ export function parseInlinePathToken(value: string): InlinePathTarget | null {
   };
 }
 
+/** Keeps trusted tool file paths openable when they have no line suffix */
+export function parseToolCallFilePath(value: string): InlinePathTarget {
+  return parseInlinePathToken(value) ?? { raw: value, path: value };
+}
+
 export function parseFileProtocolUrl(value: string): InlinePathTarget | null {
   const trimmed = value?.trim();
   if (!trimmed) {
@@ -220,6 +225,13 @@ export function parseFileProtocolUrl(value: string): InlinePathTarget | null {
   const normalizedPath = normalizeFileUrlPath(parsedUrl.pathname);
   if (!normalizedPath) {
     return null;
+  }
+
+  if (!parsedUrl.hash) {
+    const inlinePathTarget = parseInlinePathToken(normalizedPath);
+    if (inlinePathTarget && isAbsolutePath(inlinePathTarget.path)) {
+      return { ...inlinePathTarget, raw: value };
+    }
   }
 
   const lines = parseLineFragment(parsedUrl.hash);
@@ -247,7 +259,7 @@ function parseAssistantInlinePathLink(value: string): InlinePathTarget | null {
 
   return {
     ...inlinePathTarget,
-    path: normalizedPath,
+    path: safeDecodeURIComponent(normalizedPath),
   };
 }
 
@@ -315,7 +327,7 @@ export function parseAssistantFileLink(
 
   const windowsPathMatch = trimmed.match(/^([A-Za-z]:[\\/][^?#]*)(#[^?]+)?$/);
   if (windowsPathMatch) {
-    const normalizedPath = normalizePathToken(windowsPathMatch[1] ?? "");
+    const normalizedPath = normalizePathToken(safeDecodeURIComponent(windowsPathMatch[1] ?? ""));
     if (!normalizedPath) {
       return null;
     }
@@ -479,6 +491,10 @@ export function normalizeInlinePathTarget(
   }
 
   let normalized = normalizedInput;
+  const normalizedCwd = normalizePathInput(cwd);
+  if (/^[A-Za-z]:\//.test(normalizedCwd ?? "") && /^\/[A-Za-z]:\//.test(normalized)) {
+    normalized = normalized.slice(1);
+  }
   const cwdRelative = resolvePathAgainstCwd(normalized, cwd);
   if (cwdRelative) {
     normalized = cwdRelative;

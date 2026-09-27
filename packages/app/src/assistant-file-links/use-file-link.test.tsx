@@ -11,6 +11,7 @@ import { AssistantFileLinkResolverProvider } from "./provider";
 import type { DirectorySuggestionResult } from "./resolver";
 import { useFileLink } from "./use-file-link";
 import type { OpenFileDisposition } from "@/workspace/file-open";
+import { createAssistantMarkdownParser } from "@/utils/assistant-markdown-parser";
 
 vi.mock("@/utils/open-external-url", () => ({
   openExternalUrl: vi.fn(async () => {}),
@@ -72,7 +73,12 @@ function createToast(): ToastApi {
   };
 }
 
-function createWrapper(input: { client: TestClient; openedFiles: OpenedFile[]; toast?: ToastApi }) {
+function createWrapper(input: {
+  client: TestClient;
+  openedFiles: OpenedFile[];
+  toast?: ToastApi;
+  workspaceRoot?: string;
+}) {
   const queryClient = createQueryClient();
   return function Wrapper({ children }: { children: ReactNode }) {
     const openWorkspaceFile = useCallback(
@@ -87,7 +93,7 @@ function createWrapper(input: { client: TestClient; openedFiles: OpenedFile[]; t
         <AssistantFileLinkResolverProvider
           client={input.client}
           serverId="server-1"
-          workspaceRoot="/Users/test/project"
+          workspaceRoot={input.workspaceRoot ?? "/Users/test/project"}
           onOpenWorkspaceFile={openWorkspaceFile}
           toast={input.toast}
         >
@@ -99,6 +105,40 @@ function createWrapper(input: { client: TestClient; openedFiles: OpenedFile[]; t
 }
 
 describe("useFileLink", () => {
+  it("opens a Markdown-encoded Windows link on its referenced line", () => {
+    const tokens = createAssistantMarkdownParser().parseInline(
+      "[source](/E:/repo/docs/中文.md:1)",
+      {},
+    );
+    const href = tokens[0]?.children?.find((token) => token.type === "link_open")?.attrGet("href");
+    expect(href).toBe("/E:/repo/docs/%E4%B8%AD%E6%96%87.md:1");
+
+    const openedFiles: OpenedFile[] = [];
+    const getDirectorySuggestions = vi.fn(async () => resolvedSuggestions([]));
+    const { result } = renderHook(() => useFileLink({ href: href ?? "" }), {
+      wrapper: createWrapper({
+        client: { getDirectorySuggestions },
+        openedFiles,
+        workspaceRoot: "E:/repo",
+      }),
+    });
+
+    act(() => result.current.onPress());
+
+    expect(openedFiles).toEqual([
+      {
+        target: {
+          raw: "/E:/repo/docs/%E4%B8%AD%E6%96%87.md:1",
+          path: "/E:/repo/docs/中文.md",
+          lineStart: 1,
+          lineEnd: undefined,
+        },
+        disposition: "preferred",
+      },
+    ]);
+    expect(getDirectorySuggestions).not.toHaveBeenCalled();
+  });
+
   it("returns the same object across no-op parent rerenders", () => {
     const getDirectorySuggestions = vi.fn(async () => resolvedSuggestions([]));
     const queryClient = createQueryClient();

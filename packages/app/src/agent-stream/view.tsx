@@ -91,6 +91,7 @@ import type { ChatSelectionAction } from "@/assistant-selection-copy/actions";
 import {
   AssistantFileLinkResolverProvider,
   normalizeInlinePathTarget,
+  parseToolCallFilePath,
 } from "@/assistant-file-links";
 import {
   createWorkspaceFileTabTarget,
@@ -502,7 +503,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     );
 
     const handleToolCallOpenFile = useStableEvent((filePath: string) => {
-      handleInlinePathPress({ raw: filePath, path: filePath }, "preferred");
+      handleInlinePathPress(parseToolCallFilePath(filePath), "preferred");
     });
 
     const handleForkAssistantTurn: AssistantTurnForkHandler = useStableEvent(
