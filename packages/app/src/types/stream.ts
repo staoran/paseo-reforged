@@ -923,6 +923,39 @@ function isSameAssistantMessage(
   return item.phase === phase;
 }
 
+/** Finds the latest fragment of an identified assistant message */
+function findLastAssistantMessageIndex(state: StreamItem[], messageId: string): number {
+  for (let index = state.length - 1; index >= 0; index -= 1) {
+    const item = state[index];
+    if (item.kind === "assistant_message" && item.messageId === messageId) return index;
+  }
+  return -1;
+}
+
+interface BackfillAssistantPhaseInput {
+  state: StreamItem[];
+  messageId: string;
+  phase: AgentMessagePhase;
+  chunk: string;
+  timestamp: Date;
+  timelineCursor?: TimelinePosition;
+}
+
+/** Keeps completion metadata and its remaining text on the original message row */
+function backfillAssistantPhase(input: BackfillAssistantPhaseInput): StreamItem[] | null {
+  const index = findLastAssistantMessageIndex(input.state, input.messageId);
+  const matching = input.state[index];
+  if (matching?.kind !== "assistant_message" || matching.phase === input.phase) return null;
+  const updated: AssistantMessageItem = {
+    ...matching,
+    text: `${matching.text}${input.chunk}`,
+    phase: input.phase,
+    timestamp: input.timestamp,
+    ...(input.timelineCursor ? { timelineCursor: input.timelineCursor } : {}),
+  };
+  return [...input.state.slice(0, index), updated, ...input.state.slice(index + 1)];
+}
+
 function appendAssistantMessage(
   state: StreamItem[],
   text: string,
@@ -966,6 +999,19 @@ function appendAssistantMessage(
       ...(timelineCursor ? { timelineCursor } : {}),
     };
     return [...state.slice(0, -2), updated, last];
+  }
+
+  // Completion can supply the phase after another timeline row has flushed the text
+  if (phase && messageId) {
+    const backfilled = backfillAssistantPhase({
+      state,
+      messageId,
+      phase,
+      chunk,
+      timestamp,
+      timelineCursor,
+    });
+    if (backfilled) return backfilled;
   }
 
   if (!hasContent) {
@@ -1643,7 +1689,10 @@ function applyTimelineTurnId(
   }
 
   if (!event.turnId || items.length === 0) return items;
-  const index = items.length - 1;
+  const index =
+    event.item.type === "assistant_message" && event.item.phase && event.item.messageId
+      ? findLastAssistantMessageIndex(items, event.item.messageId)
+      : items.length - 1;
   const last = items[index];
   if (!last || last.turnId === event.turnId) return items;
   return [
@@ -1953,6 +2002,39 @@ function applyCanonicalUserMessageEvent(params: {
   };
 }
 
+interface LateAssistantPhaseLanesInput {
+  tail: StreamItem[];
+  head: StreamItem[];
+  event: AgentStreamEventPayload;
+  timestamp: Date;
+  source: StreamUpdateSource;
+  timelineCursor?: TimelinePosition;
+}
+
+/** Routes late phase completion to the lane that owns its original message row */
+function applyLateAssistantPhaseAcrossLanes(
+  input: LateAssistantPhaseLanesInput,
+): ApplyStreamEventResult | null {
+  const { tail, head, event, timestamp, source, timelineCursor } = input;
+  if (event.type !== "timeline" || event.item.type !== "assistant_message") return null;
+  const { phase, messageId } = event.item;
+  if (!phase || !messageId) return null;
+
+  const headIndex = findLastAssistantMessageIndex(head, messageId);
+  if (headIndex >= 0) {
+    const matching = head[headIndex];
+    if (matching?.kind !== "assistant_message" || matching.phase === phase) return null;
+    const updated = reduceStreamUpdate(head, event, timestamp, { source, timelineCursor });
+    return { tail, head: updated, changedTail: false, changedHead: updated !== head };
+  }
+
+  const tailIndex = findLastAssistantMessageIndex(tail, messageId);
+  const matching = tail[tailIndex];
+  if (matching?.kind !== "assistant_message" || matching.phase === phase) return null;
+  const updated = reduceStreamUpdate(tail, event, timestamp, { source, timelineCursor });
+  return { tail: updated, head, changedTail: updated !== tail, changedHead: false };
+}
+
 /**
  * Apply a stream event using head/tail model.
  *
@@ -1984,6 +2066,15 @@ export function applyStreamEvent(params: {
   });
   if (canonicalUserResult) return canonicalUserResult;
   const source = params.source ?? "live";
+  const latePhase = applyLateAssistantPhaseAcrossLanes({
+    tail,
+    head,
+    event,
+    timestamp,
+    source,
+    timelineCursor: params.timelineCursor,
+  });
+  if (latePhase) return latePhase;
   let nextTail = tail;
   let nextHead = head;
   let changedTail = false;

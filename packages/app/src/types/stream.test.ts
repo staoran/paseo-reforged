@@ -51,6 +51,141 @@ it("retains assistant phase during deltas, phase-only completion and history hyd
   ]);
 });
 
+it.each([
+  { intervening: "user", suffix: "" },
+  { intervening: "user", suffix: " done" },
+  { intervening: "tool", suffix: "" },
+  { intervening: "tool", suffix: " done" },
+] as const)(
+  "backfills a late final phase across a $intervening row with suffix '$suffix'",
+  ({ intervening, suffix }) => {
+    const first: AgentStreamEventPayload = {
+      type: "timeline",
+      provider: "codex",
+      turnId: "answer-turn",
+      item: { type: "assistant_message", text: "Answer", messageId: "late-final" },
+    };
+    const between: AgentStreamEventPayload =
+      intervening === "user"
+        ? {
+            type: "timeline",
+            provider: "codex",
+            turnId: "other-turn",
+            item: { type: "user_message", text: "Next question", messageId: "next-user" },
+          }
+        : canonicalToolTimeline({
+            provider: "codex",
+            callId: "intervening-tool",
+            turnId: "other-turn",
+            name: "shell",
+            status: "completed",
+          });
+    const completion: AgentStreamEventPayload = {
+      type: "timeline",
+      provider: "codex",
+      turnId: "answer-turn",
+      item: {
+        type: "assistant_message",
+        text: suffix,
+        messageId: "late-final",
+        phase: "final_answer",
+      },
+    };
+    const updates = [
+      { event: first, timestamp: new Date(1000) },
+      { event: between, timestamp: new Date(2000) },
+      { event: completion, timestamp: new Date(3000) },
+    ];
+    let tail: StreamItem[] = [];
+    let head: StreamItem[] = [];
+    let completionResult: ReturnType<typeof applyStreamEvent> | undefined;
+    for (const { event, timestamp } of updates) {
+      const result = applyStreamEvent({ tail, head, event, timestamp });
+      tail = result.tail;
+      head = result.head;
+      if (event === completion) completionResult = result;
+    }
+
+    expect(completionResult).toMatchObject({ changedTail: true, changedHead: false });
+    const expectedKinds = [
+      "assistant_message",
+      intervening === "user" ? "user_message" : "tool_call",
+    ];
+    expect(head).toEqual([]);
+    expect(tail.map((item) => item.kind)).toEqual(expectedKinds);
+    expect(tail[0]).toMatchObject({
+      id: "late-final",
+      text: `Answer${suffix}`,
+      phase: "final_answer",
+      turnId: "answer-turn",
+    });
+    expect(tail[1]).toMatchObject({ turnId: "other-turn" });
+
+    const hydrated = hydrateStreamState(updates, { source: "canonical" });
+    expect(hydrated.map((item) => item.kind)).toEqual(expectedKinds);
+    expect(hydrated[0]).toMatchObject({
+      id: "late-final",
+      text: `Answer${suffix}`,
+      phase: "final_answer",
+      turnId: "answer-turn",
+    });
+    expect(hydrated[1]).toMatchObject({ turnId: "other-turn" });
+  },
+);
+
+it("backfills a late final phase when a submitted user row remains in head", () => {
+  const first = applyStreamEvent({
+    tail: [],
+    head: [],
+    event: {
+      type: "timeline",
+      provider: "codex",
+      turnId: "answer-turn",
+      item: { type: "assistant_message", text: "Answer", messageId: "head-final" },
+    },
+    timestamp: new Date(1000),
+  });
+  const withUser = applyStreamEvent({
+    tail: first.tail,
+    head: first.head,
+    event: {
+      type: "timeline",
+      provider: "codex",
+      turnId: "other-turn",
+      item: { type: "user_message", text: "Next question", messageId: "head-user" },
+    },
+    timestamp: new Date(2000),
+    unmatchedUserMessageInsert: "head",
+  });
+  const completion = applyStreamEvent({
+    tail: withUser.tail,
+    head: withUser.head,
+    event: {
+      type: "timeline",
+      provider: "codex",
+      turnId: "answer-turn",
+      item: {
+        type: "assistant_message",
+        text: "",
+        messageId: "head-final",
+        phase: "final_answer",
+      },
+    },
+    timestamp: new Date(3000),
+  });
+
+  expect(completion).toMatchObject({ changedTail: false, changedHead: true });
+  expect(completion.tail).toEqual([]);
+  expect(completion.head.map((item) => item.kind)).toEqual(["assistant_message", "user_message"]);
+  expect(completion.head[0]).toMatchObject({
+    id: "head-final",
+    text: "Answer",
+    phase: "final_answer",
+    turnId: "answer-turn",
+  });
+  expect(completion.head[1]).toMatchObject({ id: "head-user", turnId: "other-turn" });
+});
+
 it("keeps anonymous commentary separate from a final answer", () => {
   const process: AgentStreamEventPayload = {
     type: "timeline",
