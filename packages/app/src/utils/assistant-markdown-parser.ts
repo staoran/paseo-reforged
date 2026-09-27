@@ -5,6 +5,7 @@ import { enableStreamingMarkdown } from "@/utils/streaming-markdown";
 
 /** Lets assistant-authored strong close after punctuation before adjacent prose */
 function allowPunctuationAdjacentStrong(state: StateInline): boolean {
+  let changed = false;
   const delimiterLists = [
     state.delimiters,
     ...state.tokens_meta.flatMap((meta) => (meta ? [meta.delimiters] : [])),
@@ -18,9 +19,11 @@ function allowPunctuationAdjacentStrong(state: StateInline): boolean {
         first.marker !== 0x2a ||
         first.length !== 2 ||
         first.close ||
+        first.end !== -1 ||
         second.marker !== 0x2a ||
         second.length !== 2 ||
         second.close ||
+        second.end !== -1 ||
         second.token !== first.token + 1
       ) {
         continue;
@@ -37,11 +40,12 @@ function allowPunctuationAdjacentStrong(state: StateInline): boolean {
       if (isPunctuation) {
         first.close = true;
         second.close = true;
+        changed = true;
       }
     }
   }
 
-  return false;
+  return changed;
 }
 
 export function createAssistantMarkdownParser({ streaming = false } = {}): MarkdownIt {
@@ -53,15 +57,16 @@ export function createAssistantMarkdownParser({ streaming = false } = {}): Markd
   parser.validateLink = (url: string) =>
     url.trim().toLowerCase().startsWith("file://") || defaultValidateLink(url);
 
-  parser.inline.ruler2.before(
-    "balance_pairs",
-    "assistant_adjacent_strong",
-    allowPunctuationAdjacentStrong,
-  );
-
   if (streaming) {
     enableStreamingMarkdown(parser);
   }
+
+  // The first inline postprocessing rule is markdown-it's original pair matcher
+  const [balancePairs] = parser.inline.ruler2.getRules("");
+  parser.inline.ruler2.after("balance_pairs", "assistant_adjacent_strong", (state) => {
+    if (allowPunctuationAdjacentStrong(state)) balancePairs(state);
+    return false;
+  });
 
   return parser;
 }

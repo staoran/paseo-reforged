@@ -25,6 +25,14 @@ describe("createAssistantMarkdownParser", () => {
     expect(parser.renderInline("**外发。**例如")).toBe("<strong>外发。</strong>例如");
   });
 
+  it("preserves nested strong when the punctuation-adjacent marker already has a match", () => {
+    for (const streaming of [false, true]) {
+      expect(createAssistantMarkdownParser({ streaming }).renderInline("**A。**B**C**")).toBe(
+        "<strong>A。<strong>B</strong>C</strong>",
+      );
+    }
+  });
+
   it.each([
     ["**核销”**这些", "<strong>核销”</strong>这些"],
     ["前文。**后续**", "前文。<strong>后续</strong>"],
