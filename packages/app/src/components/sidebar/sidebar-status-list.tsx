@@ -49,6 +49,7 @@ import type { ShortcutKey } from "@/utils/format-shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import { useWorkspaceReadState } from "@/hooks/use-workspace-read-state";
+import { useCloseIdleAgentRuntime } from "@/hooks/use-close-idle-agent-runtime";
 import {
   SidebarWorkspaceRowFrame,
   SidebarWorkspaceRowContent,
@@ -72,6 +73,7 @@ import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sec
 import {
   SidebarWorkspaceContextMenu,
   SidebarWorkspaceMenu,
+  type AgentRuntimeCloseActions,
 } from "@/components/sidebar/sidebar-workspace-menu";
 import { PinnedSectionHeader } from "@/components/sidebar/pinned-section-header";
 import { SidebarGroupToggleRow } from "@/components/sidebar/sidebar-group-toggle-row";
@@ -595,6 +597,8 @@ function StatusWorkspaceRowWithMenu({
 }) {
   const { t } = useTranslation();
   const toast = useToast();
+  /** Shares close feedback across the row's dropdown and context menus */
+  const agentRuntimeActions = useCloseIdleAgentRuntime();
   const [isHidingWorkspace, setIsHidingWorkspace] = useState(false);
   const [isRenameOpen, setIsRenameOpen] = useState(false);
   const isArchiving = workspace.archivingAt !== null || isHidingWorkspace;
@@ -670,6 +674,7 @@ function StatusWorkspaceRowWithMenu({
     <>
       <StatusWorkspaceRowInner
         workspace={workspace}
+        agentRuntimeActions={agentRuntimeActions}
         hostBadge={hostBadge}
         projectName={projectName}
         projectIconDataUri={projectIconDataUri}
@@ -708,6 +713,7 @@ function StatusWorkspaceRowWithMenu({
 
 interface StatusWorkspaceRowInnerProps {
   workspace: SidebarWorkspaceEntry;
+  agentRuntimeActions: AgentRuntimeCloseActions;
   hostBadge: HostBadgeModel | null;
   projectName: string;
   projectIconDataUri: string | null;
@@ -755,6 +761,7 @@ function DraggableStatusWorkspaceRowInner(
 
 function StatusWorkspaceRowInnerContent({
   workspace,
+  agentRuntimeActions,
   hostBadge,
   projectName,
   projectIconDataUri,
@@ -856,6 +863,7 @@ function StatusWorkspaceRowInnerContent({
             {...hoverHandlers}
           >
             <SidebarWorkspaceContextMenu
+              agentRuntimeActions={agentRuntimeActions}
               contextMenuOpen={contextMenuOpen}
               onContextMenuOpenChange={onContextMenuOpenChange}
               workspace={workspace}
@@ -913,6 +921,7 @@ function StatusWorkspaceRowInnerContent({
                 {renderSlot ? (
                   <StatusWorkspaceActionSlot
                     workspace={workspace}
+                    agentRuntimeActions={agentRuntimeActions}
                     backdrop={backdrop}
                     trailing={trailing}
                     trailingPresentation={trailingPresentation}
@@ -944,6 +953,7 @@ function StatusWorkspaceRowInnerContent({
 
 function StatusWorkspaceActionSlot({
   workspace,
+  agentRuntimeActions,
   backdrop,
   trailing,
   trailingPresentation,
@@ -964,6 +974,7 @@ function StatusWorkspaceActionSlot({
   archiveShortcutKeys,
 }: {
   workspace: SidebarWorkspaceEntry;
+  agentRuntimeActions: AgentRuntimeCloseActions;
   backdrop: SidebarSurfaceBackdrop;
   trailing: SidebarWorkspaceTrailing;
   trailingPresentation: SidebarWorkspaceTrailingPresentation;
@@ -996,6 +1007,7 @@ function StatusWorkspaceActionSlot({
         {kebab.showKebab && onArchive ? (
           <SidebarWorkspaceMenu
             {...kebab.menuProps}
+            agentRuntimeActions={agentRuntimeActions}
             workspaceKey={workspace.workspaceKey}
             serverId={workspace.serverId}
             workspaceId={workspace.workspaceId}

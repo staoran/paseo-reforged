@@ -306,6 +306,52 @@ describe("buildWorkspaceTabMenuEntries", () => {
     );
   });
 
+  it("keeps runtime close failures beside the action until a retry clears them", () => {
+    const tab = createAgentTab();
+    const buildEntries = (errorByAgentId: ReadonlyMap<string, string>) =>
+      buildWorkspaceTabMenuEntries({
+        surface: "desktop",
+        tab,
+        index: 0,
+        tabCount: 1,
+        menuTestIDBase: "workspace-tab-context-agent_123",
+        onCopyResumeCommand: vi.fn(),
+        onCopyAgentId: vi.fn(),
+        onCopyTerminalId: vi.fn(),
+        onCopyFilePath: vi.fn(),
+        onReloadAgent: vi.fn(),
+        onRenameTab: vi.fn(),
+        onCloseTab: vi.fn(),
+        onCloseTabsBefore: vi.fn(),
+        onCloseTabsAfter: vi.fn(),
+        onCloseOtherTabs: vi.fn(),
+        agentRuntimeActions: {
+          canClose: () => true,
+          isPending: () => false,
+          errorByAgentId,
+          close: vi.fn(),
+        },
+      });
+
+    const failed = buildEntries(new Map([["agent-123", "Provider cleanup failed"]]));
+    expect(failed).toContainEqual(
+      expect.objectContaining({
+        key: "close-agent-runtime",
+        disabled: false,
+        description: "Provider cleanup failed",
+      }),
+    );
+    expect(failed).toContainEqual(
+      expect.objectContaining({
+        key: "close-agent-runtime-keep-record",
+        description: "Provider cleanup failed",
+      }),
+    );
+    expect(buildEntries(new Map())).toContainEqual(
+      expect.objectContaining({ key: "close-agent-runtime", description: undefined }),
+    );
+  });
+
   it("includes copy id and rename for terminal tabs", () => {
     const onRenameTab = vi.fn();
     const onCopyTerminalId = vi.fn();

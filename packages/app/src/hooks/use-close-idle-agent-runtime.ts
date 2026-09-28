@@ -17,10 +17,12 @@ interface CloseIdleAgentRuntimeInput {
 }
 
 const EMPTY_PENDING_AGENT_IDS: ReadonlySet<string> = new Set();
+const EMPTY_ERRORS: ReadonlyMap<string, string> = new Map();
 
 /** Confirms and closes an idle Agent runtime while retaining its stored record */
 export function useCloseIdleAgentRuntime(): {
   pendingAgentIds: ReadonlySet<string>;
+  errorByAgentId: ReadonlyMap<string, string>;
   closeIdleAgentRuntime: (input: CloseIdleAgentRuntimeInput) => Promise<void>;
 } {
   const { t } = useTranslation();
@@ -28,6 +30,30 @@ export function useCloseIdleAgentRuntime(): {
   const pendingAgentIdsRef = useRef(new Set<string>());
   const [pendingAgentIds, setPendingAgentIds] =
     useState<ReadonlySet<string>>(EMPTY_PENDING_AGENT_IDS);
+  const [errorByAgentId, setErrorByAgentId] = useState<ReadonlyMap<string, string>>(EMPTY_ERRORS);
+
+  /** Clears only the selected Agent's close error */
+  const clearError = useCallback((agentId: string) => {
+    setErrorByAgentId((previous) => {
+      if (!previous.has(agentId)) return previous;
+      const next = new Map(previous);
+      next.delete(agentId);
+      return next;
+    });
+  }, []);
+
+  /** Keeps a failed close visible until the user dismisses it or retries */
+  const reportError = useCallback(
+    (agentId: string, message: string) => {
+      setErrorByAgentId((previous) => new Map(previous).set(agentId, message));
+      toast.show(message, {
+        variant: "error",
+        durationMs: null,
+        onDismiss: () => clearError(agentId),
+      });
+    },
+    [clearError, toast],
+  );
 
   const closeIdleAgentRuntime = useCallback(
     async function closeIdleAgentRuntime(input: CloseIdleAgentRuntimeInput): Promise<void> {
@@ -40,15 +66,15 @@ export function useCloseIdleAgentRuntime(): {
       try {
         const initial = readCloseContext(serverId, agentId);
         if (!initial) {
-          toast.error(t("sidebar.workspace.agentRuntime.directoryUnavailable"));
+          reportError(agentId, t("sidebar.workspace.agentRuntime.directoryUnavailable"));
           return;
         }
         if (!initial.client.supportsAgentRuntimeClose()) {
-          toast.error(t("sidebar.workspace.agentRuntime.updateHost"));
+          reportError(agentId, t("sidebar.workspace.agentRuntime.updateHost"));
           return;
         }
         if (!canRequestAgentRuntimeClose(initial.agent, keepRecord)) {
-          toast.error(t("sidebar.workspace.agentRuntime.idleRequired"));
+          reportError(agentId, t("sidebar.workspace.agentRuntime.idleRequired"));
           return;
         }
 
@@ -66,28 +92,30 @@ export function useCloseIdleAgentRuntime(): {
           if (!confirmed) return;
         }
 
+        clearError(agentId);
         const current = readCloseContext(serverId, agentId);
         if (!current) {
-          toast.error(t("sidebar.workspace.agentRuntime.directoryUnavailable"));
+          reportError(agentId, t("sidebar.workspace.agentRuntime.directoryUnavailable"));
           return;
         }
         if (!current.client.supportsAgentRuntimeClose()) {
-          toast.error(t("sidebar.workspace.agentRuntime.updateHost"));
+          reportError(agentId, t("sidebar.workspace.agentRuntime.updateHost"));
           return;
         }
         if (!canRequestAgentRuntimeClose(current.agent, keepRecord)) {
-          toast.error(t("sidebar.workspace.agentRuntime.idleRequired"));
+          reportError(agentId, t("sidebar.workspace.agentRuntime.idleRequired"));
           return;
         }
 
-        toast.show(t("sidebar.workspace.agentRuntime.pending", { title }));
+        toast.show(t("sidebar.workspace.agentRuntime.pending", { title }), { durationMs: null });
         await current.client.closeIdleAgentRuntime(agentId);
         runtimeClosed = true;
         await afterClose?.({ agent: current.agent, client: current.client });
         toast.show(t("sidebar.workspace.agentRuntime.closed", { title }), { variant: "success" });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        toast.error(
+        reportError(
+          agentId,
           runtimeClosed
             ? t("sidebar.workspace.agentRuntime.closedButCleanupFailed", { message })
             : message,
@@ -97,10 +125,10 @@ export function useCloseIdleAgentRuntime(): {
         setPendingAgentIds(new Set(pendingAgentIdsRef.current));
       }
     },
-    [t, toast],
+    [clearError, reportError, t, toast],
   );
 
-  return { pendingAgentIds, closeIdleAgentRuntime };
+  return { pendingAgentIds, errorByAgentId, closeIdleAgentRuntime };
 }
 
 /** Reads the latest Host connection and Agent state without hydrating stored records */

@@ -13,6 +13,7 @@ import {
   type ReactNode,
 } from "react";
 import { useStoreWithEqualityFn } from "zustand/traditional";
+import { useShallow } from "zustand/shallow";
 import { useIsFocused } from "@react-navigation/native";
 import { BackHandler, Keyboard, Pressable, Text, View } from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
@@ -1591,17 +1592,25 @@ function WorkspaceScreenContent({
   const client = useHostRuntimeClient(normalizedServerId);
   const isConnected = useHostRuntimeIsConnected(normalizedServerId);
   const agentRuntimeSession = useSessionStore(
-    (state) => state.sessions[normalizedServerId] ?? null,
+    useShallow((state) => {
+      const session = state.sessions[normalizedServerId];
+      return {
+        agents: session?.agents,
+        client: session?.client ?? null,
+        clientGeneration: session?.clientGeneration ?? 0,
+        supportsAgentRuntimeClose: session?.serverInfo?.features?.agentRuntimeClose === true,
+      };
+    }),
   );
   const agentRuntimeSnapshot = useHostRuntimeSnapshot(normalizedServerId);
   const agentDirectoryCurrent = isCurrentAgentDirectory({
     snapshot: agentRuntimeSnapshot,
-    session: agentRuntimeSession,
+    session: agentRuntimeSession.client ? agentRuntimeSession : null,
   });
   const supportsAgentRuntimeClose = Boolean(
     agentDirectoryCurrent &&
     agentRuntimeSnapshot?.client?.supportsAgentRuntimeClose() === true &&
-    agentRuntimeSession?.serverInfo?.features?.agentRuntimeClose === true,
+    agentRuntimeSession.supportsAgentRuntimeClose,
   );
   /** Explains why the Agent tab runtime commands are unavailable */
   let agentRuntimeUnavailableMessage: string | null = null;
@@ -1618,7 +1627,7 @@ function WorkspaceScreenContent({
     agentRuntimeUnavailableMessage = t("sidebar.workspace.agentRuntime.updateHost");
   }
   agentRuntimeUnavailableMessage ??= t("sidebar.workspace.agentRuntime.idleRequired");
-  const { pendingAgentIds, closeIdleAgentRuntime } = useCloseIdleAgentRuntime();
+  const { pendingAgentIds, errorByAgentId, closeIdleAgentRuntime } = useCloseIdleAgentRuntime();
   const supportsProvidersSnapshot = useSessionStore(
     (state) => state.sessions[normalizedServerId]?.serverInfo?.features?.providersSnapshot === true,
   );
@@ -2339,7 +2348,7 @@ function WorkspaceScreenContent({
   const agentRuntimeActions = useMemo<WorkspaceTabAgentRuntimeActions>(
     () => ({
       canClose: (agentId, keepRecord) => {
-        const agent = agentRuntimeSession?.agents.get(agentId);
+        const agent = agentRuntimeSession.agents?.get(agentId);
         return Boolean(
           persistenceKey &&
           supportsAgentRuntimeClose &&
@@ -2348,6 +2357,7 @@ function WorkspaceScreenContent({
         );
       },
       isPending: (agentId) => pendingAgentIds.has(agentId),
+      errorByAgentId,
       unavailableMessage: agentRuntimeUnavailableMessage,
       close: ({ agentId, tabId, keepRecord }) => {
         if (!persistenceKey || !normalizedServerId) return;
@@ -2380,6 +2390,7 @@ function WorkspaceScreenContent({
       agentRuntimeUnavailableMessage,
       closeIdleAgentRuntime,
       closeWorkspaceTabWithCleanup,
+      errorByAgentId,
       normalizedServerId,
       normalizedWorkspaceId,
       pendingAgentIds,

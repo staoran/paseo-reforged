@@ -18,6 +18,7 @@ import {
   shouldShowSidebarHostLabels,
   type ProjectStatusSession,
   type SidebarProjectEntry,
+  type SidebarWorkspaceEntry,
   type SidebarWorkspacePlacement,
 } from "./sidebar-workspaces-view-model";
 
@@ -456,6 +457,61 @@ describe("shared sidebar workspace model", () => {
 
     expect(nextEntries.get("srv:one")).toBe(previousEntries.get("srv:one"));
     expect(nextEntries.get("srv:two")).not.toBe(previousEntries.get("srv:two"));
+  });
+
+  it("preserves other resident rows when one Agent changes", () => {
+    const placements = buildSidebarWorkspacePlacementModel({
+      projects: [project({ projectKey: "project", workspaceKeys: ["srv:one", "srv:two"] })],
+    }).workspaces;
+    const workspaces = new Map([
+      [
+        "one",
+        workspace({ id: "one", name: "one", projectId: "project", projectDisplayName: "project" }),
+      ],
+      [
+        "two",
+        workspace({ id: "two", name: "two", projectId: "project", projectDisplayName: "project" }),
+      ],
+    ]);
+    const firstAgent = agent({ id: "first", workspaceId: "one", status: "idle" });
+    const secondAgent = agent({ id: "second", workspaceId: "two", status: "idle" });
+    const buildEntries = (
+      agents: Map<string, Agent>,
+      previousEntries?: ReadonlyMap<string, SidebarWorkspaceEntry>,
+    ) =>
+      buildSidebarWorkspaceEntries({
+        placements,
+        sessions: [
+          {
+            serverId: "srv",
+            workspaces,
+            workspaceAgentActivity: new Map(),
+            agents,
+            agentDirectoryCurrent: true,
+            supportsMarkUnread: false,
+          },
+        ],
+        previousEntries,
+      });
+
+    const initial = buildEntries(
+      new Map([
+        ["first", firstAgent],
+        ["second", secondAgent],
+      ]),
+    );
+    const next = buildEntries(
+      new Map([
+        ["first", firstAgent],
+        ["second", { ...secondAgent, status: "closed" }],
+      ]),
+      initial,
+    );
+
+    expect(next.get("srv:one")).toBe(initial.get("srv:one"));
+    expect(next.get("srv:one")?.managedAgents).toBe(initial.get("srv:one")?.managedAgents);
+    expect(next.get("srv:two")).not.toBe(initial.get("srv:two"));
+    expect(next.get("srv:two")?.residentAgentCount).toBe(0);
   });
 
   it("keeps a structurally disambiguated project key in status entries", () => {

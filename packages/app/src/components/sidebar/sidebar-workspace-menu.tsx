@@ -95,6 +95,7 @@ function renderTriggerIcon({ hovered }: { hovered?: boolean }) {
 
 export interface SidebarWorkspaceMenuProps {
   workspaceKey: string;
+  agentRuntimeActions: AgentRuntimeCloseActions;
   serverId?: string;
   workspaceId?: string;
   workspaceLabels?: readonly string[];
@@ -131,6 +132,7 @@ interface SidebarWorkspaceMenuItemsProps extends Omit<
 }
 
 type MenuSurface = "context" | "dropdown";
+export type AgentRuntimeCloseActions = ReturnType<typeof useCloseIdleAgentRuntime>;
 /** Local page id for selecting one managed Agent in a Workspace menu */
 const AGENT_RUNTIME_MENU_PAGE_ID = "workspace-agent-runtime";
 
@@ -169,7 +171,11 @@ function SidebarWorkspaceMenuItems({
   agentDirectoryCurrent = false,
   supportsAgentRuntimeClose = false,
   agentRuntimeCloseDisabledReason = "syncing",
-}: SidebarWorkspaceMenuItemsProps & { surface: MenuSurface }): ReactNode {
+  agentRuntimeActions,
+}: SidebarWorkspaceMenuItemsProps & {
+  surface: MenuSurface;
+  agentRuntimeActions: AgentRuntimeCloseActions;
+}): ReactNode {
   const { t } = useTranslation();
   const archiveTrailing = useMemo(
     () => (archiveShortcutKeys ? <Shortcut chord={archiveShortcutKeys} /> : null),
@@ -240,6 +246,7 @@ function SidebarWorkspaceMenuItems({
           agentDirectoryCurrent={agentDirectoryCurrent}
           supportsAgentRuntimeClose={supportsAgentRuntimeClose}
           disabledReason={agentRuntimeCloseDisabledReason}
+          actions={agentRuntimeActions}
         />
       ) : null}
       {onTogglePin ? (
@@ -291,6 +298,7 @@ function AgentRuntimeMenuEntry({
   agentDirectoryCurrent,
   supportsAgentRuntimeClose,
   disabledReason,
+  actions,
 }: {
   surface: MenuSurface;
   serverId: string;
@@ -298,6 +306,7 @@ function AgentRuntimeMenuEntry({
   agentDirectoryCurrent: boolean;
   supportsAgentRuntimeClose: boolean;
   disabledReason: "offline" | "syncing" | "sync_failed" | "update_host";
+  actions: AgentRuntimeCloseActions;
 }) {
   const { t } = useTranslation();
   if (!agentDirectoryCurrent) {
@@ -322,6 +331,7 @@ function AgentRuntimeMenuEntry({
         serverId={serverId}
         agent={agent}
         supportsAgentRuntimeClose={supportsAgentRuntimeClose}
+        actions={actions}
       />
     ) : null;
   }
@@ -343,19 +353,24 @@ function AgentRuntimeMenuItem({
   serverId,
   agent,
   supportsAgentRuntimeClose,
+  actions,
 }: {
   surface: MenuSurface;
   serverId: string;
   agent: Agent;
   supportsAgentRuntimeClose: boolean;
+  actions: AgentRuntimeCloseActions;
 }) {
   const { t } = useTranslation();
-  const { pendingAgentIds, closeIdleAgentRuntime } = useCloseIdleAgentRuntime();
-  const pending = pendingAgentIds.has(agent.id);
+  const { closeIdleAgentRuntime } = actions;
+  const pending = actions.pendingAgentIds.has(agent.id);
   const title = agent.title?.trim() || agent.id.slice(0, 7);
+  const error = actions.errorByAgentId.get(agent.id);
   let description: string;
   if (!supportsAgentRuntimeClose) {
     description = agentRuntimeUnavailableLabel(t, "update_host");
+  } else if (error) {
+    description = error;
   } else if (agent.pendingPermissions.length > 0) {
     description = t("sidebar.workspace.agentRuntime.pendingPermissions");
   } else {
@@ -370,7 +385,6 @@ function AgentRuntimeMenuItem({
       surface={surface}
       disabled={!supportsAgentRuntimeClose || (!canCloseIdleAgentRuntime(agent) && !pending)}
       destructive
-      closeOnSelect={false}
       leading={agentRuntimeLeadingIcon}
       description={description}
       status={pending ? "pending" : "idle"}
@@ -388,10 +402,12 @@ function WorkspaceAgentRuntimeMenuPage({
   serverId,
   managedAgents,
   supportsAgentRuntimeClose,
+  actions,
 }: {
   serverId: string;
   managedAgents: readonly Agent[];
   supportsAgentRuntimeClose: boolean;
+  actions: AgentRuntimeCloseActions;
 }) {
   const agents = useMemo(
     () =>
@@ -411,6 +427,7 @@ function WorkspaceAgentRuntimeMenuPage({
           serverId={serverId}
           agent={agent}
           supportsAgentRuntimeClose={supportsAgentRuntimeClose}
+          actions={actions}
         />
       ))}
     </>
@@ -425,6 +442,7 @@ function useSidebarWorkspaceMenuPages(input: {
   managedAgents: readonly Agent[];
   agentDirectoryCurrent: boolean;
   supportsAgentRuntimeClose: boolean;
+  actions: AgentRuntimeCloseActions;
 }): readonly MenuPageDefinition[] {
   const { t } = useTranslation();
   const labelPages = useWorkspaceLabelMenuPages(input.workspaceTarget);
@@ -445,12 +463,14 @@ function useSidebarWorkspaceMenuPages(input: {
           serverId={input.serverId}
           managedAgents={input.managedAgents}
           supportsAgentRuntimeClose={input.supportsAgentRuntimeClose}
+          actions={input.actions}
         />
       ),
     };
   }, [
     input.agentDirectoryCurrent,
     input.managedAgents,
+    input.actions,
     input.serverId,
     input.supportsAgentRuntimeClose,
     input.workspaceId,
@@ -512,6 +532,7 @@ export function SidebarWorkspaceMenu({
   agentDirectoryCurrent = false,
   supportsAgentRuntimeClose = false,
   agentRuntimeCloseDisabledReason = "syncing",
+  agentRuntimeActions,
   open,
   onOpenChange,
 }: SidebarWorkspaceMenuProps) {
@@ -528,6 +549,7 @@ export function SidebarWorkspaceMenu({
     managedAgents: managedAgents ?? [],
     agentDirectoryCurrent,
     supportsAgentRuntimeClose,
+    actions: agentRuntimeActions,
   });
   return (
     <DropdownMenu compactMode="sheet" open={open} onOpenChange={onOpenChange}>
@@ -556,6 +578,7 @@ export function SidebarWorkspaceMenu({
           agentDirectoryCurrent={agentDirectoryCurrent}
           supportsAgentRuntimeClose={supportsAgentRuntimeClose}
           agentRuntimeCloseDisabledReason={agentRuntimeCloseDisabledReason}
+          agentRuntimeActions={agentRuntimeActions}
           onCopyPath={onCopyPath}
           onCopyBranchName={onCopyBranchName}
           onRename={onRename}
@@ -603,6 +626,7 @@ export function SidebarWorkspaceContextMenu({
   onTogglePin,
   openInFileManagerPath,
   agentRuntimeCloseDisabledReason,
+  agentRuntimeActions,
   accessibilityLabel,
   highlightStyle,
   ...triggerProps
@@ -653,6 +677,7 @@ export function SidebarWorkspaceContextMenu({
     managedAgents: workspace.managedAgents ?? [],
     agentDirectoryCurrent: workspace.agentDirectoryCurrent ?? false,
     supportsAgentRuntimeClose: workspace.supportsAgentRuntimeClose ?? false,
+    actions: agentRuntimeActions,
   });
   const closeDisabledReason =
     agentRuntimeCloseDisabledReason ?? workspace.agentRuntimeCloseDisabledReason ?? "syncing";
@@ -683,6 +708,7 @@ export function SidebarWorkspaceContextMenu({
           agentDirectoryCurrent={workspace.agentDirectoryCurrent}
           supportsAgentRuntimeClose={workspace.supportsAgentRuntimeClose}
           agentRuntimeCloseDisabledReason={closeDisabledReason}
+          agentRuntimeActions={agentRuntimeActions}
           onCopyPath={onCopyPath}
           onCopyBranchName={onCopyBranchName}
           onRename={onRename}

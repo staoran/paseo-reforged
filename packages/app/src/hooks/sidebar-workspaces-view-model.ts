@@ -509,13 +509,22 @@ function buildManagedAgentIndexesByServer(
 function getWorkspaceManagedAgentFields(
   index: WorkspaceManagedAgentIndex | null | undefined,
   workspaceId: string,
+  previousEntry: SidebarWorkspaceEntry | undefined,
 ): Pick<SidebarWorkspaceEntry, "residentAgentCount" | "managedAgents"> {
   if (!index) {
     return { residentAgentCount: null, managedAgents: null };
   }
+  const agents = index.agentsByWorkspace.get(workspaceId) ?? EMPTY_AGENTS;
+  const previousAgents = previousEntry?.managedAgents;
+  const managedAgents =
+    previousAgents &&
+    previousAgents.length === agents.length &&
+    previousAgents.every((agent, agentIndex) => agent === agents[agentIndex])
+      ? previousAgents
+      : agents;
   return {
     residentAgentCount: index.residentCountsByWorkspace.get(workspaceId) ?? 0,
-    managedAgents: index.agentsByWorkspace.get(workspaceId) ?? EMPTY_AGENTS,
+    managedAgents,
   };
 }
 
@@ -542,9 +551,11 @@ export function buildSidebarWorkspaceEntries(input: {
     });
     const workspace = workspaceKey ? session.workspaces.get(workspaceKey) : null;
     if (!workspace) continue;
+    const previousEntry = input.previousEntries?.get(placement.workspaceKey);
     const agentRuntimeFields = getWorkspaceManagedAgentFields(
       managedAgentsByServer.get(placement.serverId),
       workspace.id,
+      previousEntry,
     );
 
     const entry = createSidebarWorkspaceEntry({
@@ -559,7 +570,6 @@ export function buildSidebarWorkspaceEntries(input: {
       agentRuntimeCloseDisabledReason: session.agentRuntimeCloseDisabledReason,
       supportsMarkUnread: session.supportsMarkUnread,
     });
-    const previousEntry = input.previousEntries?.get(placement.workspaceKey);
     entries.set(
       placement.workspaceKey,
       previousEntry && areSidebarWorkspaceEntriesEqual(previousEntry, entry)
