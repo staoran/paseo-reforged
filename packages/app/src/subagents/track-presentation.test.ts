@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { i18n } from "@/i18n/i18next";
+import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
 import type { PaseoSubagentRow, ProviderSubagentRow, SubagentRow } from "./select";
 import {
   buildSubagentPillPresentation,
@@ -168,6 +169,15 @@ describe("resolveRowLabel", () => {
 });
 
 describe("buildSubagentRowPresentationData", () => {
+  it("keeps an idle child done while the same lifecycle remains ready in the Workspace", () => {
+    expect(deriveSidebarStateBucket({ status: "idle", requiresAttention: false })).toBe(
+      "attention",
+    );
+    expect(
+      buildSubagentRowPresentationData(row({ id: "child", status: "idle" })).statusBucket,
+    ).toBe("done");
+  });
+
   it("namespaces the key with a subagent prefix", () => {
     expect(buildSubagentRowPresentationData(row({ id: "child-a" })).key).toBe(
       "paseo_subagent_child-a",
@@ -258,6 +268,13 @@ describe("buildSubagentRowPresentationData for provider rows", () => {
   it("leaves managed subagent rows with no subtitle", () => {
     expect(buildSubagentRowPresentationData(row({ id: "a", title: "Managed" })).subtitle).toBe("");
   });
+
+  it.each(["completed", "canceled"] as const)(
+    "keeps a %s provider child in the done bucket",
+    (status) => {
+      expect(buildSubagentRowPresentationData(providerRow({ status })).statusBucket).toBe("done");
+    },
+  );
 });
 
 describe("provider-owned row subtitles", () => {

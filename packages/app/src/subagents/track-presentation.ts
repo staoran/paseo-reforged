@@ -23,6 +23,7 @@ export interface SubagentRowPresentationData {
   statusBucket: SidebarStateBucket | null;
 }
 
+/** Builds child-track labels and activity without applying Workspace review semantics */
 export function buildSubagentRowPresentationData(row: SubagentRow): SubagentRowPresentationData {
   // The task distinguishes siblings in a fan-out, so it names the row when present. Providers
   // own the compact secondary context because model, effort, and usage semantics differ.
@@ -38,10 +39,14 @@ export function buildSubagentRowPresentationData(row: SubagentRow): SubagentRowP
     label: label ?? "",
     subtitle: subtitle ?? "",
     titleState: label ? "ready" : "loading",
-    statusBucket: deriveSidebarStateBucket({
-      status,
-      requiresAttention: false,
-    }),
+    // An idle child is finished in the track even while its Workspace stays ready for review
+    statusBucket:
+      status === "idle"
+        ? "done"
+        : deriveSidebarStateBucket({
+            status,
+            requiresAttention: false,
+          }),
   };
 }
 
