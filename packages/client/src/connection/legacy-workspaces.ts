@@ -26,6 +26,16 @@ function legacyWorkspaceId(value: string): string {
 // at the client edge, including live updates, so app workflows need no version branch.
 export class LegacyWorkspaces {
   private readonly agents = new Map<string, AgentEntry>();
+  /** Retains the Workspace entry time across legacy updates within one bucket */
+  private readonly statusEntryByWorkspaceId = new Map<
+    string,
+    Pick<Workspace, "status" | "statusEnteredAt">
+  >();
+  /** Keeps one transition time across all pages of a legacy directory snapshot */
+  private snapshotStartedAt: string | null = null;
+
+  /** Supplies the transition time for remove updates that carry no timestamp */
+  constructor(private readonly now: () => string = () => new Date().toISOString()) {}
 
   normalize(message: SessionOutboundMessage): SessionOutboundMessage {
     const stamp = (agent: AgentSnapshotPayload): AgentSnapshotPayload => ({
@@ -71,36 +81,66 @@ export class LegacyWorkspaces {
     return message;
   }
 
-  read(entries: AgentEntry[], reset: boolean): Workspace[] {
-    if (reset) this.agents.clear();
+  /** Applies one legacy Agent directory page and optionally retires old Workspace history */
+  read(entries: AgentEntry[], reset: boolean, complete = true): Workspace[] {
+    if (reset) {
+      this.agents.clear();
+      this.snapshotStartedAt = this.now();
+    }
     for (const entry of entries) this.agents.set(entry.agent.id, entry);
     const pageIds = new Set(entries.map(workspaceId));
-    return [...this.workspaces().values()].filter((workspace) => pageIds.has(workspace.id));
+    const snapshotComplete = complete && this.snapshotStartedAt !== null;
+    const workspaces = this.workspaces(
+      this.snapshotStartedAt ?? undefined,
+      this.snapshotStartedAt === null || snapshotComplete,
+    );
+    if (snapshotComplete) {
+      for (const id of this.statusEntryByWorkspaceId.keys()) {
+        if (!workspaces.has(id)) this.statusEntryByWorkspaceId.delete(id);
+      }
+      this.snapshotStartedAt = null;
+    }
+    return [...workspaces.values()].filter((workspace) => pageIds.has(workspace.id));
   }
 
   update(message: SessionOutboundMessage): WorkspaceUpdate[] {
     if (message.type !== "agent_update") return [];
-    const before = this.workspaces();
+    const persistHistory = this.snapshotStartedAt === null;
+    const before = this.workspaces(this.snapshotStartedAt ?? undefined, persistHistory);
     const update = message.payload;
+    const statusChangedAt = update.kind === "upsert" ? update.agent.updatedAt : this.now();
     if (update.kind === "remove") this.agents.delete(update.agentId);
     else {
       const project = update.project ?? this.agents.get(update.agent.id)?.project;
       if (update.agent.archivedAt) this.agents.delete(update.agent.id);
       else if (project) this.agents.set(update.agent.id, { agent: update.agent, project });
     }
-    const after = this.workspaces();
+    const after = this.workspaces(this.snapshotStartedAt ?? statusChangedAt, persistHistory);
+    if (!persistHistory) {
+      for (const [id, workspace] of after) {
+        if (before.get(id)?.status === workspace.status) continue;
+        workspace.statusEnteredAt = statusChangedAt;
+        this.statusEntryByWorkspaceId.set(id, {
+          status: workspace.status,
+          statusEnteredAt: statusChangedAt,
+        });
+      }
+    }
     const changes: WorkspaceUpdate[] = [];
     for (const [id, workspace] of after) {
       if (JSON.stringify(before.get(id)) !== JSON.stringify(workspace))
         changes.push({ type: "workspace_update", payload: { kind: "upsert", workspace } });
     }
     for (const id of before.keys())
-      if (!after.has(id))
+      if (!after.has(id)) {
+        if (persistHistory) this.statusEntryByWorkspaceId.delete(id);
         changes.push({ type: "workspace_update", payload: { kind: "remove", id } });
+      }
     return changes;
   }
 
-  private workspaces(): Map<string, Workspace> {
+  /** Rebuilds legacy workspace projections and preserves bucket entry times */
+  private workspaces(statusChangedAt?: string, persistHistory = true): Map<string, Workspace> {
     const workspaces = new Map<string, Workspace>();
     for (const entry of this.agents.values()) {
       const { agent, project } = entry;
@@ -139,6 +179,20 @@ export class LegacyWorkspaces {
         githubRuntime: null,
         project,
       });
+    }
+    for (const [id, workspace] of workspaces) {
+      const previous = this.statusEntryByWorkspaceId.get(id);
+      if (previous?.status === workspace.status) {
+        workspace.statusEnteredAt = previous.statusEnteredAt;
+      } else if (previous && statusChangedAt) {
+        workspace.statusEnteredAt = statusChangedAt;
+      }
+      if (persistHistory) {
+        this.statusEntryByWorkspaceId.set(id, {
+          status: workspace.status,
+          statusEnteredAt: workspace.statusEnteredAt,
+        });
+      }
     }
     return workspaces;
   }

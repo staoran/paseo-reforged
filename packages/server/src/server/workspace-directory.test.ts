@@ -309,6 +309,40 @@ describe("WorkspaceDirectory", () => {
     await expect(workspace.workspaceStatus()).resolves.toBe("done");
   });
 
+  test("uses an open turn while root or same-workspace child lifecycle still says idle", async () => {
+    const workspace = new WorkspaceStatus();
+    workspace.hasRootAgent({ id: "parent-agent", status: "idle" });
+    const rootTurnStartedAt = "2026-03-01T12:05:00.000Z";
+    workspace.updateAgent("parent-agent", {
+      activeTurn: { turnId: "root-turn", startedAt: rootTurnStartedAt },
+    });
+    await expect(workspace.workspaceDescriptor()).resolves.toMatchObject({
+      status: "running",
+      statusEnteredAt: rootTurnStartedAt,
+    });
+
+    workspace.updateAgent("parent-agent", { activeTurn: null });
+    await expect(workspace.workspaceStatus()).resolves.toBe("attention");
+
+    workspace.hasDelegatedAgent({ id: "child-agent", status: "idle" });
+    workspace.updateAgent("child-agent", {
+      activeTurn: { turnId: "child-turn", startedAt: NOW },
+    });
+    await expect(workspace.workspaceStatus()).resolves.toBe("running");
+
+    const childWorkspace = new WorkspaceStatus();
+    childWorkspace.hasRootAgent({ id: "parent-agent", status: "closed" });
+    childWorkspace.hasDelegatedAgent({ id: "child-agent", status: "idle" });
+    const childTurnStartedAt = "2026-03-01T12:10:00.000Z";
+    childWorkspace.updateAgent("child-agent", {
+      activeTurn: { turnId: "child-turn", startedAt: childTurnStartedAt },
+    });
+    await expect(childWorkspace.workspaceDescriptor()).resolves.toMatchObject({
+      status: "running",
+      statusEnteredAt: childTurnStartedAt,
+    });
+  });
+
   test("preserves Ready entry time when attention changes and refreshes it on bucket changes", async () => {
     const workspace = new WorkspaceStatus();
     workspace.hasRootAgent({ id: "root-agent", status: "idle" });

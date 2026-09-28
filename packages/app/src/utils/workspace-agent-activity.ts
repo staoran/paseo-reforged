@@ -78,7 +78,10 @@ export function buildWorkspaceAgentActivityIndex(
       requiresAttention: agent.requiresAttention,
       attentionReason: agent.attentionReason,
     });
-    const enteredAt = agent.attentionTimestamp ?? agent.updatedAt;
+    const enteredAt =
+      status === "running" && agent.turn.phase === "open"
+        ? (agent.turn.startedAt ?? agent.updatedAt)
+        : (agent.attentionTimestamp ?? agent.updatedAt);
     const current = activityByWorkspaceId.get(agent.workspaceId);
     if (current) {
       const priority = getWorkspaceStateBucketPriority(status);

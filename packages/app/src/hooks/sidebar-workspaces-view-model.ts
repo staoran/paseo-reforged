@@ -1,3 +1,4 @@
+import { getWorkspaceStateBucketPriority } from "@getpaseo/protocol/agent-state-bucket";
 import type { PrHint } from "@/git/pr-hint";
 import { selectPrHintFromStatus } from "@/git/pr-hint";
 import { type HostProjectListItem } from "@/projects/host-project-model";
@@ -315,25 +316,28 @@ function deriveEffectiveWorkspaceStatus(input: {
   pendingCreateAttempts?: Record<string, PendingCreateAttempt>;
   workspaceAgentActivity?: ReadonlyMap<string, WorkspaceAgentActivity>;
 }): EffectiveWorkspaceStatus {
-  if (input.workspace.status !== "done") {
-    return { status: input.workspace.status, enteredAt: input.workspace.statusEnteredAt };
-  }
-
-  const pendingStartedAt = getPendingInitialAgentCreateStartedAt({
-    serverId: input.serverId,
-    workspaceId: input.workspace.id,
-    pendingCreateAttempts: input.pendingCreateAttempts,
-  });
-  if (pendingStartedAt) {
-    return { status: "running", enteredAt: pendingStartedAt };
+  const workspaceStatus = input.workspace.status;
+  if (workspaceStatus === "done") {
+    const pendingStartedAt = getPendingInitialAgentCreateStartedAt({
+      serverId: input.serverId,
+      workspaceId: input.workspace.id,
+      pendingCreateAttempts: input.pendingCreateAttempts,
+    });
+    if (pendingStartedAt) {
+      return { status: "running", enteredAt: pendingStartedAt };
+    }
   }
 
   const rootAgentActivity = input.workspaceAgentActivity?.get(input.workspace.id);
-  if (rootAgentActivity && rootAgentActivity.status !== "done") {
+  if (
+    rootAgentActivity &&
+    getWorkspaceStateBucketPriority(rootAgentActivity.status) <
+      getWorkspaceStateBucketPriority(workspaceStatus)
+  ) {
     return rootAgentActivity;
   }
 
-  return { status: input.workspace.status, enteredAt: input.workspace.statusEnteredAt };
+  return { status: workspaceStatus, enteredAt: input.workspace.statusEnteredAt };
 }
 
 function getPendingInitialAgentCreateStartedAt(input: {

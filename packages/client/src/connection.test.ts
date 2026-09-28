@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import { DaemonClient, type DaemonTransport } from "./daemon-client";
+import { LegacyWorkspaces } from "./connection/legacy-workspaces";
 
 function connection(
   options: {
@@ -752,7 +753,7 @@ test.each([
           workspaceDirectory: cwd,
           projectRootPath: root,
           projectId: "/repo",
-          status: "done",
+          status: "attention",
         }),
       ]);
       const updates: unknown[] = [];
@@ -835,10 +836,395 @@ test("legacy workspace pages contain only that page's groups and retain earlier 
         type: "workspace_update",
         payload: expect.objectContaining({
           kind: "upsert",
-          workspace: expect.objectContaining({ id: "/first", status: "done" }),
+          workspace: expect.objectContaining({ id: "/first", status: "attention" }),
         }),
       }),
     ]);
+    await workspaces.release();
+  } finally {
+    await h.client.close();
+  }
+});
+
+test("legacy Ready keeps its entry time through read updates and changes it on Working", async () => {
+  const h = connection({ ownedSubscriptions: false, workspaceMultiplicity: false });
+  const enteredAt = "2026-06-18T10:00:00.000Z";
+  try {
+    const connecting = h.client.connect();
+    h.open();
+    await connecting;
+    const workspaces = h.client.observeWorkspaces();
+    const unread = legacyAgent({ id: "agent", cwd: "/repo/app", updatedAt: enteredAt });
+    h.receive({
+      type: "fetch_agents_response",
+      payload: {
+        requestId: h.sent.at(-1)!.message!.requestId,
+        entries: [
+          {
+            ...unread,
+            agent: {
+              ...unread.agent,
+              requiresAttention: true,
+              attentionReason: "finished",
+              attentionTimestamp: enteredAt,
+            },
+          },
+        ],
+        pageInfo: { hasMore: false, nextCursor: null, prevCursor: null },
+      },
+    });
+    expect((await workspaces.ready).entries[0]).toMatchObject({
+      status: "attention",
+      statusEnteredAt: enteredAt,
+    });
+
+    const updates: unknown[] = [];
+    workspaces.subscribe({ snapshot: () => {}, update: (message) => updates.push(message) });
+    for (const updatedAt of ["2026-06-18T10:10:00.000Z", "2026-06-18T10:20:00.000Z"]) {
+      h.receive({
+        type: "agent_update",
+        payload: {
+          kind: "upsert",
+          ...legacyAgent({ id: "agent", cwd: "/repo/app", updatedAt }),
+        },
+      });
+    }
+    expect(updates).toHaveLength(2);
+    for (const update of updates) {
+      expect(update).toMatchObject({
+        type: "workspace_update",
+        payload: {
+          workspace: { status: "attention", statusEnteredAt: enteredAt },
+        },
+      });
+    }
+
+    const runningAt = "2026-06-18T10:30:00.000Z";
+    h.receive({
+      type: "agent_update",
+      payload: {
+        kind: "upsert",
+        ...legacyAgent({ id: "agent", cwd: "/repo/app", status: "running", updatedAt: runningAt }),
+      },
+    });
+    expect(updates).toHaveLength(3);
+    expect(updates[2]).toMatchObject({
+      type: "workspace_update",
+      payload: {
+        workspace: { status: "running", statusEnteredAt: runningAt },
+      },
+    });
+
+    const readyAt = "2026-06-18T10:40:00.000Z";
+    h.receive({
+      type: "agent_update",
+      payload: {
+        kind: "upsert",
+        ...legacyAgent({ id: "agent", cwd: "/repo/app", updatedAt: readyAt }),
+      },
+    });
+    expect(updates).toHaveLength(4);
+    expect(updates[3]).toMatchObject({
+      type: "workspace_update",
+      payload: {
+        workspace: { status: "attention", statusEnteredAt: readyAt },
+      },
+    });
+    await workspaces.release();
+  } finally {
+    await h.client.close();
+  }
+});
+
+test("legacy multi-root Ready starts when the higher-priority root clears", async () => {
+  const h = connection({ ownedSubscriptions: false, workspaceMultiplicity: false });
+  try {
+    const connecting = h.client.connect();
+    h.open();
+    await connecting;
+    const workspaces = h.client.observeWorkspaces();
+    const runningAt = "2026-06-18T10:00:00.000Z";
+    h.receive({
+      type: "fetch_agents_response",
+      payload: {
+        requestId: h.sent.at(-1)!.message!.requestId,
+        entries: [
+          legacyAgent({ id: "running", cwd: "/repo/app", status: "running", updatedAt: runningAt }),
+          legacyAgent({ id: "ready", cwd: "/repo/app", updatedAt: "2026-06-18T09:00:00.000Z" }),
+        ],
+        pageInfo: { hasMore: false, nextCursor: null, prevCursor: null },
+      },
+    });
+    expect((await workspaces.ready).entries[0]).toMatchObject({
+      status: "running",
+      statusEnteredAt: runningAt,
+    });
+
+    const updates: unknown[] = [];
+    workspaces.subscribe({ snapshot: () => {}, update: (message) => updates.push(message) });
+    const readyAt = "2026-06-18T10:15:00.000Z";
+    h.receive({
+      type: "agent_update",
+      payload: {
+        kind: "upsert",
+        ...legacyAgent({ id: "running", cwd: "/repo/app", updatedAt: readyAt }),
+      },
+    });
+    expect(updates).toHaveLength(1);
+    expect(updates[0]).toMatchObject({
+      type: "workspace_update",
+      payload: {
+        workspace: { status: "attention", statusEnteredAt: readyAt },
+      },
+    });
+    await workspaces.release();
+  } finally {
+    await h.client.close();
+  }
+});
+
+test("legacy multi-root Ready uses the remove transition time", () => {
+  const transitionAt = "2026-06-18T10:15:00.000Z";
+  const workspaces = new LegacyWorkspaces(() => transitionAt);
+  workspaces.read(
+    [
+      legacyAgent({
+        id: "running",
+        cwd: "/repo/app",
+        status: "running",
+        updatedAt: "2026-06-18T10:00:00.000Z",
+      }),
+      legacyAgent({ id: "ready", cwd: "/repo/app", updatedAt: "2026-06-18T09:00:00.000Z" }),
+    ],
+    true,
+  );
+
+  const updates = workspaces.update({
+    type: "agent_update",
+    payload: { kind: "remove", agentId: "running" },
+  });
+
+  expect(updates).toHaveLength(1);
+  expect(updates[0]).toMatchObject({
+    type: "workspace_update",
+    payload: {
+      workspace: { status: "attention", statusEnteredAt: transitionAt },
+    },
+  });
+});
+
+test("legacy non-empty reset keeps entry time for the same status bucket", () => {
+  const workspaces = new LegacyWorkspaces();
+  const initial = legacyAgent({
+    id: "agent",
+    cwd: "/repo/app",
+    updatedAt: "2026-06-18T10:00:00.000Z",
+  });
+  expect(workspaces.read([initial], true)).toMatchObject([
+    { status: "attention", statusEnteredAt: "2026-06-18T10:00:00.000Z" },
+  ]);
+
+  const refreshed = legacyAgent({
+    id: "agent",
+    cwd: "/repo/app",
+    updatedAt: "2026-06-18T10:20:00.000Z",
+  });
+  expect(workspaces.read([refreshed], true)).toMatchObject([
+    { status: "attention", statusEnteredAt: "2026-06-18T10:00:00.000Z" },
+  ]);
+});
+
+test("legacy full reset uses its transition time when a higher-priority root disappears", () => {
+  const transitionAt = "2026-06-18T10:15:00.000Z";
+  const workspaces = new LegacyWorkspaces(() => transitionAt);
+  const running = legacyAgent({
+    id: "running",
+    cwd: "/repo/app",
+    status: "running",
+    updatedAt: "2026-06-18T10:00:00.000Z",
+  });
+  const ready = legacyAgent({
+    id: "ready",
+    cwd: "/repo/app",
+    updatedAt: "2026-06-18T09:00:00.000Z",
+  });
+  expect(workspaces.read([running, ready], true)).toMatchObject([
+    { status: "running", statusEnteredAt: "2026-06-18T10:00:00.000Z" },
+  ]);
+
+  expect(workspaces.read([ready], true)).toMatchObject([
+    { status: "attention", statusEnteredAt: transitionAt },
+  ]);
+});
+
+test("legacy paged reset does not let live updates rewrite its transition time", () => {
+  const transitionAt = "2026-06-18T10:15:00.000Z";
+  const workspaces = new LegacyWorkspaces(() => transitionAt);
+  const ready = legacyAgent({
+    id: "ready",
+    cwd: "/repo/app",
+    updatedAt: "2026-06-18T09:00:00.000Z",
+  });
+  workspaces.read(
+    [
+      legacyAgent({
+        id: "running",
+        cwd: "/repo/app",
+        status: "running",
+        updatedAt: "2026-06-18T10:00:00.000Z",
+      }),
+      ready,
+    ],
+    true,
+  );
+
+  expect(workspaces.read([ready], true, false)).toMatchObject([
+    { status: "attention", statusEnteredAt: transitionAt },
+  ]);
+
+  const duringSnapshot = workspaces.update({
+    type: "agent_update",
+    payload: {
+      kind: "upsert",
+      ...legacyAgent({ id: "other", cwd: "/repo/other", updatedAt: "2026-06-18T10:20:00.000Z" }),
+    },
+  });
+  expect(duringSnapshot).toHaveLength(1);
+  expect(duringSnapshot).toMatchObject([
+    {
+      payload: {
+        workspace: {
+          id: "/repo/other",
+          status: "attention",
+          statusEnteredAt: "2026-06-18T10:20:00.000Z",
+        },
+      },
+    },
+  ]);
+
+  workspaces.read(
+    [legacyAgent({ id: "last", cwd: "/repo/last", updatedAt: transitionAt })],
+    false,
+    true,
+  );
+  const updates = workspaces.update({
+    type: "agent_update",
+    payload: {
+      kind: "upsert",
+      ...legacyAgent({ id: "ready", cwd: "/repo/app", updatedAt: "2026-06-18T10:30:00.000Z" }),
+    },
+  });
+  expect(updates).toMatchObject([
+    {
+      payload: {
+        workspace: { id: "/repo/app", status: "attention", statusEnteredAt: transitionAt },
+      },
+    },
+  ]);
+});
+
+test("legacy paged reset retains a live bucket transition through its final page", () => {
+  const snapshotAt = "2026-06-18T10:15:00.000Z";
+  const liveAt = "2026-06-18T10:20:00.000Z";
+  const workspaces = new LegacyWorkspaces(() => snapshotAt);
+  const ready = legacyAgent({
+    id: "ready",
+    cwd: "/repo/app",
+    updatedAt: "2026-06-18T09:00:00.000Z",
+  });
+  workspaces.read(
+    [
+      legacyAgent({
+        id: "running",
+        cwd: "/repo/app",
+        status: "running",
+        updatedAt: "2026-06-18T10:00:00.000Z",
+      }),
+      ready,
+    ],
+    true,
+  );
+  workspaces.read([ready], true, false);
+
+  const live = workspaces.update({
+    type: "agent_update",
+    payload: {
+      kind: "upsert",
+      ...legacyAgent({ id: "ready", cwd: "/repo/app", status: "running", updatedAt: liveAt }),
+    },
+  });
+  expect(live).toMatchObject([
+    { payload: { workspace: { status: "running", statusEnteredAt: liveAt } } },
+  ]);
+
+  workspaces.read(
+    [legacyAgent({ id: "last", cwd: "/repo/last", updatedAt: snapshotAt })],
+    false,
+    true,
+  );
+  const later = workspaces.update({
+    type: "agent_update",
+    payload: {
+      kind: "upsert",
+      ...legacyAgent({
+        id: "ready",
+        cwd: "/repo/app",
+        status: "running",
+        updatedAt: "2026-06-18T10:30:00.000Z",
+      }),
+    },
+  });
+  expect(later).toMatchObject([
+    { payload: { workspace: { status: "running", statusEnteredAt: liveAt } } },
+  ]);
+});
+
+test("legacy full workspace reset clears cached entry times", async () => {
+  const h = connection({ ownedSubscriptions: false, workspaceMultiplicity: false });
+  try {
+    const connecting = h.client.connect();
+    h.open();
+    await connecting;
+    const workspaces = h.client.observeWorkspaces();
+    const initialAt = "2026-06-18T10:00:00.000Z";
+    h.receive({
+      type: "fetch_agents_response",
+      payload: {
+        requestId: h.sent.at(-1)!.message!.requestId,
+        entries: [legacyAgent({ id: "agent", cwd: "/repo/app", updatedAt: initialAt })],
+        pageInfo: { hasMore: false, nextCursor: null, prevCursor: null },
+      },
+    });
+    await workspaces.ready;
+    const updates: unknown[] = [];
+    workspaces.subscribe({ snapshot: () => {}, update: (message) => updates.push(message) });
+
+    const refreshed = h.client.fetchWorkspaces();
+    h.receive({
+      type: "fetch_agents_response",
+      payload: {
+        requestId: h.sent.at(-1)!.message!.requestId,
+        entries: [],
+        pageInfo: { hasMore: false, nextCursor: null, prevCursor: null },
+      },
+    });
+    await expect(refreshed).resolves.toMatchObject({ entries: [] });
+
+    const resetAt = "2026-06-18T10:20:00.000Z";
+    h.receive({
+      type: "agent_update",
+      payload: {
+        kind: "upsert",
+        ...legacyAgent({ id: "agent", cwd: "/repo/app", updatedAt: resetAt }),
+      },
+    });
+    expect(updates).toHaveLength(1);
+    expect(updates[0]).toMatchObject({
+      type: "workspace_update",
+      payload: {
+        workspace: { status: "attention", statusEnteredAt: resetAt },
+      },
+    });
     await workspaces.release();
   } finally {
     await h.client.close();

@@ -370,12 +370,13 @@ export class WorkspaceDirectory {
         continue;
       }
       const isWorkspaceRoot = workspaceAgent.id === agent.id;
-      if (!isWorkspaceRoot && agent.status !== "running") {
+      const hasActiveTurn = agent.activeTurn != null;
+      if (!isWorkspaceRoot && agent.status !== "running" && !hasActiveTurn) {
         continue;
       }
       const bucket = isWorkspaceRoot
         ? deriveAgentStateBucket({
-            status: agent.status,
+            status: hasActiveTurn ? "running" : agent.status,
             pendingPermissionCount: agent.pendingPermissions?.length ?? 0,
             requiresAttention: agent.requiresAttention,
             attentionReason: agent.attentionReason ?? null,
@@ -517,7 +518,7 @@ export class WorkspaceDirectory {
 
   // Best-effort newest timestamp across contributing agents and other activity
   // whose bucket matches `winningBucket`. For agents, uses:
-  //   - `attentionTimestamp` when attention is set (covers attention/failed)
+  //   - active turn start for running, then `attentionTimestamp` for attention/failed
   //   - `updatedAt` as a general fallback for any bucket
   // Returns `null` if no matching contributor has a parseable timestamp.
   private findNewestTimestampInBucket(
@@ -527,7 +528,10 @@ export class WorkspaceDirectory {
   ): string | null {
     const agentTimestamps = contributingAgents
       .filter((contribution) => contribution.bucket === winningBucket)
-      .map(({ agent }) => {
+      .map(({ agent, bucket }) => {
+        if (bucket === "running" && agent.activeTurn?.startedAt) {
+          return agent.activeTurn.startedAt;
+        }
         // Prefer attentionTimestamp when the agent has attention set — this is
         // the most accurate "entered current status" signal.
         if (agent.attentionTimestamp) {

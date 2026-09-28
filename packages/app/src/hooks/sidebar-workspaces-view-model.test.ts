@@ -852,6 +852,41 @@ describe("createSidebarWorkspaceEntry unread presentation", () => {
       }),
     ).toEqual({ hasClearableAttention: false, canMarkUnread: false });
   });
+
+  it("uses an open Agent turn over a stale Ready descriptor", () => {
+    const root = agent({ id: "root", workspaceId: "ws-1", status: "idle" });
+    root.turn = {
+      phase: "open",
+      turnId: "turn-1",
+      startedAt: new Date(2_000),
+      cancellationRequestId: null,
+    };
+    const activity = buildWorkspaceAgentActivityIndex(new Map([[root.id, root]]));
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: projectWorkspace("ws-1", "attention"),
+      workspaceAgentActivity: activity,
+      supportsMarkUnread: true,
+    });
+
+    expect(activity.get("ws-1")?.status).toBe("running");
+    expect(entry.statusBucket).toBe("running");
+    expect(entry.statusEnteredAt).toEqual(new Date(2_000));
+    expect(
+      deriveWorkspaceReadActionAvailability({
+        status: entry.statusBucket,
+        activity: entry,
+        supportsMarkUnread: entry.supportsMarkUnread,
+      }),
+    ).toEqual({ hasClearableAttention: false, canMarkUnread: false });
+
+    const needsInput = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: projectWorkspace("ws-1", "needs_input"),
+      workspaceAgentActivity: activity,
+    });
+    expect(needsInput.statusBucket).toBe("needs_input");
+  });
 });
 
 function sessionWith(input: {

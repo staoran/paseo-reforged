@@ -61,7 +61,11 @@ export class LegacySubscriptions {
             type: "fetch_workspaces_response",
             payload: {
               ...value.payload,
-              entries: workspaces.read(value.payload.entries, !message.page?.cursor),
+              entries: workspaces.read(
+                value.payload.entries,
+                !message.page?.cursor,
+                !value.payload.pageInfo.hasMore,
+              ),
               emptyProjects: [],
             },
           };
