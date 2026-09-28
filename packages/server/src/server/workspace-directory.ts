@@ -52,6 +52,11 @@ interface WorkspaceAgentBucketContribution {
   bucket: WorkspaceStateBucket;
 }
 
+interface WorkspaceAgentContributionInput {
+  activeAgents: AgentSnapshotPayload[];
+  descriptorsByWorkspaceId: Map<string, WorkspaceDescriptorPayload>;
+}
+
 type FetchWorkspacesRequestMessage = Extract<
   SessionInboundMessage,
   { type: "fetch_workspaces_request" }
@@ -75,6 +80,8 @@ export type ProviderSubagentWorkspaceActivity = Pick<
 
 export interface WorkspaceDirectoryDeps {
   logger: pino.Logger;
+  /** Supplies the transition timestamp for bucket changes */
+  nowIso(): string;
   projectRegistry: {
     list(): Promise<PersistedProjectRecord[]>;
   };
@@ -288,7 +295,7 @@ export class WorkspaceDirectory {
 
     // Resolve the workspace-level `statusEnteredAt` (see aggregate semantics
     // on `resolveStatusEnteredAt`).
-    const nowIso = new Date().toISOString();
+    const nowIso = this.deps.nowIso();
     for (const [workspaceId, descriptor] of descriptorsByWorkspaceId) {
       const contributingAgents = contributingAgentsByWorkspaceId.get(workspaceId) ?? [];
       const activityEntries = activityEntriesByWorkspaceId.get(workspaceId) ?? [];
@@ -356,10 +363,9 @@ export class WorkspaceDirectory {
   }
 
   /** Aggregates each Agent's bucket and records only sources that contributed to Workspace state */
-  private applyAgentBucketContributions(params: {
-    activeAgents: AgentSnapshotPayload[];
-    descriptorsByWorkspaceId: Map<string, WorkspaceDescriptorPayload>;
-  }): Map<string, WorkspaceAgentBucketContribution[]> {
+  private applyAgentBucketContributions(
+    params: WorkspaceAgentContributionInput,
+  ): Map<string, WorkspaceAgentBucketContribution[]> {
     const { activeAgents, descriptorsByWorkspaceId } = params;
     const activeAgentsById = new Map(activeAgents.map((agent) => [agent.id, agent] as const));
     const contributionsByWorkspaceId = new Map<string, WorkspaceAgentBucketContribution[]>();

@@ -43,6 +43,12 @@ export interface WorkspaceReadActionAvailability {
   canMarkUnread: boolean;
 }
 
+export interface WorkspaceReadActionInput {
+  status: WorkspaceDescriptor["status"] | null;
+  activity: Pick<WorkspaceAgentActivity, "hasClearableAttention" | "hasMarkUnreadCandidate"> | null;
+  supportsMarkUnread: boolean;
+}
+
 type WorkspaceAgentReadFacts = Pick<
   WorkspaceAgentActivity,
   "hasUnreadAttention" | "hasClearableAttention" | "hasMarkUnreadCandidate"
@@ -78,18 +84,20 @@ export function buildWorkspaceAgentActivityIndex(
       requiresAttention: agent.requiresAttention,
       attentionReason: agent.attentionReason,
     });
-    const enteredAt =
-      status === "running" && agent.turn.phase === "open"
-        ? (agent.turn.startedAt ?? agent.updatedAt)
-        : (agent.attentionTimestamp ?? agent.updatedAt);
+    let enteredAt = agent.attentionTimestamp ?? agent.updatedAt;
+    if (agent.turn.phase === "open") {
+      if (status === "running") enteredAt = agent.turn.startedAt ?? agent.updatedAt;
+    }
     const current = activityByWorkspaceId.get(agent.workspaceId);
     if (current) {
       const priority = getWorkspaceStateBucketPriority(status);
       const currentPriority = getWorkspaceStateBucketPriority(current.status);
-      if (
-        priority > currentPriority ||
-        (priority === currentPriority && current.enteredAt && enteredAt <= current.enteredAt)
-      ) {
+      const isLowerPriority = priority > currentPriority;
+      const isOlderInSameBucket =
+        priority === currentPriority &&
+        current.enteredAt !== null &&
+        enteredAt <= current.enteredAt;
+      if (isLowerPriority || isOlderInSameBucket) {
         continue;
       }
     }
@@ -134,21 +142,20 @@ function recordWorkspaceAgentReadFacts(
   };
   factsByWorkspaceId.set(workspaceId, facts);
 
-  if (
+  const hasNoPendingPermissions = agent.pendingPermissions.length === 0;
+  const isClearableAttention =
     agent.requiresAttention === true &&
-    agent.pendingPermissions.length === 0 &&
-    agent.attentionReason !== "permission"
-  ) {
+    hasNoPendingPermissions &&
+    agent.attentionReason !== "permission";
+  if (isClearableAttention) {
     facts.hasClearableAttention = true;
   }
   if (!isRoot) return;
 
+  const hasFinishedStatus = agent.status === "idle" || agent.status === "closed";
   if (agent.requiresAttention === true) {
     facts.hasUnreadAttention = true;
-  } else if (
-    (agent.status === "idle" || agent.status === "closed") &&
-    agent.pendingPermissions.length === 0
-  ) {
+  } else if (hasFinishedStatus && hasNoPendingPermissions) {
     facts.hasMarkUnreadCandidate = true;
   }
 }
@@ -163,32 +170,32 @@ function reconcileWorkspaceAgentActivity(
   if (previous?.status !== next.status) return next;
 
   next.enteredAt = previous.enteredAt;
-  if (
-    previous.agentId === next.agentId &&
+  const hasSameAgent = previous.agentId === next.agentId;
+  const hasSameReadFacts =
     previous.hasUnreadAttention === next.hasUnreadAttention &&
     previous.hasClearableAttention === next.hasClearableAttention &&
-    previous.hasMarkUnreadCandidate === next.hasMarkUnreadCandidate
-  ) {
+    previous.hasMarkUnreadCandidate === next.hasMarkUnreadCandidate;
+  if (hasSameAgent && hasSameReadFacts) {
     return previous;
   }
   return next;
 }
 
 /** Exposes read actions only when the Agent facts and Workspace priority allow them */
-export function deriveWorkspaceReadActionAvailability(input: {
-  status: WorkspaceDescriptor["status"] | null;
-  activity: Pick<WorkspaceAgentActivity, "hasClearableAttention" | "hasMarkUnreadCandidate"> | null;
-  supportsMarkUnread: boolean;
-}): WorkspaceReadActionAvailability {
+export function deriveWorkspaceReadActionAvailability(
+  input: WorkspaceReadActionInput,
+): WorkspaceReadActionAvailability {
   const { status, activity, supportsMarkUnread } = input;
-  const hasClearableAttention =
-    Boolean(activity?.hasClearableAttention) &&
-    (status === "attention" || status === "failed" || status === "done");
+  const canClearInBucket = status === "attention" || status === "failed" || status === "done";
+  const canMarkUnreadInBucket = status === "attention" || status === "done";
+  const hasClearableAttention = Boolean(activity?.hasClearableAttention) && canClearInBucket;
+  const hasMarkUnreadCandidate = Boolean(activity?.hasMarkUnreadCandidate);
+  const hasNoClearableAttention = !activity?.hasClearableAttention;
   const canMarkUnread =
     supportsMarkUnread &&
-    Boolean(activity?.hasMarkUnreadCandidate) &&
-    !activity?.hasClearableAttention &&
-    (status === "attention" || status === "done");
+    hasMarkUnreadCandidate &&
+    hasNoClearableAttention &&
+    canMarkUnreadInBucket;
   return { hasClearableAttention, canMarkUnread };
 }
 

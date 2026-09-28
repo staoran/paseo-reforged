@@ -1144,6 +1144,7 @@ export class Session {
     });
     this.workspaceDirectory = new WorkspaceDirectory({
       logger: this.sessionLogger,
+      nowIso: () => new Date().toISOString(),
       projectRegistry: this.projectRegistry,
       workspaceRegistry: this.workspaceRegistry,
       listAgentPayloads: () => this.listAgentPayloads(),

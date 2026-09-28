@@ -119,14 +119,17 @@ export class LegacyWorkspaces {
     let snapshot = this.snapshot;
     if (!input.cursor) snapshot = this.startSnapshot();
     else if (snapshot?.nextCursor !== input.cursor) snapshot = null;
-    return (page) =>
-      snapshot ? this.readSnapshot(snapshot, page) : this.projectPage(page.entries);
+    return (page) => {
+      if (snapshot) return this.readSnapshot(snapshot, page);
+      return this.projectPage(page.entries);
+    };
   }
 
   /** Applies one legacy Agent directory page for direct projection callers */
   read(input: LegacyWorkspaceRead): Workspace[] {
     const { entries, reset, complete = true } = input;
-    const snapshot = reset ? this.startSnapshot() : this.snapshot;
+    let snapshot = this.snapshot;
+    if (reset) snapshot = this.startSnapshot();
     if (!snapshot) {
       for (const entry of entries) this.agents.set(entry.agent.id, entry);
       const pageIds = new Set(entries.map(workspaceId));
@@ -334,8 +337,11 @@ function workspaceStatus(
 ): Workspace["status"] | null {
   const { agent } = entry;
   const parentId = getParentAgentIdFromLabels(agent.labels);
-  const parent = parentId ? agents.get(parentId) : undefined;
-  const isRoot = !parentId || (parent !== undefined && workspaceId(parent) !== workspaceId(entry));
+  let parent: AgentEntry | undefined;
+  if (parentId) parent = agents.get(parentId);
+  const parentInAnotherWorkspace =
+    parent !== undefined && workspaceId(parent) !== workspaceId(entry);
+  const isRoot = !parentId || parentInAnotherWorkspace;
   if (!isRoot) return agent.status === "running" || agent.activeTurn ? "running" : null;
   return deriveAgentStateBucket({
     status: agent.activeTurn ? "running" : agent.status,

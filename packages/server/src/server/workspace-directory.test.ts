@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { createTestLogger } from "../test-utils/test-logger.js";
 import type { AgentSnapshotPayload, WorkspaceDescriptorPayload } from "./messages.js";
@@ -10,6 +10,8 @@ import type { ProviderSubagentWorkspaceActivity } from "./workspace-directory.js
 const NOW = "2026-03-01T12:00:00.000Z";
 
 class WorkspaceStatus {
+  private nowIso = NOW;
+
   private readonly project: PersistedProjectRecord = {
     projectId: "project-1",
     rootPath: "/workspace/project",
@@ -67,6 +69,7 @@ class WorkspaceStatus {
   }> = [];
   private readonly directory = new WorkspaceDirectory({
     logger: createTestLogger(),
+    nowIso: () => this.nowIso,
     projectRegistry: { list: async () => [this.project] },
     workspaceRegistry: { list: async () => this.workspaces },
     listAgentPayloads: async () => this.agents,
@@ -108,6 +111,11 @@ class WorkspaceStatus {
     const agent = this.agents.find((entry) => entry.id === id);
     if (!agent) throw new Error(`Agent not found: ${id}`);
     Object.assign(agent, patch);
+  }
+
+  /** Advances the directory clock without changing global timers */
+  setNow(nowIso: string): void {
+    this.nowIso = nowIso;
   }
 
   hasSiblingWorkspaceSameCwd(): void {
@@ -364,26 +372,21 @@ describe("WorkspaceDirectory", () => {
     expect(closedUnread.status).toBe("attention");
     expect(closedUnread.statusEnteredAt).toBe(NOW);
 
-    vi.useFakeTimers();
-    try {
-      vi.setSystemTime(new Date("2026-03-02T12:00:00.000Z"));
-      workspace.updateAgent("root-agent", {
-        requiresAttention: false,
-        attentionReason: null,
-        attentionTimestamp: null,
-      });
-      const done = await workspace.workspaceDescriptor();
-      expect(done.status).toBe("done");
-      expect(done.statusEnteredAt).toBe("2026-03-02T12:00:00.000Z");
+    workspace.setNow("2026-03-02T12:00:00.000Z");
+    workspace.updateAgent("root-agent", {
+      requiresAttention: false,
+      attentionReason: null,
+      attentionTimestamp: null,
+    });
+    const done = await workspace.workspaceDescriptor();
+    expect(done.status).toBe("done");
+    expect(done.statusEnteredAt).toBe("2026-03-02T12:00:00.000Z");
 
-      vi.setSystemTime(new Date("2026-03-03T12:00:00.000Z"));
-      workspace.updateAgent("root-agent", { status: "idle" });
-      const reopened = await workspace.workspaceDescriptor();
-      expect(reopened.status).toBe("attention");
-      expect(reopened.statusEnteredAt).toBe("2026-03-03T12:00:00.000Z");
-    } finally {
-      vi.useRealTimers();
-    }
+    workspace.setNow("2026-03-03T12:00:00.000Z");
+    workspace.updateAgent("root-agent", { status: "idle" });
+    const reopened = await workspace.workspaceDescriptor();
+    expect(reopened.status).toBe("attention");
+    expect(reopened.statusEnteredAt).toBe("2026-03-03T12:00:00.000Z");
   });
 
   test("ignores a same-workspace idle child for both bucket and initial entry time", async () => {
@@ -688,6 +691,7 @@ describe("WorkspaceDirectory empty projects", () => {
   }): WorkspaceDirectory {
     return new WorkspaceDirectory({
       logger: createTestLogger(),
+      nowIso: () => NOW,
       projectRegistry: { list: async () => input.projects },
       workspaceRegistry: { list: async () => input.workspaces },
       listAgentPayloads: async () => [],
@@ -808,6 +812,7 @@ test("Git observation targets exclude archived records without hydrating app des
   };
   const directory = new WorkspaceDirectory({
     logger: createTestLogger(),
+    nowIso: () => NOW,
     projectRegistry: { list: async () => [project("active"), project("archived", NOW)] },
     workspaceRegistry: {
       list: async () => [
