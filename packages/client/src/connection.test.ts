@@ -1295,6 +1295,79 @@ test("legacy Working transition uses the active turn start before its later Agen
   ]);
 });
 
+test.each([
+  { attentionReason: "permission" as const, maskedStatus: "needs_input" as const },
+  { attentionReason: "error" as const, maskedStatus: "failed" as const },
+])(
+  "legacy Working starts when $maskedStatus clears above an already-running root",
+  ({ attentionReason, maskedStatus }) => {
+    const turnStartedAt = "2026-06-18T10:00:00.000Z";
+    const maskedAt = "2026-06-18T10:05:00.000Z";
+    const unmaskedAt = "2026-06-18T10:10:00.000Z";
+    const workspaces = new LegacyWorkspaces();
+    const runningEntry = legacyAgent({
+      id: "running",
+      cwd: "/repo/app",
+      status: "running",
+      updatedAt: turnStartedAt,
+    });
+    const running = {
+      ...runningEntry,
+      agent: {
+        ...runningEntry.agent,
+        activeTurn: { turnId: "turn", startedAt: turnStartedAt },
+      },
+    };
+    const blockerEntry = legacyAgent({
+      id: "blocker",
+      cwd: "/repo/app",
+      updatedAt: maskedAt,
+    });
+    const blocker = {
+      ...blockerEntry,
+      agent: {
+        ...blockerEntry.agent,
+        requiresAttention: true,
+        attentionReason,
+        attentionTimestamp: maskedAt,
+      },
+    };
+    expect(workspaces.read({ entries: [running, blocker], reset: true })).toMatchObject([
+      { status: maskedStatus, statusEnteredAt: maskedAt },
+    ]);
+
+    const unmasked = workspaces.update({
+      type: "agent_update",
+      payload: {
+        kind: "upsert",
+        ...blocker,
+        agent: {
+          ...blocker.agent,
+          updatedAt: unmaskedAt,
+          requiresAttention: false,
+          attentionReason: null,
+          attentionTimestamp: null,
+        },
+      },
+    });
+    expect(unmasked).toMatchObject([
+      { payload: { workspace: { status: "running", statusEnteredAt: unmaskedAt } } },
+    ]);
+
+    const sameBucket = workspaces.update({
+      type: "agent_update",
+      payload: {
+        kind: "upsert",
+        ...running,
+        agent: { ...running.agent, updatedAt: "2026-06-18T10:20:00.000Z" },
+      },
+    });
+    expect(sameBucket).toMatchObject([
+      { payload: { workspace: { status: "running", statusEnteredAt: unmaskedAt } } },
+    ]);
+  },
+);
+
 test("legacy multi-root Ready starts when the higher-priority root clears", async () => {
   const h = connection({ ownedSubscriptions: false, workspaceMultiplicity: false });
   try {

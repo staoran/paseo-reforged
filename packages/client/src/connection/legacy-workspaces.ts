@@ -300,9 +300,15 @@ export class LegacyWorkspaces {
       const previous = this.statusEntryByWorkspaceId.get(id);
       if (previous?.status === workspace.status) {
         workspace.statusEnteredAt = previous.statusEnteredAt;
-      } else if (previous && statusChangedAt && workspace.status !== "running") {
-        // Working has a turn start; another Agent can reveal an older Ready or Done state
-        workspace.statusEnteredAt = statusChangedAt;
+      } else if (previous && statusChangedAt) {
+        // An already-running turn enters Working when a higher-priority bucket clears
+        const unmaskingRunning =
+          workspace.status === "running" &&
+          getWorkspaceStateBucketPriority(previous.status) <
+            getWorkspaceStateBucketPriority("running");
+        if (workspace.status !== "running" || unmaskingRunning) {
+          workspace.statusEnteredAt = statusChangedAt;
+        }
       }
       if (persistHistory) {
         this.statusEntryByWorkspaceId.set(id, {
