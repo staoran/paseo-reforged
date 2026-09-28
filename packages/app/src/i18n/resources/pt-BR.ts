@@ -1295,7 +1295,7 @@ export const ptBR: TranslationResources = {
         hideFailed: "Falha ao ocultar workspace",
         archiveFailed: "Falha ao arquivar workspace",
       },
-      residentAgents: "{{count}} agente residente",
+      residentAgents: "Agentes residentes: {{count}}",
       agentRuntime: {
         closeIdle: "Fechar runtime do agente ocioso",
         closeAgent: "Fechar runtime de {{title}}",

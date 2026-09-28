@@ -1305,7 +1305,7 @@ export const fr: TranslationResources = {
         hideFailed: "Échec du masquage de l'espace de travail",
         archiveFailed: "Échec de l'archivage de l'espace de travail",
       },
-      residentAgents: "{{count}} agent résident",
+      residentAgents: "Agents résidents : {{count}}",
       agentRuntime: {
         closeIdle: "Fermer le runtime de l'agent inactif",
         closeAgent: "Fermer le runtime de {{title}}",

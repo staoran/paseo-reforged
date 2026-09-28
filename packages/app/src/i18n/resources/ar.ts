@@ -1269,7 +1269,7 @@ export const ar: TranslationResources = {
         hideFailed: "فشل في إخفاء مساحة العمل",
         archiveFailed: "فشل في أرشفة مساحة العمل",
       },
-      residentAgents: "{{count}} وكيل مقيم",
+      residentAgents: "الوكلاء المقيمون: {{count}}",
       agentRuntime: {
         closeIdle: "إغلاق بيئة الوكيل الخامل",
         closeAgent: "إغلاق بيئة {{title}}",

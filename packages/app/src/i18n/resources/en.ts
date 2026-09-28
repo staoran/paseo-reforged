@@ -1277,7 +1277,7 @@ export const en = {
         hideFailed: "Failed to hide workspace",
         archiveFailed: "Failed to archive workspace",
       },
-      residentAgents: "{{count}} resident agent",
+      residentAgents: "Resident agents: {{count}}",
       agentRuntime: {
         closeIdle: "Close idle agent runtime",
         closeAgent: "Close {{title}} runtime",
