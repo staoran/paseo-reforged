@@ -1,4 +1,4 @@
-import { useSyncExternalStore, useMemo } from "react";
+import { useSyncExternalStore, useMemo, useRef } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import equal from "fast-deep-equal/es6";
 import {
@@ -2660,21 +2660,22 @@ export function useHostRuntimeConnectionStatuses(
   serverIds: readonly string[],
 ): ReadonlyMap<string, HostRuntimeConnectionStatus> {
   const store = getHostRuntimeStore();
-  const version = useSyncExternalStore(
+  // The snapshot is the statuses themselves, joined into a string so React compares by
+  // value. A version counter read only for reactivity is dropped by the React Compiler.
+  const readStatuses = () =>
+    serverIds
+      .map((serverId) => store.getSnapshot(serverId)?.connectionStatus ?? "connecting")
+      .join("\n");
+  const statuses = useSyncExternalStore(
     (onStoreChange) => store.subscribeAll(onStoreChange),
-    () => store.getVersion(),
-    () => store.getVersion(),
+    readStatuses,
+    readStatuses,
   );
 
   return useMemo(() => {
-    // Aggregate version triggers snapshot reads on every host tick
-    void version;
-    const entries: Array<[string, HostRuntimeConnectionStatus]> = serverIds.map((serverId) => [
-      serverId,
-      store.getSnapshot(serverId)?.connectionStatus ?? "connecting",
-    ]);
-    return new Map(entries);
-  }, [serverIds, store, version]);
+    const values = statuses.split("\n") as HostRuntimeConnectionStatus[];
+    return new Map(serverIds.map((serverId, index) => [serverId, values[index]]));
+  }, [serverIds, statuses]);
 }
 
 /** Selects the current Host snapshots once for a collection view */
@@ -2682,17 +2683,31 @@ export function useHostRuntimeSnapshots(
   serverIds: readonly string[],
 ): ReadonlyMap<string, HostRuntimeSnapshot | null> {
   const store = getHostRuntimeStore();
-  const version = useSyncExternalStore(
+  // Cache the collection so useSyncExternalStore returns the same reference until a host changes
+  const cache = useRef<{
+    store: HostRuntimeStore;
+    serverIds: readonly string[];
+    version: number;
+    snapshots: ReadonlyMap<string, HostRuntimeSnapshot | null>;
+  } | null>(null);
+  const readSnapshots = () => {
+    const version = store.getVersion();
+    if (
+      cache.current?.store === store &&
+      cache.current.serverIds === serverIds &&
+      cache.current.version === version
+    ) {
+      return cache.current.snapshots;
+    }
+    const snapshots = new Map(serverIds.map((serverId) => [serverId, store.getSnapshot(serverId)]));
+    cache.current = { store, serverIds, version, snapshots };
+    return snapshots;
+  };
+  return useSyncExternalStore(
     (onStoreChange) => store.subscribeAll(onStoreChange),
-    () => store.getVersion(),
-    () => store.getVersion(),
+    readSnapshots,
+    readSnapshots,
   );
-
-  return useMemo(() => {
-    // The aggregate version is the reactivity trigger; re-read snapshots on every host tick.
-    void version;
-    return new Map(serverIds.map((serverId) => [serverId, store.getSnapshot(serverId)]));
-  }, [serverIds, store, version]);
 }
 
 export function useHostRuntimeLastError(serverId: string): string | null {
