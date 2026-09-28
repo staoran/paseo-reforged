@@ -950,6 +950,205 @@ test("legacy initial pages reconcile an earlier workspace removed during the sna
   }
 });
 
+test("legacy older first-page response cannot replace a newer completed refresh", async () => {
+  const h = connection({ ownedSubscriptions: false, workspaceMultiplicity: false });
+  try {
+    const connecting = h.client.connect();
+    h.open();
+    await connecting;
+    const workspaces = h.client.observeWorkspaces();
+    h.receive({
+      type: "fetch_agents_response",
+      payload: {
+        requestId: h.sent.at(-1)!.message!.requestId,
+        entries: [legacyAgent({ id: "baseline", cwd: "/baseline" })],
+        pageInfo: { hasMore: false, nextCursor: null, prevCursor: null },
+      },
+    });
+    await workspaces.ready;
+    const updates: unknown[] = [];
+    workspaces.subscribe({ snapshot: () => {}, update: (message) => updates.push(message) });
+
+    const older = h.client.fetchWorkspaces();
+    const olderRequestId = h.sent.at(-1)!.message!.requestId;
+    const newer = h.client.fetchWorkspaces();
+    const newerRequestId = h.sent.at(-1)!.message!.requestId;
+    const newerAt = "2026-06-18T10:00:00.000Z";
+    h.receive({
+      type: "fetch_agents_response",
+      payload: {
+        requestId: newerRequestId,
+        entries: [
+          legacyAgent({ id: "newer", cwd: "/newer", status: "running", updatedAt: newerAt }),
+        ],
+        pageInfo: { hasMore: false, nextCursor: null, prevCursor: null },
+      },
+    });
+    expect((await newer).entries).toMatchObject([{ id: "/newer", status: "running" }]);
+    h.receive({
+      type: "fetch_agents_response",
+      payload: {
+        requestId: olderRequestId,
+        entries: [legacyAgent({ id: "older", cwd: "/older" })],
+        pageInfo: { hasMore: false, nextCursor: null, prevCursor: null },
+      },
+    });
+    await older;
+    expect(updates).toEqual([]);
+
+    h.receive({
+      type: "agent_update",
+      payload: {
+        kind: "upsert",
+        ...legacyAgent({
+          id: "newer",
+          cwd: "/newer",
+          status: "running",
+          updatedAt: "2026-06-18T10:20:00.000Z",
+        }),
+      },
+    });
+    expect(updates).toMatchObject([
+      { payload: { workspace: { status: "running", statusEnteredAt: newerAt } } },
+    ]);
+    h.receive({ type: "agent_update", payload: { kind: "remove", agentId: "newer" } });
+    expect(updates).toMatchObject([
+      { payload: { workspace: { status: "running", statusEnteredAt: newerAt } } },
+      { type: "workspace_update", payload: { kind: "remove", id: "/newer" } },
+    ]);
+    await workspaces.release();
+  } finally {
+    await h.client.close();
+  }
+});
+
+test("legacy older final-page response cannot complete a newer paged refresh", async () => {
+  const h = connection({ ownedSubscriptions: false, workspaceMultiplicity: false });
+  try {
+    const connecting = h.client.connect();
+    h.open();
+    await connecting;
+    const workspaces = h.client.observeWorkspaces();
+    h.receive({
+      type: "fetch_agents_response",
+      payload: {
+        requestId: h.sent.at(-1)!.message!.requestId,
+        entries: [legacyAgent({ id: "baseline", cwd: "/baseline" })],
+        pageInfo: { hasMore: false, nextCursor: null, prevCursor: null },
+      },
+    });
+    await workspaces.ready;
+    const updates: unknown[] = [];
+    workspaces.subscribe({ snapshot: () => {}, update: (message) => updates.push(message) });
+
+    const firstPage = h.client.fetchWorkspaces({ page: { limit: 1 } });
+    h.receive({
+      type: "fetch_agents_response",
+      payload: {
+        requestId: h.sent.at(-1)!.message!.requestId,
+        entries: [legacyAgent({ id: "older-first", cwd: "/older-first" })],
+        pageInfo: { hasMore: true, nextCursor: "older-next", prevCursor: null },
+      },
+    });
+    await firstPage;
+    const olderFinal = h.client.fetchWorkspaces({ page: { limit: 1, cursor: "older-next" } });
+    const olderRequestId = h.sent.at(-1)!.message!.requestId;
+    const newerFirst = h.client.fetchWorkspaces({ page: { limit: 1 } });
+    h.receive({
+      type: "fetch_agents_response",
+      payload: {
+        requestId: h.sent.at(-1)!.message!.requestId,
+        entries: [legacyAgent({ id: "newer-first", cwd: "/newer-first" })],
+        pageInfo: { hasMore: true, nextCursor: "newer-next", prevCursor: null },
+      },
+    });
+    await newerFirst;
+    const newerFinal = h.client.fetchWorkspaces({ page: { limit: 1, cursor: "newer-next" } });
+    const newerRequestId = h.sent.at(-1)!.message!.requestId;
+    h.receive({
+      type: "fetch_agents_response",
+      payload: {
+        requestId: olderRequestId,
+        entries: [legacyAgent({ id: "older-final", cwd: "/older-final" })],
+        pageInfo: { hasMore: false, nextCursor: null, prevCursor: "older-next" },
+      },
+    });
+    await olderFinal;
+    expect(updates).toEqual([]);
+
+    h.receive({
+      type: "fetch_agents_response",
+      payload: {
+        requestId: newerRequestId,
+        entries: [legacyAgent({ id: "newer-final", cwd: "/newer-final" })],
+        pageInfo: { hasMore: false, nextCursor: null, prevCursor: "newer-next" },
+      },
+    });
+    expect((await newerFinal).entries).toMatchObject([{ id: "/newer-final" }]);
+    expect(updates).toEqual([]);
+
+    h.receive({ type: "agent_update", payload: { kind: "remove", agentId: "older-final" } });
+    expect(updates).toEqual([]);
+    h.receive({ type: "agent_update", payload: { kind: "remove", agentId: "newer-final" } });
+    expect(updates).toMatchObject([
+      { type: "workspace_update", payload: { kind: "remove", id: "/newer-final" } },
+    ]);
+    await workspaces.release();
+  } finally {
+    await h.client.close();
+  }
+});
+
+test("legacy Agent update before the first page survives its stale response", async () => {
+  const h = connection({ ownedSubscriptions: false, workspaceMultiplicity: false });
+  try {
+    const connecting = h.client.connect();
+    h.open();
+    await connecting;
+    const workspaces = h.client.observeWorkspaces();
+    const requestId = h.sent.at(-1)!.message!.requestId;
+    const turnStartedAt = "2026-06-18T10:05:00.000Z";
+    const live = legacyAgent({
+      id: "agent",
+      cwd: "/repo/app",
+      updatedAt: "2026-06-18T10:10:00.000Z",
+    });
+    h.receive({
+      type: "agent_update",
+      payload: {
+        kind: "upsert",
+        agent: { ...live.agent, activeTurn: { turnId: "turn", startedAt: turnStartedAt } },
+      },
+    });
+    h.receive({
+      type: "fetch_agents_response",
+      payload: {
+        requestId,
+        entries: [
+          legacyAgent({
+            id: "agent",
+            cwd: "/repo/app",
+            updatedAt: "2026-06-18T10:00:00.000Z",
+          }),
+        ],
+        pageInfo: { hasMore: false, nextCursor: null, prevCursor: null },
+      },
+    });
+    expect((await workspaces.ready).entries).toMatchObject([
+      { id: "/repo/app", status: "running", statusEnteredAt: turnStartedAt },
+    ]);
+    const updates: unknown[] = [];
+    workspaces.subscribe({ snapshot: () => {}, update: (message) => updates.push(message) });
+    h.receive({ type: "agent_update", payload: { kind: "remove", agentId: "agent" } });
+    expect(updates).toMatchObject([
+      { type: "workspace_update", payload: { kind: "remove", id: "/repo/app" } },
+    ]);
+    await workspaces.release();
+  } finally {
+    await h.client.close();
+  }
+});
+
 test("legacy same-workspace idle child does not lift a read closed root into Ready", () => {
   const workspaces = new LegacyWorkspaces();
   const root = legacyAgent({ id: "root", cwd: "/repo/app", status: "closed" });
@@ -1067,6 +1266,33 @@ test("legacy Ready keeps its entry time through read updates and changes it on W
   } finally {
     await h.client.close();
   }
+});
+
+test("legacy Working transition uses the active turn start before its later Agent update", () => {
+  const workspaces = new LegacyWorkspaces();
+  const ready = legacyAgent({
+    id: "agent",
+    cwd: "/repo/app",
+    updatedAt: "2026-06-18T10:00:00.000Z",
+  });
+  workspaces.read({ entries: [ready], reset: true });
+  const startedAt = "2026-06-18T10:05:00.000Z";
+  const changed = legacyAgent({
+    id: "agent",
+    cwd: "/repo/app",
+    updatedAt: "2026-06-18T10:10:00.000Z",
+  });
+  const updates = workspaces.update({
+    type: "agent_update",
+    payload: {
+      kind: "upsert",
+      ...changed,
+      agent: { ...changed.agent, activeTurn: { turnId: "turn", startedAt } },
+    },
+  });
+  expect(updates).toMatchObject([
+    { payload: { workspace: { status: "running", statusEnteredAt: startedAt } } },
+  ]);
 });
 
 test("legacy multi-root Ready starts when the higher-priority root clears", async () => {
