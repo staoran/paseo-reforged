@@ -7,7 +7,11 @@ import {
   type MockAgentWorkspace,
 } from "../support/helpers/mock-agent";
 import { getServerId } from "../support/helpers/server-id";
-import { closeMobileAgentSidebar, openMobileAgentSidebar } from "../support/helpers/sidebar";
+import {
+  closeMobileAgentSidebar,
+  openMobileAgentSidebar,
+  selectSidebarStatusGrouping,
+} from "../support/helpers/sidebar";
 
 interface FinishedWorkspaces {
   subject: MockAgentWorkspace;
@@ -63,7 +67,7 @@ async function markAsUnread(page: Page, workspaceId: string) {
 
 async function markAsRead(page: Page, workspaceId: string) {
   await chooseReadAction(page, workspaceId, "read");
-  await expectStatus(page, workspaceId, "done");
+  await expectStatus(page, workspaceId, "attention");
 }
 
 async function expectStatus(page: Page, workspaceId: string, status: "done" | "attention") {
@@ -73,10 +77,10 @@ async function expectStatus(page: Page, workspaceId: string, status: "done" | "a
 }
 
 async function markBackgroundWorkspaceAndReopen(page: Page, workspaceId: string) {
-  await test.step("background workspace gains green dot and clears when clicked", async () => {
+  await test.step("background Workspace remains Ready when marked attention clears", async () => {
     await markAsUnread(page, workspaceId);
     await openWorkspace(page, workspaceId);
-    await expectStatus(page, workspaceId, "done");
+    await expectStatus(page, workspaceId, "attention");
   });
 }
 
@@ -95,7 +99,7 @@ async function leaveMarkedWorkspaceAndReopen(page: Page, { subject, other }: Fin
     await openWorkspace(page, other.workspaceId);
     await expectStatus(page, subject.workspaceId, "attention");
     await openWorkspace(page, subject.workspaceId);
-    await expectStatus(page, subject.workspaceId, "done");
+    await expectStatus(page, subject.workspaceId, "attention");
   });
 }
 
@@ -105,7 +109,7 @@ async function completeTurnAndLeave(page: Page, { subject, other }: FinishedWork
     await subject.client.waitForFinish(subject.agentId, 20_000);
     await expectStatus(page, subject.workspaceId, "attention");
     await openWorkspace(page, other.workspaceId);
-    await expectStatus(page, subject.workspaceId, "done");
+    await expectStatus(page, subject.workspaceId, "attention");
   });
 }
 
@@ -135,7 +139,7 @@ async function leaveMarkedWorkspaceAndReopenOnCompact(
     await openWorkspaceOnCompact(page, other.workspaceId);
     await expectStatus(page, subject.workspaceId, "attention");
     await openWorkspaceOnCompact(page, subject.workspaceId);
-    await expectStatus(page, subject.workspaceId, "done");
+    await expectStatus(page, subject.workspaceId, "attention");
   });
 }
 
@@ -147,7 +151,7 @@ async function completeTurnAndLeaveOnCompact(page: Page, { subject, other }: Fin
     await openMobileAgentSidebar(page);
     await expectStatus(page, subject.workspaceId, "attention");
     await openWorkspaceOnCompact(page, other.workspaceId);
-    await expectStatus(page, subject.workspaceId, "done");
+    await expectStatus(page, subject.workspaceId, "attention");
   });
 }
 
@@ -188,7 +192,7 @@ async function markUnreadThenResumeChat(page: Page, workspaceId: string) {
     await closeMobileAgentSidebar(page);
     await page.getByRole("textbox", { name: "Message agent..." }).click();
     await openMobileAgentSidebar(page);
-    await expectStatus(page, workspaceId, "done");
+    await expectStatus(page, workspaceId, "attention");
   });
 }
 
@@ -226,4 +230,27 @@ test("manual unread survives leaving the current workspace on compact layout", a
   await leaveMarkedWorkspaceAndReopenOnCompact(page, workspaces);
   await markUnreadThenResumeChat(page, workspaces.subject.workspaceId);
   await completeTurnAndLeaveOnCompact(page, workspaces);
+});
+
+test("status grouping shows unread emphasis independently from Ready membership", async ({
+  page,
+  workspaces,
+}) => {
+  await gotoAppShell(page);
+  await selectSidebarStatusGrouping(page);
+
+  const row = page
+    .getByTestId("sidebar-status-group-rows-attention")
+    .getByTestId(`sidebar-workspace-row-${getServerId()}:${workspaces.subject.workspaceId}`);
+  await expect(row).toBeVisible();
+  await expect(row.getByTestId("project-status-badge")).toHaveCount(0);
+  await expect(row.getByTestId("sidebar-workspace-title")).toHaveCSS("font-weight", "400");
+
+  await chooseReadAction(page, workspaces.subject.workspaceId, "unread");
+  await expect(row.getByTestId("project-status-badge")).toBeVisible();
+  await expect(row.getByTestId("sidebar-workspace-title")).toHaveCSS("font-weight", "600");
+
+  await chooseReadAction(page, workspaces.subject.workspaceId, "read");
+  await expect(row.getByTestId("project-status-badge")).toHaveCount(0);
+  await expect(row.getByTestId("sidebar-workspace-title")).toHaveCSS("font-weight", "400");
 });

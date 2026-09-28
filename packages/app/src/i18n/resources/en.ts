@@ -368,6 +368,8 @@ export const en = {
       header: "Spoke",
     },
     activity: {
+      completed: "Processed",
+      completedWithDuration: "Processed in {{duration}}",
       details: "Details",
     },
     dictation: {
@@ -652,6 +654,9 @@ export const en = {
         moveToMain: "Move to main panel",
         reloadAgent: "Reload agent",
         reloadAgentTooltip: "Reload agent to update skills, MCPs or login status.",
+        closeAgentRuntime: "Close agent runtime",
+        closeAgentRuntimeAndKeepRecord: "Close runtime and keep record",
+        closingAgentRuntime: "Closing agent runtime...",
         close: "Close",
         renameTerminal: "Rename terminal",
         renameAgent: "Rename agent",
@@ -1271,6 +1276,28 @@ export const en = {
         hostDisconnected: "Host is not connected",
         hideFailed: "Failed to hide workspace",
         archiveFailed: "Failed to archive workspace",
+      },
+      residentAgents: "Resident agents: {{count}}",
+      agentRuntime: {
+        closeIdle: "Close idle agent runtime",
+        closeAgent: "Close {{title}} runtime",
+        pending: "Closing {{title}}...",
+        pendingPermissions: "Waiting for permissions",
+        confirmTitle: "Close {{title}} runtime?",
+        confirmMessage:
+          "The runtime and its background activity will stop. The agent record stays.",
+        confirmCloseAndKeepMessage:
+          "The runtime and its background activity will stop. The agent record stays, but this tab will close.",
+        confirm: "Close runtime",
+        cancel: "Cancel",
+        closed: "Closed {{title}} runtime",
+        closedButCleanupFailed: "Runtime closed, but the tab could not be cleaned up: {{message}}",
+        idleRequired: "Only an idle agent without pending permissions can be closed.",
+        directoryUnavailable: "The current agent directory is not available.",
+        updateHost: "Update the host to close agent runtimes.",
+        hostOffline: "Connect this host to close agent runtimes.",
+        syncingDirectory: "Waiting for the current agent directory.",
+        directoryFailed: "Agent directory sync failed. Retry after it recovers.",
       },
     },
   },
@@ -2187,6 +2214,10 @@ export const en = {
         label: "Terminal scrollback",
         description: "Lines kept in the built-in terminal buffer",
         accessibilityLabel: "Terminal scrollback lines",
+      },
+      autoExpandActivity: {
+        label: "Always expand Activity",
+        description: "Show completed agent Activity expanded by default",
       },
       autoExpandReasoning: {
         label: "Always expand reasoning",

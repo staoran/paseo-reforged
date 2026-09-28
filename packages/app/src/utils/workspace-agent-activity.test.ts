@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { Agent } from "@/stores/session-store";
-import { buildWorkspaceAgentActivityIndex } from "./workspace-agent-activity";
+import {
+  buildWorkspaceAgentActivityIndex,
+  buildWorkspaceManagedAgentIndex,
+  deriveWorkspaceReadActionAvailability,
+} from "./workspace-agent-activity";
 
 function agent(input: {
   id: string;
@@ -66,6 +70,58 @@ function agent(input: {
 }
 
 describe("workspace agent activity index", () => {
+  it("counts unarchived resident managed Agents by their own Workspace", () => {
+    const index = buildWorkspaceManagedAgentIndex(
+      new Map([
+        ["root", agent({ id: "root", workspaceId: "workspace-a", updatedAt: "2026-01-01" })],
+        [
+          "child",
+          agent({
+            id: "child",
+            workspaceId: "workspace-a",
+            parentAgentId: "root",
+            status: "error",
+            updatedAt: "2026-01-02",
+          }),
+        ],
+        [
+          "other-workspace",
+          agent({ id: "other-workspace", workspaceId: "workspace-b", updatedAt: "2026-01-03" }),
+        ],
+        [
+          "closed",
+          agent({
+            id: "closed",
+            workspaceId: "workspace-a",
+            status: "closed",
+            updatedAt: "2026-01-04",
+          }),
+        ],
+        [
+          "archived",
+          agent({
+            id: "archived",
+            workspaceId: "workspace-a",
+            archivedAt: "2026-01-05T00:00:00.000Z",
+            updatedAt: "2026-01-05",
+          }),
+        ],
+      ]),
+    );
+
+    expect(index.residentCountsByWorkspace).toEqual(
+      new Map([
+        ["workspace-a", 2],
+        ["workspace-b", 1],
+      ]),
+    );
+    expect(index.agentsByWorkspace.get("workspace-a")?.map(({ id }) => id)).toEqual([
+      "root",
+      "child",
+      "closed",
+    ]);
+  });
+
   it("uses turn liveness for running while preserving protocol lifecycle states", () => {
     const result = buildWorkspaceAgentActivityIndex(
       new Map([
@@ -144,6 +200,9 @@ describe("workspace agent activity index", () => {
             agentId: "permission",
             status: "needs_input",
             enteredAt: new Date("2026-06-01T10:01:00.000Z"),
+            hasUnreadAttention: false,
+            hasClearableAttention: false,
+            hasMarkUnreadCandidate: false,
           },
         ],
         [
@@ -152,10 +211,74 @@ describe("workspace agent activity index", () => {
             agentId: "attention",
             status: "attention",
             enteredAt: new Date("2026-06-01T10:02:00.000Z"),
+            hasUnreadAttention: true,
+            hasClearableAttention: true,
+            hasMarkUnreadCandidate: false,
           },
         ],
       ]),
     );
+  });
+
+  it("keeps an older idle root Ready when a newer root is closed and read", () => {
+    const previous = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "older",
+          agent({
+            id: "older",
+            workspaceId: "workspace-a",
+            status: "idle",
+            updatedAt: "2026-06-01T10:00:00.000Z",
+          }),
+        ],
+        [
+          "newer",
+          agent({
+            id: "newer",
+            workspaceId: "workspace-a",
+            status: "closed",
+            updatedAt: "2026-06-01T10:05:00.000Z",
+          }),
+        ],
+      ]),
+    );
+
+    expect(previous.get("workspace-a")).toMatchObject({
+      agentId: "older",
+      status: "attention",
+      enteredAt: new Date("2026-06-01T10:00:00.000Z"),
+    });
+
+    const next = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "older",
+          agent({
+            id: "older",
+            workspaceId: "workspace-a",
+            status: "closed",
+            updatedAt: "2026-06-01T10:00:00.000Z",
+          }),
+        ],
+        [
+          "newer",
+          agent({
+            id: "newer",
+            workspaceId: "workspace-a",
+            status: "idle",
+            updatedAt: "2026-06-01T10:10:00.000Z",
+          }),
+        ],
+      ]),
+      previous,
+    );
+
+    expect(next.get("workspace-a")).toMatchObject({
+      agentId: "newer",
+      status: "attention",
+      enteredAt: new Date("2026-06-01T10:00:00.000Z"),
+    });
   });
 
   it("does not let archived or child agents change root workspace activity", () => {
@@ -198,6 +321,9 @@ describe("workspace agent activity index", () => {
       agentId: "root",
       status: "running",
       enteredAt: new Date("2026-06-01T10:00:00.000Z"),
+      hasUnreadAttention: false,
+      hasClearableAttention: false,
+      hasMarkUnreadCandidate: false,
     });
   });
 
@@ -231,8 +357,11 @@ describe("workspace agent activity index", () => {
           "workspace-a",
           {
             agentId: "parent",
-            status: "done",
+            status: "attention",
             enteredAt: new Date("2026-06-01T10:00:00.000Z"),
+            hasUnreadAttention: false,
+            hasClearableAttention: false,
+            hasMarkUnreadCandidate: true,
           },
         ],
         [
@@ -241,6 +370,9 @@ describe("workspace agent activity index", () => {
             agentId: "child",
             status: "running",
             enteredAt: new Date("2026-06-01T10:03:00.000Z"),
+            hasUnreadAttention: false,
+            hasClearableAttention: false,
+            hasMarkUnreadCandidate: false,
           },
         ],
       ]),
@@ -317,6 +449,127 @@ describe("workspace agent activity index", () => {
       agentId: "root",
       status: "needs_input",
       enteredAt: new Date("2026-06-01T10:05:00.000Z"),
+      hasUnreadAttention: false,
+      hasClearableAttention: false,
+      hasMarkUnreadCandidate: false,
     });
+  });
+
+  it("keeps an older root's unread attention when a newer root supplies the status", () => {
+    const index = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "unread",
+          agent({
+            id: "unread",
+            workspaceId: "workspace-a",
+            status: "closed",
+            updatedAt: "2026-06-01T10:00:00.000Z",
+            requiresAttention: true,
+            attentionReason: "finished",
+          }),
+        ],
+        [
+          "latest",
+          agent({
+            id: "latest",
+            workspaceId: "workspace-a",
+            status: "idle",
+            updatedAt: "2026-06-01T10:05:00.000Z",
+          }),
+        ],
+      ]),
+    );
+
+    expect(index.get("workspace-a")).toMatchObject({
+      agentId: "latest",
+      status: "attention",
+      hasUnreadAttention: true,
+      hasClearableAttention: true,
+      hasMarkUnreadCandidate: true,
+    });
+    expect(
+      deriveWorkspaceReadActionAvailability({
+        status: "attention",
+        activity: index.get("workspace-a") ?? null,
+        supportsMarkUnread: true,
+      }),
+    ).toEqual({ hasClearableAttention: true, canMarkUnread: false });
+  });
+
+  it("refreshes unread facts without changing the Ready entry time", () => {
+    const previous = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "root",
+          agent({
+            id: "root",
+            workspaceId: "workspace-a",
+            status: "idle",
+            updatedAt: "2026-06-01T10:00:00.000Z",
+            requiresAttention: true,
+            attentionReason: "finished",
+          }),
+        ],
+      ]),
+    );
+    const next = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "root",
+          agent({
+            id: "root",
+            workspaceId: "workspace-a",
+            status: "idle",
+            updatedAt: "2026-06-01T10:05:00.000Z",
+          }),
+        ],
+      ]),
+      previous,
+    );
+
+    expect(next).not.toBe(previous);
+    expect(next.get("workspace-a")).toMatchObject({
+      status: "attention",
+      enteredAt: new Date("2026-06-01T10:00:00.000Z"),
+      hasUnreadAttention: false,
+      hasClearableAttention: false,
+      hasMarkUnreadCandidate: true,
+    });
+    expect(
+      deriveWorkspaceReadActionAvailability({
+        status: "attention",
+        activity: next.get("workspace-a") ?? null,
+        supportsMarkUnread: true,
+      }),
+    ).toEqual({ hasClearableAttention: false, canMarkUnread: true });
+  });
+
+  it("does not offer mark unread for permission, failure, or running buckets", () => {
+    const activity = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "root",
+          agent({
+            id: "root",
+            workspaceId: "workspace-a",
+            status: "idle",
+            updatedAt: "2026-06-01T10:00:00.000Z",
+          }),
+        ],
+      ]),
+    ).get("workspace-a")!;
+    for (const status of ["needs_input", "failed", "running"] as const) {
+      expect(
+        deriveWorkspaceReadActionAvailability({ status, activity, supportsMarkUnread: true }),
+      ).toEqual({ hasClearableAttention: false, canMarkUnread: false });
+    }
+    expect(
+      deriveWorkspaceReadActionAvailability({
+        status: "attention",
+        activity,
+        supportsMarkUnread: false,
+      }),
+    ).toEqual({ hasClearableAttention: false, canMarkUnread: false });
   });
 });

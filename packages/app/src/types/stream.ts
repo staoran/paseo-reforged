@@ -1,5 +1,6 @@
 import type {
   AgentProvider,
+  AgentMessagePhase,
   AgentTimelineItem,
   JsonValue,
   ToolCallDetail,
@@ -706,6 +707,8 @@ export interface AssistantMessageItem {
   kind: "assistant_message";
   id: string;
   messageId?: string;
+  /** Provider-declared boundary between process text and final answer */
+  phase?: AgentMessagePhase;
   turnId?: string;
   timelineCursor?: TimelinePosition;
   text: string;
@@ -909,29 +912,99 @@ function appendUserMessage(
   return upsertUserMessage(state, nextItem);
 }
 
-function appendAssistantMessage(
-  state: StreamItem[],
-  text: string,
-  timestamp: Date,
-  source: StreamUpdateSource,
-  messageId?: string,
-  reservedItemIds?: ReadonlySet<string>,
-  timelineCursor?: TimelinePosition,
-): StreamItem[] {
+/** Anonymous streams can join only while their explicit phase remains the same */
+function isSameAssistantMessage(
+  item: StreamItem | undefined,
+  messageId: string | undefined,
+  phase: AgentMessagePhase | undefined,
+): item is AssistantMessageItem {
+  if (!item || item.kind !== "assistant_message") return false;
+  if (messageId !== undefined) return item.messageId === messageId;
+  return item.phase === phase;
+}
+
+/** Finds the latest fragment of an identified assistant message */
+function findLastAssistantMessageIndex(state: StreamItem[], messageId: string): number {
+  for (let index = state.length - 1; index >= 0; index -= 1) {
+    const item = state[index];
+    if (item.kind === "assistant_message" && item.messageId === messageId) return index;
+  }
+  return -1;
+}
+
+interface BackfillAssistantCompletionInput {
+  state: StreamItem[];
+  messageId: string;
+  phase?: AgentMessagePhase;
+  completionSuffix?: true;
+  chunk: string;
+  timestamp: Date;
+  timelineCursor?: TimelinePosition;
+}
+
+/** Identifies phase metadata or completion text that belongs to an earlier message row */
+function shouldBackfillAssistantCompletion(
+  item: StreamItem | undefined,
+  phase: AgentMessagePhase | undefined,
+  completionSuffix?: true,
+): item is AssistantMessageItem {
+  return (
+    item?.kind === "assistant_message" &&
+    (completionSuffix === true || (phase !== undefined && item.phase !== phase))
+  );
+}
+
+/** Keeps completion metadata and its remaining text on the original message row */
+function backfillAssistantCompletion(input: BackfillAssistantCompletionInput): StreamItem[] | null {
+  const index = findLastAssistantMessageIndex(input.state, input.messageId);
+  const matching = input.state[index];
+  if (!shouldBackfillAssistantCompletion(matching, input.phase, input.completionSuffix))
+    return null;
+  const updated: AssistantMessageItem = {
+    ...matching,
+    text: `${matching.text}${input.chunk}`,
+    phase: input.phase ?? matching.phase,
+    timestamp: input.timestamp,
+    ...(input.timelineCursor ? { timelineCursor: input.timelineCursor } : {}),
+  };
+  return [...input.state.slice(0, index), updated, ...input.state.slice(index + 1)];
+}
+
+interface AppendAssistantMessageInput {
+  state: StreamItem[];
+  text: string;
+  timestamp: Date;
+  source: StreamUpdateSource;
+  messageId?: string;
+  phase?: AgentMessagePhase;
+  completionSuffix?: true;
+  reservedItemIds?: ReadonlySet<string>;
+  timelineCursor?: TimelinePosition;
+}
+
+function appendAssistantMessage(input: AppendAssistantMessageInput): StreamItem[] {
+  const {
+    state,
+    text,
+    timestamp,
+    source,
+    messageId,
+    phase,
+    completionSuffix,
+    reservedItemIds,
+    timelineCursor,
+  } = input;
   const { chunk, hasContent } = normalizeChunk(text);
-  if (!chunk) {
+  if (!chunk && !phase) {
     return state;
   }
 
   const last = state[state.length - 1];
-  const shouldAppendToLast =
-    last &&
-    last.kind === "assistant_message" &&
-    (messageId === undefined || last.messageId === messageId);
-  if (shouldAppendToLast) {
+  if (isSameAssistantMessage(last, messageId, phase)) {
     const updated: AssistantMessageItem = {
       ...last,
       text: `${last.text}${chunk}`,
+      phase: phase ?? last.phase,
       timestamp,
       ...(timelineCursor ? { timelineCursor } : {}),
     };
@@ -944,16 +1017,30 @@ function appendAssistantMessage(
   if (
     source === "live" &&
     last?.kind === "user_message" &&
-    secondLast?.kind === "assistant_message" &&
-    (messageId === undefined || secondLast.messageId === messageId)
+    isSameAssistantMessage(secondLast, messageId, phase)
   ) {
     const updated: AssistantMessageItem = {
       ...secondLast,
       text: `${secondLast.text}${chunk}`,
+      phase: phase ?? secondLast.phase,
       timestamp,
       ...(timelineCursor ? { timelineCursor } : {}),
     };
     return [...state.slice(0, -2), updated, last];
+  }
+
+  // Completion can supply metadata or a suffix after another row has flushed the text
+  if (messageId && (phase || completionSuffix)) {
+    const backfilled = backfillAssistantCompletion({
+      state,
+      messageId,
+      phase,
+      completionSuffix,
+      chunk,
+      timestamp,
+      timelineCursor,
+    });
+    if (backfilled) return backfilled;
   }
 
   if (!hasContent) {
@@ -966,6 +1053,7 @@ function appendAssistantMessage(
     kind: "assistant_message",
     id: entryId,
     ...(messageId ? { messageId } : {}),
+    phase,
     ...(timelineCursor ? { timelineCursor } : {}),
     text: chunk,
     timestamp,
@@ -1516,15 +1604,17 @@ function reduceTimelineEvent(
       );
     case "assistant_message":
       return finalizeActiveThoughts(
-        appendAssistantMessage(
+        appendAssistantMessage({
           state,
-          item.text,
+          text: item.text,
           timestamp,
           source,
-          item.messageId,
+          messageId: item.messageId,
+          phase: item.phase,
+          completionSuffix: item.completionSuffix,
           reservedItemIds,
           timelineCursor,
-        ),
+        }),
       );
     case "reasoning":
       return appendThought(state, item.text, timestamp, timelineCursor);
@@ -1629,7 +1719,10 @@ function applyTimelineTurnId(
   }
 
   if (!event.turnId || items.length === 0) return items;
-  const index = items.length - 1;
+  const index =
+    event.item.type === "assistant_message" && event.item.phase && event.item.messageId
+      ? findLastAssistantMessageIndex(items, event.item.messageId)
+      : items.length - 1;
   const last = items[index];
   if (!last || last.turnId === event.turnId) return items;
   return [
@@ -1730,6 +1823,8 @@ function getEventItemKind(event: AgentStreamEventPayload): StreamItem["kind"] | 
     case "error":
     case "notification":
       return "notification";
+    case "compaction":
+      return "compaction";
     case "plugin":
       return "plugin";
     default:
@@ -1939,6 +2034,39 @@ function applyCanonicalUserMessageEvent(params: {
   };
 }
 
+interface LateAssistantCompletionLanesInput {
+  tail: StreamItem[];
+  head: StreamItem[];
+  event: AgentStreamEventPayload;
+  timestamp: Date;
+  source: StreamUpdateSource;
+  timelineCursor?: TimelinePosition;
+}
+
+/** Routes late completion to the lane that owns its original message row */
+function applyLateAssistantCompletionAcrossLanes(
+  input: LateAssistantCompletionLanesInput,
+): ApplyStreamEventResult | null {
+  const { tail, head, event, timestamp, source, timelineCursor } = input;
+  if (event.type !== "timeline" || event.item.type !== "assistant_message") return null;
+  const { phase, messageId, completionSuffix } = event.item;
+  if (!messageId || (!phase && !completionSuffix)) return null;
+
+  const headIndex = findLastAssistantMessageIndex(head, messageId);
+  if (headIndex >= 0) {
+    const matching = head[headIndex];
+    if (!shouldBackfillAssistantCompletion(matching, phase, completionSuffix)) return null;
+    const updated = reduceStreamUpdate(head, event, timestamp, { source, timelineCursor });
+    return { tail, head: updated, changedTail: false, changedHead: updated !== head };
+  }
+
+  const tailIndex = findLastAssistantMessageIndex(tail, messageId);
+  const matching = tail[tailIndex];
+  if (!shouldBackfillAssistantCompletion(matching, phase, completionSuffix)) return null;
+  const updated = reduceStreamUpdate(tail, event, timestamp, { source, timelineCursor });
+  return { tail: updated, head, changedTail: updated !== tail, changedHead: false };
+}
+
 /**
  * Apply a stream event using head/tail model.
  *
@@ -1970,6 +2098,15 @@ export function applyStreamEvent(params: {
   });
   if (canonicalUserResult) return canonicalUserResult;
   const source = params.source ?? "live";
+  const lateCompletion = applyLateAssistantCompletionAcrossLanes({
+    tail,
+    head,
+    event,
+    timestamp,
+    source,
+    timelineCursor: params.timelineCursor,
+  });
+  if (lateCompletion) return lateCompletion;
   let nextTail = tail;
   let nextHead = head;
   let changedTail = false;

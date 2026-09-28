@@ -15,6 +15,7 @@ import { useWorkspaceArchive } from "@/workspace/use-workspace-archive";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import { useWorkspaceReadState } from "@/hooks/use-workspace-read-state";
+import { useCloseIdleAgentRuntime } from "@/hooks/use-close-idle-agent-runtime";
 import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
 import { isNative as platformIsNative } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -22,6 +23,7 @@ import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press
 import {
   SidebarWorkspaceContextMenu,
   SidebarWorkspaceMenu,
+  type AgentRuntimeCloseActions,
 } from "@/components/sidebar/sidebar-workspace-menu";
 import {
   SidebarWorkspaceRowFrame,
@@ -74,6 +76,8 @@ export function SidebarWorkspaceRow({
 }: SidebarWorkspaceRowProps) {
   const { t } = useTranslation();
   const toast = useToast();
+  /** Shares close feedback across the row's dropdown and context menus */
+  const agentRuntimeActions = useCloseIdleAgentRuntime();
   const [isHidingWorkspace, setIsHidingWorkspace] = useState(false);
   const [isRenameOpen, setIsRenameOpen] = useState(false);
   const isArchiving = workspace.archivingAt !== null || isHidingWorkspace;
@@ -124,10 +128,7 @@ export function SidebarWorkspaceRow({
 
   const archiveShortcutKeys = useShortcutKeys("archive-workspace");
   const { hasClearableAttention, canMarkUnread, clearAttention, markUnread } =
-    useWorkspaceReadState({
-      serverId: workspace.serverId,
-      workspaceId: workspace.workspaceId,
-    });
+    useWorkspaceReadState(workspace);
   const handleMarkAsRead = useCallback(() => {
     void clearAttention().catch((error) => {
       toast.error(error instanceof Error ? error.message : "Failed to mark workspace as read");
@@ -154,6 +155,7 @@ export function SidebarWorkspaceRow({
     <>
       <WorkspaceRowBody
         workspace={workspace}
+        agentRuntimeActions={agentRuntimeActions}
         selected={selected}
         shortcutNumber={shortcutNumber}
         showShortcutBadge={showShortcutBadge}
@@ -187,6 +189,7 @@ export function SidebarWorkspaceRow({
 
 interface WorkspaceRowBodyProps {
   workspace: SidebarWorkspaceEntry;
+  agentRuntimeActions: AgentRuntimeCloseActions;
   selected: boolean;
   shortcutNumber: number | null;
   showShortcutBadge: boolean;
@@ -211,6 +214,7 @@ interface WorkspaceRowBodyProps {
 
 function WorkspaceRowBody({
   workspace,
+  agentRuntimeActions,
   selected,
   shortcutNumber,
   showShortcutBadge,
@@ -292,6 +296,7 @@ function WorkspaceRowBody({
             {...hoverHandlers}
           >
             <SidebarWorkspaceContextMenu
+              agentRuntimeActions={agentRuntimeActions}
               contextMenuOpen={contextMenuOpen}
               onContextMenuOpenChange={onContextMenuOpenChange}
               workspace={workspace}
@@ -334,6 +339,7 @@ function WorkspaceRowBody({
               >
                 <WorkspaceRowTrailingActions
                   workspace={workspace}
+                  agentRuntimeActions={agentRuntimeActions}
                   backdrop={backdrop}
                   trailing={trailing}
                   isHovered={isHovered}
@@ -363,6 +369,7 @@ function WorkspaceRowBody({
 
 function WorkspaceRowTrailingActions({
   workspace,
+  agentRuntimeActions,
   backdrop,
   trailing,
   isHovered,
@@ -382,6 +389,7 @@ function WorkspaceRowTrailingActions({
   onRename,
 }: {
   workspace: SidebarWorkspaceEntry;
+  agentRuntimeActions: AgentRuntimeCloseActions;
   backdrop: SidebarSurfaceBackdrop;
   trailing: SidebarWorkspaceTrailing;
   isHovered: boolean;
@@ -435,10 +443,15 @@ function WorkspaceRowTrailingActions({
             {onArchive ? (
               <SidebarWorkspaceMenu
                 {...kebab.menuProps}
+                agentRuntimeActions={agentRuntimeActions}
                 workspaceKey={workspace.workspaceKey}
                 serverId={workspace.serverId}
                 workspaceId={workspace.workspaceId}
                 workspaceLabels={workspace.labels}
+                managedAgents={workspace.managedAgents}
+                agentDirectoryCurrent={workspace.agentDirectoryCurrent}
+                supportsAgentRuntimeClose={workspace.supportsAgentRuntimeClose}
+                agentRuntimeCloseDisabledReason={workspace.agentRuntimeCloseDisabledReason}
                 onCopyPath={onCopyPath}
                 onCopyBranchName={onCopyBranchName}
                 onRename={onRename}

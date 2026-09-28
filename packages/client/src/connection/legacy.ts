@@ -44,6 +44,7 @@ export class LegacySubscriptions {
     };
     const workspaces = this.workspaces;
     if (workspaces && message.type === "fetch_workspaces_request") {
+      const readPage = workspaces.prepareRead({ cursor: message.page?.cursor });
       return {
         ...identity,
         message: SessionInboundMessageSchema.parse({
@@ -61,7 +62,11 @@ export class LegacySubscriptions {
             type: "fetch_workspaces_response",
             payload: {
               ...value.payload,
-              entries: workspaces.read(value.payload.entries, !message.page?.cursor),
+              entries: readPage({
+                entries: value.payload.entries,
+                complete: !value.payload.pageInfo.hasMore,
+                nextCursor: value.payload.pageInfo.nextCursor,
+              }),
               emptyProjects: [],
             },
           };

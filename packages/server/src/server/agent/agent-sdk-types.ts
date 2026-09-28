@@ -1,4 +1,5 @@
 import type {
+  AgentMessagePhase,
   AgentProviderNotice,
   AgentTaskItem,
   JsonValue,
@@ -403,7 +404,15 @@ export interface PluginTimelineItem {
 
 export type AgentTimelineItem =
   | { type: "user_message"; text: string; messageId?: string; clientMessageId?: string }
-  | { type: "assistant_message"; text: string; messageId?: string }
+  | {
+      type: "assistant_message";
+      text: string;
+      messageId?: string;
+      /** Explicit process or final-answer boundary reported by the provider */
+      phase?: AgentMessagePhase;
+      /** Text supplied by item completion after streamed deltas */
+      completionSuffix?: true;
+    }
   | { type: "reasoning"; text: string }
   | ToolCallTimelineItem
   | { type: "todo"; items: AgentTaskItem[] }

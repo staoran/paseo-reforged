@@ -9884,6 +9884,190 @@ test("idle agents remain resident until an explicit lifecycle action closes them
   }
 });
 
+test("closes only an idle runtime and keeps its stored agent record", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-runtime-close-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let closeCount = 0;
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new (class extends TestAgentSession {
+        override async close(): Promise<void> {
+          closeCount += 1;
+        }
+      })(config);
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  let agentId: string | null = null;
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: "workspace-1",
+    });
+    agentId = agent.id;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    await expect(manager.closeIdleAgentRuntime(agent.id)).resolves.toEqual({ outcome: "closed" });
+    expect(manager.getAgent(agent.id)).toBeNull();
+    expect(await storage.get(agent.id)).toMatchObject({
+      id: agent.id,
+      workspaceId: "workspace-1",
+      lastStatus: "closed",
+    });
+    expect((await storage.get(agent.id))?.archivedAt).toBeUndefined();
+    await expect(manager.closeIdleAgentRuntime(agent.id)).resolves.toEqual({
+      outcome: "already_closed",
+    });
+    expect(closeCount).toBe(1);
+    expect(client.resumeOverrides).toEqual([]);
+  } finally {
+    await manager.closeAgent(agentId).catch(() => undefined);
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("idle runtime close rejects pending runs, permissions, and archived records", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-runtime-reject-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  let agentId: string | null = null;
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const pendingStream = manager.streamAgent(agent.id, "queued but not consumed");
+    await expect(manager.closeIdleAgentRuntime(agent.id)).rejects.toThrow("active work");
+    void pendingStream;
+    manager.getAgent(agent.id)?.inFlightPermissionResponses.add("permission-1");
+    await expect(manager.closeIdleAgentRuntime(agent.id)).rejects.toThrow("pending permissions");
+    manager.getAgent(agent.id)?.inFlightPermissionResponses.clear();
+
+    await manager.archiveAgent(agent.id);
+    await expect(manager.closeIdleAgentRuntime(agent.id)).rejects.toThrow("is archived");
+    expect(manager.getAgent(agent.id)).toBeNull();
+  } finally {
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("idle runtime close fences new turns until the provider releases its session", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-runtime-close-fence-"));
+  const closeStarted = deferred<void>();
+  const closeAllowed = deferred<void>();
+  let outOfBandHandlerCalls = 0;
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new (class extends TestAgentSession {
+        override tryHandleOutOfBand() {
+          outOfBandHandlerCalls += 1;
+          return { run: async () => {} };
+        }
+
+        override async close(): Promise<void> {
+          closeStarted.resolve();
+          await closeAllowed.promise;
+        }
+      })(config);
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+  let agentId: string | null = null;
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    const closing = manager.closeIdleAgentRuntime(agent.id);
+    await closeStarted.promise;
+    expect(() => manager.streamAgent(agent.id, "must not start during close")).toThrow(
+      "runtime closure is in progress",
+    );
+    expect(() => manager.tryRunOutOfBand(agent.id, "/compact")).toThrow(
+      "runtime closure is in progress",
+    );
+    expect(outOfBandHandlerCalls).toBe(0);
+    closeAllowed.resolve();
+    await expect(closing).resolves.toEqual({ outcome: "closed" });
+  } finally {
+    closeAllowed.resolve();
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("idle runtime close rejects in-flight out-of-band commands", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-runtime-command-race-"));
+  const commandsStarted = deferred<void>();
+  const firstCommandAllowed = deferred<void>();
+  const secondCommandAllowed = deferred<void>();
+  let commandStarts = 0;
+  let closeCount = 0;
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new (class extends TestAgentSession {
+        override tryHandleOutOfBand(prompt: AgentPromptInput) {
+          if (prompt !== "/compact") return null;
+          return {
+            run: async () => {
+              commandStarts += 1;
+              if (commandStarts === 2) commandsStarted.resolve();
+              await (commandStarts === 1 ? firstCommandAllowed : secondCommandAllowed).promise;
+            },
+          };
+        }
+
+        override async close(): Promise<void> {
+          closeCount += 1;
+        }
+      })(config);
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+  let agentId: string | null = null;
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(manager.tryRunOutOfBand(agent.id, "/compact")).toBe(true);
+    expect(manager.tryRunOutOfBand(agent.id, "/compact")).toBe(true);
+    await commandsStarted.promise;
+    await expect(manager.closeIdleAgentRuntime(agent.id)).rejects.toThrow("active work");
+    expect(closeCount).toBe(0);
+
+    firstCommandAllowed.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await expect(manager.closeIdleAgentRuntime(agent.id)).rejects.toThrow("active work");
+    secondCommandAllowed.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await expect(manager.closeIdleAgentRuntime(agent.id)).resolves.toEqual({ outcome: "closed" });
+    expect(closeCount).toBe(1);
+  } finally {
+    firstCommandAllowed.resolve();
+    secondCommandAllowed.resolve();
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("archiving a closed parent still cascades to its managed children", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-closed-parent-archive-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);

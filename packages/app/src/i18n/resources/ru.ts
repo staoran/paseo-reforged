@@ -375,6 +375,8 @@ export const ru: TranslationResources = {
       header: "Сказал",
     },
     activity: {
+      completed: "Обработано",
+      completedWithDuration: "Обработано за {{duration}}",
       details: "Подробности",
     },
     dictation: {
@@ -662,6 +664,9 @@ export const ru: TranslationResources = {
         moveToMain: "Переместить на основную панель",
         reloadAgent: "Перезагрузить агента",
         reloadAgentTooltip: "Перезагрузите агента, чтобы обновить навыки, MCP или статус входа.",
+        closeAgentRuntime: "Закрыть среду агента",
+        closeAgentRuntimeAndKeepRecord: "Закрыть среду и сохранить запись",
+        closingAgentRuntime: "Закрытие среды агента...",
         close: "Закрыть",
         renameTerminal: "Переименовать терминал",
         renameAgent: "Переименовать агента",
@@ -1281,6 +1286,28 @@ export const ru: TranslationResources = {
         hostDisconnected: "Хост не подключён",
         hideFailed: "Не удалось скрыть рабочее пространство",
         archiveFailed: "Не удалось архивировать рабочее пространство",
+      },
+      residentAgents: "Резидентных агентов: {{count}}",
+      agentRuntime: {
+        closeIdle: "Закрыть среду неактивного агента",
+        closeAgent: "Закрыть среду {{title}}",
+        pending: "Закрытие {{title}}...",
+        pendingPermissions: "Ожидание разрешений",
+        confirmTitle: "Закрыть среду {{title}}?",
+        confirmMessage: "Среда и ее фоновые действия будут остановлены. Запись агента сохранится.",
+        confirmCloseAndKeepMessage:
+          "Среда и ее фоновые действия будут остановлены. Запись сохранится, но эта вкладка закроется.",
+        confirm: "Закрыть среду",
+        cancel: "Отмена",
+        closed: "Среда {{title}} закрыта",
+        closedButCleanupFailed: "Среда закрыта, но вкладку не удалось очистить: {{message}}",
+        idleRequired: "Можно закрыть только неактивного агента без ожидающих разрешений.",
+        directoryUnavailable: "Текущий каталог агентов недоступен.",
+        updateHost: "Обновите хост, чтобы закрывать среды агентов.",
+        hostOffline: "Подключите этот хост, чтобы закрывать среды агентов.",
+        syncingDirectory: "Ожидание текущего каталога агентов.",
+        directoryFailed:
+          "Синхронизация каталога агентов завершилась ошибкой. Повторите после восстановления.",
       },
     },
   },
@@ -2103,6 +2130,10 @@ export const ru: TranslationResources = {
         label: "Буфер прокрутки терминала",
         description: "Количество строк, сохраняемых во встроенном буфере терминала",
         accessibilityLabel: "Количество строк в буфере прокрутки терминала",
+      },
+      autoExpandActivity: {
+        label: "Всегда раскрывать активность",
+        description: "Раскрывать завершённую активность агента по умолчанию",
       },
       autoExpandReasoning: {
         label: "Всегда разворачивать размышления",

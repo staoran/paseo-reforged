@@ -284,6 +284,15 @@ describe("ReplicaCache", () => {
     expect(restoredTimeline).toEqual(timeline());
   });
 
+  it("retains assistant phase through durable timeline storage", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const value = { ...timeline(), items: [{ ...timelineItem(), phase: "final_answer" as const }] };
+    writer.commitTimeline(SERVER_ID, "agent-1", value);
+    await writer.flush();
+    expect(await createCache(storage).readTimeline(SERVER_ID, "agent-1")).toEqual(value);
+  });
+
   it("preserves pending timeline updates across directory baseline replacement", async () => {
     const storage = new MemoryStorage();
     const writer = createCache(storage);

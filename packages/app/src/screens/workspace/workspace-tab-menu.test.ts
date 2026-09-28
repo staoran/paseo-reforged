@@ -179,6 +179,179 @@ describe("buildWorkspaceTabMenuEntries", () => {
     expect(onRenameTab).toHaveBeenCalledWith(tab);
   });
 
+  it("adds separate runtime close actions for agent tabs", () => {
+    const close = vi.fn();
+    const tab = createAgentTab();
+    const entries = buildWorkspaceTabMenuEntries({
+      surface: "desktop",
+      tab,
+      index: 0,
+      tabCount: 1,
+      menuTestIDBase: "workspace-tab-context-agent_123",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onCopyTerminalId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+      agentRuntimeActions: {
+        canClose: () => true,
+        isPending: () => false,
+        close,
+      },
+    });
+
+    const closeRuntime = entries.find(
+      (entry) => entry.kind === "item" && entry.key === "close-agent-runtime",
+    );
+    const closeRuntimeAndKeepRecord = entries.find(
+      (entry) => entry.kind === "item" && entry.key === "close-agent-runtime-keep-record",
+    );
+    if (!closeRuntime || closeRuntime.kind !== "item") {
+      throw new Error("Close runtime entry missing");
+    }
+    if (!closeRuntimeAndKeepRecord || closeRuntimeAndKeepRecord.kind !== "item") {
+      throw new Error("Close runtime and keep record entry missing");
+    }
+
+    closeRuntime.onSelect();
+    closeRuntimeAndKeepRecord.onSelect();
+
+    expect(close).toHaveBeenNthCalledWith(1, {
+      agentId: "agent-123",
+      tabId: "agent_123",
+      keepRecord: false,
+    });
+    expect(close).toHaveBeenNthCalledWith(2, {
+      agentId: "agent-123",
+      tabId: "agent_123",
+      keepRecord: true,
+    });
+  });
+
+  it("gates runtime actions independently and explains disabled items", () => {
+    const tab = createAgentTab();
+    const buildEntries = (
+      canClose: (keepRecord: boolean) => boolean,
+      isPending: boolean,
+      unavailableMessage?: string,
+    ) =>
+      buildWorkspaceTabMenuEntries({
+        surface: "desktop",
+        tab,
+        index: 0,
+        tabCount: 1,
+        menuTestIDBase: "workspace-tab-context-agent_123",
+        onCopyResumeCommand: vi.fn(),
+        onCopyAgentId: vi.fn(),
+        onCopyTerminalId: vi.fn(),
+        onCopyFilePath: vi.fn(),
+        onReloadAgent: vi.fn(),
+        onRenameTab: vi.fn(),
+        onCloseTab: vi.fn(),
+        onCloseTabsBefore: vi.fn(),
+        onCloseTabsAfter: vi.fn(),
+        onCloseOtherTabs: vi.fn(),
+        agentRuntimeActions: {
+          canClose: (_agentId, keepRecord) => canClose(keepRecord),
+          isPending: () => isPending,
+          unavailableMessage,
+          close: vi.fn(),
+        },
+      });
+
+    for (const [entries, expectedPending] of [
+      [buildEntries(() => false, false, "Update the Host"), false],
+      [buildEntries(() => true, true), true],
+    ] as const) {
+      const runtimeEntries = entries.filter(
+        (entry) =>
+          entry.kind === "item" &&
+          (entry.key === "close-agent-runtime" || entry.key === "close-agent-runtime-keep-record"),
+      );
+      expect(runtimeEntries).toHaveLength(2);
+      expect(runtimeEntries.every((entry) => entry.kind === "item" && entry.disabled)).toBe(true);
+      expect(
+        runtimeEntries.every(
+          (entry) => entry.kind === "item" && entry.label === "Closing agent runtime...",
+        ),
+      ).toBe(expectedPending);
+      expect(
+        runtimeEntries.every(
+          (entry) =>
+            entry.kind === "item" &&
+            entry.description === (expectedPending ? undefined : "Update the Host"),
+        ),
+      ).toBe(true);
+    }
+
+    const closedEntries = buildEntries((keepRecord) => keepRecord, false, "Agent is not idle");
+    expect(closedEntries).toContainEqual(
+      expect.objectContaining({
+        key: "close-agent-runtime",
+        disabled: true,
+        description: "Agent is not idle",
+      }),
+    );
+    expect(closedEntries).toContainEqual(
+      expect.objectContaining({
+        key: "close-agent-runtime-keep-record",
+        disabled: false,
+        description: undefined,
+      }),
+    );
+  });
+
+  it("keeps runtime close failures beside the action until a retry clears them", () => {
+    const tab = createAgentTab();
+    const buildEntries = (errorByAgentId: ReadonlyMap<string, string>) =>
+      buildWorkspaceTabMenuEntries({
+        surface: "desktop",
+        tab,
+        index: 0,
+        tabCount: 1,
+        menuTestIDBase: "workspace-tab-context-agent_123",
+        onCopyResumeCommand: vi.fn(),
+        onCopyAgentId: vi.fn(),
+        onCopyTerminalId: vi.fn(),
+        onCopyFilePath: vi.fn(),
+        onReloadAgent: vi.fn(),
+        onRenameTab: vi.fn(),
+        onCloseTab: vi.fn(),
+        onCloseTabsBefore: vi.fn(),
+        onCloseTabsAfter: vi.fn(),
+        onCloseOtherTabs: vi.fn(),
+        agentRuntimeActions: {
+          canClose: () => true,
+          isPending: () => false,
+          errorByAgentId,
+          close: vi.fn(),
+        },
+      });
+
+    const failed = buildEntries(new Map([["agent-123", "Provider cleanup failed"]]));
+    expect(failed).toContainEqual(
+      expect.objectContaining({
+        key: "close-agent-runtime",
+        disabled: false,
+        description: "Provider cleanup failed",
+      }),
+    );
+    expect(failed).toContainEqual(
+      expect.objectContaining({
+        key: "close-agent-runtime-keep-record",
+        description: "Provider cleanup failed",
+      }),
+    );
+    expect(buildEntries(new Map())).toContainEqual(
+      expect.objectContaining({ key: "close-agent-runtime", description: undefined }),
+    );
+  });
+
   it("includes copy id and rename for terminal tabs", () => {
     const onRenameTab = vi.fn();
     const onCopyTerminalId = vi.fn();

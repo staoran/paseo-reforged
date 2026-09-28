@@ -1144,6 +1144,7 @@ export class Session {
     });
     this.workspaceDirectory = new WorkspaceDirectory({
       logger: this.sessionLogger,
+      nowIso: () => new Date().toISOString(),
       projectRegistry: this.projectRegistry,
       workspaceRegistry: this.workspaceRegistry,
       listAgentPayloads: () => this.listAgentPayloads(),
@@ -2269,6 +2270,7 @@ export class Session {
     return undefined;
   }
 
+  // eslint-disable-next-line complexity
   private async dispatchInboundMessage(msg: SessionInboundMessage, source?: object): Promise<void> {
     const promise =
       this.dispatchSubscriptionMessage(msg, source) ??
@@ -2278,6 +2280,7 @@ export class Session {
       this.dispatchAgentTimelineMessage(msg, source) ??
       this.dispatchHubExecutionMessage(msg) ??
       this.dispatchCreationMessage(msg, source) ??
+      this.dispatchAgentRuntimeMessage(msg) ??
       this.dispatchAgentLifecycleMessage(msg) ??
       this.dispatchAgentConfigMessage(msg) ??
       this.dispatchCheckoutMessage(msg) ??
@@ -2696,6 +2699,13 @@ export class Session {
     }
   }
 
+  private dispatchAgentRuntimeMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    if (msg.type === "agent.runtime.close.request") {
+      return this.handleAgentRuntimeCloseRequest(msg);
+    }
+    return undefined;
+  }
+
   private dispatchAgentLifecycleMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
       case "fetch_agents_request":
@@ -2738,6 +2748,35 @@ export class Session {
         return this.handleClearAgentAttention(msg.agentId, msg.requestId);
       default:
         return undefined;
+    }
+  }
+
+  private async handleAgentRuntimeCloseRequest(
+    request: Extract<SessionInboundMessage, { type: "agent.runtime.close.request" }>,
+  ): Promise<void> {
+    try {
+      const result = await this.agentManager.closeIdleAgentRuntime(request.agentId);
+      this.emit({
+        type: "agent.runtime.close.response",
+        payload: {
+          requestId: request.requestId,
+          agentId: request.agentId,
+          accepted: true,
+          error: null,
+          outcome: result.outcome,
+        },
+      });
+    } catch (error) {
+      const message = getErrorMessageOr(error, "Failed to close agent runtime");
+      this.emit({
+        type: "agent.runtime.close.response",
+        payload: {
+          requestId: request.requestId,
+          agentId: request.agentId,
+          accepted: false,
+          error: message,
+        },
+      });
     }
   }
 

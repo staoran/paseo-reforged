@@ -376,6 +376,8 @@ export const es: TranslationResources = {
       header: "Habló",
     },
     activity: {
+      completed: "Procesado",
+      completedWithDuration: "Procesado en {{duration}}",
       details: "Detalles",
     },
     dictation: {
@@ -662,6 +664,9 @@ export const es: TranslationResources = {
         reloadAgent: "Recargar agente",
         reloadAgentTooltip:
           "Vuelva a cargar el agente para actualizar habilidades, MCP o estado de inicio de sesión.",
+        closeAgentRuntime: "Cerrar el runtime del agente",
+        closeAgentRuntimeAndKeepRecord: "Cerrar el runtime y conservar el registro",
+        closingAgentRuntime: "Cerrando el runtime del agente...",
         close: "Cerrar",
         renameTerminal: "Cambiar nombre de terminal",
         renameAgent: "Cambiar nombre del agente",
@@ -1299,6 +1304,29 @@ export const es: TranslationResources = {
         hostDisconnected: "Hostno está conectado",
         hideFailed: "No se pudo ocultar el espacio de trabajo",
         archiveFailed: "No se pudo archivar el espacio de trabajo",
+      },
+      residentAgents: "Agentes residentes: {{count}}",
+      agentRuntime: {
+        closeIdle: "Cerrar runtime del agente inactivo",
+        closeAgent: "Cerrar runtime de {{title}}",
+        pending: "Cerrando {{title}}...",
+        pendingPermissions: "Esperando permisos",
+        confirmTitle: "¿Cerrar runtime de {{title}}?",
+        confirmMessage:
+          "El runtime y su actividad en segundo plano se detendrán. El registro se conserva.",
+        confirmCloseAndKeepMessage:
+          "El runtime y su actividad en segundo plano se detendrán. El registro se conserva, pero esta pestaña se cerrará.",
+        confirm: "Cerrar runtime",
+        cancel: "Cancelar",
+        closed: "Runtime de {{title}} cerrado",
+        closedButCleanupFailed: "Runtime cerrado, pero no se pudo limpiar la pestaña: {{message}}",
+        idleRequired: "Solo se puede cerrar un agente inactivo sin permisos pendientes.",
+        directoryUnavailable: "El directorio actual de agentes no está disponible.",
+        updateHost: "Actualiza el host para cerrar runtimes de agentes.",
+        hostOffline: "Conecta este host para cerrar runtimes de agentes.",
+        syncingDirectory: "Esperando el directorio actual de agentes.",
+        directoryFailed:
+          "Falló la sincronización del directorio de agentes. Reintenta cuando se recupere.",
       },
     },
   },
@@ -2117,6 +2145,10 @@ export const es: TranslationResources = {
         label: "Historial de terminal",
         description: "Líneas mantenidas en el búfer de terminal incorporado",
         accessibilityLabel: "Líneas del historial de terminal",
+      },
+      autoExpandActivity: {
+        label: "Expandir siempre la actividad",
+        description: "Mostrar la actividad completada del agente expandida por defecto",
       },
       autoExpandReasoning: {
         label: "Siempre expandir razonamiento",

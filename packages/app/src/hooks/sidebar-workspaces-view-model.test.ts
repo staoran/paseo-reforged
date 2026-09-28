@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
 import type { WorkspaceStructureProject } from "@/projects/workspace-structure";
-import { buildWorkspaceAgentActivityIndex } from "@/utils/workspace-agent-activity";
+import {
+  buildWorkspaceAgentActivityIndex,
+  deriveWorkspaceReadActionAvailability,
+} from "@/utils/workspace-agent-activity";
 import {
   appendMissingOrderKeys,
   applyStoredOrdering,
@@ -15,6 +18,7 @@ import {
   shouldShowSidebarHostLabels,
   type ProjectStatusSession,
   type SidebarProjectEntry,
+  type SidebarWorkspaceEntry,
   type SidebarWorkspacePlacement,
 } from "./sidebar-workspaces-view-model";
 
@@ -322,6 +326,7 @@ describe("shared sidebar workspace model", () => {
         {
           serverId: "host-a",
           workspaceAgentActivity: new Map(),
+          supportsMarkUnread: false,
           workspaces: new Map([
             [
               "main",
@@ -338,6 +343,7 @@ describe("shared sidebar workspace model", () => {
         {
           serverId: "host-b",
           workspaceAgentActivity: new Map(),
+          supportsMarkUnread: false,
           workspaces: new Map([
             [
               "feature",
@@ -425,6 +431,7 @@ describe("shared sidebar workspace model", () => {
         {
           serverId: "srv",
           workspaceAgentActivity: new Map(),
+          supportsMarkUnread: false,
           workspaces: new Map([
             ["one", one],
             ["two", two],
@@ -438,6 +445,7 @@ describe("shared sidebar workspace model", () => {
         {
           serverId: "srv",
           workspaceAgentActivity: new Map(),
+          supportsMarkUnread: false,
           workspaces: new Map([
             ["one", one],
             ["two", { ...two, status: "running" }],
@@ -451,6 +459,61 @@ describe("shared sidebar workspace model", () => {
     expect(nextEntries.get("srv:two")).not.toBe(previousEntries.get("srv:two"));
   });
 
+  it("preserves other resident rows when one Agent changes", () => {
+    const placements = buildSidebarWorkspacePlacementModel({
+      projects: [project({ projectKey: "project", workspaceKeys: ["srv:one", "srv:two"] })],
+    }).workspaces;
+    const workspaces = new Map([
+      [
+        "one",
+        workspace({ id: "one", name: "one", projectId: "project", projectDisplayName: "project" }),
+      ],
+      [
+        "two",
+        workspace({ id: "two", name: "two", projectId: "project", projectDisplayName: "project" }),
+      ],
+    ]);
+    const firstAgent = agent({ id: "first", workspaceId: "one", status: "idle" });
+    const secondAgent = agent({ id: "second", workspaceId: "two", status: "idle" });
+    const buildEntries = (
+      agents: Map<string, Agent>,
+      previousEntries?: ReadonlyMap<string, SidebarWorkspaceEntry>,
+    ) =>
+      buildSidebarWorkspaceEntries({
+        placements,
+        sessions: [
+          {
+            serverId: "srv",
+            workspaces,
+            workspaceAgentActivity: new Map(),
+            agents,
+            agentDirectoryCurrent: true,
+            supportsMarkUnread: false,
+          },
+        ],
+        previousEntries,
+      });
+
+    const initial = buildEntries(
+      new Map([
+        ["first", firstAgent],
+        ["second", secondAgent],
+      ]),
+    );
+    const next = buildEntries(
+      new Map([
+        ["first", firstAgent],
+        ["second", { ...secondAgent, status: "closed" }],
+      ]),
+      initial,
+    );
+
+    expect(next.get("srv:one")).toBe(initial.get("srv:one"));
+    expect(next.get("srv:one")?.managedAgents).toBe(initial.get("srv:one")?.managedAgents);
+    expect(next.get("srv:two")).not.toBe(initial.get("srv:two"));
+    expect(next.get("srv:two")?.residentAgentCount).toBe(0);
+  });
+
   it("keeps a structurally disambiguated project key in status entries", () => {
     const projectKey = "host:srv:project:prj_a";
     const model = buildSidebarWorkspacePlacementModel({
@@ -462,6 +525,7 @@ describe("shared sidebar workspace model", () => {
         {
           serverId: "srv",
           workspaceAgentActivity: new Map(),
+          supportsMarkUnread: false,
           workspaces: new Map([
             [
               "clone-a",
@@ -695,6 +759,8 @@ function agent(input: {
   updatedAt?: Date;
   parentAgentId?: string | null;
   archivedAt?: Date | null;
+  requiresAttention?: boolean;
+  attentionReason?: Agent["attentionReason"];
 }): Agent {
   return {
     serverId: "srv",
@@ -720,9 +786,164 @@ function agent(input: {
     model: null,
     parentAgentId: input.parentAgentId ?? null,
     archivedAt: input.archivedAt ?? null,
+    requiresAttention: input.requiresAttention ?? false,
+    attentionReason: input.attentionReason ?? null,
     labels: {},
   };
 }
+
+describe("createSidebarWorkspaceEntry unread presentation", () => {
+  it("keeps read idle Workspace in Ready without unread emphasis", () => {
+    const activity = buildWorkspaceAgentActivityIndex(
+      new Map([["root", agent({ id: "root", workspaceId: "ws-1", status: "idle" })]]),
+    );
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: projectWorkspace("ws-1", "attention"),
+      workspaceAgentActivity: activity,
+    });
+
+    expect(entry.statusBucket).toBe("attention");
+    expect(entry.hasUnreadAttention).toBe(false);
+  });
+
+  it("surfaces unread attention from another root even when the latest Agent is read", () => {
+    const activity = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "unread",
+          agent({
+            id: "unread",
+            workspaceId: "ws-1",
+            status: "closed",
+            updatedAt: new Date(1_000),
+            requiresAttention: true,
+            attentionReason: "finished",
+          }),
+        ],
+        [
+          "latest",
+          agent({ id: "latest", workspaceId: "ws-1", status: "idle", updatedAt: new Date(2_000) }),
+        ],
+      ]),
+    );
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: projectWorkspace("ws-1", "attention"),
+      workspaceAgentActivity: activity,
+    });
+
+    expect(entry.hasUnreadAttention).toBe(true);
+  });
+
+  it("uses an older Ready root and its read facts while the daemon still reports Done", () => {
+    const activity = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "ready",
+          agent({ id: "ready", workspaceId: "ws-1", status: "idle", updatedAt: new Date(1_000) }),
+        ],
+        [
+          "closed",
+          agent({
+            id: "closed",
+            workspaceId: "ws-1",
+            status: "closed",
+            updatedAt: new Date(2_000),
+          }),
+        ],
+      ]),
+    );
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: projectWorkspace("ws-1", "done"),
+      workspaceAgentActivity: activity,
+      supportsMarkUnread: true,
+    });
+
+    expect(entry.statusBucket).toBe("attention");
+    expect(entry.statusEnteredAt).toEqual(new Date(1_000));
+    expect(entry.hasMarkUnreadCandidate).toBe(true);
+    expect(
+      deriveWorkspaceReadActionAvailability({
+        status: entry.statusBucket,
+        activity: entry,
+        supportsMarkUnread: entry.supportsMarkUnread,
+      }),
+    ).toEqual({ hasClearableAttention: false, canMarkUnread: true });
+  });
+
+  it("hides read actions when the row is Working but the daemon still reports Done", () => {
+    const activity = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "read",
+          agent({ id: "read", workspaceId: "ws-1", status: "idle", updatedAt: new Date(1_000) }),
+        ],
+        [
+          "working",
+          agent({
+            id: "working",
+            workspaceId: "ws-1",
+            status: "running",
+            updatedAt: new Date(2_000),
+          }),
+        ],
+      ]),
+    );
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: projectWorkspace("ws-1", "done"),
+      workspaceAgentActivity: activity,
+      supportsMarkUnread: true,
+    });
+
+    expect(entry.statusBucket).toBe("running");
+    expect(entry.hasMarkUnreadCandidate).toBe(true);
+    expect(
+      deriveWorkspaceReadActionAvailability({
+        status: entry.statusBucket,
+        activity: entry,
+        supportsMarkUnread: entry.supportsMarkUnread,
+      }),
+    ).toEqual({ hasClearableAttention: false, canMarkUnread: false });
+  });
+
+  it("uses an open Agent turn over a stale Ready descriptor", () => {
+    const root = agent({ id: "root", workspaceId: "ws-1", status: "idle" });
+    root.turn = {
+      phase: "open",
+      turnId: "turn-1",
+      startedAt: new Date(2_000),
+      cancellationRequestId: null,
+    };
+    const activity = buildWorkspaceAgentActivityIndex(new Map([[root.id, root]]));
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: projectWorkspace("ws-1", "attention"),
+      workspaceAgentActivity: activity,
+      supportsMarkUnread: true,
+    });
+
+    expect(activity.get("ws-1")?.status).toBe("running");
+    expect(entry.statusBucket).toBe("running");
+    expect(entry.statusEnteredAt).toEqual(new Date(2_000));
+    expect(
+      deriveWorkspaceReadActionAvailability({
+        status: entry.statusBucket,
+        activity: entry,
+        supportsMarkUnread: entry.supportsMarkUnread,
+      }),
+    ).toEqual({ hasClearableAttention: false, canMarkUnread: false });
+
+    const needsInput = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: projectWorkspace("ws-1", "needs_input"),
+      workspaceAgentActivity: activity,
+    });
+    expect(needsInput.statusBucket).toBe("needs_input");
+  });
+});
 
 function sessionWith(input: {
   workspaces: WorkspaceDescriptor[];

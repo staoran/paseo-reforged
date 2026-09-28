@@ -114,6 +114,51 @@ function toolCall(options?: {
 }
 
 describe("AgentStreamCoalescer", () => {
+  test("flushes buffered text before forwarding phase-only completion", () => {
+    const { coalescer, flushes } = createHarness();
+    primeLeadingEdge(coalescer, flushes);
+    coalescer.handle("agent-1", assistant("Answer", { messageId: "final" }));
+    expect(
+      coalescer.handle(
+        "agent-1",
+        timeline({
+          type: "assistant_message",
+          text: "",
+          messageId: "final",
+          phase: "final_answer",
+        }),
+      ),
+    ).toBe(false);
+    expect(flushes.map((flush) => flush.item)).toEqual([
+      { type: "assistant_message", text: "Answer", messageId: "final" },
+    ]);
+  });
+  test("flushes buffered deltas before forwarding a marked completion suffix", () => {
+    const { coalescer, flushes } = createHarness();
+    primeLeadingEdge(coalescer, flushes);
+    coalescer.handle(
+      "agent-1",
+      timeline({
+        type: "assistant_message",
+        text: "Ans",
+        messageId: "final",
+        phase: "final_answer",
+      }),
+    );
+    const completion = timeline({
+      type: "assistant_message",
+      text: "wer",
+      messageId: "final",
+      phase: "final_answer",
+      completionSuffix: true,
+    });
+
+    expect(coalescer.handle("agent-1", completion)).toBe(false);
+    expect(flushes.map((flush) => flush.item)).toEqual([
+      { type: "assistant_message", text: "Ans", messageId: "final", phase: "final_answer" },
+    ]);
+    expect(completion.item).toMatchObject({ text: "wer", completionSuffix: true });
+  });
   beforeEach(() => {
     vi.useFakeTimers();
   });

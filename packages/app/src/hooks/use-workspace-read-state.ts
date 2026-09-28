@@ -1,8 +1,8 @@
 import { useCallback, useMemo } from "react";
+import type { SidebarWorkspaceEntry } from "@/hooks/sidebar-workspaces-view-model";
 import { i18n } from "@/i18n/i18next";
-import { useHostFeature } from "@/runtime/host-features";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
-import { useWorkspaceFields } from "@/stores/session-store-hooks";
+import { deriveWorkspaceReadActionAvailability } from "@/utils/workspace-agent-activity";
 import { markWorkspaceUnread } from "@/workspace/mark-unread";
 
 export interface WorkspaceReadStateController {
@@ -12,17 +12,16 @@ export interface WorkspaceReadStateController {
   markUnread: () => Promise<void>;
 }
 
-export function useWorkspaceReadState({
-  serverId,
-  workspaceId,
-}: {
-  serverId: string;
-  workspaceId: string;
-}): WorkspaceReadStateController {
-  const status = useWorkspaceFields(serverId, workspaceId, (workspace) => workspace.status);
-  const supportsMarkUnread = useHostFeature(serverId, "workspaceMarkUnread");
-  const hasClearableAttention = status === "attention" || status === "failed";
-  const canMarkUnread = supportsMarkUnread && status === "done";
+/** Uses the sidebar collection's effective status and Agent read facts for row actions */
+export function useWorkspaceReadState(
+  workspace: SidebarWorkspaceEntry,
+): WorkspaceReadStateController {
+  const { serverId, workspaceId } = workspace;
+  const { hasClearableAttention, canMarkUnread } = deriveWorkspaceReadActionAvailability({
+    status: workspace.statusBucket,
+    activity: workspace,
+    supportsMarkUnread: workspace.supportsMarkUnread,
+  });
 
   const clearAttention = useCallback(async () => {
     if (!hasClearableAttention) {

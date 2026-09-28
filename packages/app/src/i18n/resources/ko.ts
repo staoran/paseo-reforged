@@ -372,6 +372,8 @@ export const ko: TranslationResources = {
       header: "말함",
     },
     activity: {
+      completed: "처리 완료",
+      completedWithDuration: "처리 시간 {{duration}}",
       details: "세부 정보",
     },
     dictation: {
@@ -657,6 +659,9 @@ export const ko: TranslationResources = {
         reloadAgent: "에이전트 다시 로드",
         reloadAgentTooltip:
           "스킬, MCP 또는 로그인 상태를 업데이트하려면 에이전트를 다시 로드하세요.",
+        closeAgentRuntime: "에이전트 런타임 닫기",
+        closeAgentRuntimeAndKeepRecord: "런타임을 닫고 기록 유지",
+        closingAgentRuntime: "에이전트 런타임 닫는 중...",
         close: "닫기",
         renameTerminal: "터미널 이름 변경",
         renameAgent: "에이전트 이름 변경",
@@ -1270,6 +1275,27 @@ export const ko: TranslationResources = {
         hostDisconnected: "호스트가 연결되어 있지 않습니다",
         hideFailed: "워크스페이스를 숨기지 못했습니다",
         archiveFailed: "워크스페이스를 보관하지 못했습니다.",
+      },
+      residentAgents: "상주 에이전트 {{count}}개",
+      agentRuntime: {
+        closeIdle: "유휴 에이전트 런타임 닫기",
+        closeAgent: "{{title}} 런타임 닫기",
+        pending: "{{title}} 닫는 중...",
+        pendingPermissions: "권한 대기 중",
+        confirmTitle: "{{title}} 런타임을 닫을까요?",
+        confirmMessage: "런타임과 백그라운드 활동이 중지됩니다. 에이전트 기록은 유지됩니다.",
+        confirmCloseAndKeepMessage:
+          "런타임과 백그라운드 활동이 중지됩니다. 기록은 유지되지만 이 탭은 닫힙니다.",
+        confirm: "런타임 닫기",
+        cancel: "취소",
+        closed: "{{title}} 런타임을 닫았습니다",
+        closedButCleanupFailed: "런타임은 닫았지만 탭을 정리하지 못했습니다: {{message}}",
+        idleRequired: "대기 중인 권한이 없는 유휴 에이전트만 닫을 수 있습니다.",
+        directoryUnavailable: "현재 에이전트 디렉터리를 사용할 수 없습니다.",
+        updateHost: "에이전트 런타임을 닫으려면 호스트를 업데이트하세요.",
+        hostOffline: "에이전트 런타임을 닫으려면 호스트에 연결하세요.",
+        syncingDirectory: "현재 에이전트 디렉터리를 기다리는 중입니다.",
+        directoryFailed: "에이전트 디렉터리 동기화에 실패했습니다. 복구 후 다시 시도하세요.",
       },
     },
   },
@@ -2078,6 +2104,10 @@ export const ko: TranslationResources = {
         label: "터미널 스크롤백",
         description: "내장 터미널 버퍼에 보관되는 줄 수",
         accessibilityLabel: "터미널 스크롤백 줄 수",
+      },
+      autoExpandActivity: {
+        label: "Activity 항상 펼치기",
+        description: "완료된 에이전트 Activity를 기본으로 펼쳐 표시",
       },
       autoExpandReasoning: {
         label: "추론 항상 펼치기",

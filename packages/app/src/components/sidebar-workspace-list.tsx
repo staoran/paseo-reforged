@@ -94,6 +94,7 @@ import type { SidebarWorkspaceGroup } from "@/components/sidebar/sidebar-labels"
 import {
   SidebarWorkspaceContextMenu,
   SidebarWorkspaceMenu,
+  type AgentRuntimeCloseActions,
 } from "@/components/sidebar/sidebar-workspace-menu";
 import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press-drag-interaction";
 import { PinnedSectionHeader } from "@/components/sidebar/pinned-section-header";
@@ -125,6 +126,7 @@ import type { ShortcutKey } from "@/utils/format-shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import { useWorkspaceReadState } from "@/hooks/use-workspace-read-state";
+import { useCloseIdleAgentRuntime } from "@/hooks/use-close-idle-agent-runtime";
 import type { PrHint } from "@/git/use-pr-status-query";
 import {
   buildSidebarProjectRowModel,
@@ -263,6 +265,7 @@ interface ProjectHeaderRowProps {
 
 interface WorkspaceRowInnerProps {
   workspace: SidebarWorkspaceEntry;
+  agentRuntimeActions: AgentRuntimeCloseActions;
   hostBadge?: HostBadgeModel | null;
   leadingProjectName?: string | null;
   leadingProjectIconDataUri?: string | null;
@@ -601,6 +604,7 @@ function ProjectMenuItems({
 
 function WorkspaceRowRightGroup({
   workspace,
+  agentRuntimeActions,
   backdrop,
   isHovered,
   isTouchPlatform,
@@ -621,6 +625,7 @@ function WorkspaceRowRightGroup({
   onTogglePin,
 }: {
   workspace: SidebarWorkspaceEntry;
+  agentRuntimeActions: AgentRuntimeCloseActions;
   backdrop: SidebarSurfaceBackdrop;
   isHovered: boolean;
   isTouchPlatform: boolean;
@@ -677,10 +682,15 @@ function WorkspaceRowRightGroup({
             {onArchive ? (
               <SidebarWorkspaceMenu
                 {...kebab.menuProps}
+                agentRuntimeActions={agentRuntimeActions}
                 workspaceKey={workspace.workspaceKey}
                 serverId={workspace.serverId}
                 workspaceId={workspace.workspaceId}
                 workspaceLabels={workspace.labels}
+                managedAgents={workspace.managedAgents}
+                agentDirectoryCurrent={workspace.agentDirectoryCurrent}
+                supportsAgentRuntimeClose={workspace.supportsAgentRuntimeClose}
+                agentRuntimeCloseDisabledReason={workspace.agentRuntimeCloseDisabledReason}
                 onCopyPath={onCopyPath}
                 onCopyBranchName={onCopyBranchName}
                 onRename={onRename}
@@ -1049,6 +1059,7 @@ function ProjectHeaderRow({
 
 function WorkspaceRowInner({
   workspace,
+  agentRuntimeActions,
   hostBadge,
   leadingProjectName,
   leadingProjectIconDataUri,
@@ -1132,6 +1143,7 @@ function WorkspaceRowInner({
             {...hoverHandlers}
           >
             <SidebarWorkspaceContextMenu
+              agentRuntimeActions={agentRuntimeActions}
               contextMenuOpen={contextMenuOpen}
               onContextMenuOpenChange={onContextMenuOpenChange}
               workspace={workspace}
@@ -1179,6 +1191,7 @@ function WorkspaceRowInner({
               >
                 <WorkspaceRowRightGroup
                   workspace={workspace}
+                  agentRuntimeActions={agentRuntimeActions}
                   backdrop={backdrop}
                   isHovered={isHovered}
                   isTouchPlatform={isTouchPlatform}
@@ -1244,6 +1257,8 @@ function WorkspaceRowWithMenu({
 }) {
   const { t } = useTranslation();
   const toast = useToast();
+  /** Shares close feedback across the row's dropdown and context menus */
+  const agentRuntimeActions = useCloseIdleAgentRuntime();
   const [isHidingWorkspace, setIsHidingWorkspace] = useState(false);
   const [isRenameOpen, setIsRenameOpen] = useState(false);
   const isArchiving = workspace.archivingAt !== null || isHidingWorkspace;
@@ -1297,10 +1312,7 @@ function WorkspaceRowWithMenu({
 
   const archiveShortcutKeys = useShortcutKeys("archive-workspace");
   const { hasClearableAttention, canMarkUnread, clearAttention, markUnread } =
-    useWorkspaceReadState({
-      serverId: workspace.serverId,
-      workspaceId: workspace.workspaceId,
-    });
+    useWorkspaceReadState(workspace);
   const handleMarkAsRead = useCallback(() => {
     void clearAttention().catch((error) => {
       toast.error(error instanceof Error ? error.message : "Failed to mark workspace as read");
@@ -1327,6 +1339,7 @@ function WorkspaceRowWithMenu({
     <>
       <WorkspaceRowInner
         workspace={workspace}
+        agentRuntimeActions={agentRuntimeActions}
         hostBadge={hostBadge}
         leadingProjectName={leadingProjectName}
         leadingProjectIconDataUri={leadingProjectIconDataUri}

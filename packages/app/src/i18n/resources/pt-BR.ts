@@ -375,6 +375,8 @@ export const ptBR: TranslationResources = {
       header: "Falou",
     },
     activity: {
+      completed: "Processado",
+      completedWithDuration: "Processado em {{duration}}",
       details: "Detalhes",
     },
     dictation: {
@@ -660,6 +662,9 @@ export const ptBR: TranslationResources = {
         moveToMain: "Mover para o painel principal",
         reloadAgent: "Recarregar agente",
         reloadAgentTooltip: "Recarregue o agente para atualizar skills, MCPs ou status de login.",
+        closeAgentRuntime: "Fechar runtime do agente",
+        closeAgentRuntimeAndKeepRecord: "Fechar runtime e manter registro",
+        closingAgentRuntime: "Fechando runtime do agente...",
         close: "Fechar",
         renameTerminal: "Renomear terminal",
         renameAgent: "Renomear agente",
@@ -1289,6 +1294,29 @@ export const ptBR: TranslationResources = {
         hostDisconnected: "Host não está conectado",
         hideFailed: "Falha ao ocultar workspace",
         archiveFailed: "Falha ao arquivar workspace",
+      },
+      residentAgents: "Agentes residentes: {{count}}",
+      agentRuntime: {
+        closeIdle: "Fechar runtime do agente ocioso",
+        closeAgent: "Fechar runtime de {{title}}",
+        pending: "Fechando {{title}}...",
+        pendingPermissions: "Aguardando permissões",
+        confirmTitle: "Fechar runtime de {{title}}?",
+        confirmMessage:
+          "O runtime e suas atividades em segundo plano serão interrompidos. O registro será mantido.",
+        confirmCloseAndKeepMessage:
+          "O runtime e suas atividades em segundo plano serão interrompidos. O registro será mantido, mas esta aba será fechada.",
+        confirm: "Fechar runtime",
+        cancel: "Cancelar",
+        closed: "Runtime de {{title}} fechado",
+        closedButCleanupFailed: "Runtime fechado, mas não foi possível limpar a aba: {{message}}",
+        idleRequired: "Somente um agente ocioso sem permissões pendentes pode ser fechado.",
+        directoryUnavailable: "O diretório atual de agentes não está disponível.",
+        updateHost: "Atualize o host para fechar runtimes de agentes.",
+        hostOffline: "Conecte este host para fechar runtimes de agentes.",
+        syncingDirectory: "Aguardando o diretório atual de agentes.",
+        directoryFailed:
+          "A sincronização do diretório de agentes falhou. Tente novamente após a recuperação.",
       },
     },
   },
@@ -2101,6 +2129,10 @@ export const ptBR: TranslationResources = {
         label: "Scrollback do terminal",
         description: "Linhas mantidas no buffer do terminal integrado",
         accessibilityLabel: "Linhas do scrollback do terminal",
+      },
+      autoExpandActivity: {
+        label: "Sempre expandir atividade",
+        description: "Mostrar a atividade concluída do agente expandida por padrão",
       },
       autoExpandReasoning: {
         label: "Sempre expandir raciocínio",

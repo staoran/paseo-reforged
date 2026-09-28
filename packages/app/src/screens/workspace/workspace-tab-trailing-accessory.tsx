@@ -5,6 +5,7 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   ArrowLeftToLine,
   ArrowRightToLine,
+  Bot,
   Copy,
   CopyX,
   Ellipsis,
@@ -29,6 +30,7 @@ const ThemedArrowLeftToLine = withUnistyles(ArrowLeftToLine);
 const ThemedArrowRightToLine = withUnistyles(ArrowRightToLine);
 const ThemedCopyX = withUnistyles(CopyX);
 const ThemedPencil = withUnistyles(Pencil);
+const ThemedBot = withUnistyles(Bot);
 const ThemedX = withUnistyles(X);
 
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -59,6 +61,8 @@ function MobileTabDropdownMenuItem({
         return <ThemedCopyX size={16} uniProps={mutedColorMapping} />;
       case "pencil":
         return <ThemedPencil size={16} uniProps={mutedColorMapping} />;
+      case "bot":
+        return <ThemedBot size={16} uniProps={mutedColorMapping} />;
       case "x":
         return <ThemedX size={16} uniProps={mutedColorMapping} />;
       default:
@@ -73,6 +77,7 @@ function MobileTabDropdownMenuItem({
     <DropdownMenuItem
       testID={entry.testID}
       disabled={entry.disabled}
+      description={entry.description}
       destructive={entry.destructive}
       onSelect={entry.onSelect}
       tooltip={entry.tooltip}

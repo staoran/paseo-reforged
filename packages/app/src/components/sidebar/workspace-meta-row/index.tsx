@@ -2,7 +2,7 @@ import { Fragment, useCallback, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Pressable, Text, View, type GestureResponderEvent } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { ExternalLink, Folder, GitBranch, Globe } from "lucide-react-native";
+import { Bot, ExternalLink, Folder, GitBranch, Globe } from "lucide-react-native";
 import {
   workspaceLabelKey,
   type WorkspaceLabelDefinition,
@@ -18,6 +18,7 @@ import type { Theme } from "@/styles/theme";
 import { PullRequestStateIcon } from "@/git/pull-request-state-icon";
 import { CheckIndicator } from "./check-indicator";
 import type { CheckSummary, CheckSummaryState } from "./check-summary";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { selectMetaRowItems, type MetaRowItem } from "./meta-items";
 import { workspaceServiceLabelKey, type WorkspaceServiceSummary } from "./service-summary";
 
@@ -35,6 +36,8 @@ export {
 const META_ICON_SIZE = HOST_BADGE_ICON_SIZE;
 
 const ThemedExternalLink = withUnistyles(ExternalLink);
+/** Uses the Bot glyph for the resident Agent indicator */
+const ThemedBot = withUnistyles(Bot);
 const ThemedFolder = withUnistyles(Folder);
 const ThemedGitBranch = withUnistyles(GitBranch);
 const ThemedGlobe = withUnistyles(Globe);
@@ -67,6 +70,7 @@ export function WorkspaceMetaRow({
   prHint,
   serviceSummary,
   labels = EMPTY_LABELS,
+  residentAgentCount = null,
 }: {
   currentBranch: string | null;
   projectName: string | null;
@@ -74,7 +78,9 @@ export function WorkspaceMetaRow({
   prHint: PrHint | null;
   serviceSummary: WorkspaceServiceSummary | null;
   labels?: readonly WorkspaceLabelDefinition[];
+  residentAgentCount?: number | null;
 }) {
+  const { t } = useTranslation();
   const { rowItems, checksDisplay } = useSidebarMetaPreferences();
   const items = selectMetaRowItems({
     currentBranch,
@@ -87,7 +93,7 @@ export function WorkspaceMetaRow({
     checksDisplay,
   });
 
-  if (items.length === 0) return null;
+  if (items.length === 0 && (!residentAgentCount || residentAgentCount < 1)) return null;
 
   return (
     <View style={styles.row}>
@@ -97,6 +103,28 @@ export function WorkspaceMetaRow({
           <MetaItemNode item={item} hostBadge={hostBadge} leading={index === 0} />
         </Fragment>
       ))}
+      {residentAgentCount && residentAgentCount > 0 ? (
+        <Tooltip delayDuration={250} enabledOnDesktop enabledOnMobile={false}>
+          <TooltipTrigger asChild>
+            <View
+              style={styles.residentAgents}
+              accessibilityRole="image"
+              accessibilityLabel={t("sidebar.workspace.residentAgents", {
+                count: residentAgentCount,
+              })}
+              testID="sidebar-workspace-resident-agents"
+            >
+              <ThemedBot size={META_ICON_SIZE} uniProps={mutedMapping} />
+              {residentAgentCount > 1 ? (
+                <Text style={styles.residentAgentCount}>{residentAgentCount}</Text>
+              ) : null}
+            </View>
+          </TooltipTrigger>
+          <TooltipContent side="top">
+            <Text>{t("sidebar.workspace.residentAgents", { count: residentAgentCount })}</Text>
+          </TooltipContent>
+        </Tooltip>
+      ) : null}
     </View>
   );
 }
@@ -315,6 +343,19 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[1.5],
     minWidth: 0,
+    width: "100%",
+  },
+  residentAgents: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    marginLeft: "auto",
+    flexShrink: 0,
+  },
+  residentAgentCount: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    lineHeight: 16,
   },
   item: {
     flexDirection: "row",

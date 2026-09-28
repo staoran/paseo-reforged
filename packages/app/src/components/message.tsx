@@ -3037,6 +3037,8 @@ interface ToolCallProps {
   onInlineDetailsExpandedChange?: (expanded: boolean) => void;
   onOpenFilePath?: (filePath: string) => void;
   defaultExpanded?: boolean;
+  /** Reports explicit user toggles independently from inline scroll lifecycle */
+  onExpandedChange?: (expanded: boolean) => void;
   forceInline?: boolean;
   maxDetailHeight?: number;
 }
@@ -3056,6 +3058,7 @@ export const ToolCall = memo(function ToolCall({
   onInlineDetailsExpandedChange,
   onOpenFilePath,
   defaultExpanded,
+  onExpandedChange,
   forceInline = false,
   maxDetailHeight = 400,
 }: ToolCallProps) {
@@ -3112,10 +3115,13 @@ export const ToolCall = memo(function ToolCall({
         showLoadingSkeleton: presentation.isLoadingDetails,
       });
     } else {
-      setIsExpanded((prev) => !prev);
+      setIsExpanded(!isExpanded);
+      onExpandedChange?.(!isExpanded);
     }
   }, [
     shouldRenderInline,
+    isExpanded,
+    onExpandedChange,
     openToolCall,
     toolName,
     presentation.displayName,
@@ -3217,6 +3223,7 @@ function areToolCallPropsEqual(previous: ToolCallProps, next: ToolCallProps) {
   if (previous.disableOuterSpacing !== next.disableOuterSpacing) return false;
   if (previous.onOpenFilePath !== next.onOpenFilePath) return false;
   if (previous.defaultExpanded !== next.defaultExpanded) return false;
+  if (previous.onExpandedChange !== next.onExpandedChange) return false;
   if (previous.forceInline !== next.forceInline) return false;
   if (previous.maxDetailHeight !== next.maxDetailHeight) return false;
   return true;

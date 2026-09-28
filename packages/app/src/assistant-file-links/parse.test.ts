@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
+import { createAssistantMarkdownParser } from "@/utils/assistant-markdown-parser";
+import { resolveWorkspaceFilePaths } from "@/workspace/file-open";
+import { classifyForResolution } from "./resolver";
 import {
   classifyAssistantFileLink,
   normalizeInlinePathTarget,
   parseAssistantFileLink,
   parseFileProtocolUrl,
   parseInlinePathToken,
+  parseToolCallFilePath,
 } from "./parse";
 
 describe("parseInlinePathToken", () => {
@@ -64,7 +68,58 @@ describe("parseInlinePathToken", () => {
   });
 });
 
+describe("parseToolCallFilePath", () => {
+  it("opens a Windows tool-card file path at its line and ignores the column", () => {
+    expect(parseToolCallFilePath("E:\\repo\\src\\app.ts:12:4")).toEqual({
+      raw: "E:\\repo\\src\\app.ts:12:4",
+      path: "E:/repo/src/app.ts",
+      lineStart: 12,
+      lineEnd: undefined,
+    });
+  });
+
+  it("keeps tool-card paths without a line suffix intact", () => {
+    expect(parseToolCallFilePath("E:\\repo\\src\\app.ts")).toEqual({
+      raw: "E:\\repo\\src\\app.ts",
+      path: "E:\\repo\\src\\app.ts",
+    });
+  });
+});
+
 describe("parseFileProtocolUrl", () => {
+  it("opens an encoded Windows file URL at its colon-suffixed line", () => {
+    expect(parseFileProtocolUrl("file:///E:/docs/%E4%B8%AD.md:1")).toEqual({
+      raw: "file:///E:/docs/%E4%B8%AD.md:1",
+      path: "E:/docs/中.md",
+      lineStart: 1,
+      lineEnd: undefined,
+    });
+  });
+
+  it("opens POSIX file URLs with line and column suffixes", () => {
+    expect(parseFileProtocolUrl("file:///tmp/notes.md:1")).toEqual({
+      raw: "file:///tmp/notes.md:1",
+      path: "/tmp/notes.md",
+      lineStart: 1,
+      lineEnd: undefined,
+    });
+    expect(parseFileProtocolUrl("file:///tmp/notes.md:12:4")).toEqual({
+      raw: "file:///tmp/notes.md:12:4",
+      path: "/tmp/notes.md",
+      lineStart: 12,
+      lineEnd: undefined,
+    });
+  });
+
+  it("keeps fragment line ranges on encoded file URLs", () => {
+    expect(parseFileProtocolUrl("file:///E:/docs/%E4%B8%AD.md#L1-L3")).toEqual({
+      raw: "file:///E:/docs/%E4%B8%AD.md#L1-L3",
+      path: "E:/docs/中.md",
+      lineStart: 1,
+      lineEnd: 3,
+    });
+  });
+
   it("parses file URLs with line fragments", () => {
     expect(parseFileProtocolUrl("file:///Users/test/project/src/app.tsx#L81")).toEqual({
       raw: "file:///Users/test/project/src/app.tsx#L81",
@@ -214,6 +269,36 @@ describe("classifyAssistantFileLink", () => {
 });
 
 describe("parseAssistantFileLink", () => {
+  it("opens a Markdown-encoded Windows file link at its referenced line", () => {
+    const tokens = createAssistantMarkdownParser().parseInline(
+      "[source](/E:/repo/docs/中文.md:1)",
+      {},
+    );
+    const href = tokens[0]?.children?.find((token) => token.type === "link_open")?.attrGet("href");
+    expect(href).toBe("/E:/repo/docs/%E4%B8%AD%E6%96%87.md:1");
+
+    const resolution = classifyForResolution({ href: href ?? "" }, { workspaceRoot: "E:/repo" });
+    const target =
+      resolution.kind === "resolved" && resolution.value.kind === "file"
+        ? resolution.value.target
+        : null;
+    const normalized = target ? normalizeInlinePathTarget(target.path, "E:/repo") : null;
+    const opened = normalized?.file
+      ? resolveWorkspaceFilePaths({ path: normalized.file, workspaceRoot: "E:/repo" })
+      : null;
+
+    expect({ target, normalized, opened }).toEqual({
+      target: {
+        raw: "/E:/repo/docs/%E4%B8%AD%E6%96%87.md:1",
+        path: "/E:/repo/docs/中文.md",
+        lineStart: 1,
+        lineEnd: undefined,
+      },
+      normalized: { directory: "docs", file: "docs/中文.md" },
+      opened: { absolutePath: "E:/repo/docs/中文.md", relativePath: "docs/中文.md" },
+    });
+  });
+
   it("resolves bare markdown filenames against the active workspace", () => {
     expect(
       parseAssistantFileLink("dumm.md", {
@@ -323,6 +408,37 @@ describe("parseAssistantFileLink", () => {
     });
   });
 
+  it("decodes bare Windows drive links only after recognizing an absolute path", () => {
+    expect(parseAssistantFileLink("E:/repo/docs/%E4%B8%AD.md#L1")).toEqual({
+      raw: "E:/repo/docs/%E4%B8%AD.md#L1",
+      path: "E:/repo/docs/中.md",
+      lineStart: 1,
+      lineEnd: undefined,
+    });
+    expect(parseAssistantFileLink("%2Ftmp/notes.md:1", { workspaceRoot: "E:/repo" })).toEqual({
+      raw: "%2Ftmp/notes.md:1",
+      path: "E:/repo/%2Ftmp/notes.md",
+      lineStart: 1,
+      lineEnd: undefined,
+    });
+  });
+
+  it("decodes slash-drive links without a line suffix", () => {
+    const target = parseAssistantFileLink("/E:/repo/docs/%E4%B8%AD.md", {
+      workspaceRoot: "E:/repo",
+    });
+    expect(target).toEqual({
+      raw: "/E:/repo/docs/%E4%B8%AD.md",
+      path: "/E:/repo/docs/中.md",
+      lineStart: undefined,
+      lineEnd: undefined,
+    });
+    expect(normalizeInlinePathTarget(target?.path ?? "", "E:/repo")).toEqual({
+      directory: "docs",
+      file: "docs/中.md",
+    });
+  });
+
   it("allows file URLs even when they are outside the workspace root", () => {
     expect(
       parseAssistantFileLink("file:///tmp/outside.txt", {
@@ -389,6 +505,21 @@ describe("parseAssistantFileLink", () => {
         workspaceRoot: "/Users/test/project",
       }),
     ).toBeNull();
+  });
+
+  it("keeps invalid percent escapes in absolute paths without throwing", () => {
+    expect(parseAssistantFileLink("E:/repo/100%done.md:1")).toEqual({
+      raw: "E:/repo/100%done.md:1",
+      path: "E:/repo/100%done.md",
+      lineStart: 1,
+      lineEnd: undefined,
+    });
+    expect(parseAssistantFileLink("file:///tmp/100%done.md:1")).toEqual({
+      raw: "file:///tmp/100%done.md:1",
+      path: "/tmp/100%done.md",
+      lineStart: 1,
+      lineEnd: undefined,
+    });
   });
 
   it("rejects invalid line fragments", () => {

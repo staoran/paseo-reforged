@@ -2,12 +2,140 @@ import { describe, expect, test } from "vitest";
 
 import type { AgentTimelineRow } from "./agent-manager.js";
 import {
+  TimelineProjection,
   projectTimelineRows,
   selectProjectedTimelinePage,
   selectTimelineWindowByProjectedLimit,
 } from "./timeline-projection.js";
 
 describe("projectTimelineRows", () => {
+  test("retains phase on chunks and accepts metadata-only final completion", () => {
+    const rows: AgentTimelineRow[] = [
+      {
+        seq: 1,
+        timestamp: "2026-09-26T00:00:00.000Z",
+        item: {
+          type: "assistant_message",
+          text: "Working",
+          messageId: "process",
+          phase: "commentary",
+        },
+      },
+      {
+        seq: 2,
+        timestamp: "2026-09-26T00:00:01.000Z",
+        item: { type: "assistant_message", text: "Answer", messageId: "final" },
+      },
+      {
+        seq: 3,
+        timestamp: "2026-09-26T00:00:02.000Z",
+        item: { type: "assistant_message", text: "", messageId: "final", phase: "final_answer" },
+      },
+    ];
+    const projected = projectTimelineRows({ rows, mode: "projected" });
+    expect(projected.map((row) => row.item)).toEqual([
+      { type: "assistant_message", text: "Working", messageId: "process", phase: "commentary" },
+      { type: "assistant_message", text: "Answer", messageId: "final", phase: "final_answer" },
+    ]);
+    expect(projected[1]?.seqEnd).toBe(3);
+  });
+
+  test("preserves a completion suffix across an intervening history row", () => {
+    const rows: AgentTimelineRow[] = [
+      {
+        seq: 1,
+        timestamp: "2026-09-26T00:00:00.000Z",
+        turnId: "answer-turn",
+        item: { type: "assistant_message", text: "Ans", messageId: "final", phase: "final_answer" },
+      },
+      {
+        seq: 2,
+        timestamp: "2026-09-26T00:00:01.000Z",
+        turnId: "next-turn",
+        item: { type: "user_message", text: "Next" },
+      },
+      {
+        seq: 3,
+        timestamp: "2026-09-26T00:00:02.000Z",
+        turnId: "answer-turn",
+        item: {
+          type: "assistant_message",
+          text: "wer",
+          messageId: "final",
+          phase: "final_answer",
+          completionSuffix: true,
+        },
+      },
+    ];
+
+    const expectedItems = [
+      { type: "assistant_message", text: "Answer", messageId: "final", phase: "final_answer" },
+      { type: "user_message", text: "Next" },
+    ];
+    const projected = projectTimelineRows({ rows, mode: "projected" });
+    expect(projected.map((row) => row.item)).toEqual(expectedItems);
+    expect(projected[0]).toMatchObject({
+      seqStart: 1,
+      seqEnd: 3,
+      sourceSeqRanges: [
+        { startSeq: 1, endSeq: 1 },
+        { startSeq: 3, endSeq: 3 },
+      ],
+    });
+
+    const retained = new TimelineProjection();
+    for (const row of rows) retained.append(row);
+    expect(retained.getRows().map((row) => row.item)).toEqual(expectedItems);
+
+    const tail = selectProjectedTimelinePage({ rows, direction: "tail", limit: 1 });
+    expect(tail.entries.map((entry) => entry.item)).toEqual(expectedItems);
+    expect(tail.startSeq).toBe(1);
+    expect(tail.endSeq).toBe(3);
+
+    const window = selectTimelineWindowByProjectedLimit({ rows, direction: "tail", limit: 1 });
+    expect(window.projectedEntries.map((entry) => entry.item)).toEqual(expectedItems);
+    expect(window.selectedRows.map((row) => row.seq)).toEqual([1, 2, 3]);
+  });
+
+  test("keeps ordinary same-ID assistant text separate after another row", () => {
+    const rows: AgentTimelineRow[] = [
+      {
+        seq: 1,
+        timestamp: "2026-09-26T00:00:00.000Z",
+        item: { type: "assistant_message", text: "Before", messageId: "resumed" },
+      },
+      {
+        seq: 2,
+        timestamp: "2026-09-26T00:00:01.000Z",
+        item: { type: "user_message", text: "Next" },
+      },
+      {
+        seq: 3,
+        timestamp: "2026-09-26T00:00:02.000Z",
+        item: { type: "assistant_message", text: "After", messageId: "resumed" },
+      },
+    ];
+
+    expect(projectTimelineRows({ rows, mode: "projected" }).map((row) => row.item)).toEqual(
+      rows.map((row) => row.item),
+    );
+  });
+
+  test("does not merge anonymous assistant messages across phase boundaries", () => {
+    const rows: AgentTimelineRow[] = [
+      {
+        seq: 1,
+        timestamp: "2026-09-26T00:00:00.000Z",
+        item: { type: "assistant_message", text: "Working", phase: "commentary" },
+      },
+      {
+        seq: 2,
+        timestamp: "2026-09-26T00:00:01.000Z",
+        item: { type: "assistant_message", text: "Answer", phase: "final_answer" },
+      },
+    ];
+    expect(projectTimelineRows({ rows, mode: "projected" })).toHaveLength(2);
+  });
   test("merges adjacent assistant chunks in projected mode", () => {
     const rows: AgentTimelineRow[] = [
       {

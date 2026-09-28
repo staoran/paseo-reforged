@@ -1,5 +1,7 @@
 import { describe, expect, test } from "vitest";
+import { z } from "zod";
 import {
+  AgentTimelineItemPayloadSchema,
   FileExplorerRequestSchema,
   PaseoWorktreeArchiveRequestSchema,
   parseServerInfoStatusPayload,
@@ -7,6 +9,47 @@ import {
   SessionOutboundMessageSchema,
   WorkspaceProjectDescriptorPayloadSchema,
 } from "./messages.js";
+
+describe("assistant phase compatibility", () => {
+  test("accepts assistant items from an older daemon without phase", () => {
+    const item = { type: "assistant_message", text: "Answer", messageId: "answer" };
+    expect(AgentTimelineItemPayloadSchema.parse(item)).toEqual(item);
+    expect(AgentTimelineItemPayloadSchema.parse({ ...item, phase: "final_answer" })).toEqual({
+      ...item,
+      phase: "final_answer",
+    });
+  });
+
+  test("an older assistant schema accepts new optional phase metadata", () => {
+    const legacySchema = z.object({
+      type: z.literal("assistant_message"),
+      text: z.string(),
+      messageId: z.string().optional(),
+    });
+    expect(
+      legacySchema.parse({
+        type: "assistant_message",
+        text: "Answer",
+        messageId: "answer",
+        phase: "final_answer",
+      }),
+    ).toEqual({ type: "assistant_message", text: "Answer", messageId: "answer" });
+  });
+
+  test("completion suffix metadata is optional and ignored by older assistant schemas", () => {
+    const item = {
+      type: "assistant_message",
+      text: "wer",
+      messageId: "answer",
+      phase: "final_answer",
+      completionSuffix: true,
+    };
+    expect(AgentTimelineItemPayloadSchema.parse(item)).toEqual(item);
+    expect(
+      z.object({ type: z.literal("assistant_message"), text: z.string() }).parse(item),
+    ).toEqual({ type: "assistant_message", text: "wer" });
+  });
+});
 
 function workspaceDescriptor(overrides: Record<string, unknown> = {}) {
   return {

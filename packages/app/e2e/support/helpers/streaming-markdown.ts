@@ -48,7 +48,7 @@ export async function expectUnfinishedBold(page: Page): Promise<void> {
   const bold = message.locator('[data-paseo-markdown-tag="strong"]');
   await expect(bold).toContainText("Bold");
   await expect(message).not.toContainText("stays bold");
-  await expect(bold).toHaveCSS("font-weight", "500");
+  await expect(bold).toHaveCSS("font-weight", "700");
   await expect(message).not.toContainText("*");
 }
 
@@ -97,6 +97,6 @@ async function expectCompletedMarkdown(page: Page): Promise<void> {
   ).toHaveAttribute("href", "https://example.com/documentation");
   await expect(message.locator('[data-paseo-markdown-tag="strong"]')).toHaveCSS(
     "font-weight",
-    "500",
+    "700",
   );
 }

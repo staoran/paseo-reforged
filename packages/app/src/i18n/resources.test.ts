@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
+import { i18n } from "./i18next";
 import { ar } from "./resources/ar";
 import { en } from "./resources/en";
 import { es } from "./resources/es";
@@ -104,6 +105,25 @@ function findUntranslatedConnectionErrors(): string[] {
 }
 
 describe("translation resources", () => {
+  it("renders resident Agent counts in each supported language", () => {
+    const cases = [
+      ["en", "Resident agents: 1", "Resident agents: 2"],
+      ["ar", "الوكلاء المقيمون: 1", "الوكلاء المقيمون: 2"],
+      ["es", "Agentes residentes: 1", "Agentes residentes: 2"],
+      ["fr", "Agents résidents : 1", "Agents résidents : 2"],
+      ["ja", "常駐エージェント 1", "常駐エージェント 2"],
+      ["ko", "상주 에이전트 1개", "상주 에이전트 2개"],
+      ["pt-BR", "Agentes residentes: 1", "Agentes residentes: 2"],
+      ["ru", "Резидентных агентов: 1", "Резидентных агентов: 2"],
+      ["zh-CN", "1 个驻留 Agent", "2 个驻留 Agent"],
+    ] as const;
+
+    for (const [lng, singular, plural] of cases) {
+      expect(i18n.t("sidebar.workspace.residentAgents", { lng, count: 1 })).toBe(singular);
+      expect(i18n.t("sidebar.workspace.residentAgents", { lng, count: 2 })).toBe(plural);
+    }
+  });
+
   it("keeps all supported language keys in sync with English", () => {
     const englishKeys = flattenKeys(en).sort();
     expect(flattenKeys(ar).sort()).toEqual(englishKeys);

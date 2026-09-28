@@ -100,6 +100,8 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   shortcutNumber = null,
   showShortcutBadge = false,
   reserveIdleStatusIndicatorSpace = true,
+  emphasizeTitle = false,
+  suppressProjectStatusBadge = false,
   children,
 }: {
   workspace: SidebarWorkspaceEntry;
@@ -117,6 +119,10 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   showShortcutBadge?: boolean;
   /** Keep the empty leading slot when the workspace has no active status. */
   reserveIdleStatusIndicatorSpace?: boolean;
+  /** Emphasize an unread Ready row in the status grouping */
+  emphasizeTitle?: boolean;
+  /** Keep a read Ready row's project icon free of an unread status badge */
+  suppressProjectStatusBadge?: boolean;
   children?: ReactNode;
 }) {
   const {
@@ -131,8 +137,9 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
       styles.workspaceBranchText,
       isHovered && styles.workspaceBranchTextHovered,
       isCreating && styles.workspaceBranchTextCreating,
+      emphasizeTitle && styles.workspaceBranchTextEmphasized,
     ],
-    [isHovered, isCreating],
+    [emphasizeTitle, isHovered, isCreating],
   );
 
   return (
@@ -143,7 +150,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
             iconDataUri={leadingProjectIconDataUri}
             displayName={leadingProjectName}
             projectViewKey={workspace.projectViewKey}
-            statusBucket={workspace.statusBucket}
+            statusBucket={suppressProjectStatusBadge ? null : workspace.statusBucket}
             backdrop={backdrop}
             loading={isLoading}
             testID={`sidebar-row-project-icon-${workspace.workspaceKey}`}
@@ -158,7 +165,11 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
         )}
         <View style={styles.workspaceContentColumn}>
           <View style={styles.workspaceTitleRow}>
-            <Text style={workspaceBranchTextStyle} numberOfLines={1}>
+            <Text
+              style={workspaceBranchTextStyle}
+              numberOfLines={1}
+              testID="sidebar-workspace-title"
+            >
               {workspaceLabel}
             </Text>
             <View style={sidebarWorkspaceRowStyles.rowRight}>{children}</View>
@@ -170,6 +181,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
             prHint={workspace.prHint}
             serviceSummary={serviceSummary}
             labels={labels}
+            residentAgentCount={workspace.residentAgentCount}
           />
         </View>
       </View>
@@ -527,6 +539,9 @@ const styles = StyleSheet.create((theme) => ({
   },
   workspaceBranchTextHovered: {
     opacity: 1,
+  },
+  workspaceBranchTextEmphasized: {
+    fontWeight: "600",
   },
   statusDotNeedsInput: {
     backgroundColor: getStatusDotColor({ theme, bucket: "needs_input" }) ?? undefined,

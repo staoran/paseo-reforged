@@ -13,6 +13,7 @@ import {
   type ReactNode,
 } from "react";
 import { useStoreWithEqualityFn } from "zustand/traditional";
+import { useShallow } from "zustand/shallow";
 import { useIsFocused } from "@react-navigation/native";
 import { BackHandler, Keyboard, Pressable, Text, View } from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
@@ -96,6 +97,7 @@ import {
   useHostRuntimeSnapshot,
   useHosts,
 } from "@/runtime/host-runtime";
+import { isCurrentAgentDirectory } from "@/utils/agent-directory-readiness";
 import { prefetchProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import {
   shouldSeedWorkspaceSetupTab,
@@ -107,6 +109,8 @@ import { useWorkspaceTerminalSessionRetention } from "@/terminal/hooks/use-works
 import type { CheckoutStatusPayload } from "@/git/use-status-query";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
+import { useCloseIdleAgentRuntime } from "@/hooks/use-close-idle-agent-runtime";
+import { canRequestAgentRuntimeClose } from "@/utils/agent-runtime-close-eligibility";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { removeResidentBrowserWebview } from "@/desktop/browser/resident-webviews";
 import { createWorkspaceBrowser, useBrowserStore } from "@/desktop/browser/store";
@@ -132,6 +136,7 @@ import {
 } from "@/screens/workspace/workspace-desktop-tabs-row";
 import {
   buildWorkspaceTabMenuEntries,
+  type WorkspaceTabAgentRuntimeActions,
   type WorkspaceTabMenuLabels,
 } from "@/screens/workspace/workspace-tab-menu";
 import { useDesktopBrowserNewTabRequests } from "@/desktop/browser/new-tab-requests";
@@ -420,6 +425,7 @@ interface MobileWorkspaceTabSwitcherProps {
   onCloseTabsAbove: (tabId: string) => Promise<void> | void;
   onCloseTabsBelow: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
+  agentRuntimeActions: WorkspaceTabAgentRuntimeActions;
 }
 
 function MobileActiveTabTrigger({
@@ -527,6 +533,7 @@ function MobileWorkspaceTabOption({
   onCloseTabsAbove,
   onCloseTabsBelow,
   onCloseOtherTabs,
+  agentRuntimeActions,
 }: {
   tab: WorkspaceTabDescriptor;
   tabIndex: number;
@@ -546,6 +553,7 @@ function MobileWorkspaceTabOption({
   onCloseTabsAbove: (tabId: string) => Promise<void> | void;
   onCloseTabsBelow: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
+  agentRuntimeActions: WorkspaceTabAgentRuntimeActions;
 }) {
   const { t } = useTranslation();
   const tabMenuLabels = useMemo<WorkspaceTabMenuLabels>(
@@ -562,6 +570,9 @@ function MobileWorkspaceTabOption({
       closeOthers: t("workspace.tabs.menu.closeOthers"),
       reloadAgent: t("workspace.tabs.menu.reloadAgent"),
       reloadAgentTooltip: t("workspace.tabs.menu.reloadAgentTooltip"),
+      closeAgentRuntime: t("workspace.tabs.menu.closeAgentRuntime"),
+      closeAgentRuntimeAndKeepRecord: t("workspace.tabs.menu.closeAgentRuntimeAndKeepRecord"),
+      closingAgentRuntime: t("workspace.tabs.menu.closingAgentRuntime"),
       close: t("workspace.tabs.menu.close"),
     }),
     [t],
@@ -583,6 +594,7 @@ function MobileWorkspaceTabOption({
     onCloseTabsBefore: onCloseTabsAbove,
     onCloseTabsAfter: onCloseTabsBelow,
     onCloseOtherTabs,
+    agentRuntimeActions,
     labels: tabMenuLabels,
   });
 
@@ -655,6 +667,7 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
   onCloseTabsAbove,
   onCloseTabsBelow,
   onCloseOtherTabs,
+  agentRuntimeActions,
 }: MobileWorkspaceTabSwitcherProps) {
   const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState(false);
@@ -712,6 +725,7 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
           onCloseTabsAbove={onCloseTabsAbove}
           onCloseTabsBelow={onCloseTabsBelow}
           onCloseOtherTabs={onCloseOtherTabs}
+          agentRuntimeActions={agentRuntimeActions}
         />
       );
     },
@@ -731,6 +745,7 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
       onCloseTabsAbove,
       onCloseTabsBelow,
       onCloseOtherTabs,
+      agentRuntimeActions,
     ],
   );
 
@@ -1530,6 +1545,7 @@ function useLastMainPane(input: {
   return lastMainPaneRef;
 }
 
+// eslint-disable-next-line complexity
 function WorkspaceScreenContent({
   serverId,
   workspaceId,
@@ -1575,6 +1591,43 @@ function WorkspaceScreenContent({
 
   const client = useHostRuntimeClient(normalizedServerId);
   const isConnected = useHostRuntimeIsConnected(normalizedServerId);
+  const agentRuntimeSession = useSessionStore(
+    useShallow((state) => {
+      const session = state.sessions[normalizedServerId];
+      return {
+        agents: session?.agents,
+        client: session?.client ?? null,
+        clientGeneration: session?.clientGeneration ?? 0,
+        supportsAgentRuntimeClose: session?.serverInfo?.features?.agentRuntimeClose === true,
+      };
+    }),
+  );
+  const agentRuntimeSnapshot = useHostRuntimeSnapshot(normalizedServerId);
+  const agentDirectoryCurrent = isCurrentAgentDirectory({
+    snapshot: agentRuntimeSnapshot,
+    session: agentRuntimeSession.client ? agentRuntimeSession : null,
+  });
+  const supportsAgentRuntimeClose = Boolean(
+    agentDirectoryCurrent &&
+    agentRuntimeSnapshot?.client?.supportsAgentRuntimeClose() === true &&
+    agentRuntimeSession.supportsAgentRuntimeClose,
+  );
+  /** Explains why the Agent tab runtime commands are unavailable */
+  let agentRuntimeUnavailableMessage: string | null = null;
+  if (agentRuntimeSnapshot?.connectionStatus !== "online") {
+    agentRuntimeUnavailableMessage = t("sidebar.workspace.agentRuntime.hostOffline");
+  } else if (
+    agentRuntimeSnapshot.agentDirectoryStatus === "error_before_first_success" ||
+    agentRuntimeSnapshot.agentDirectoryStatus === "error_after_ready"
+  ) {
+    agentRuntimeUnavailableMessage = t("sidebar.workspace.agentRuntime.directoryFailed");
+  } else if (!agentDirectoryCurrent) {
+    agentRuntimeUnavailableMessage = t("sidebar.workspace.agentRuntime.syncingDirectory");
+  } else if (!supportsAgentRuntimeClose) {
+    agentRuntimeUnavailableMessage = t("sidebar.workspace.agentRuntime.updateHost");
+  }
+  agentRuntimeUnavailableMessage ??= t("sidebar.workspace.agentRuntime.idleRequired");
+  const { pendingAgentIds, errorByAgentId, closeIdleAgentRuntime } = useCloseIdleAgentRuntime();
   const supportsProvidersSnapshot = useSessionStore(
     (state) => state.sessions[normalizedServerId]?.serverInfo?.features?.providersSnapshot === true,
   );
@@ -2291,6 +2344,61 @@ function WorkspaceScreenContent({
   });
 
   const [hoveredCloseTabKey, setHoveredCloseTabKey] = useState<string | null>(null);
+  /** Closes a tab's idle Agent runtime through the explicit runtime command */
+  const agentRuntimeActions = useMemo<WorkspaceTabAgentRuntimeActions>(
+    () => ({
+      canClose: (agentId, keepRecord) => {
+        const agent = agentRuntimeSession.agents?.get(agentId);
+        return Boolean(
+          persistenceKey &&
+          supportsAgentRuntimeClose &&
+          agent?.workspaceId === normalizedWorkspaceId &&
+          canRequestAgentRuntimeClose(agent, keepRecord),
+        );
+      },
+      isPending: (agentId) => pendingAgentIds.has(agentId),
+      errorByAgentId,
+      unavailableMessage: agentRuntimeUnavailableMessage,
+      close: ({ agentId, tabId, keepRecord }) => {
+        if (!persistenceKey || !normalizedServerId) return;
+        void closeIdleAgentRuntime({
+          serverId: normalizedServerId,
+          agentId,
+          keepRecord,
+          ...(keepRecord
+            ? {
+                afterClose: async ({ agent, client: currentClient }) => {
+                  if (agent.parentAgentId) {
+                    const clientId = await getOrCreateClientId();
+                    await currentClient.updateAgent(agentId, {
+                      labels: { [getOpenAgentTabLabel(clientId)]: "false" },
+                    });
+                  }
+                  setHoveredCloseTabKey((current) => (current === tabId ? null : current));
+                  closeWorkspaceTabWithCleanup({
+                    tabId,
+                    target: { kind: "agent", agentId },
+                  });
+                },
+              }
+            : {}),
+        });
+      },
+    }),
+    [
+      agentRuntimeSession,
+      agentRuntimeUnavailableMessage,
+      closeIdleAgentRuntime,
+      closeWorkspaceTabWithCleanup,
+      errorByAgentId,
+      normalizedServerId,
+      normalizedWorkspaceId,
+      pendingAgentIds,
+      persistenceKey,
+      setHoveredCloseTabKey,
+      supportsAgentRuntimeClose,
+    ],
+  );
   const { handleRenameTab, renamingTab, handleRenameModalSubmit, handleRenameModalClose } =
     useWorkspaceTabRename({
       client,
@@ -3979,6 +4087,7 @@ function WorkspaceScreenContent({
         onCloseTabsToLeft={handleCloseTabsToLeftInPane}
         onCloseTabsToRight={handleCloseTabsToRightInPane}
         onCloseOtherTabs={handleCloseOtherTabsInPane}
+        agentRuntimeActions={agentRuntimeActions}
         onCreateNewTab={handleCreateNewTab}
         buildPaneContentModel={buildDesktopPaneContentModel}
         onFocusPane={handleFocusPane}
@@ -4015,6 +4124,7 @@ function WorkspaceScreenContent({
     handleCloseTabsToLeftInPane,
     handleCloseTabsToRightInPane,
     handleCloseOtherTabsInPane,
+    agentRuntimeActions,
     handleCreateNewTab,
     buildDesktopPaneContentModel,
     handleFocusPane,
@@ -4059,6 +4169,7 @@ function WorkspaceScreenContent({
           onCloseTabsAbove={handleCloseTabsToLeft}
           onCloseTabsBelow={handleCloseTabsToRight}
           onCloseOtherTabs={handleCloseOtherTabs}
+          agentRuntimeActions={agentRuntimeActions}
         />
       ) : null}
 
@@ -4082,6 +4193,7 @@ function WorkspaceScreenContent({
             onCloseTabsToLeft={handleCloseTabsToLeft}
             onCloseTabsToRight={handleCloseTabsToRight}
             onCloseOtherTabs={handleCloseOtherTabs}
+            agentRuntimeActions={agentRuntimeActions}
             onCreateNewTab={handleCreateNewTab}
             onReorderTabs={handleReorderTabsInFocusedPane}
             focusModeEnabled={desktopFocusModeEnabled}

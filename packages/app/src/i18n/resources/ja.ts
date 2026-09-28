@@ -376,6 +376,8 @@ export const ja: TranslationResources = {
       header: "読み上げ済み",
     },
     activity: {
+      completed: "処理済み",
+      completedWithDuration: "処理時間 {{duration}}",
       details: "詳細",
     },
     dictation: {
@@ -662,6 +664,9 @@ export const ja: TranslationResources = {
         reloadAgent: "エージェントを再読み込み",
         reloadAgentTooltip:
           "スキル、MCP、ログイン状態を更新するためにエージェントを再読み込みします。",
+        closeAgentRuntime: "エージェントのランタイムを閉じる",
+        closeAgentRuntimeAndKeepRecord: "ランタイムを閉じて記録を保持",
+        closingAgentRuntime: "エージェントのランタイムを閉じています...",
         close: "閉じる",
         renameTerminal: "ターミナルの名前を変更",
         renameAgent: "エージェントの名前を変更",
@@ -1277,6 +1282,29 @@ export const ja: TranslationResources = {
         hostDisconnected: "ホストが接続されていません",
         hideFailed: "ワークスペースの非表示に失敗しました",
         archiveFailed: "ワークスペースのアーカイブに失敗しました",
+      },
+      residentAgents: "常駐エージェント {{count}}",
+      agentRuntime: {
+        closeIdle: "アイドル状態のエージェントランタイムを閉じる",
+        closeAgent: "{{title}} のランタイムを閉じる",
+        pending: "{{title}} を閉じています...",
+        pendingPermissions: "権限を待機中",
+        confirmTitle: "{{title}} のランタイムを閉じますか？",
+        confirmMessage:
+          "ランタイムとバックグラウンド活動を停止します。エージェントの記録は保持されます。",
+        confirmCloseAndKeepMessage:
+          "ランタイムとバックグラウンド活動を停止します。記録は保持されますが、このタブは閉じます。",
+        confirm: "ランタイムを閉じる",
+        cancel: "キャンセル",
+        closed: "{{title}} のランタイムを閉じました",
+        closedButCleanupFailed: "ランタイムは閉じましたが、タブを整理できませんでした: {{message}}",
+        idleRequired: "保留中の権限がないアイドル状態のエージェントだけ閉じられます。",
+        directoryUnavailable: "現在のエージェントディレクトリを利用できません。",
+        updateHost: "エージェントランタイムを閉じるにはホストを更新してください。",
+        hostOffline: "このホストに接続してエージェントランタイムを閉じてください。",
+        syncingDirectory: "現在のエージェントディレクトリを待機中です。",
+        directoryFailed:
+          "エージェントディレクトリの同期に失敗しました。復旧後に再試行してください。",
       },
     },
   },
@@ -2085,6 +2113,10 @@ export const ja: TranslationResources = {
         label: "ターミナルスクロールバック",
         description: "組み込みターミナルバッファに保持する行数",
         accessibilityLabel: "ターミナルスクロールバック行数",
+      },
+      autoExpandActivity: {
+        label: "Activity を常に展開",
+        description: "完了したエージェントの Activity をデフォルトで展開",
       },
       autoExpandReasoning: {
         label: "常に思考プロセスを展開",

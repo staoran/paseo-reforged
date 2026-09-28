@@ -137,7 +137,7 @@ export function createMarkdownStyles(theme: Theme) {
 
     strong: {
       ...webSelectableTextStyle,
-      fontWeight: theme.fontWeight.medium,
+      fontWeight: theme.fontWeight.bold,
     },
 
     em: {

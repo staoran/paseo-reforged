@@ -368,9 +368,19 @@ export interface AgentTaskItem {
   activeForm?: string;
 }
 
+/** Provider-declared assistant message role, used only when the boundary is explicit */
+export type AgentMessagePhase = "commentary" | "final_answer";
+
 export type AgentTimelineItem =
   | { type: "user_message"; text: string; messageId?: string; clientMessageId?: string }
-  | { type: "assistant_message"; text: string; messageId?: string }
+  | {
+      type: "assistant_message";
+      text: string;
+      messageId?: string;
+      phase?: AgentMessagePhase;
+      /** Text supplied by item completion after streamed deltas */
+      completionSuffix?: true;
+    }
   | { type: "reasoning"; text: string }
   | ToolCallTimelineItem
   | { type: "todo"; items: AgentTaskItem[] }

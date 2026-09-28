@@ -8,18 +8,27 @@ import {
   openMobileAgentSidebar,
   pinWorkspaceFromSidebar,
 } from "../support/helpers/sidebar";
-import { seedWorkspace } from "../support/helpers/seed-client";
+import { seedWorkspace, type SeedDaemonClient } from "../support/helpers/seed-client";
 import { expectWorkspaceHeader } from "../support/helpers/workspace-ui";
 import { getServerId } from "../support/helpers/server-id";
 import { projectEquivalenceViewKey } from "../support/helpers/project-view-key";
 import { escapeRegex } from "../support/helpers/regex";
 import { openFilesPanel } from "../support/helpers/workspace-tabs";
-import { seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 
 const GITHUB_REMOTE_URL = "https://github.com/test-owner/test-repo.git";
 
 function getWorkspaceRowTestId(workspaceId: string): string {
   return `sidebar-workspace-row-${getServerId()}:${workspaceId}`;
+}
+
+/** Reads the current Agent status from the daemon directory */
+async function getAgentStatus(
+  client: SeedDaemonClient,
+  agentId: string,
+): Promise<string | undefined> {
+  const agents = await client.fetchAgents({ scope: "active" });
+  return agents.entries.find((entry) => entry.agent.id === agentId)?.agent.status;
 }
 
 async function openWorkspaceFromSidebar(
@@ -225,6 +234,70 @@ test.describe("Sidebar workspace list", () => {
       await openWorkspaceReadAction(page, workspace.workspaceId, "unread");
     } finally {
       await workspace.cleanup();
+    }
+  });
+
+  test("closes an idle Agent from the sidebar and keeps its record", async ({ page }, testInfo) => {
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "sidebar-agent-runtime-close-",
+      title: "Idle runtime",
+    });
+    try {
+      await session.client.waitForAgentUpsert(
+        session.agentId,
+        (snapshot) => snapshot.status === "idle",
+      );
+      await gotoAppShell(page);
+      const row = await waitForSidebarWorkspace(page, session.workspaceId);
+      await expect(row.getByTestId("sidebar-workspace-resident-agents")).toBeVisible();
+      await expect(row.getByTestId("sidebar-workspace-resident-agents")).toHaveAttribute(
+        "aria-label",
+        "Resident agents: 1",
+      );
+      await testInfo.attach("resident-agent-before-close", {
+        body: await page.screenshot(),
+        contentType: "image/png",
+      });
+
+      await row.hover();
+      await page
+        .getByTestId(`sidebar-workspace-kebab-${getServerId()}:${session.workspaceId}`)
+        .click();
+      const closeItem = page.getByTestId(
+        `sidebar-workspace-menu-close-agent-runtime-${session.agentId}`,
+      );
+      await expect(closeItem).toBeEnabled();
+      page.once("dialog", (dialog) => dialog.accept());
+      await closeItem.click();
+
+      await expect.poll(() => getAgentStatus(session.client, session.agentId)).toBe("closed");
+      await expect(row.getByTestId("sidebar-workspace-resident-agents")).toHaveCount(0);
+      await expect(row).toBeVisible();
+      await testInfo.attach("resident-agent-after-close", {
+        body: await page.screenshot(),
+        contentType: "image/png",
+      });
+
+      await openAgentRoute(page, session);
+      await session.client.waitForAgentUpsert(
+        session.agentId,
+        (snapshot) => snapshot.status === "idle",
+      );
+      const tab = page
+        .getByTestId(`workspace-tab-agent_${session.agentId}`)
+        .filter({ visible: true });
+      await expect(tab).toBeVisible();
+      await tab.click({ button: "right" });
+      const menuBase = `workspace-tab-context-agent_${session.agentId}`;
+      const keepRecord = page.getByTestId(`${menuBase}-close-agent-runtime-keep-record`);
+      await expect(keepRecord).toBeEnabled();
+      page.once("dialog", (dialog) => dialog.accept());
+      await keepRecord.click();
+      await expect(tab).toHaveCount(0);
+      await expect.poll(() => getAgentStatus(session.client, session.agentId)).toBe("closed");
+      await expect(row).toBeVisible();
+    } finally {
+      await session.cleanup();
     }
   });
 

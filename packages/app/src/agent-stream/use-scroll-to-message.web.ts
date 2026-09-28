@@ -11,6 +11,8 @@ interface UseScrollToMessageInput {
   scrollContainerRef: React.RefObject<HTMLElement | null>;
   rowVirtualizer: Virtualizer<HTMLElement, Element>;
   historyVirtualized: readonly StreamItem[];
+  /** Collapsed process members resolve to their top-level host */
+  messageHostIds?: ReadonlyMap<string, string>;
   cancelPendingStickToBottom: () => void;
   setFollowOutput: (value: boolean) => boolean;
   onNearBottomChange: (value: boolean) => void;
@@ -31,6 +33,7 @@ export function useScrollToMessage({
   scrollContainerRef,
   rowVirtualizer,
   historyVirtualized,
+  messageHostIds,
   cancelPendingStickToBottom,
   setFollowOutput,
   onNearBottomChange,
@@ -130,7 +133,8 @@ export function useScrollToMessage({
       }
 
       const index = historyVirtualized.findIndex(
-        (item) => getStreamItemMessageId(item) === messageId,
+        (item) =>
+          getStreamItemMessageId(item) === messageId || item.id === messageHostIds?.get(messageId),
       );
       if (index >= 0) {
         rowVirtualizer.scrollToIndex(index, { align: "start" });
@@ -142,6 +146,7 @@ export function useScrollToMessage({
       active,
       cancelPendingStickToBottom,
       historyVirtualized,
+      messageHostIds,
       onNearBottomChange,
       rowVirtualizer,
       scrollContainerRef,

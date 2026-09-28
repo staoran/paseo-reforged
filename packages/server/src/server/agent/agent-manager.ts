@@ -494,6 +494,10 @@ export interface AgentMetricsSnapshot {
   };
 }
 
+export interface AgentRuntimeCloseResult {
+  outcome: "closed" | "already_closed";
+}
+
 type ActiveManagedAgent =
   | ManagedAgentInitializing
   | ManagedAgentIdle
@@ -739,6 +743,10 @@ export class AgentManager {
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly agentRegistrationTasks = new Set<Promise<void>>();
   private readonly inFlightAgentCloses = new Map<string, Promise<void>>();
+  private readonly inFlightIdleRuntimeCloses = new Map<string, Promise<AgentRuntimeCloseResult>>();
+  private readonly idleRuntimeCloseFences = new Set<string>();
+  /** Counts independent commands that still use each Agent runtime */
+  private readonly inFlightOutOfBandCommands = new Map<string, number>();
   private readonly reloadedSessionCloses = new WeakMap<AgentSession, Promise<void>>();
   private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
@@ -1697,7 +1705,51 @@ export class AgentManager {
     return close;
   }
 
-  private async closeAgentRuntime(agentId: string): Promise<void> {
+  /** Closes an unarchived idle runtime without loading stored-only agents */
+  closeIdleAgentRuntime(agentId: string): Promise<AgentRuntimeCloseResult> {
+    const existing = this.inFlightIdleRuntimeCloses.get(agentId);
+    if (existing) {
+      return existing;
+    }
+
+    const close = this.runLifecycleMutation(agentId, async () => {
+      this.idleRuntimeCloseFences.add(agentId);
+      try {
+        const stored = this.registry ? await this.registry.get(agentId) : null;
+        if (stored?.archivedAt) {
+          throw new Error(`Agent ${agentId} is archived`);
+        }
+
+        const agent = this.agents.get(agentId);
+        if (!agent) {
+          if (!stored) {
+            throw new Error(`Agent ${agentId} not found`);
+          }
+          return { outcome: "already_closed" as const };
+        }
+        this.assertIdleRuntimeCanClose(agent);
+        await this.closeAgentRuntime(agentId, (latestAgent) => {
+          this.assertIdleRuntimeCanClose(latestAgent);
+        });
+        return { outcome: "closed" as const };
+      } finally {
+        this.idleRuntimeCloseFences.delete(agentId);
+      }
+    });
+    this.inFlightIdleRuntimeCloses.set(agentId, close);
+    const clearClose = () => {
+      if (this.inFlightIdleRuntimeCloses.get(agentId) === close) {
+        this.inFlightIdleRuntimeCloses.delete(agentId);
+      }
+    };
+    void close.then(clearClose, clearClose);
+    return close;
+  }
+
+  private async closeAgentRuntime(
+    agentId: string,
+    beforeClose?: (agent: LiveManagedAgent) => void,
+  ): Promise<void> {
     const agent = this.requireAgent(agentId);
     this.logger.trace(
       {
@@ -1712,11 +1764,13 @@ export class AgentManager {
       "agent.manager.close.start",
     );
     await this.drainSessionEvents(agentId);
+    const latestAgent = this.requireAgent(agentId);
+    beforeClose?.(latestAgent);
     // Retain ownership until shutdown succeeds. A failed close may still own a
     // native writer, so publishing a resumable closed snapshot would orphan it.
-    await agent.session.close();
+    await latestAgent.session.close();
     this.cancelRunningProviderSubagents(agentId);
-    const closedAgent = this.prepareAgentForClosure(agent, "agent closed");
+    const closedAgent = this.prepareAgentForClosure(latestAgent, "agent closed");
 
     let persistError: unknown;
     try {
@@ -1736,6 +1790,25 @@ export class AgentManager {
 
     if (persistError !== undefined) {
       throw persistError;
+    }
+  }
+
+  private assertIdleRuntimeCanClose(agent: LiveManagedAgent): asserts agent is ManagedAgentIdle {
+    if (agent.lifecycle !== "idle") {
+      throw new Error(`Agent ${agent.id} is not idle`);
+    }
+    const providerPendingPermissions = agent.session.getPendingPermissions();
+    if (
+      agent.pendingPermissions.size > 0 ||
+      agent.inFlightPermissionResponses.size > 0 ||
+      providerPendingPermissions.length > 0 ||
+      agent.activeForegroundTurnId !== null ||
+      agent.activeTurnId !== null ||
+      agent.pendingReplacement ||
+      this.runs.hasRun(agent.id) ||
+      (this.inFlightOutOfBandCommands.get(agent.id) ?? 0) > 0
+    ) {
+      throw new Error(`Agent ${agent.id} has active work or pending permissions`);
     }
   }
 
@@ -2360,6 +2433,9 @@ export class AgentManager {
    */
   tryRunOutOfBand(agentId: string, prompt: AgentPromptInput, options?: AgentRunOptions): boolean {
     const agent = this.requireSessionAgent(agentId);
+    if (this.idleRuntimeCloseFences.has(agentId)) {
+      throw new Error(`Agent ${agentId} runtime closure is in progress`);
+    }
     const handler = agent.session.tryHandleOutOfBand?.(prompt);
     if (!handler) {
       return false;
@@ -2383,6 +2459,10 @@ export class AgentManager {
       }
       this.dispatchStream(agent.id, event, { timestamp: new Date().toISOString() });
     };
+    this.inFlightOutOfBandCommands.set(
+      agentId,
+      (this.inFlightOutOfBandCommands.get(agentId) ?? 0) + 1,
+    );
     void (async () => {
       try {
         await handler.run({ emit: dispatch });
@@ -2393,6 +2473,10 @@ export class AgentManager {
           provider: agent.provider,
           item: { type: "assistant_message", text: `[Error] ${text}` },
         });
+      } finally {
+        const remaining = (this.inFlightOutOfBandCommands.get(agentId) ?? 1) - 1;
+        if (remaining === 0) this.inFlightOutOfBandCommands.delete(agentId);
+        else this.inFlightOutOfBandCommands.set(agentId, remaining);
       }
     })();
     return true;
@@ -2478,6 +2562,9 @@ export class AgentManager {
     options?: AgentRunOptions,
   ): AsyncGenerator<AgentStreamEvent> {
     const existingAgent = this.requireSessionAgent(agentId);
+    if (this.idleRuntimeCloseFences.has(agentId)) {
+      throw new Error(`Agent ${agentId} runtime closure is in progress`);
+    }
     this.logger.trace(
       {
         agentId,
