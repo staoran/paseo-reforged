@@ -4,6 +4,7 @@ import {
   deriveAgentStateBucket,
   getWorkspaceStateBucketPriority,
 } from "@getpaseo/protocol/agent-state-bucket";
+import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
 
 type AgentEntry = Extract<
   SessionOutboundMessage,
@@ -14,6 +15,27 @@ type Workspace = Extract<
   { type: "fetch_workspaces_response" }
 >["payload"]["entries"][number];
 type WorkspaceUpdate = Extract<SessionOutboundMessage, { type: "workspace_update" }>;
+type AgentUpdate = Extract<SessionOutboundMessage, { type: "agent_update" }>["payload"];
+
+interface LegacyWorkspaceSnapshot {
+  agents: Map<string, AgentEntry>;
+  agentUpdates: AgentUpdate[];
+  sentWorkspaces: Map<string, Workspace>;
+  sentDeltas: WorkspaceUpdate[];
+  startedAt: string;
+}
+
+interface LegacyWorkspaceRead {
+  entries: AgentEntry[];
+  reset: boolean;
+  complete?: boolean;
+}
+
+interface LegacyWorkspaceProjection {
+  agents: ReadonlyMap<string, AgentEntry>;
+  statusChangedAt?: string;
+  persistHistory?: boolean;
+}
 
 // Preserve the pre-registry app's identity format. This is an opaque ID, never
 // a filesystem path: converting C:\ to C: changes a drive root into a relative path.
@@ -31,8 +53,12 @@ export class LegacyWorkspaces {
     string,
     Pick<Workspace, "status" | "statusEnteredAt">
   >();
-  /** Keeps one transition time across all pages of a legacy directory snapshot */
-  private snapshotStartedAt: string | null = null;
+  /** Separates incomplete pages from the last complete Agent directory */
+  private snapshot: LegacyWorkspaceSnapshot | null = null;
+  /** Identifies when live updates can use a complete Agent directory */
+  private hasCompleteSnapshot = false;
+  /** Repairs page entries after all snapshot pages and live deltas are known */
+  private pendingCorrections: WorkspaceUpdate[] = [];
 
   /** Supplies the transition time for remove updates that carry no timestamp */
   constructor(private readonly now: () => string = () => new Date().toISOString()) {}
@@ -81,51 +107,94 @@ export class LegacyWorkspaces {
     return message;
   }
 
-  /** Applies one legacy Agent directory page and optionally retires old Workspace history */
-  read(entries: AgentEntry[], reset: boolean, complete = true): Workspace[] {
+  /** Applies one legacy Agent directory page and reconciles live updates at the final page */
+  read(input: LegacyWorkspaceRead): Workspace[] {
+    const { entries, reset, complete = true } = input;
     if (reset) {
-      this.agents.clear();
-      this.snapshotStartedAt = this.now();
+      this.snapshot = {
+        agents: new Map(),
+        agentUpdates: [],
+        sentWorkspaces: new Map(),
+        sentDeltas: [],
+        startedAt: this.now(),
+      };
+      this.pendingCorrections = [];
     }
-    for (const entry of entries) this.agents.set(entry.agent.id, entry);
     const pageIds = new Set(entries.map(workspaceId));
-    const snapshotComplete = complete && this.snapshotStartedAt !== null;
-    const workspaces = this.workspaces(
-      this.snapshotStartedAt ?? undefined,
-      this.snapshotStartedAt === null || snapshotComplete,
-    );
-    if (snapshotComplete) {
-      for (const id of this.statusEntryByWorkspaceId.keys()) {
-        if (!workspaces.has(id)) this.statusEntryByWorkspaceId.delete(id);
-      }
-      this.snapshotStartedAt = null;
+    const snapshot = this.snapshot;
+    if (!snapshot) {
+      for (const entry of entries) this.agents.set(entry.agent.id, entry);
+      return [...this.workspaces({ agents: this.agents }).values()].filter((workspace) =>
+        pageIds.has(workspace.id),
+      );
     }
-    return [...workspaces.values()].filter((workspace) => pageIds.has(workspace.id));
-  }
 
-  update(message: SessionOutboundMessage): WorkspaceUpdate[] {
-    if (message.type !== "agent_update") return [];
-    const persistHistory = this.snapshotStartedAt === null;
-    const before = this.workspaces(this.snapshotStartedAt ?? undefined, persistHistory);
-    const update = message.payload;
-    const statusChangedAt = update.kind === "upsert" ? update.agent.updatedAt : this.now();
-    if (update.kind === "remove") this.agents.delete(update.agentId);
-    else {
-      const project = update.project ?? this.agents.get(update.agent.id)?.project;
-      if (update.agent.archivedAt) this.agents.delete(update.agent.id);
-      else if (project) this.agents.set(update.agent.id, { agent: update.agent, project });
+    for (const entry of entries) snapshot.agents.set(entry.agent.id, entry);
+    if (!complete) {
+      const partial = this.workspaces({
+        agents: snapshot.agents,
+        statusChangedAt: snapshot.startedAt,
+        persistHistory: false,
+      });
+      const page = [...partial.values()].filter((workspace) => pageIds.has(workspace.id));
+      for (const workspace of page) snapshot.sentWorkspaces.set(workspace.id, workspace);
+      return page;
     }
-    const after = this.workspaces(this.snapshotStartedAt ?? statusChangedAt, persistHistory);
-    if (!persistHistory) {
-      for (const [id, workspace] of after) {
-        if (before.get(id)?.status === workspace.status) continue;
-        workspace.statusEnteredAt = statusChangedAt;
-        this.statusEntryByWorkspaceId.set(id, {
-          status: workspace.status,
-          statusEnteredAt: statusChangedAt,
+
+    for (const update of snapshot.agentUpdates) this.applyAgentUpdate(snapshot.agents, update);
+    this.agents.clear();
+    for (const [id, entry] of snapshot.agents) this.agents.set(id, entry);
+    const workspaces = this.workspaces({
+      agents: this.agents,
+      statusChangedAt: snapshot.startedAt,
+    });
+    for (const id of this.statusEntryByWorkspaceId.keys()) {
+      if (!workspaces.has(id)) this.statusEntryByWorkspaceId.delete(id);
+    }
+    const page = [...workspaces.values()].filter((workspace) => pageIds.has(workspace.id));
+    // Live deltas replay after the paged snapshot in the app, regardless of their arrival page
+    const delivered = new Map(snapshot.sentWorkspaces);
+    for (const workspace of page) delivered.set(workspace.id, workspace);
+    for (const delta of snapshot.sentDeltas) {
+      if (delta.payload.kind === "remove") delivered.delete(delta.payload.id);
+      else delivered.set(delta.payload.workspace.id, delta.payload.workspace);
+    }
+    for (const [id, workspace] of workspaces) {
+      if (JSON.stringify(delivered.get(id)) !== JSON.stringify(workspace)) {
+        this.pendingCorrections.push({
+          type: "workspace_update",
+          payload: { kind: "upsert", workspace },
         });
       }
     }
+    for (const id of delivered.keys()) {
+      if (!workspaces.has(id)) {
+        this.pendingCorrections.push({ type: "workspace_update", payload: { kind: "remove", id } });
+      }
+    }
+    this.snapshot = null;
+    this.hasCompleteSnapshot = true;
+    return page;
+  }
+
+  /** Projects live Agent changes from the last complete directory and drains page corrections */
+  update(message: SessionOutboundMessage): WorkspaceUpdate[] {
+    if (message.type === "fetch_agents_response") {
+      const corrections = this.pendingCorrections;
+      this.pendingCorrections = [];
+      return corrections;
+    }
+    if (message.type !== "agent_update") return [];
+    const update = message.payload;
+    this.snapshot?.agentUpdates.push(update);
+    if (!this.hasCompleteSnapshot) {
+      this.applyAgentUpdate(this.agents, update);
+      return [];
+    }
+    const before = this.workspaces({ agents: this.agents });
+    const statusChangedAt = update.kind === "upsert" ? update.agent.updatedAt : this.now();
+    this.applyAgentUpdate(this.agents, update);
+    const after = this.workspaces({ agents: this.agents, statusChangedAt });
     const changes: WorkspaceUpdate[] = [];
     for (const [id, workspace] of after) {
       if (JSON.stringify(before.get(id)) !== JSON.stringify(workspace))
@@ -133,25 +202,37 @@ export class LegacyWorkspaces {
     }
     for (const id of before.keys())
       if (!after.has(id)) {
-        if (persistHistory) this.statusEntryByWorkspaceId.delete(id);
+        this.statusEntryByWorkspaceId.delete(id);
         changes.push({ type: "workspace_update", payload: { kind: "remove", id } });
       }
+    this.snapshot?.sentDeltas.push(...changes);
     return changes;
   }
 
+  /** Applies a live Agent update with the placement from either directory generation */
+  private applyAgentUpdate(agents: Map<string, AgentEntry>, update: AgentUpdate): void {
+    if (update.kind === "remove") {
+      agents.delete(update.agentId);
+      return;
+    }
+    const project =
+      update.project ??
+      agents.get(update.agent.id)?.project ??
+      this.agents.get(update.agent.id)?.project;
+    if (update.agent.archivedAt) agents.delete(update.agent.id);
+    else if (project) agents.set(update.agent.id, { agent: update.agent, project });
+  }
+
   /** Rebuilds legacy workspace projections and preserves bucket entry times */
-  private workspaces(statusChangedAt?: string, persistHistory = true): Map<string, Workspace> {
+  private workspaces(input: LegacyWorkspaceProjection): Map<string, Workspace> {
+    const { agents, statusChangedAt, persistHistory = true } = input;
     const workspaces = new Map<string, Workspace>();
-    for (const entry of this.agents.values()) {
+    for (const entry of agents.values()) {
       const { agent, project } = entry;
       const { checkout } = project;
       const id = workspaceId(entry);
-      const status = deriveAgentStateBucket({
-        status: agent.status,
-        pendingPermissionCount: agent.pendingPermissions.length,
-        requiresAttention: agent.requiresAttention,
-        attentionReason: agent.attentionReason,
-      });
+      const status = workspaceStatus(entry, agents);
+      if (!status) continue;
       const existing = workspaces.get(id);
       if (
         existing &&
@@ -196,6 +277,24 @@ export class LegacyWorkspaces {
     }
     return workspaces;
   }
+}
+
+/** Limits same-workspace child Agents to active work in the Workspace bucket */
+function workspaceStatus(
+  entry: AgentEntry,
+  agents: ReadonlyMap<string, AgentEntry>,
+): Workspace["status"] | null {
+  const { agent } = entry;
+  const parentId = getParentAgentIdFromLabels(agent.labels);
+  const parent = parentId ? agents.get(parentId) : undefined;
+  const isRoot = !parentId || (parent !== undefined && workspaceId(parent) !== workspaceId(entry));
+  if (!isRoot) return agent.status === "running" || agent.activeTurn ? "running" : null;
+  return deriveAgentStateBucket({
+    status: agent.activeTurn ? "running" : agent.status,
+    pendingPermissionCount: agent.pendingPermissions.length,
+    requiresAttention: agent.requiresAttention,
+    attentionReason: agent.attentionReason,
+  });
 }
 
 function workspaceId(entry: AgentEntry): string {

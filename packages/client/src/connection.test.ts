@@ -669,12 +669,14 @@ test("subscription-restored notification waits for the new membership acknowledg
   }
 });
 
+/** Builds a legacy Agent directory entry with an optional parent relationship */
 function legacyAgent(input: {
   id: string;
   cwd: string;
-  status?: "idle" | "running";
+  status?: "idle" | "running" | "closed";
   updatedAt?: string;
   projectRoot?: string;
+  parentAgentId?: string;
 }) {
   const updatedAt = input.updatedAt ?? "2026-06-18T10:00:00.000Z";
   return {
@@ -700,7 +702,7 @@ function legacyAgent(input: {
       pendingPermissions: [],
       persistence: null,
       title: null,
-      labels: {},
+      labels: input.parentAgentId ? { "paseo.parent-agent-id": input.parentAgentId } : {},
     },
     project: {
       projectKey: "/repo",
@@ -846,6 +848,137 @@ test("legacy workspace pages contain only that page's groups and retain earlier 
   }
 });
 
+test("legacy paged refresh does not remove a workspace whose running root is on a later page", async () => {
+  const h = connection({ ownedSubscriptions: false, workspaceMultiplicity: false });
+  try {
+    const connecting = h.client.connect();
+    h.open();
+    await connecting;
+    const workspaces = h.client.observeWorkspaces();
+    const ready = legacyAgent({
+      id: "ready",
+      cwd: "/repo/app",
+      updatedAt: "2026-06-18T10:00:00.000Z",
+    });
+    const running = legacyAgent({
+      id: "running",
+      cwd: "/repo/app",
+      status: "running",
+      updatedAt: "2026-06-18T09:00:00.000Z",
+    });
+    h.receive({
+      type: "fetch_agents_response",
+      payload: {
+        requestId: h.sent.at(-1)!.message!.requestId,
+        entries: [ready, running],
+        pageInfo: { hasMore: false, nextCursor: null, prevCursor: null },
+      },
+    });
+    expect((await workspaces.ready).entries).toMatchObject([
+      { id: "/repo/app", status: "running", statusEnteredAt: running.agent.updatedAt },
+    ]);
+    const updates: unknown[] = [];
+    workspaces.subscribe({ snapshot: () => {}, update: (message) => updates.push(message) });
+
+    const firstPage = h.client.fetchWorkspaces({ page: { limit: 1 } });
+    h.receive({
+      type: "fetch_agents_response",
+      payload: {
+        requestId: h.sent.at(-1)!.message!.requestId,
+        entries: [ready],
+        pageInfo: { hasMore: true, nextCursor: "next-page", prevCursor: null },
+      },
+    });
+    await firstPage;
+    const lastPage = h.client.fetchWorkspaces({ page: { limit: 1, cursor: "next-page" } });
+    h.receive({ type: "agent_update", payload: { kind: "remove", agentId: ready.agent.id } });
+    expect(updates).toEqual([]);
+    h.receive({
+      type: "fetch_agents_response",
+      payload: {
+        requestId: h.sent.at(-1)!.message!.requestId,
+        entries: [running],
+        pageInfo: { hasMore: false, nextCursor: null, prevCursor: "next-page" },
+      },
+    });
+    expect((await lastPage).entries).toMatchObject([
+      { id: "/repo/app", status: "running", statusEnteredAt: running.agent.updatedAt },
+    ]);
+    expect(updates).toEqual([]);
+    await workspaces.release();
+  } finally {
+    await h.client.close();
+  }
+});
+
+test("legacy initial pages reconcile an earlier workspace removed during the snapshot", async () => {
+  const h = connection({ ownedSubscriptions: false, workspaceMultiplicity: false });
+  try {
+    const connecting = h.client.connect();
+    h.open();
+    await connecting;
+    const workspaces = h.client.observeWorkspaces();
+    h.receive({
+      type: "fetch_agents_response",
+      payload: {
+        requestId: h.sent.at(-1)!.message!.requestId,
+        entries: [legacyAgent({ id: "first", cwd: "/repo/first" })],
+        pageInfo: { hasMore: true, nextCursor: "next-page", prevCursor: null },
+      },
+    });
+    await workspaces.ready;
+    const updates: unknown[] = [];
+    workspaces.subscribe({ snapshot: () => {}, update: (message) => updates.push(message) });
+    const lastPage = h.client.fetchWorkspaces({ page: { limit: 1, cursor: "next-page" } });
+    h.receive({ type: "agent_update", payload: { kind: "remove", agentId: "first" } });
+    expect(updates).toEqual([]);
+    h.receive({
+      type: "fetch_agents_response",
+      payload: {
+        requestId: h.sent.at(-1)!.message!.requestId,
+        entries: [legacyAgent({ id: "last", cwd: "/repo/last" })],
+        pageInfo: { hasMore: false, nextCursor: null, prevCursor: "next-page" },
+      },
+    });
+    expect((await lastPage).entries).toMatchObject([{ id: "/repo/last" }]);
+    expect(updates).toMatchObject([
+      { type: "workspace_update", payload: { kind: "remove", id: "/repo/first" } },
+    ]);
+    await workspaces.release();
+  } finally {
+    await h.client.close();
+  }
+});
+
+test("legacy same-workspace idle child does not lift a read closed root into Ready", () => {
+  const workspaces = new LegacyWorkspaces();
+  const root = legacyAgent({ id: "root", cwd: "/repo/app", status: "closed" });
+  const child = legacyAgent({ id: "child", cwd: "/repo/app", parentAgentId: root.agent.id });
+  expect(workspaces.read({ entries: [root, child], reset: true })).toMatchObject([
+    { id: "/repo/app", status: "done" },
+  ]);
+
+  const runningChild = legacyAgent({
+    id: "child",
+    cwd: "/repo/app",
+    parentAgentId: root.agent.id,
+    status: "running",
+  });
+  expect(workspaces.read({ entries: [root, runningChild], reset: true })).toMatchObject([
+    { id: "/repo/app", status: "running" },
+  ]);
+
+  const crossWorkspaceChild = legacyAgent({
+    id: "child",
+    cwd: "/repo/worktree",
+    parentAgentId: root.agent.id,
+  });
+  expect(workspaces.read({ entries: [root, crossWorkspaceChild], reset: true })).toMatchObject([
+    { id: "/repo/app", status: "done" },
+    { id: "/repo/worktree", status: "attention" },
+  ]);
+});
+
 test("legacy Ready keeps its entry time through read updates and changes it on Working", async () => {
   const h = connection({ ownedSubscriptions: false, workspaceMultiplicity: false });
   const enteredAt = "2026-06-18T10:00:00.000Z";
@@ -986,8 +1119,8 @@ test("legacy multi-root Ready starts when the higher-priority root clears", asyn
 test("legacy multi-root Ready uses the remove transition time", () => {
   const transitionAt = "2026-06-18T10:15:00.000Z";
   const workspaces = new LegacyWorkspaces(() => transitionAt);
-  workspaces.read(
-    [
+  workspaces.read({
+    entries: [
       legacyAgent({
         id: "running",
         cwd: "/repo/app",
@@ -996,8 +1129,8 @@ test("legacy multi-root Ready uses the remove transition time", () => {
       }),
       legacyAgent({ id: "ready", cwd: "/repo/app", updatedAt: "2026-06-18T09:00:00.000Z" }),
     ],
-    true,
-  );
+    reset: true,
+  });
 
   const updates = workspaces.update({
     type: "agent_update",
@@ -1020,7 +1153,7 @@ test("legacy non-empty reset keeps entry time for the same status bucket", () =>
     cwd: "/repo/app",
     updatedAt: "2026-06-18T10:00:00.000Z",
   });
-  expect(workspaces.read([initial], true)).toMatchObject([
+  expect(workspaces.read({ entries: [initial], reset: true })).toMatchObject([
     { status: "attention", statusEnteredAt: "2026-06-18T10:00:00.000Z" },
   ]);
 
@@ -1029,7 +1162,7 @@ test("legacy non-empty reset keeps entry time for the same status bucket", () =>
     cwd: "/repo/app",
     updatedAt: "2026-06-18T10:20:00.000Z",
   });
-  expect(workspaces.read([refreshed], true)).toMatchObject([
+  expect(workspaces.read({ entries: [refreshed], reset: true })).toMatchObject([
     { status: "attention", statusEnteredAt: "2026-06-18T10:00:00.000Z" },
   ]);
 });
@@ -1048,11 +1181,11 @@ test("legacy full reset uses its transition time when a higher-priority root dis
     cwd: "/repo/app",
     updatedAt: "2026-06-18T09:00:00.000Z",
   });
-  expect(workspaces.read([running, ready], true)).toMatchObject([
+  expect(workspaces.read({ entries: [running, ready], reset: true })).toMatchObject([
     { status: "running", statusEnteredAt: "2026-06-18T10:00:00.000Z" },
   ]);
 
-  expect(workspaces.read([ready], true)).toMatchObject([
+  expect(workspaces.read({ entries: [ready], reset: true })).toMatchObject([
     { status: "attention", statusEnteredAt: transitionAt },
   ]);
 });
@@ -1065,8 +1198,8 @@ test("legacy paged reset does not let live updates rewrite its transition time",
     cwd: "/repo/app",
     updatedAt: "2026-06-18T09:00:00.000Z",
   });
-  workspaces.read(
-    [
+  workspaces.read({
+    entries: [
       legacyAgent({
         id: "running",
         cwd: "/repo/app",
@@ -1075,10 +1208,10 @@ test("legacy paged reset does not let live updates rewrite its transition time",
       }),
       ready,
     ],
-    true,
-  );
+    reset: true,
+  });
 
-  expect(workspaces.read([ready], true, false)).toMatchObject([
+  expect(workspaces.read({ entries: [ready], reset: true, complete: false })).toMatchObject([
     { status: "attention", statusEnteredAt: transitionAt },
   ]);
 
@@ -1102,11 +1235,10 @@ test("legacy paged reset does not let live updates rewrite its transition time",
     },
   ]);
 
-  workspaces.read(
-    [legacyAgent({ id: "last", cwd: "/repo/last", updatedAt: transitionAt })],
-    false,
-    true,
-  );
+  workspaces.read({
+    entries: [legacyAgent({ id: "last", cwd: "/repo/last", updatedAt: transitionAt })],
+    reset: false,
+  });
   const updates = workspaces.update({
     type: "agent_update",
     payload: {
@@ -1132,19 +1264,17 @@ test("legacy paged reset retains a live bucket transition through its final page
     cwd: "/repo/app",
     updatedAt: "2026-06-18T09:00:00.000Z",
   });
-  workspaces.read(
-    [
-      legacyAgent({
-        id: "running",
-        cwd: "/repo/app",
-        status: "running",
-        updatedAt: "2026-06-18T10:00:00.000Z",
-      }),
-      ready,
-    ],
-    true,
-  );
-  workspaces.read([ready], true, false);
+  const closed = legacyAgent({
+    id: "closed",
+    cwd: "/repo/app",
+    status: "closed",
+    updatedAt: "2026-06-18T08:00:00.000Z",
+  });
+  workspaces.read({
+    entries: [ready, closed],
+    reset: true,
+  });
+  workspaces.read({ entries: [ready], reset: true, complete: false });
 
   const live = workspaces.update({
     type: "agent_update",
@@ -1157,11 +1287,10 @@ test("legacy paged reset retains a live bucket transition through its final page
     { payload: { workspace: { status: "running", statusEnteredAt: liveAt } } },
   ]);
 
-  workspaces.read(
-    [legacyAgent({ id: "last", cwd: "/repo/last", updatedAt: snapshotAt })],
-    false,
-    true,
-  );
+  workspaces.read({
+    entries: [closed, legacyAgent({ id: "last", cwd: "/repo/last", updatedAt: snapshotAt })],
+    reset: false,
+  });
   const later = workspaces.update({
     type: "agent_update",
     payload: {
@@ -1176,6 +1305,43 @@ test("legacy paged reset retains a live bucket transition through its final page
   });
   expect(later).toMatchObject([
     { payload: { workspace: { status: "running", statusEnteredAt: liveAt } } },
+  ]);
+});
+
+test("legacy paged refresh preserves Working time when another root starts running", () => {
+  const snapshotAt = "2026-06-18T10:15:00.000Z";
+  const workspaces = new LegacyWorkspaces(() => snapshotAt);
+  const ready = legacyAgent({
+    id: "ready",
+    cwd: "/repo/app",
+    updatedAt: "2026-06-18T10:00:00.000Z",
+  });
+  const running = legacyAgent({
+    id: "running",
+    cwd: "/repo/app",
+    status: "running",
+    updatedAt: "2026-06-18T09:00:00.000Z",
+  });
+  workspaces.read({ entries: [ready, running], reset: true });
+  workspaces.read({ entries: [ready], reset: true, complete: false });
+
+  const live = workspaces.update({
+    type: "agent_update",
+    payload: {
+      kind: "upsert",
+      ...legacyAgent({
+        id: "ready",
+        cwd: "/repo/app",
+        status: "running",
+        updatedAt: "2026-06-18T10:20:00.000Z",
+      }),
+    },
+  });
+  expect(live).toMatchObject([
+    { payload: { workspace: { status: "running", statusEnteredAt: running.agent.updatedAt } } },
+  ]);
+  expect(workspaces.read({ entries: [running], reset: false })).toMatchObject([
+    { status: "running", statusEnteredAt: running.agent.updatedAt },
   ]);
 });
 
