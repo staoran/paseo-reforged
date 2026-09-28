@@ -8,6 +8,7 @@ import {
 } from "../support/helpers/file-explorer";
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+import { seedWorkspace } from "../support/helpers/seed-client";
 
 const APP_SETTINGS_KEY = "@paseo:app-settings";
 
@@ -216,6 +217,51 @@ test.describe("CodeMirror workspace file editing", () => {
       ).toBeVisible();
     } finally {
       await session.cleanup();
+    }
+  });
+
+  test("opens encoded Windows Markdown paths and file URLs at their referenced lines", async ({
+    page,
+  }, testInfo) => {
+    test.skip(process.platform !== "win32", "Windows drive paths require a Windows test host");
+    const workspace = await seedWorkspace({ repoPrefix: "file-editing-windows-link-" });
+    const fileName = "中文.md";
+    const absolutePath = path.join(workspace.repoPath, fileName);
+    const drivePath = absolutePath.replace(/\\/g, "/");
+    const response = [`[Drive link](/${drivePath}:2)`, `[File URL](file:///${drivePath}:1)`].join(
+      "\n\n",
+    );
+    try {
+      await writeFile(absolutePath, "first line\nsecond line\n", "utf8");
+      const agent = await workspace.client.createAgent({
+        provider: "mock",
+        cwd: workspace.repoPath,
+        workspaceId: workspace.workspaceId,
+        title: "Windows file links",
+        modeId: "load-test",
+        model: "e2e-fast-stream",
+        initialPrompt: "Show the file links.",
+        featureValues: { mockAssistantResponse: response },
+      });
+      await workspace.client.waitForAgentUpsert(agent.id, (snapshot) => snapshot.status === "idle");
+      await openAgentRoute(page, { workspaceId: workspace.workspaceId, agentId: agent.id });
+
+      await page.getByText("Drive link", { exact: true }).click();
+      await expectFileTabOpen(page, fileName);
+      await expect(page.getByLabel("Line 2, column 1")).toBeVisible();
+      await expect(editor(page)).toContainText("second line");
+
+      await page.getByTestId(`workspace-tab-agent_${agent.id}`).filter({ visible: true }).click();
+      await page.getByText("File URL", { exact: true }).click();
+      await expectFileTabOpen(page, fileName);
+      await expect(page.getByLabel("Line 1, column 1")).toBeVisible();
+      await expect(editor(page)).toContainText("first line");
+      await testInfo.attach("windows-file-link-opened", {
+        body: await page.screenshot(),
+        contentType: "image/png",
+      });
+    } finally {
+      await workspace.cleanup();
     }
   });
 
