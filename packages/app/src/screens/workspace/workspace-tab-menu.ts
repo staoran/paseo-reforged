@@ -45,8 +45,9 @@ export const DEFAULT_WORKSPACE_TAB_MENU_LABELS: WorkspaceTabMenuLabels = {
 
 /** Runtime actions available to managed Agent tab menus */
 export interface WorkspaceTabAgentRuntimeActions {
-  canClose: (agentId: string) => boolean;
+  canClose: (agentId: string, keepRecord: boolean) => boolean;
   isPending: (agentId: string) => boolean;
+  unavailableMessage?: string | null;
   close: (input: { agentId: string; tabId: string; keepRecord: boolean }) => void;
 }
 
@@ -65,6 +66,7 @@ export type WorkspaceTabMenuEntry =
         | "bot"
         | "x";
       hint?: string;
+      description?: string;
       tooltip?: string;
       disabled?: boolean;
       destructive?: boolean;
@@ -231,13 +233,18 @@ export function buildWorkspaceTabMenuEntries(
     });
     if (agentRuntimeActions) {
       const pending = agentRuntimeActions.isPending(agentId);
-      const disabled = pending || !agentRuntimeActions.canClose(agentId);
+      const closeDisabled = pending || !agentRuntimeActions.canClose(agentId, false);
+      const keepRecordDisabled = pending || !agentRuntimeActions.canClose(agentId, true);
+      const unavailableDescription = pending
+        ? undefined
+        : (agentRuntimeActions.unavailableMessage ?? undefined);
       entries.push({
         kind: "item",
         key: "close-agent-runtime",
         label: pending ? labels.closingAgentRuntime : labels.closeAgentRuntime,
         icon: "bot",
-        disabled,
+        disabled: closeDisabled,
+        description: closeDisabled ? unavailableDescription : undefined,
         destructive: true,
         testID: `${menuTestIDBase}-close-agent-runtime`,
         onSelect: () => agentRuntimeActions.close({ agentId, tabId: tab.tabId, keepRecord: false }),
@@ -247,7 +254,8 @@ export function buildWorkspaceTabMenuEntries(
         key: "close-agent-runtime-keep-record",
         label: pending ? labels.closingAgentRuntime : labels.closeAgentRuntimeAndKeepRecord,
         icon: "bot",
-        disabled,
+        disabled: keepRecordDisabled,
+        description: keepRecordDisabled ? unavailableDescription : undefined,
         destructive: true,
         testID: `${menuTestIDBase}-close-agent-runtime-keep-record`,
         onSelect: () => agentRuntimeActions.close({ agentId, tabId: tab.tabId, keepRecord: true }),

@@ -9966,9 +9966,15 @@ test("idle runtime close fences new turns until the provider releases its sessio
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-runtime-close-fence-"));
   const closeStarted = deferred<void>();
   const closeAllowed = deferred<void>();
+  let outOfBandHandlerCalls = 0;
   const client = new (class extends TestAgentClient {
     override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
       return new (class extends TestAgentSession {
+        override tryHandleOutOfBand() {
+          outOfBandHandlerCalls += 1;
+          return { run: async () => {} };
+        }
+
         override async close(): Promise<void> {
           closeStarted.resolve();
           await closeAllowed.promise;
@@ -9991,10 +9997,72 @@ test("idle runtime close fences new turns until the provider releases its sessio
     expect(() => manager.streamAgent(agent.id, "must not start during close")).toThrow(
       "runtime closure is in progress",
     );
+    expect(() => manager.tryRunOutOfBand(agent.id, "/compact")).toThrow(
+      "runtime closure is in progress",
+    );
+    expect(outOfBandHandlerCalls).toBe(0);
     closeAllowed.resolve();
     await expect(closing).resolves.toEqual({ outcome: "closed" });
   } finally {
     closeAllowed.resolve();
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("idle runtime close rejects in-flight out-of-band commands", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-runtime-command-race-"));
+  const commandsStarted = deferred<void>();
+  const firstCommandAllowed = deferred<void>();
+  const secondCommandAllowed = deferred<void>();
+  let commandStarts = 0;
+  let closeCount = 0;
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new (class extends TestAgentSession {
+        override tryHandleOutOfBand(prompt: AgentPromptInput) {
+          if (prompt !== "/compact") return null;
+          return {
+            run: async () => {
+              commandStarts += 1;
+              if (commandStarts === 2) commandsStarted.resolve();
+              await (commandStarts === 1 ? firstCommandAllowed : secondCommandAllowed).promise;
+            },
+          };
+        }
+
+        override async close(): Promise<void> {
+          closeCount += 1;
+        }
+      })(config);
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+  let agentId: string | null = null;
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(manager.tryRunOutOfBand(agent.id, "/compact")).toBe(true);
+    expect(manager.tryRunOutOfBand(agent.id, "/compact")).toBe(true);
+    await commandsStarted.promise;
+    await expect(manager.closeIdleAgentRuntime(agent.id)).rejects.toThrow("active work");
+    expect(closeCount).toBe(0);
+
+    firstCommandAllowed.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await expect(manager.closeIdleAgentRuntime(agent.id)).rejects.toThrow("active work");
+    secondCommandAllowed.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await expect(manager.closeIdleAgentRuntime(agent.id)).resolves.toEqual({ outcome: "closed" });
+    expect(closeCount).toBe(1);
+  } finally {
+    firstCommandAllowed.resolve();
+    secondCommandAllowed.resolve();
     if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });
   }

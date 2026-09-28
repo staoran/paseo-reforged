@@ -5,6 +5,7 @@ import type { Agent } from "@/stores/session-store";
 import { useSessionStore } from "@/stores/session-store";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { isCurrentAgentDirectory } from "@/utils/agent-directory-readiness";
+import { canRequestAgentRuntimeClose } from "@/utils/agent-runtime-close-eligibility";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { useToast } from "@/contexts/toast-context";
 
@@ -16,17 +17,6 @@ interface CloseIdleAgentRuntimeInput {
 }
 
 const EMPTY_PENDING_AGENT_IDS: ReadonlySet<string> = new Set();
-
-/** Identifies an unarchived Agent that can currently accept an idle-runtime close request */
-export function canCloseIdleAgentRuntime(agent: Agent | null | undefined): boolean {
-  return Boolean(
-    agent &&
-    !agent.archivedAt &&
-    agent.status === "idle" &&
-    agent.turn.phase !== "open" &&
-    agent.pendingPermissions.length === 0,
-  );
-}
 
 /** Confirms and closes an idle Agent runtime while retaining its stored record */
 export function useCloseIdleAgentRuntime(): {
@@ -57,22 +47,24 @@ export function useCloseIdleAgentRuntime(): {
           toast.error(t("sidebar.workspace.agentRuntime.updateHost"));
           return;
         }
-        if (!canCloseIdleAgentRuntime(initial.agent)) {
+        if (!canRequestAgentRuntimeClose(initial.agent, keepRecord)) {
           toast.error(t("sidebar.workspace.agentRuntime.idleRequired"));
           return;
         }
 
         const title = initial.agent.title?.trim() || t("workspace.tabs.fallback.agent");
-        const confirmed = await confirmDialog({
-          title: t("sidebar.workspace.agentRuntime.confirmTitle", { title }),
-          message: keepRecord
-            ? t("sidebar.workspace.agentRuntime.confirmCloseAndKeepMessage", { title })
-            : t("sidebar.workspace.agentRuntime.confirmMessage", { title }),
-          confirmLabel: t("sidebar.workspace.agentRuntime.confirm"),
-          cancelLabel: t("sidebar.workspace.agentRuntime.cancel"),
-          destructive: true,
-        });
-        if (!confirmed) return;
+        if (initial.agent.status !== "closed") {
+          const confirmed = await confirmDialog({
+            title: t("sidebar.workspace.agentRuntime.confirmTitle", { title }),
+            message: keepRecord
+              ? t("sidebar.workspace.agentRuntime.confirmCloseAndKeepMessage", { title })
+              : t("sidebar.workspace.agentRuntime.confirmMessage", { title }),
+            confirmLabel: t("sidebar.workspace.agentRuntime.confirm"),
+            cancelLabel: t("sidebar.workspace.agentRuntime.cancel"),
+            destructive: true,
+          });
+          if (!confirmed) return;
+        }
 
         const current = readCloseContext(serverId, agentId);
         if (!current) {
@@ -83,7 +75,7 @@ export function useCloseIdleAgentRuntime(): {
           toast.error(t("sidebar.workspace.agentRuntime.updateHost"));
           return;
         }
-        if (!canCloseIdleAgentRuntime(current.agent)) {
+        if (!canRequestAgentRuntimeClose(current.agent, keepRecord)) {
           toast.error(t("sidebar.workspace.agentRuntime.idleRequired"));
           return;
         }

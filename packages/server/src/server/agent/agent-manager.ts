@@ -745,6 +745,8 @@ export class AgentManager {
   private readonly inFlightAgentCloses = new Map<string, Promise<void>>();
   private readonly inFlightIdleRuntimeCloses = new Map<string, Promise<AgentRuntimeCloseResult>>();
   private readonly idleRuntimeCloseFences = new Set<string>();
+  /** Counts independent commands that still use each Agent runtime */
+  private readonly inFlightOutOfBandCommands = new Map<string, number>();
   private readonly reloadedSessionCloses = new WeakMap<AgentSession, Promise<void>>();
   private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
@@ -1803,7 +1805,8 @@ export class AgentManager {
       agent.activeForegroundTurnId !== null ||
       agent.activeTurnId !== null ||
       agent.pendingReplacement ||
-      this.runs.hasRun(agent.id)
+      this.runs.hasRun(agent.id) ||
+      (this.inFlightOutOfBandCommands.get(agent.id) ?? 0) > 0
     ) {
       throw new Error(`Agent ${agent.id} has active work or pending permissions`);
     }
@@ -2430,6 +2433,9 @@ export class AgentManager {
    */
   tryRunOutOfBand(agentId: string, prompt: AgentPromptInput, options?: AgentRunOptions): boolean {
     const agent = this.requireSessionAgent(agentId);
+    if (this.idleRuntimeCloseFences.has(agentId)) {
+      throw new Error(`Agent ${agentId} runtime closure is in progress`);
+    }
     const handler = agent.session.tryHandleOutOfBand?.(prompt);
     if (!handler) {
       return false;
@@ -2453,6 +2459,10 @@ export class AgentManager {
       }
       this.dispatchStream(agent.id, event, { timestamp: new Date().toISOString() });
     };
+    this.inFlightOutOfBandCommands.set(
+      agentId,
+      (this.inFlightOutOfBandCommands.get(agentId) ?? 0) + 1,
+    );
     void (async () => {
       try {
         await handler.run({ emit: dispatch });
@@ -2463,6 +2473,10 @@ export class AgentManager {
           provider: agent.provider,
           item: { type: "assistant_message", text: `[Error] ${text}` },
         });
+      } finally {
+        const remaining = (this.inFlightOutOfBandCommands.get(agentId) ?? 1) - 1;
+        if (remaining === 0) this.inFlightOutOfBandCommands.delete(agentId);
+        else this.inFlightOutOfBandCommands.set(agentId, remaining);
       }
     })();
     return true;

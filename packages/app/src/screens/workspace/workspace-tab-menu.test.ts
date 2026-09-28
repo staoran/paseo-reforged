@@ -233,9 +233,13 @@ describe("buildWorkspaceTabMenuEntries", () => {
     });
   });
 
-  it("disables runtime close actions while pending or not closeable", () => {
+  it("gates runtime actions independently and explains disabled items", () => {
     const tab = createAgentTab();
-    const buildEntries = (canClose: boolean, isPending: boolean) =>
+    const buildEntries = (
+      canClose: (keepRecord: boolean) => boolean,
+      isPending: boolean,
+      unavailableMessage?: string,
+    ) =>
       buildWorkspaceTabMenuEntries({
         surface: "desktop",
         tab,
@@ -253,15 +257,16 @@ describe("buildWorkspaceTabMenuEntries", () => {
         onCloseTabsAfter: vi.fn(),
         onCloseOtherTabs: vi.fn(),
         agentRuntimeActions: {
-          canClose: () => canClose,
+          canClose: (_agentId, keepRecord) => canClose(keepRecord),
           isPending: () => isPending,
+          unavailableMessage,
           close: vi.fn(),
         },
       });
 
     for (const [entries, expectedPending] of [
-      [buildEntries(false, false), false],
-      [buildEntries(true, true), true],
+      [buildEntries(() => false, false, "Update the Host"), false],
+      [buildEntries(() => true, true), true],
     ] as const) {
       const runtimeEntries = entries.filter(
         (entry) =>
@@ -275,7 +280,30 @@ describe("buildWorkspaceTabMenuEntries", () => {
           (entry) => entry.kind === "item" && entry.label === "Closing agent runtime...",
         ),
       ).toBe(expectedPending);
+      expect(
+        runtimeEntries.every(
+          (entry) =>
+            entry.kind === "item" &&
+            entry.description === (expectedPending ? undefined : "Update the Host"),
+        ),
+      ).toBe(true);
     }
+
+    const closedEntries = buildEntries((keepRecord) => keepRecord, false, "Agent is not idle");
+    expect(closedEntries).toContainEqual(
+      expect.objectContaining({
+        key: "close-agent-runtime",
+        disabled: true,
+        description: "Agent is not idle",
+      }),
+    );
+    expect(closedEntries).toContainEqual(
+      expect.objectContaining({
+        key: "close-agent-runtime-keep-record",
+        disabled: false,
+        description: undefined,
+      }),
+    );
   });
 
   it("includes copy id and rename for terminal tabs", () => {

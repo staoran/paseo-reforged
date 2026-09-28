@@ -108,10 +108,8 @@ import { useWorkspaceTerminalSessionRetention } from "@/terminal/hooks/use-works
 import type { CheckoutStatusPayload } from "@/git/use-status-query";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
-import {
-  canCloseIdleAgentRuntime,
-  useCloseIdleAgentRuntime,
-} from "@/hooks/use-close-idle-agent-runtime";
+import { useCloseIdleAgentRuntime } from "@/hooks/use-close-idle-agent-runtime";
+import { canRequestAgentRuntimeClose } from "@/utils/agent-runtime-close-eligibility";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { removeResidentBrowserWebview } from "@/desktop/browser/resident-webviews";
 import { createWorkspaceBrowser, useBrowserStore } from "@/desktop/browser/store";
@@ -1605,6 +1603,21 @@ function WorkspaceScreenContent({
     agentRuntimeSnapshot?.client?.supportsAgentRuntimeClose() === true &&
     agentRuntimeSession?.serverInfo?.features?.agentRuntimeClose === true,
   );
+  /** Explains why the Agent tab runtime commands are unavailable */
+  let agentRuntimeUnavailableMessage: string | null = null;
+  if (agentRuntimeSnapshot?.connectionStatus !== "online") {
+    agentRuntimeUnavailableMessage = t("sidebar.workspace.agentRuntime.hostOffline");
+  } else if (
+    agentRuntimeSnapshot.agentDirectoryStatus === "error_before_first_success" ||
+    agentRuntimeSnapshot.agentDirectoryStatus === "error_after_ready"
+  ) {
+    agentRuntimeUnavailableMessage = t("sidebar.workspace.agentRuntime.directoryFailed");
+  } else if (!agentDirectoryCurrent) {
+    agentRuntimeUnavailableMessage = t("sidebar.workspace.agentRuntime.syncingDirectory");
+  } else if (!supportsAgentRuntimeClose) {
+    agentRuntimeUnavailableMessage = t("sidebar.workspace.agentRuntime.updateHost");
+  }
+  agentRuntimeUnavailableMessage ??= t("sidebar.workspace.agentRuntime.idleRequired");
   const { pendingAgentIds, closeIdleAgentRuntime } = useCloseIdleAgentRuntime();
   const supportsProvidersSnapshot = useSessionStore(
     (state) => state.sessions[normalizedServerId]?.serverInfo?.features?.providersSnapshot === true,
@@ -2325,16 +2338,17 @@ function WorkspaceScreenContent({
   /** Closes a tab's idle Agent runtime through the explicit runtime command */
   const agentRuntimeActions = useMemo<WorkspaceTabAgentRuntimeActions>(
     () => ({
-      canClose: (agentId) => {
+      canClose: (agentId, keepRecord) => {
         const agent = agentRuntimeSession?.agents.get(agentId);
         return Boolean(
           persistenceKey &&
           supportsAgentRuntimeClose &&
           agent?.workspaceId === normalizedWorkspaceId &&
-          canCloseIdleAgentRuntime(agent),
+          canRequestAgentRuntimeClose(agent, keepRecord),
         );
       },
       isPending: (agentId) => pendingAgentIds.has(agentId),
+      unavailableMessage: agentRuntimeUnavailableMessage,
       close: ({ agentId, tabId, keepRecord }) => {
         if (!persistenceKey || !normalizedServerId) return;
         void closeIdleAgentRuntime({
@@ -2363,6 +2377,7 @@ function WorkspaceScreenContent({
     }),
     [
       agentRuntimeSession,
+      agentRuntimeUnavailableMessage,
       closeIdleAgentRuntime,
       closeWorkspaceTabWithCleanup,
       normalizedServerId,

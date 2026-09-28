@@ -25,10 +25,8 @@ import { getForgePresentation, normalizeForge } from "@/git/forge";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import type { AgentRuntimeCloseDisabledReason } from "@/hooks/sidebar-workspaces-view-model";
 import type { Agent } from "@/stores/session-store";
-import {
-  canCloseIdleAgentRuntime,
-  useCloseIdleAgentRuntime,
-} from "@/hooks/use-close-idle-agent-runtime";
+import { useCloseIdleAgentRuntime } from "@/hooks/use-close-idle-agent-runtime";
+import { canCloseIdleAgentRuntime } from "@/utils/agent-runtime-close-eligibility";
 import { useAppSettings } from "@/hooks/use-settings";
 import type { Theme } from "@/styles/theme";
 import type { ShortcutKey } from "@/utils/format-shortcut";

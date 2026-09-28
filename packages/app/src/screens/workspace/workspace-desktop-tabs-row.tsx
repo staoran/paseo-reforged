@@ -432,6 +432,7 @@ function TabContextMenuItem({
     <ContextMenuItem
       testID={entry.testID}
       disabled={entry.disabled}
+      description={entry.description}
       destructive={entry.destructive}
       onSelect={entry.onSelect}
       tooltip={entry.tooltip}
