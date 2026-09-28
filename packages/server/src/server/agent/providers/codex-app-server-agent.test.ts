@@ -2845,6 +2845,7 @@ describe("Codex app-server provider", () => {
         type: "assistant_message",
         messageId: "child-message-1",
         text: " the path.",
+        completionSuffix: true,
       },
     });
     expect(providerEvents.at(-1)).toMatchObject({
@@ -5916,7 +5917,141 @@ describe("Codex app-server provider", () => {
         type: "timeline",
         provider: "codex",
         turnId: "test-turn",
-        item: { type: "assistant_message", text: "!", messageId: "assistant-item-2" },
+        item: {
+          type: "assistant_message",
+          text: "!",
+          messageId: "assistant-item-2",
+          completionSuffix: true,
+        },
+      },
+    ]);
+  });
+
+  test("marks same-phase final text supplied only by item completion", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/started", {
+      item: { id: "final-item", type: "agentMessage", text: "", phase: "final_answer" },
+    });
+    asInternals(session).handleNotification("item/agentMessage/delta", {
+      itemId: "final-item",
+      delta: "Ans",
+    });
+    asInternals(session).handleNotification("item/completed", {
+      item: { id: "final-item", type: "agentMessage", text: "Answer", phase: "final_answer" },
+    });
+
+    expect(events.at(-1)).toEqual({
+      type: "timeline",
+      provider: "codex",
+      turnId: "test-turn",
+      item: {
+        type: "assistant_message",
+        text: "wer",
+        messageId: "final-item",
+        phase: "final_answer",
+        completionSuffix: true,
+      },
+    });
+  });
+
+  test("keeps a late streamed item completion on its native turn after a newer turn starts", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    session.activeForegroundTurnId = "old-foreground";
+    asInternals(session).handleNotification("turn/started", {
+      threadId: "test-thread",
+      turn: { id: "native-old" },
+    });
+    asInternals(session).handleNotification("item/started", {
+      threadId: "test-thread",
+      turnId: "native-old",
+      item: { id: "late-old-item", type: "agentMessage", text: "", phase: "final_answer" },
+    });
+    asInternals(session).handleNotification("item/agentMessage/delta", {
+      threadId: "test-thread",
+      turnId: "native-old",
+      itemId: "late-old-item",
+      delta: "Old",
+    });
+    asInternals(session).handleNotification("turn/completed", {
+      threadId: "test-thread",
+      turn: { id: "native-old", status: "completed" },
+    });
+    session.activeForegroundTurnId = "new-foreground";
+    asInternals(session).handleNotification("turn/started", {
+      threadId: "test-thread",
+      turn: { id: "native-new" },
+    });
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      turnId: "native-old",
+      item: {
+        id: "late-old-item",
+        type: "agentMessage",
+        text: "Old answer",
+        phase: "final_answer",
+      },
+    });
+
+    expect(events.at(-1)).toMatchObject({
+      type: "timeline",
+      turnId: "old-foreground",
+      item: {
+        type: "assistant_message",
+        messageId: "late-old-item",
+        text: " answer",
+        phase: "final_answer",
+        completionSuffix: true,
+      },
+    });
+  });
+
+  test("does not replay streamed reasoning when its completion arrives after the next turn starts", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("turn/started", {
+      threadId: "test-thread",
+      turn: { id: "native-old" },
+    });
+    asInternals(session).handleNotification("item/reasoning/summaryTextDelta", {
+      threadId: "test-thread",
+      turnId: "native-old",
+      itemId: "old-reasoning",
+      delta: "Think",
+    });
+    asInternals(session).handleNotification("turn/completed", {
+      threadId: "test-thread",
+      turn: { id: "native-old", status: "completed" },
+    });
+    asInternals(session).handleNotification("turn/started", {
+      threadId: "test-thread",
+      turn: { id: "native-new" },
+    });
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      turnId: "native-old",
+      item: { id: "old-reasoning", type: "reasoning", summary: ["Thinking"] },
+    });
+
+    expect(events.filter((event) => event.type === "timeline")).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        item: { type: "reasoning", text: "Think" },
+      },
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        item: { type: "reasoning", text: "ing" },
       },
     ]);
   });

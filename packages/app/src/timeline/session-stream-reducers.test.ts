@@ -249,6 +249,71 @@ describe("timeline turn membership compatibility", () => {
   });
 });
 
+describe("late assistant completion order", () => {
+  it.each([true, false])(
+    "backfills a same-phase suffix with continuous seq/epoch and baseline=%s",
+    (hasAuthoritativeBaseline) => {
+      const first: AgentStreamEventPayload = {
+        type: "timeline",
+        provider: "codex",
+        turnId: "answer-turn",
+        item: {
+          type: "assistant_message",
+          text: "Ans",
+          messageId: "final-message",
+          phase: "final_answer",
+        },
+      };
+      const user: AgentStreamEventPayload = {
+        type: "timeline",
+        provider: "codex",
+        turnId: "next-turn",
+        item: { type: "user_message", text: "Next", messageId: "next-user" },
+      };
+      const completion: AgentStreamEventPayload = {
+        type: "timeline",
+        provider: "codex",
+        turnId: "answer-turn",
+        item: {
+          type: "assistant_message",
+          text: "wer",
+          messageId: "final-message",
+          phase: "final_answer",
+          completionSuffix: true,
+        },
+      };
+      const paintedTail = hasAuthoritativeBaseline ? [] : [makeAssistantItem("painted")];
+      const result = processAgentStreamEvents({
+        events: [
+          makeStreamReducerEvent(first, 41),
+          makeStreamReducerEvent(user, 42),
+          makeStreamReducerEvent(completion, 43),
+        ],
+        currentTail: paintedTail,
+        currentHead: [],
+        currentCursor: hasAuthoritativeBaseline
+          ? { epoch: "epoch-1", startSeq: 1, endSeq: 40 }
+          : undefined,
+        hasAuthoritativeBaseline,
+      });
+
+      const live = hasAuthoritativeBaseline ? [...result.tail, ...result.head] : result.head;
+      expect(live.map((item) => item.kind)).toEqual(["assistant_message", "user_message"]);
+      expect(live[0]).toMatchObject({
+        id: "final-message",
+        text: "Answer",
+        turnId: "answer-turn",
+        timelineCursor: { epoch: "epoch-1", seq: 43 },
+      });
+      expect(live[1]).toMatchObject({ id: "next-user", turnId: "next-turn" });
+      expect(result.cursor).toEqual(
+        hasAuthoritativeBaseline ? { epoch: "epoch-1", startSeq: 1, endSeq: 43 } : null,
+      );
+      if (!hasAuthoritativeBaseline) expect(result.tail).toEqual(paintedTail);
+    },
+  );
+});
+
 describe("detached timeline windows", () => {
   it("does not apply or catch up live events while viewing an older window", () => {
     const currentTail = [makeAssistantItem("older window")];

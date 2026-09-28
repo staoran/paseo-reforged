@@ -35,6 +35,20 @@ describe("assistant phase compatibility", () => {
       }),
     ).toEqual({ type: "assistant_message", text: "Answer", messageId: "answer" });
   });
+
+  test("completion suffix metadata is optional and ignored by older assistant schemas", () => {
+    const item = {
+      type: "assistant_message",
+      text: "wer",
+      messageId: "answer",
+      phase: "final_answer",
+      completionSuffix: true,
+    };
+    expect(AgentTimelineItemPayloadSchema.parse(item)).toEqual(item);
+    expect(
+      z.object({ type: z.literal("assistant_message"), text: z.string() }).parse(item),
+    ).toEqual({ type: "assistant_message", text: "wer" });
+  });
 });
 
 function workspaceDescriptor(overrides: Record<string, unknown> = {}) {

@@ -106,7 +106,10 @@ export class AgentStreamCoalescer {
       return false;
     }
 
-    if (event.item.type === "assistant_message" && event.item.text === "" && event.item.phase) {
+    if (
+      event.item.type === "assistant_message" &&
+      (event.item.completionSuffix || (event.item.text === "" && event.item.phase))
+    ) {
       this.flushFor(agentId);
       return false;
     }

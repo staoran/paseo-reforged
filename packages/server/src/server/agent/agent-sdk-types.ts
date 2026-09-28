@@ -410,6 +410,8 @@ export type AgentTimelineItem =
       messageId?: string;
       /** Explicit process or final-answer boundary reported by the provider */
       phase?: AgentMessagePhase;
+      /** Text supplied by item completion after streamed deltas */
+      completionSuffix?: true;
     }
   | { type: "reasoning"; text: string }
   | ToolCallTimelineItem

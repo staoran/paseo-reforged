@@ -3428,6 +3428,10 @@ export class CodexAppServerAgentSession implements AgentSession {
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private nextTurnOrdinal = 0;
   private activeForegroundTurnId: string | null = null;
+  /** Managed turn identity for native Codex turns, including completed turns with late items */
+  private readonly managedTurnIdByNativeTurnId = new Map<string, string>();
+  /** Turn identity of the root lifecycle notification currently being dispatched */
+  private notificationTurnId: string | null = null;
   private activeClientMessageId: string | null = null;
   private cachedRuntimeInfo: AgentRuntimeInfo | null = null;
   private serviceTier: "fast" | null = null;
@@ -5302,7 +5306,8 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private notifySubscribers(event: AgentStreamEvent): void {
-    const turnId = getAgentStreamEventTurnId(event) ?? this.activeForegroundTurnId;
+    const turnId =
+      getAgentStreamEventTurnId(event) ?? this.notificationTurnId ?? this.activeForegroundTurnId;
     const tagged = turnId ? { ...event, turnId } : event;
     this.logger.trace(
       {
@@ -5365,7 +5370,17 @@ export class CodexAppServerAgentSession implements AgentSession {
       return;
     }
     this.clearProviderRetryOnRootProgress(parsed);
-    this.dispatchParsedNotification(parsed);
+    const previousNotificationTurnId = this.notificationTurnId;
+    this.notificationTurnId = null;
+    if ((parsed.kind === "item_started" || parsed.kind === "item_completed") && parsed.turnId) {
+      this.notificationTurnId =
+        this.managedTurnIdByNativeTurnId.get(parsed.turnId) ?? parsed.turnId;
+    }
+    try {
+      this.dispatchParsedNotification(parsed);
+    } finally {
+      this.notificationTurnId = previousNotificationTurnId;
+    }
   }
 
   /** A root notification after a retry means Codex resumed work */
@@ -5383,6 +5398,12 @@ export class CodexAppServerAgentSession implements AgentSession {
       return;
     if (
       parsed.kind === "turn_completed" &&
+      parsed.turnId !== null &&
+      parsed.turnId !== this.currentTurnId
+    )
+      return;
+    if (
+      (parsed.kind === "item_started" || parsed.kind === "item_completed") &&
       parsed.turnId !== null &&
       parsed.turnId !== this.currentTurnId
     )
@@ -6066,6 +6087,10 @@ export class CodexAppServerAgentSession implements AgentSession {
     parsed: Extract<ParsedCodexNotification, { kind: "thread_started" }>,
   ): void {
     this.emitProviderRetryMessage(null);
+    this.managedTurnIdByNativeTurnId.clear();
+    this.pendingAgentMessages.clear();
+    this.pendingAgentMessagePhases.clear();
+    this.pendingReasoning.clear();
     this.currentThreadId = parsed.threadId;
     this.currentTurnId = null;
     this.emitEvent({
@@ -6085,6 +6110,8 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
     if (this.currentTurnId !== parsed.turnId) this.emitProviderRetryMessage(null);
     this.currentTurnId = parsed.turnId;
+    const managedTurnId = this.activeForegroundTurnId ?? parsed.turnId;
+    this.managedTurnIdByNativeTurnId.set(parsed.turnId, managedTurnId);
     const pendingIdentification = this.pendingForegroundTurnIdentification;
     if (
       pendingIdentification &&
@@ -6094,7 +6121,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.pendingForegroundTurnIdentification = null;
     }
     this.resetTurnTrackingState();
-    this.emitEvent({ type: "turn_started", provider: CODEX_PROVIDER });
+    this.emitEvent({ type: "turn_started", provider: CODEX_PROVIDER, turnId: managedTurnId });
   }
 
   private handleTurnCompletedNotification(
@@ -6169,6 +6196,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     });
   }
 
+  /** Clears turn-scoped state while retaining unfinished text for delayed completions */
   private resetTurnTrackingState(): void {
     this.latestPlanResult = null;
     this.emittedItemStartedIds.clear();
@@ -6176,9 +6204,6 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.emittedProviderSubagentUserMessageKeys.clear();
     this.emittedExecCommandStartedCallIds.clear();
     this.emittedExecCommandCompletedCallIds.clear();
-    this.pendingAgentMessages.clear();
-    this.pendingAgentMessagePhases.clear();
-    this.pendingReasoning.clear();
     this.pendingCommandOutputDeltas.clear();
     this.pendingFileChangeOutputDeltas.clear();
     this.pendingAssistantMessageBoundary = false;
@@ -6683,6 +6708,7 @@ export class CodexAppServerAgentSession implements AgentSession {
             text: "",
             ...(timelineItem.messageId ? { messageId: timelineItem.messageId } : {}),
             phase: timelineItem.phase,
+            completionSuffix: true,
           }
         : null;
     }
@@ -6692,6 +6718,7 @@ export class CodexAppServerAgentSession implements AgentSession {
           text: suffix,
           ...(timelineItem.messageId ? { messageId: timelineItem.messageId } : {}),
           ...(timelineItem.phase ? { phase: timelineItem.phase } : {}),
+          completionSuffix: true,
         }
       : { type: timelineItem.type, text: suffix };
   }

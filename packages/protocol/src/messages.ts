@@ -672,6 +672,7 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknow
     text: z.string(),
     messageId: z.string().optional(),
     phase: z.enum(["commentary", "final_answer"]).optional(),
+    completionSuffix: z.literal(true).optional(),
   }),
   z.object({
     type: z.literal("reasoning"),

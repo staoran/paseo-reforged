@@ -133,6 +133,142 @@ it.each([
   },
 );
 
+it.each([{ intervening: "user" }, { intervening: "tool" }] as const)(
+  "keeps a same-phase completion suffix on its original row across a $intervening row",
+  ({ intervening }) => {
+    const first: AgentStreamEventPayload = {
+      type: "timeline",
+      provider: "codex",
+      turnId: "answer-turn",
+      item: {
+        type: "assistant_message",
+        text: "Ans",
+        messageId: "same-phase-final",
+        phase: "final_answer",
+      },
+    };
+    const between: AgentStreamEventPayload =
+      intervening === "user"
+        ? {
+            type: "timeline",
+            provider: "codex",
+            turnId: "other-turn",
+            item: { type: "user_message", text: "Next question", messageId: "next-user" },
+          }
+        : canonicalToolTimeline({
+            provider: "codex",
+            callId: "intervening-tool",
+            turnId: "other-turn",
+            name: "shell",
+            status: "completed",
+          });
+    const completion: AgentStreamEventPayload = {
+      type: "timeline",
+      provider: "codex",
+      turnId: "answer-turn",
+      item: {
+        type: "assistant_message",
+        text: "wer",
+        messageId: "same-phase-final",
+        phase: "final_answer",
+        completionSuffix: true,
+      },
+    };
+    const updates = [
+      { event: first, timestamp: new Date(1000) },
+      { event: between, timestamp: new Date(2000) },
+      { event: completion, timestamp: new Date(3000) },
+    ];
+    let tail: StreamItem[] = [];
+    let head: StreamItem[] = [];
+    for (const { event, timestamp } of updates) {
+      const result = applyStreamEvent({ tail, head, event, timestamp });
+      tail = result.tail;
+      head = result.head;
+    }
+
+    const expectedKinds = [
+      "assistant_message",
+      intervening === "user" ? "user_message" : "tool_call",
+    ];
+    expect([...tail, ...head].map((item) => item.kind)).toEqual(expectedKinds);
+    expect(tail[0]).toMatchObject({
+      id: "same-phase-final",
+      text: "Answer",
+      phase: "final_answer",
+      turnId: "answer-turn",
+    });
+    expect(hydrateStreamState(updates, { source: "canonical" })).toMatchObject([
+      { id: "same-phase-final", text: "Answer", phase: "final_answer" },
+      { kind: expectedKinds[1] },
+    ]);
+  },
+);
+
+it("backfills an unphased completion suffix without joining ordinary resumed deltas", () => {
+  const messageId = "unphased-message";
+  const updates = [
+    { event: assistantTimeline("Ans", "codex", messageId), timestamp: new Date(1000) },
+    {
+      event: canonicalToolTimeline({
+        provider: "codex",
+        callId: "between",
+        name: "shell",
+        status: "completed",
+      }),
+      timestamp: new Date(2000),
+    },
+    {
+      event: {
+        type: "timeline" as const,
+        provider: "codex" as const,
+        item: {
+          type: "assistant_message" as const,
+          text: "wer",
+          messageId,
+          completionSuffix: true as const,
+        },
+      },
+      timestamp: new Date(3000),
+    },
+  ];
+
+  expect(hydrateStreamState(updates).map((item) => item.kind)).toEqual([
+    "assistant_message",
+    "tool_call",
+  ]);
+  expect(hydrateStreamState(updates)[0]).toMatchObject({ text: "Answer", messageId });
+});
+
+it("keeps live compaction after the active assistant, matching history order", () => {
+  const updates = [
+    {
+      event: {
+        type: "timeline" as const,
+        provider: "codex" as const,
+        item: { type: "assistant_message" as const, text: "Working", messageId: "active" },
+      },
+      timestamp: new Date(1000),
+    },
+    { event: compactionTimeline("loading", "auto", "codex"), timestamp: new Date(2000) },
+    { event: compactionTimeline("completed", undefined, "codex"), timestamp: new Date(3000) },
+  ];
+  let tail: StreamItem[] = [];
+  let head: StreamItem[] = [];
+  for (const { event, timestamp } of updates) {
+    const result = applyStreamEvent({ tail, head, event, timestamp });
+    tail = result.tail;
+    head = result.head;
+  }
+
+  const live = [...tail, ...head];
+  const history = hydrateStreamState(updates, { source: "canonical" });
+  expect(live.map((item) => item.kind)).toEqual(["assistant_message", "compaction"]);
+  expect(live.map((item) => item.kind)).toEqual(history.map((item) => item.kind));
+  expect(live[0]).toMatchObject({ text: "Working", id: "active" });
+  expect(live[1]).toMatchObject({ status: "completed", trigger: "auto" });
+});
+
 it("backfills a late final phase when a submitted user row remains in head", () => {
   const first = applyStreamEvent({
     tail: [],
@@ -610,10 +746,11 @@ function todoTimeline(
 function compactionTimeline(
   status: "loading" | "completed",
   trigger?: "auto" | "manual",
+  provider: AgentProvider = "pi",
 ): AgentStreamEventPayload {
   return {
     type: "timeline",
-    provider: "pi",
+    provider,
     item: {
       type: "compaction",
       status,

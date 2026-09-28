@@ -301,6 +301,66 @@ function mergeAssistantChunks(entries: readonly WorkingEntry[]): WorkingEntry[] 
   return output;
 }
 
+interface AssistantCompletionMerge {
+  index: number;
+  entry: WorkingEntry;
+}
+
+/** Returns the earlier assistant row that owns a completion suffix */
+function mergeAssistantCompletionEntry(
+  entries: readonly WorkingEntry[],
+  suffix: WorkingEntry,
+): AssistantCompletionMerge | null {
+  if (
+    suffix.item.type !== "assistant_message" ||
+    suffix.item.completionSuffix !== true ||
+    !suffix.item.messageId
+  )
+    return null;
+
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const existing = entries[index];
+    if (
+      existing.item.type !== "assistant_message" ||
+      existing.item.messageId !== suffix.item.messageId ||
+      existing.turnId !== suffix.turnId
+    )
+      continue;
+
+    const phase = suffix.item.phase ?? existing.item.phase;
+    return {
+      index,
+      entry: {
+        ...existing,
+        item: {
+          type: "assistant_message",
+          text: `${existing.item.text}${suffix.item.text}`,
+          messageId: existing.item.messageId,
+          ...(phase ? { phase } : {}),
+        },
+        timestamp: suffix.timestamp,
+        seqEnd: Math.max(existing.seqEnd, suffix.seqEnd),
+        ...mergeIdentityMetadata(existing, suffix, "assistant_merge"),
+      },
+    };
+  }
+  return null;
+}
+
+/** Restores completed assistant text at its display anchor across other item kinds */
+function mergeAssistantCompletionSuffixes(entries: readonly WorkingEntry[]): WorkingEntry[] {
+  const output: WorkingEntry[] = [];
+  for (const entry of entries) {
+    const merged = mergeAssistantCompletionEntry(output, entry);
+    if (merged) {
+      output[merged.index] = merged.entry;
+      continue;
+    }
+    output.push(entry);
+  }
+  return output;
+}
+
 /** A retained item. `seq` is its latest source event, not its display anchor. */
 export type ProjectedTimelineRow = AgentTimelineRow & TimelineProjectionEntry;
 
@@ -317,6 +377,11 @@ export class TimelineProjection {
     const merged = existing ? mergeIdentityEntries(existing, entry) : null;
     if (merged && index !== undefined) {
       this.rows[index] = { ...merged, seq: merged.seqEnd };
+      return;
+    }
+    const completion = mergeAssistantCompletionEntry(this.rows, entry);
+    if (completion) {
+      this.rows[completion.index] = { ...completion.entry, seq: completion.entry.seqEnd };
       return;
     }
     const previous = this.rows.at(-1);
@@ -360,7 +425,7 @@ export function projectTimelineRows(input: {
 
   const toolCollapsed = collapseByIdentity(canonical);
   const assistantMerged = mergeAssistantChunks(toolCollapsed);
-  return mergeReasoningChunks(assistantMerged);
+  return mergeReasoningChunks(mergeAssistantCompletionSuffixes(assistantMerged));
 }
 
 /**
@@ -375,8 +440,7 @@ export function selectTimelineWindowByProjectedLimit(input: {
 }): ProjectedWindowSelection {
   const { rows, direction } = input;
   const limit = Math.max(0, Math.floor(input.limit));
-  const canonical = makeCanonicalEntries(rows);
-  const projectedAll = mergeReasoningChunks(mergeAssistantChunks(collapseByIdentity(canonical)));
+  const projectedAll = projectTimelineRows({ rows, mode: "projected" });
 
   if (projectedAll.length === 0) {
     return {
