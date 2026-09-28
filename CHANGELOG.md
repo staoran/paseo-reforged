@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.10.0-beta.2 - 2026-09-29
+
+### Added
+
+- Add Usage reports from built-in sources, selected for the active session account
+- Add OpenCode v2 session history and Codex custom provider support
+- Add workspace file editing and relative assistant file-link tooltips
+
+### Improved
+
+- Keep agent, schedule, and imported-session timestamps current while they remain visible
+- Refresh Host version and feature information after daemon reconnects
+- Show Hub plan prices and billing qualifiers from the live plan catalog
+
+### Fixed
+
+- Keep Host runtime and Agent directory state aligned after reconnects and directory resyncs
+
 ## 0.9.2-beta.4 - 2026-09-26
 
 ### Fixed
