@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   describeCompactTimeAgo,
+  describeTimeAgo,
   formatCompactTimeAgo,
   formatCompactTimeAgoAsProse,
   formatDuration,
@@ -13,13 +14,28 @@ describe("formatTimeAgo", () => {
 
   it.each([
     ["2026-07-16T11:59:55.000Z", "just now"],
-    ["2026-07-16T11:59:30.000Z", "30s ago"],
+    ["2026-07-16T11:59:30.000Z", "just now"],
+    ["2026-07-16T11:59:00.000Z", "1m ago"],
     ["2026-07-16T11:55:00.000Z", "5m ago"],
     ["2026-07-16T10:00:00.000Z", "2h ago"],
     ["2026-07-13T12:00:00.000Z", "3d ago"],
     ["2026-01-15T12:00:00.000Z", "Jan 15"],
   ])("formats %s as %s", (date, expected) => {
     expect(formatTimeAgo(new Date(date), now)).toBe(expected);
+  });
+});
+
+describe("describeTimeAgo", () => {
+  const now = new Date("2026-07-16T12:00:00.000Z");
+
+  it.each([
+    ["2026-07-16T11:59:30.000Z", "just now", "minute"],
+    ["2026-07-16T11:55:00.000Z", "5m ago", "minute"],
+    ["2026-07-16T10:00:00.000Z", "2h ago", "hour"],
+    ["2026-07-13T12:00:00.000Z", "3d ago", "day"],
+    ["2026-01-15T12:00:00.000Z", "Jan 15", "static"],
+  ] as const)("formats %s as %s at %s resolution", (date, label, resolution) => {
+    expect(describeTimeAgo(new Date(date), now)).toEqual({ label, resolution });
   });
 });
 
@@ -106,15 +122,15 @@ describe("formatMessageTimestamp", () => {
     const date = new Date(2026, 4, 14, 12, 23);
     const formatted = formatMessageTimestamp(date, now);
     expect(formatted).toMatch(/12:23/);
-    expect(formatted).not.toMatch(/Thursday|Wednesday/);
+    expect(formatted).not.toContain(date.toLocaleDateString(undefined, { weekday: "long" }));
   });
 
   it("includes weekday for timestamps within the last 6 days", () => {
-    // 2026-05-14 is a Thursday. 2026-05-11 is a Monday.
     const now = new Date(2026, 4, 14, 17, 30);
     const date = new Date(2026, 4, 11, 22, 12);
     const formatted = formatMessageTimestamp(date, now);
-    expect(formatted).toMatch(/Monday/);
+    const weekday = date.toLocaleDateString(undefined, { weekday: "long" });
+    expect(formatted.slice(0, weekday.length + 1)).toBe(`${weekday} `);
     expect(formatted).toMatch(/10:12 PM|22:12/);
   });
 
@@ -124,16 +140,21 @@ describe("formatMessageTimestamp", () => {
     const now = new Date(2026, 8, 25, 11, 47);
     const date = new Date(2026, 8, 18, 12, 2);
     const formatted = formatMessageTimestamp(date, now);
-    expect(formatted).toMatch(/Sep|September/);
-    expect(formatted).toMatch(/18/);
-    expect(formatted).not.toMatch(/Friday/);
+    const dateLabel = date.toLocaleDateString(undefined, {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
+    expect(formatted).toContain(dateLabel);
+    expect(formatted).not.toContain(date.toLocaleDateString(undefined, { weekday: "long" }));
   });
 
   it("includes full date for older timestamps", () => {
     const now = new Date(2026, 4, 14, 17, 30);
     const date = new Date(2026, 3, 1, 9, 5);
     const formatted = formatMessageTimestamp(date, now);
-    expect(formatted).toMatch(/Apr|April/);
-    expect(formatted).toMatch(/2026/);
+    expect(formatted).toContain(
+      date.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }),
+    );
   });
 });
