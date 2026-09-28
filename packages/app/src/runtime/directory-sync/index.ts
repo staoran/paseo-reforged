@@ -162,7 +162,7 @@ export class DirectorySync {
     private readonly callbacks: {
       onAgentStoppedRunning: (agentId: string) => void;
       markAgentLoading: () => void;
-      markAgentReady: () => void;
+      markAgentReady: (source: DirectorySourceToken | null) => void;
       markAgentError: (error: string) => void;
     },
     private readonly checkpoints?: DirectoryCheckpointStorage,
@@ -427,7 +427,7 @@ export class DirectorySync {
     }
     const onlineConnection = this.getOnlineConnection();
     if (!onlineConnection) {
-      this.callbacks.markAgentReady();
+      this.callbacks.markAgentReady(null);
       return {
         agents: new Map(useSessionStore.getState().sessions[this.serverId]?.agents),
         subscriptionId: null,
@@ -454,7 +454,7 @@ export class DirectorySync {
       const agents = this.commitAgentSnapshot(completion.snapshot, completion.deltas);
       this.persistAgentCursors(completion.snapshot, completion.deltas);
       this.persistCheckpoint();
-      this.callbacks.markAgentReady();
+      this.callbacks.markAgentReady(source);
       return { agents, subscriptionId: completion.snapshot.subscriptionId };
     } catch (error) {
       const deltas = this.agentTransactions.fail(transaction);

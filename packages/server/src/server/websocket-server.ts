@@ -1679,6 +1679,7 @@ export class VoiceAssistantWebSocketServer {
         agentRequestReceipts: true,
         workspaceRequestReceipts: true,
         creationLifecycle: true,
+        agentRuntimeClose: true,
         hubAgentRpc: true,
         // COMPAT(directorySync): added in v0.3.x, remove gate after 2027-02-12.
         directorySync: true,

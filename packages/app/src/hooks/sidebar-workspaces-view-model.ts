@@ -2,20 +2,34 @@ import type { PrHint } from "@/git/pr-hint";
 import { selectPrHintFromStatus } from "@/git/pr-hint";
 import { type HostProjectListItem } from "@/projects/host-project-model";
 import type { PendingCreateAttempt } from "@/stores/create-flow-store";
-import type { DaemonServerInfo, WorkspaceDescriptor } from "@/stores/session-store";
+import type {
+  Agent,
+  DaemonServerInfo,
+  SessionState,
+  WorkspaceDescriptor,
+} from "@/stores/session-store";
+import type { HostRuntimeSnapshot } from "@/runtime/host-runtime";
 import type {
   WorkspaceStructureHostPlacement,
   WorkspaceStructureProject,
 } from "@/projects/workspace-structure";
 import { projectDisplayNameFromProjectId } from "@/utils/project-display-name";
 import { aggregateSidebarStateBuckets } from "@/utils/sidebar-agent-state";
+import { isCurrentAgentDirectory } from "@/utils/agent-directory-readiness";
 import { shortenPath } from "@/utils/shorten-path";
-import type { WorkspaceAgentActivity } from "@/utils/workspace-agent-activity";
+import {
+  buildWorkspaceManagedAgentIndex,
+  type WorkspaceAgentActivity,
+  type WorkspaceManagedAgentIndex,
+} from "@/utils/workspace-agent-activity";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 
 const EMPTY_PROJECTS: SidebarProjectEntry[] = [];
+/** Stable empty value for Workspaces without managed Agents */
+const EMPTY_AGENTS: readonly Agent[] = [];
 
 export type SidebarStateBucket = WorkspaceDescriptor["status"];
+export type AgentRuntimeCloseDisabledReason = "offline" | "syncing" | "sync_failed" | "update_host";
 
 export interface SidebarWorkspacePlacement {
   workspaceKey: string;
@@ -56,6 +70,11 @@ export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
   hasClearableAttention: boolean;
   hasMarkUnreadCandidate: boolean;
   supportsMarkUnread: boolean;
+  residentAgentCount?: number | null;
+  managedAgents?: readonly Agent[] | null;
+  agentDirectoryCurrent?: boolean;
+  supportsAgentRuntimeClose?: boolean;
+  agentRuntimeCloseDisabledReason?: AgentRuntimeCloseDisabledReason;
 }
 
 export interface SidebarProjectEntry {
@@ -77,18 +96,30 @@ export interface SidebarWorkspaceSession {
   serverId: string;
   workspaces: Map<string, WorkspaceDescriptor>;
   workspaceAgentActivity: Map<string, WorkspaceAgentActivity>;
+  agents?: ReadonlyMap<string, Agent>;
+  agentDirectoryCurrent?: boolean;
+  supportsAgentRuntimeClose?: boolean;
+  agentRuntimeCloseDisabledReason?: AgentRuntimeCloseDisabledReason;
   supportsMarkUnread: boolean;
 }
 
 interface SidebarWorkspaceSessionSource {
+  agents?: Map<string, Agent>;
+  client?: SessionState["client"];
+  clientGeneration?: number;
   workspaces: Map<string, WorkspaceDescriptor>;
   workspaceAgentActivity: Map<string, WorkspaceAgentActivity>;
   serverInfo: Pick<DaemonServerInfo, "features"> | null;
 }
 
+/** Empty until the sidebar receives the current Host snapshots */
+const EMPTY_RUNTIME_SNAPSHOTS: ReadonlyMap<string, HostRuntimeSnapshot | null> = new Map();
+
+/** Selects Host sessions and current Agent directory readiness for the sidebar hosts */
 export function selectSidebarWorkspaceSessions(
   sessions: Record<string, SidebarWorkspaceSessionSource | undefined>,
   serverIds: readonly string[],
+  runtimeSnapshots: ReadonlyMap<string, HostRuntimeSnapshot | null> = EMPTY_RUNTIME_SNAPSHOTS,
 ): SidebarWorkspaceSession[] {
   const selected: SidebarWorkspaceSession[] = [];
   for (const serverId of serverIds) {
@@ -96,10 +127,35 @@ export function selectSidebarWorkspaceSessions(
     if (!session) {
       continue;
     }
+    const runtimeSnapshot = runtimeSnapshots.get(serverId) ?? null;
+    const agentDirectorySession =
+      session.client && session.clientGeneration !== undefined
+        ? { client: session.client, clientGeneration: session.clientGeneration }
+        : null;
+    const agentDirectoryCurrent = runtimeSnapshots.has(serverId)
+      ? isCurrentAgentDirectory({ snapshot: runtimeSnapshot, session: agentDirectorySession })
+      : undefined;
+    const supportsAgentRuntimeClose = Boolean(
+      agentDirectoryCurrent &&
+      runtimeSnapshot?.client?.supportsAgentRuntimeClose() === true &&
+      session.serverInfo?.features?.agentRuntimeClose === true,
+    );
     selected.push({
       serverId,
       workspaces: session.workspaces,
       workspaceAgentActivity: session.workspaceAgentActivity,
+      ...(agentDirectoryCurrent !== undefined
+        ? {
+            agents: session.agents,
+            agentDirectoryCurrent,
+            supportsAgentRuntimeClose,
+            agentRuntimeCloseDisabledReason: resolveAgentRuntimeCloseDisabledReason({
+              snapshot: runtimeSnapshot,
+              agentDirectoryCurrent,
+              supportsAgentRuntimeClose,
+            }),
+          }
+        : {}),
       supportsMarkUnread: session.serverInfo?.features?.workspaceMarkUnread === true,
     });
   }
@@ -122,12 +178,34 @@ export function areSidebarWorkspaceSessionsEqual(
       leftSession.serverId !== rightSession.serverId ||
       leftSession.workspaces !== rightSession.workspaces ||
       leftSession.workspaceAgentActivity !== rightSession.workspaceAgentActivity ||
+      leftSession.agents !== rightSession.agents ||
+      leftSession.agentDirectoryCurrent !== rightSession.agentDirectoryCurrent ||
+      leftSession.supportsAgentRuntimeClose !== rightSession.supportsAgentRuntimeClose ||
+      leftSession.agentRuntimeCloseDisabledReason !==
+        rightSession.agentRuntimeCloseDisabledReason ||
       leftSession.supportsMarkUnread !== rightSession.supportsMarkUnread
     ) {
       return false;
     }
   }
   return true;
+}
+
+/** Explains why the close command is unavailable for the selected Host */
+function resolveAgentRuntimeCloseDisabledReason(input: {
+  snapshot: HostRuntimeSnapshot | null;
+  agentDirectoryCurrent: boolean | undefined;
+  supportsAgentRuntimeClose: boolean;
+}): AgentRuntimeCloseDisabledReason | undefined {
+  if (input.snapshot?.connectionStatus !== "online") return "offline";
+  if (
+    input.snapshot.agentDirectoryStatus === "error_before_first_success" ||
+    input.snapshot.agentDirectoryStatus === "error_after_ready"
+  ) {
+    return "sync_failed";
+  }
+  if (!input.agentDirectoryCurrent) return "syncing";
+  return input.supportsAgentRuntimeClose ? undefined : "update_host";
 }
 
 interface EffectiveWorkspaceStatus {
@@ -151,6 +229,30 @@ function normalizeCurrentBranch(currentBranch: string | null | undefined): strin
   return trimmed.length === 0 || trimmed === "HEAD" ? null : trimmed;
 }
 
+/** Projects optional Agent runtime fields into a stable sidebar shape */
+function createAgentRuntimeSidebarFields(input: {
+  residentAgentCount?: number | null;
+  managedAgents?: readonly Agent[] | null;
+  agentDirectoryCurrent?: boolean;
+  supportsAgentRuntimeClose?: boolean;
+  agentRuntimeCloseDisabledReason?: AgentRuntimeCloseDisabledReason;
+}): Pick<
+  SidebarWorkspaceEntry,
+  | "residentAgentCount"
+  | "managedAgents"
+  | "agentDirectoryCurrent"
+  | "supportsAgentRuntimeClose"
+  | "agentRuntimeCloseDisabledReason"
+> {
+  return {
+    residentAgentCount: input.residentAgentCount ?? null,
+    managedAgents: input.managedAgents ?? null,
+    agentDirectoryCurrent: input.agentDirectoryCurrent ?? false,
+    supportsAgentRuntimeClose: input.supportsAgentRuntimeClose ?? false,
+    agentRuntimeCloseDisabledReason: input.agentRuntimeCloseDisabledReason,
+  };
+}
+
 /** Combines daemon Workspace state with client Agent facts for sidebar presentation */
 export function createSidebarWorkspaceEntry(input: {
   serverId: string;
@@ -158,6 +260,11 @@ export function createSidebarWorkspaceEntry(input: {
   projectViewKey?: string;
   pendingCreateAttempts?: Record<string, PendingCreateAttempt>;
   workspaceAgentActivity?: ReadonlyMap<string, WorkspaceAgentActivity>;
+  residentAgentCount?: number | null;
+  managedAgents?: readonly Agent[] | null;
+  agentDirectoryCurrent?: boolean;
+  supportsAgentRuntimeClose?: boolean;
+  agentRuntimeCloseDisabledReason?: AgentRuntimeCloseDisabledReason;
   supportsMarkUnread?: boolean;
 }): SidebarWorkspaceEntry {
   const projectViewKey = input.projectViewKey ?? input.workspace.projectId;
@@ -186,6 +293,7 @@ export function createSidebarWorkspaceEntry(input: {
     hasClearableAttention: activity?.hasClearableAttention ?? false,
     hasMarkUnreadCandidate: activity?.hasMarkUnreadCandidate ?? false,
     supportsMarkUnread: input.supportsMarkUnread ?? false,
+    ...createAgentRuntimeSidebarFields(input),
     archivingAt: input.workspace.archivingAt,
     diffStat: input.workspace.diffStat,
     prHint: selectPrHintFromStatus(
@@ -377,6 +485,36 @@ function resolveStructuralWorkspaceIdentity(input: {
   };
 }
 
+/** Indexes managed Agents once per Host before projecting Workspace entries */
+function buildManagedAgentIndexesByServer(
+  sessions: readonly SidebarWorkspaceSession[],
+): Map<string, WorkspaceManagedAgentIndex | null> {
+  const indexes = new Map<string, WorkspaceManagedAgentIndex | null>();
+  for (const session of sessions) {
+    indexes.set(
+      session.serverId,
+      session.agentDirectoryCurrent && session.agents
+        ? buildWorkspaceManagedAgentIndex(session.agents)
+        : null,
+    );
+  }
+  return indexes;
+}
+
+/** Selects resident Agents for one Workspace from a Host index */
+function getWorkspaceManagedAgentFields(
+  index: WorkspaceManagedAgentIndex | null | undefined,
+  workspaceId: string,
+): Pick<SidebarWorkspaceEntry, "residentAgentCount" | "managedAgents"> {
+  if (!index) {
+    return { residentAgentCount: null, managedAgents: null };
+  }
+  return {
+    residentAgentCount: index.residentCountsByWorkspace.get(workspaceId) ?? 0,
+    managedAgents: index.agentsByWorkspace.get(workspaceId) ?? EMPTY_AGENTS,
+  };
+}
+
 export function buildSidebarWorkspaceEntries(input: {
   placements: readonly SidebarWorkspacePlacement[];
   sessions: SidebarWorkspaceSession[];
@@ -388,6 +526,7 @@ export function buildSidebarWorkspaceEntries(input: {
   }
 
   const sessionByServerId = new Map(input.sessions.map((session) => [session.serverId, session]));
+  const managedAgentsByServer = buildManagedAgentIndexesByServer(input.sessions);
   const entries = new Map<string, SidebarWorkspaceEntry>();
 
   for (const placement of input.placements) {
@@ -399,6 +538,10 @@ export function buildSidebarWorkspaceEntries(input: {
     });
     const workspace = workspaceKey ? session.workspaces.get(workspaceKey) : null;
     if (!workspace) continue;
+    const agentRuntimeFields = getWorkspaceManagedAgentFields(
+      managedAgentsByServer.get(placement.serverId),
+      workspace.id,
+    );
 
     const entry = createSidebarWorkspaceEntry({
       serverId: placement.serverId,
@@ -406,6 +549,10 @@ export function buildSidebarWorkspaceEntries(input: {
       projectViewKey: placement.projectViewKey,
       pendingCreateAttempts: input.pendingCreateAttempts,
       workspaceAgentActivity: session.workspaceAgentActivity,
+      ...agentRuntimeFields,
+      agentDirectoryCurrent: session.agentDirectoryCurrent ?? false,
+      supportsAgentRuntimeClose: session.supportsAgentRuntimeClose ?? false,
+      agentRuntimeCloseDisabledReason: session.agentRuntimeCloseDisabledReason,
       supportsMarkUnread: session.supportsMarkUnread,
     });
     const previousEntry = input.previousEntries?.get(placement.workspaceKey);

@@ -18,6 +18,9 @@ export interface WorkspaceTabMenuLabels {
   closeOthers: string;
   reloadAgent: string;
   reloadAgentTooltip: string;
+  closeAgentRuntime: string;
+  closeAgentRuntimeAndKeepRecord: string;
+  closingAgentRuntime: string;
   close: string;
 }
 
@@ -34,8 +37,18 @@ export const DEFAULT_WORKSPACE_TAB_MENU_LABELS: WorkspaceTabMenuLabels = {
   closeOthers: i18n.t("workspace.tabs.menu.closeOthers"),
   reloadAgent: i18n.t("workspace.tabs.menu.reloadAgent"),
   reloadAgentTooltip: i18n.t("workspace.tabs.menu.reloadAgentTooltip"),
+  closeAgentRuntime: i18n.t("workspace.tabs.menu.closeAgentRuntime"),
+  closeAgentRuntimeAndKeepRecord: i18n.t("workspace.tabs.menu.closeAgentRuntimeAndKeepRecord"),
+  closingAgentRuntime: i18n.t("workspace.tabs.menu.closingAgentRuntime"),
   close: i18n.t("workspace.tabs.menu.close"),
 };
+
+/** Runtime actions available to managed Agent tab menus */
+export interface WorkspaceTabAgentRuntimeActions {
+  canClose: (agentId: string) => boolean;
+  isPending: (agentId: string) => boolean;
+  close: (input: { agentId: string; tabId: string; keepRecord: boolean }) => void;
+}
 
 export type WorkspaceTabMenuEntry =
   | {
@@ -49,6 +62,7 @@ export type WorkspaceTabMenuEntry =
         | "arrow-right-to-line"
         | "copy-x"
         | "pencil"
+        | "bot"
         | "x";
       hint?: string;
       tooltip?: string;
@@ -78,6 +92,7 @@ interface BuildWorkspaceTabMenuEntriesInput {
   onCloseTabsBefore: (tabId: string) => Promise<void> | void;
   onCloseTabsAfter: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
+  agentRuntimeActions?: WorkspaceTabAgentRuntimeActions;
   labels?: WorkspaceTabMenuLabels;
 }
 
@@ -95,6 +110,7 @@ interface BuildWorkspaceDesktopTabActionsInput {
   onCloseTabsToLeft: (tabId: string) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
+  agentRuntimeActions?: WorkspaceTabAgentRuntimeActions;
   labels?: WorkspaceTabMenuLabels;
 }
 
@@ -182,6 +198,7 @@ export function buildWorkspaceTabMenuEntries(
     onCloseTabsBefore,
     onCloseTabsAfter,
     onCloseOtherTabs,
+    agentRuntimeActions,
   } = input;
   const labels = input.labels ?? DEFAULT_WORKSPACE_TAB_MENU_LABELS;
   const isFirstTab = index === 0;
@@ -212,6 +229,30 @@ export function buildWorkspaceTabMenuEntries(
         void onCopyAgentId(agentId);
       },
     });
+    if (agentRuntimeActions) {
+      const pending = agentRuntimeActions.isPending(agentId);
+      const disabled = pending || !agentRuntimeActions.canClose(agentId);
+      entries.push({
+        kind: "item",
+        key: "close-agent-runtime",
+        label: pending ? labels.closingAgentRuntime : labels.closeAgentRuntime,
+        icon: "bot",
+        disabled,
+        destructive: true,
+        testID: `${menuTestIDBase}-close-agent-runtime`,
+        onSelect: () => agentRuntimeActions.close({ agentId, tabId: tab.tabId, keepRecord: false }),
+      });
+      entries.push({
+        kind: "item",
+        key: "close-agent-runtime-keep-record",
+        label: pending ? labels.closingAgentRuntime : labels.closeAgentRuntimeAndKeepRecord,
+        icon: "bot",
+        disabled,
+        destructive: true,
+        testID: `${menuTestIDBase}-close-agent-runtime-keep-record`,
+        onSelect: () => agentRuntimeActions.close({ agentId, tabId: tab.tabId, keepRecord: true }),
+      });
+    }
   }
 
   if (tab.target.kind === "terminal") {
@@ -343,6 +384,7 @@ export function buildWorkspaceDesktopTabActions(
       onCloseTabsBefore: input.onCloseTabsToLeft,
       onCloseTabsAfter: input.onCloseTabsToRight,
       onCloseOtherTabs: input.onCloseOtherTabs,
+      agentRuntimeActions: input.agentRuntimeActions,
       labels: input.labels,
     }),
     closeButtonTestId: getCloseButtonTestId(input.tab),

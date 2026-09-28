@@ -2879,6 +2879,27 @@ export class DaemonClient {
     }
   }
 
+  supportsAgentRuntimeClose(): boolean {
+    return this.lastServerInfoMessage?.features?.agentRuntimeClose === true;
+  }
+
+  async closeIdleAgentRuntime(agentId: string): Promise<"closed" | "already_closed"> {
+    if (!this.supportsAgentRuntimeClose()) {
+      throw new Error("Update the host to close idle agent runtimes.");
+    }
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"agent.runtime.close.response">({
+        message: {
+          type: "agent.runtime.close.request",
+          agentId,
+        },
+      });
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "Failed to close agent runtime");
+    }
+    return payload.outcome ?? "closed";
+  }
+
   async updateAgent(
     agentId: string,
     updates: { name?: string; labels?: Record<string, string> },

@@ -1994,6 +1994,21 @@ export const AgentDetachResponseMessageSchema = z.object({
   payload: AgentActionResponsePayloadSchema,
 });
 
+export const AgentRuntimeCloseRequestMessageSchema = z.object({
+  type: z.literal("agent.runtime.close.request"),
+  agentId: z.string(),
+  requestId: z.string(),
+});
+
+export const AgentRuntimeCloseResponseMessageSchema = z.object({
+  type: z.literal("agent.runtime.close.response"),
+  payload: AgentActionResponsePayloadSchema.extend({
+    // The outcome distinguishes an already closed stored record from a runtime
+    // that was released by this request. Older clients ignore this optional field.
+    outcome: z.enum(["closed", "already_closed"]).optional(),
+  }),
+});
+
 export const AgentRewindModeSchema = z.enum(["conversation", "files", "both"]);
 
 export const AgentRewindRequestMessageSchema = z.object({
@@ -3257,6 +3272,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   SetAgentFeatureRequestMessageSchema,
   AgentConfigApplyRequestMessageSchema,
   AgentDetachRequestMessageSchema,
+  AgentRuntimeCloseRequestMessageSchema,
   AgentRewindRequestMessageSchema,
   AgentPermissionResponseMessageSchema,
   CheckoutStatusRequestSchema,
@@ -3535,6 +3551,9 @@ export const ServerInfoStatusPayloadSchema = z
         // COMPAT(workspaceRequestReceipts): added in v0.8.0; remove gate after 2027-03-07.
         workspaceRequestReceipts: z.boolean().optional(),
         creationLifecycle: z.boolean().optional(),
+        // COMPAT(agentRuntimeClose): added in v0.8.x; remove the gate after the
+        // supported client floor includes idle runtime closure.
+        agentRuntimeClose: z.boolean().optional(),
         // COMPAT(hubAgentRpc): added in v0.8.0; remove gate after 2027-03-05.
         hubAgentRpc: z.boolean().optional(),
         providersSnapshot: z.boolean().optional(),
@@ -6857,6 +6876,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   WaitForFinishResponseMessageSchema,
   AgentPermissionRequestMessageSchema,
   AgentPermissionResolvedMessageSchema,
+  AgentRuntimeCloseResponseMessageSchema,
   AgentDeletedMessageSchema,
   AgentArchivedMessageSchema,
   CloseItemsResponseSchema,
@@ -7044,6 +7064,9 @@ export type SetAgentThinkingResponseMessage = z.infer<typeof SetAgentThinkingRes
 export type SetAgentFeatureResponseMessage = z.infer<typeof SetAgentFeatureResponseMessageSchema>;
 export type AgentConfigApplyResponseMessage = z.infer<typeof AgentConfigApplyResponseMessageSchema>;
 export type AgentDetachResponseMessage = z.infer<typeof AgentDetachResponseMessageSchema>;
+export type AgentRuntimeCloseResponseMessage = z.infer<
+  typeof AgentRuntimeCloseResponseMessageSchema
+>;
 export type AgentRewindResponseMessage = z.infer<typeof AgentRewindResponseMessageSchema>;
 export type UpdateAgentResponseMessage = z.infer<typeof UpdateAgentResponseMessageSchema>;
 export type ProjectRenameResponse = z.infer<typeof ProjectRenameResponseSchema>;

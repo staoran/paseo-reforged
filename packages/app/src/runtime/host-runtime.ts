@@ -65,7 +65,11 @@ import { dispatchComposerAgentMessage, sendQueuedComposerMessageNow } from "@/co
 import { createMessageSubmissionWriter } from "@/composer/submission/writer";
 import { resolveComposerAttachmentSubmitFormat } from "@/composer/attachments/submit";
 import { encodeImages } from "@/utils/encode-images";
-import { DirectorySync, type RefreshAgentDirectoryResult } from "@/runtime/directory-sync";
+import {
+  DirectorySync,
+  type DirectorySourceToken,
+  type RefreshAgentDirectoryResult,
+} from "@/runtime/directory-sync";
 import { ReplicaCache } from "@/runtime/replica-cache";
 import type { ReplicaRowStore } from "@/runtime/replica-cache/row-store";
 import { createReplicaRowStore } from "@/runtime/replica-cache/row-store-factory";
@@ -110,6 +114,7 @@ export interface HostRuntimeSnapshot {
   agentDirectoryStatus: HostRuntimeAgentDirectoryStatus;
   agentDirectoryError: string | null;
   hasEverLoadedAgentDirectory: boolean;
+  agentDirectorySource: DirectorySourceToken | null;
   probeByConnectionId: Map<string, ConnectionProbeState>;
   clientGeneration: number;
   connectionEpoch: number;
@@ -636,6 +641,7 @@ export class HostRuntimeController {
       agentDirectoryStatus: "idle",
       agentDirectoryError: null,
       hasEverLoadedAgentDirectory: false,
+      agentDirectorySource: null,
       probeByConnectionId: new Map(),
       clientGeneration: 0,
     };
@@ -734,11 +740,12 @@ export class HostRuntimeController {
     });
   }
 
-  markAgentDirectorySyncReady(): void {
+  markAgentDirectorySyncReady(source: DirectorySourceToken | null = null): void {
     this.updateSnapshot({
       agentDirectoryStatus: "ready",
       agentDirectoryError: null,
       hasEverLoadedAgentDirectory: true,
+      agentDirectorySource: source,
     });
   }
 
@@ -1655,7 +1662,7 @@ export class HostRuntimeStore {
       {
         onAgentStoppedRunning: (agentId) => this.drainQueuedAgentMessage(newServerId, agentId),
         markAgentLoading: () => controller.markAgentDirectorySyncLoading(),
-        markAgentReady: () => controller.markAgentDirectorySyncReady(),
+        markAgentReady: (source) => controller.markAgentDirectorySyncReady(source),
         markAgentError: (error) => controller.markAgentDirectorySyncError(error),
       },
       this.replicaCache,
@@ -2073,7 +2080,7 @@ export class HostRuntimeStore {
         {
           onAgentStoppedRunning: (agentId) => this.drainQueuedAgentMessage(host.serverId, agentId),
           markAgentLoading: () => controller.markAgentDirectorySyncLoading(),
-          markAgentReady: () => controller.markAgentDirectorySyncReady(),
+          markAgentReady: (source) => controller.markAgentDirectorySyncReady(source),
           markAgentError: (error) => controller.markAgentDirectorySyncError(error),
         },
         this.replicaCache,
@@ -2513,13 +2520,31 @@ export function useHostRuntimeConnectionStatuses(
   );
 
   return useMemo(() => {
-    // The aggregate version is the reactivity trigger; re-read snapshots on every host tick.
+    // Aggregate version triggers snapshot reads on every host tick
     void version;
     const entries: Array<[string, HostRuntimeConnectionStatus]> = serverIds.map((serverId) => [
       serverId,
       store.getSnapshot(serverId)?.connectionStatus ?? "connecting",
     ]);
     return new Map(entries);
+  }, [serverIds, store, version]);
+}
+
+/** Selects the current Host snapshots once for a collection view */
+export function useHostRuntimeSnapshots(
+  serverIds: readonly string[],
+): ReadonlyMap<string, HostRuntimeSnapshot | null> {
+  const store = getHostRuntimeStore();
+  const version = useSyncExternalStore(
+    (onStoreChange) => store.subscribeAll(onStoreChange),
+    () => store.getVersion(),
+    () => store.getVersion(),
+  );
+
+  return useMemo(() => {
+    // The aggregate version is the reactivity trigger; re-read snapshots on every host tick.
+    void version;
+    return new Map(serverIds.map((serverId) => [serverId, store.getSnapshot(serverId)]));
   }, [serverIds, store, version]);
 }
 

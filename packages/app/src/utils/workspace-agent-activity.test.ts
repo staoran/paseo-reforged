@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Agent } from "@/stores/session-store";
 import {
   buildWorkspaceAgentActivityIndex,
+  buildWorkspaceManagedAgentIndex,
   deriveWorkspaceReadActionAvailability,
 } from "./workspace-agent-activity";
 
@@ -69,6 +70,58 @@ function agent(input: {
 }
 
 describe("workspace agent activity index", () => {
+  it("counts unarchived resident managed Agents by their own Workspace", () => {
+    const index = buildWorkspaceManagedAgentIndex(
+      new Map([
+        ["root", agent({ id: "root", workspaceId: "workspace-a", updatedAt: "2026-01-01" })],
+        [
+          "child",
+          agent({
+            id: "child",
+            workspaceId: "workspace-a",
+            parentAgentId: "root",
+            status: "error",
+            updatedAt: "2026-01-02",
+          }),
+        ],
+        [
+          "other-workspace",
+          agent({ id: "other-workspace", workspaceId: "workspace-b", updatedAt: "2026-01-03" }),
+        ],
+        [
+          "closed",
+          agent({
+            id: "closed",
+            workspaceId: "workspace-a",
+            status: "closed",
+            updatedAt: "2026-01-04",
+          }),
+        ],
+        [
+          "archived",
+          agent({
+            id: "archived",
+            workspaceId: "workspace-a",
+            archivedAt: "2026-01-05T00:00:00.000Z",
+            updatedAt: "2026-01-05",
+          }),
+        ],
+      ]),
+    );
+
+    expect(index.residentCountsByWorkspace).toEqual(
+      new Map([
+        ["workspace-a", 2],
+        ["workspace-b", 1],
+      ]),
+    );
+    expect(index.agentsByWorkspace.get("workspace-a")?.map(({ id }) => id)).toEqual([
+      "root",
+      "child",
+      "closed",
+    ]);
+  });
+
   it("uses turn liveness for running while preserving protocol lifecycle states", () => {
     const result = buildWorkspaceAgentActivityIndex(
       new Map([

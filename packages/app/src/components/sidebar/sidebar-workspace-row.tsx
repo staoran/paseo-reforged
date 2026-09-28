@@ -436,6 +436,10 @@ function WorkspaceRowTrailingActions({
                 serverId={workspace.serverId}
                 workspaceId={workspace.workspaceId}
                 workspaceLabels={workspace.labels}
+                managedAgents={workspace.managedAgents}
+                agentDirectoryCurrent={workspace.agentDirectoryCurrent}
+                supportsAgentRuntimeClose={workspace.supportsAgentRuntimeClose}
+                agentRuntimeCloseDisabledReason={workspace.agentRuntimeCloseDisabledReason}
                 onCopyPath={onCopyPath}
                 onCopyBranchName={onCopyBranchName}
                 onRename={onRename}

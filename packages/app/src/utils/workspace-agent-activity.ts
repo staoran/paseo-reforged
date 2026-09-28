@@ -12,6 +12,32 @@ export interface WorkspaceAgentActivity {
   hasMarkUnreadCandidate: boolean;
 }
 
+export interface WorkspaceManagedAgentIndex {
+  agentsByWorkspace: Map<string, Agent[]>;
+  residentCountsByWorkspace: Map<string, number>;
+}
+
+/** Groups unarchived managed Agents and counts the ones with a live runtime */
+export function buildWorkspaceManagedAgentIndex(
+  agents: ReadonlyMap<string, Agent>,
+): WorkspaceManagedAgentIndex {
+  const agentsByWorkspace = new Map<string, Agent[]>();
+  const residentCountsByWorkspace = new Map<string, number>();
+  for (const agent of agents.values()) {
+    if (agent.archivedAt || !agent.workspaceId) continue;
+    const workspaceAgents = agentsByWorkspace.get(agent.workspaceId);
+    if (workspaceAgents) workspaceAgents.push(agent);
+    else agentsByWorkspace.set(agent.workspaceId, [agent]);
+    if (agent.status !== "closed") {
+      residentCountsByWorkspace.set(
+        agent.workspaceId,
+        (residentCountsByWorkspace.get(agent.workspaceId) ?? 0) + 1,
+      );
+    }
+  }
+  return { agentsByWorkspace, residentCountsByWorkspace };
+}
+
 export interface WorkspaceReadActionAvailability {
   hasClearableAttention: boolean;
   canMarkUnread: boolean;

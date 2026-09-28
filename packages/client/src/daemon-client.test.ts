@@ -4795,6 +4795,49 @@ test("detaches an agent through the namespaced detach RPC", async () => {
   await expect(promise).resolves.toBeUndefined();
 });
 
+test("closes an idle runtime only when the host advertises support", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "agent_runtime_close_unit_test",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+
+  const connecting = client.connect();
+  mock.triggerOpen();
+  await connecting;
+  await expect(client.closeIdleAgentRuntime("agent-id")).rejects.toThrow(
+    "Update the host to close idle agent runtimes.",
+  );
+  expect(mock.sent).toEqual([]);
+
+  const reconnecting = client.connect();
+  mock.triggerOpen({ features: { agentRuntimeClose: true } });
+  await reconnecting;
+  const close = client.closeIdleAgentRuntime("agent-id");
+  const request = parseSentFrame(mock.sent[0]);
+  expect(request).toMatchObject({
+    type: "agent.runtime.close.request",
+    agentId: "agent-id",
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.runtime.close.response",
+      payload: {
+        requestId: request.requestId,
+        agentId: "agent-id",
+        accepted: true,
+        error: null,
+        outcome: "already_closed",
+      },
+    }),
+  );
+  await expect(close).resolves.toBe("already_closed");
+});
+
 test("sends active-scoped fetch_agents_request", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
