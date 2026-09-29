@@ -474,6 +474,8 @@ type ManagedAgentClosed = ManagedAgentBase & {
   lifecycle: "closed";
   session: null;
   activeForegroundTurnId: null;
+  /** Retains durable status when notifying clients about a stored-only record */
+  storedLastStatus?: AgentLifecycleStatus;
 };
 
 export type ManagedAgent =
@@ -1725,6 +1727,16 @@ export class AgentManager {
           if (!stored) {
             throw new Error(`Agent ${agentId} not found`);
           }
+          if (stored.lastStatus !== "closed") {
+            // Clear historical residency without acquiring a provider session
+            const nextRecord: StoredAgentRecord = {
+              ...stored,
+              lastStatus: "closed",
+              updatedAt: this.nextStoredUpdatedAt(stored),
+            };
+            await this.requireRegistry().upsert(nextRecord);
+            if (!nextRecord.internal) this.dispatchStoredAgentState(nextRecord);
+          }
           return { outcome: "already_closed" as const };
         }
         this.assertIdleRuntimeCanClose(agent);
@@ -1966,6 +1978,7 @@ export class AgentManager {
         config: buildStoredAgentConfig(record),
         runtimeInfo: undefined,
         lifecycle: "closed",
+        storedLastStatus: record.lastStatus,
         createdAt: new Date(record.createdAt),
         updatedAt,
         availableModes: [],

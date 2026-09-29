@@ -8,10 +8,12 @@ import {
 } from "@/timeline/turn-liveness";
 import type { Agent } from "@/stores/session-store";
 
+/** Keeps historical running status from fabricating a current turn after restart */
 function normalizeActiveTurn(
   snapshot: AgentSnapshotPayload,
   lastUserMessageAt: Date | null,
 ): ActiveTurnIdentity | null {
+  if (snapshot.runtimeAttached === false) return null;
   if (snapshot.activeTurn === null) return null;
   if (snapshot.activeTurn) {
     return {
@@ -57,6 +59,7 @@ export function derivePendingPermissionKey(
   return `${agentId}:${fallbackId}`;
 }
 
+/** Preserves Agent facts when writing a directory snapshot to the cache */
 export function projectAgentSnapshot(agent: Agent): AgentSnapshotPayload {
   return {
     id: agent.id,
@@ -70,6 +73,7 @@ export function projectAgentSnapshot(agent: Agent): AgentSnapshotPayload {
     updatedAt: agent.updatedAt.toISOString(),
     lastUserMessageAt: agent.lastUserMessageAt?.toISOString() ?? null,
     status: agent.status,
+    runtimeAttached: agent.runtimeAttached,
     ...projectActiveTurn(agent),
     capabilities: agent.capabilities,
     currentModeId: agent.currentModeId,
@@ -89,6 +93,7 @@ export function projectAgentSnapshot(agent: Agent): AgentSnapshotPayload {
   };
 }
 
+/** Normalizes wire dates and runtime facts at the store boundary */
 export function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId: string) {
   const createdAt = new Date(snapshot.createdAt);
   const updatedAt = new Date(snapshot.updatedAt);
@@ -110,6 +115,8 @@ export function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId:
     id: snapshot.id,
     provider: snapshot.provider,
     status: snapshot.status,
+    // COMPAT(agentRuntimeAttached): added in v0.10.0-beta.2, remove after 2027-03-29 once the daemon floor includes it
+    runtimeAttached: snapshot.runtimeAttached ?? true,
     turn,
     createdAt,
     updatedAt,

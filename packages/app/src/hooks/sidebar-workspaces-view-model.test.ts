@@ -474,7 +474,10 @@ describe("shared sidebar workspace model", () => {
       ],
     ]);
     const firstAgent = agent({ id: "first", workspaceId: "one", status: "idle" });
-    const secondAgent = agent({ id: "second", workspaceId: "two", status: "idle" });
+    const secondAgent = {
+      ...agent({ id: "second", workspaceId: "two", status: "idle" }),
+      runtimeAttached: false,
+    };
     const buildEntries = (
       agents: Map<string, Agent>,
       previousEntries?: ReadonlyMap<string, SidebarWorkspaceEntry>,
@@ -508,10 +511,12 @@ describe("shared sidebar workspace model", () => {
       initial,
     );
 
+    expect(initial.get("srv:two")?.detachedAgentCount).toBe(1);
     expect(next.get("srv:one")).toBe(initial.get("srv:one"));
     expect(next.get("srv:one")?.managedAgents).toBe(initial.get("srv:one")?.managedAgents);
     expect(next.get("srv:two")).not.toBe(initial.get("srv:two"));
     expect(next.get("srv:two")?.residentAgentCount).toBe(0);
+    expect(next.get("srv:two")?.detachedAgentCount).toBe(0);
   });
 
   it("keeps a structurally disambiguated project key in status entries", () => {

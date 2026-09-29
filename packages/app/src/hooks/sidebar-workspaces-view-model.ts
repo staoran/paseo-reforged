@@ -72,6 +72,8 @@ export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
   hasMarkUnreadCandidate: boolean;
   supportsMarkUnread: boolean;
   residentAgentCount?: number | null;
+  /** Historical Agents whose provider session has not resumed */
+  detachedAgentCount?: number | null;
   managedAgents?: readonly Agent[] | null;
   agentDirectoryCurrent?: boolean;
   supportsAgentRuntimeClose?: boolean;
@@ -233,6 +235,7 @@ function normalizeCurrentBranch(currentBranch: string | null | undefined): strin
 /** Projects optional Agent runtime fields into a stable sidebar shape */
 function createAgentRuntimeSidebarFields(input: {
   residentAgentCount?: number | null;
+  detachedAgentCount?: number | null;
   managedAgents?: readonly Agent[] | null;
   agentDirectoryCurrent?: boolean;
   supportsAgentRuntimeClose?: boolean;
@@ -240,6 +243,7 @@ function createAgentRuntimeSidebarFields(input: {
 }): Pick<
   SidebarWorkspaceEntry,
   | "residentAgentCount"
+  | "detachedAgentCount"
   | "managedAgents"
   | "agentDirectoryCurrent"
   | "supportsAgentRuntimeClose"
@@ -247,6 +251,7 @@ function createAgentRuntimeSidebarFields(input: {
 > {
   return {
     residentAgentCount: input.residentAgentCount ?? null,
+    detachedAgentCount: input.detachedAgentCount ?? null,
     managedAgents: input.managedAgents ?? null,
     agentDirectoryCurrent: input.agentDirectoryCurrent ?? false,
     supportsAgentRuntimeClose: input.supportsAgentRuntimeClose ?? false,
@@ -262,6 +267,7 @@ export function createSidebarWorkspaceEntry(input: {
   pendingCreateAttempts?: Record<string, PendingCreateAttempt>;
   workspaceAgentActivity?: ReadonlyMap<string, WorkspaceAgentActivity>;
   residentAgentCount?: number | null;
+  detachedAgentCount?: number | null;
   managedAgents?: readonly Agent[] | null;
   agentDirectoryCurrent?: boolean;
   supportsAgentRuntimeClose?: boolean;
@@ -510,9 +516,9 @@ function getWorkspaceManagedAgentFields(
   index: WorkspaceManagedAgentIndex | null | undefined,
   workspaceId: string,
   previousEntry: SidebarWorkspaceEntry | undefined,
-): Pick<SidebarWorkspaceEntry, "residentAgentCount" | "managedAgents"> {
+): Pick<SidebarWorkspaceEntry, "residentAgentCount" | "detachedAgentCount" | "managedAgents"> {
   if (!index) {
-    return { residentAgentCount: null, managedAgents: null };
+    return { residentAgentCount: null, detachedAgentCount: null, managedAgents: null };
   }
   const agents = index.agentsByWorkspace.get(workspaceId) ?? EMPTY_AGENTS;
   const previousAgents = previousEntry?.managedAgents;
@@ -524,6 +530,7 @@ function getWorkspaceManagedAgentFields(
       : agents;
   return {
     residentAgentCount: index.residentCountsByWorkspace.get(workspaceId) ?? 0,
+    detachedAgentCount: index.detachedCountsByWorkspace.get(workspaceId) ?? 0,
     managedAgents,
   };
 }

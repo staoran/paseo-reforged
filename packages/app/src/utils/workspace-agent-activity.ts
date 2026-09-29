@@ -15,14 +15,18 @@ export interface WorkspaceAgentActivity {
 export interface WorkspaceManagedAgentIndex {
   agentsByWorkspace: Map<string, Agent[]>;
   residentCountsByWorkspace: Map<string, number>;
+  /** Unclosed historical records without a current provider session */
+  detachedCountsByWorkspace: Map<string, number>;
 }
 
-/** Groups unarchived managed Agents and counts the ones with a live runtime */
+/** Groups unarchived managed Agents and counts those with an unclosed historical status */
 export function buildWorkspaceManagedAgentIndex(
   agents: ReadonlyMap<string, Agent>,
 ): WorkspaceManagedAgentIndex {
   const agentsByWorkspace = new Map<string, Agent[]>();
   const residentCountsByWorkspace = new Map<string, number>();
+  /** Drives the orange warning without changing the historical resident count */
+  const detachedCountsByWorkspace = new Map<string, number>();
   for (const agent of agents.values()) {
     if (agent.archivedAt || !agent.workspaceId) continue;
     const workspaceAgents = agentsByWorkspace.get(agent.workspaceId);
@@ -33,9 +37,15 @@ export function buildWorkspaceManagedAgentIndex(
         agent.workspaceId,
         (residentCountsByWorkspace.get(agent.workspaceId) ?? 0) + 1,
       );
+      if (agent.runtimeAttached === false) {
+        detachedCountsByWorkspace.set(
+          agent.workspaceId,
+          (detachedCountsByWorkspace.get(agent.workspaceId) ?? 0) + 1,
+        );
+      }
     }
   }
-  return { agentsByWorkspace, residentCountsByWorkspace };
+  return { agentsByWorkspace, residentCountsByWorkspace, detachedCountsByWorkspace };
 }
 
 export interface WorkspaceReadActionAvailability {

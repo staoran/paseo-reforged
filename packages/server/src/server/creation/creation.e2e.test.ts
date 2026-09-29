@@ -228,6 +228,7 @@ test.each(["create_agent_request", "agent.create.request"] as const)(
         throw new Error(`Unexpected creation result ${JSON.stringify(message)}`);
       };
       expect(createdAgent(replay)?.id).toBe(createdAgent(first)?.id);
+      expect(createdAgent(replay)?.status).toBe("idle");
       const agentId = createdAgent(first)!.id;
       await daemon.daemon.agentManager.setTitle(agentId, "Updated after creation");
       await daemon.daemon.agentManager.flush();
@@ -237,6 +238,7 @@ test.each(["create_agent_request", "agent.create.request"] as const)(
         requestId: "legacy-after-update",
       });
       expect(createdAgent(legacyReplay)?.title).toBe("Updated after creation");
+      expect(createdAgent(legacyReplay)?.status).toBe("idle");
       expect(creations).toBe(1);
     } finally {
       peer.close();

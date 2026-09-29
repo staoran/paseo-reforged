@@ -182,6 +182,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
             serviceSummary={serviceSummary}
             labels={labels}
             residentAgentCount={workspace.residentAgentCount}
+            detachedAgentCount={workspace.detachedAgentCount}
           />
         </View>
       </View>

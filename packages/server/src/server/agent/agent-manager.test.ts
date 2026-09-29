@@ -5497,6 +5497,10 @@ test("markAgentUnread dispatches stored attention to every subscriber", async ()
   await manager.closeAgent(created.id);
 
   const firstClientEvents: ManagedAgent[] = [];
+  /** A daemon restart can leave an idle record without a live runtime */
+  const storedBeforeUnread = await storage.get(created.id);
+  expect(storedBeforeUnread).not.toBeNull();
+  await storage.upsert({ ...storedBeforeUnread!, lastStatus: "idle" });
   const secondClientEvents: ManagedAgent[] = [];
   for (const events of [firstClientEvents, secondClientEvents]) {
     manager.subscribe(
@@ -5523,6 +5527,7 @@ test("markAgentUnread dispatches stored attention to every subscriber", async ()
         attentionTimestamp: expect.any(Date),
       },
     });
+    expect(toAgentPayload(events[0])).toMatchObject({ status: "idle", runtimeAttached: false });
   }
   expect(await storage.get(created.id)).toMatchObject({
     requiresAttention: true,
@@ -9923,6 +9928,50 @@ test("closes only an idle runtime and keeps its stored agent record", async () =
   } finally {
     await manager.closeAgent(agentId).catch(() => undefined);
     await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("closes a stored-only agent without resuming its provider runtime", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stored-runtime-close-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new TestAgentClient();
+  const creator = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  let agentId: string | null = null;
+
+  try {
+    const agent = await creator.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: "workspace-1",
+    });
+    agentId = agent.id;
+    await creator.closeAgent(agent.id);
+    const record = await storage.get(agent.id);
+    expect(record).not.toBeNull();
+    await storage.upsert({ ...record!, lastStatus: "running" });
+
+    const restarted = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+    const states: ManagedAgent[] = [];
+    restarted.subscribe(
+      (event) => {
+        if (event.type === "agent_state" && event.agent.id === agent.id) states.push(event.agent);
+      },
+      { agentId: agent.id, replayState: false },
+    );
+
+    await expect(restarted.closeIdleAgentRuntime(agent.id)).resolves.toEqual({
+      outcome: "already_closed",
+    });
+    expect(await storage.get(agent.id)).toMatchObject({ lastStatus: "closed" });
+    expect(states.at(-1)?.lifecycle).toBe("closed");
+    expect(toAgentPayload(states.at(-1)!)).toMatchObject({
+      status: "closed",
+      runtimeAttached: false,
+    });
+    expect(client.resumeOverrides).toEqual([]);
+  } finally {
+    await creator.closeAgent(agentId).catch(() => undefined);
+    await creator.flush().catch(() => undefined);
     await storage.flush().catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });
   }

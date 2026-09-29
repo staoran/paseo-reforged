@@ -21,6 +21,8 @@ const agent = {
   turn: { phase: "complete" },
   pendingPermissions: [],
 } as unknown as Agent;
+/** Additional records let batch tests cover a real user selection */
+const agents = new Map<string, Agent>();
 const client = { supportsAgentRuntimeClose: () => true, closeIdleAgentRuntime: closeRpc };
 
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
@@ -32,7 +34,7 @@ vi.mock("@/runtime/host-runtime", () => ({
 }));
 vi.mock("@/stores/session-store", () => ({
   useSessionStore: {
-    getState: () => ({ sessions: { host: { agents: new Map([[agent.id, agent]]) } } }),
+    getState: () => ({ sessions: { host: { agents } } }),
   },
 }));
 vi.mock("@/utils/agent-directory-readiness", () => ({
@@ -41,6 +43,8 @@ vi.mock("@/utils/agent-directory-readiness", () => ({
 vi.mock("@/utils/confirm-dialog", () => ({ confirmDialog: confirmClose }));
 
 beforeEach(() => {
+  agents.clear();
+  agents.set(agent.id, agent);
   closeRpc.mockReset();
   closeRpc.mockResolvedValue(undefined);
   confirmClose.mockReset();
@@ -49,6 +53,89 @@ beforeEach(() => {
 });
 
 describe("useCloseIdleAgentRuntime", () => {
+  it("confirms once and closes only the selected Agents including detached historical records", async () => {
+    const detached = {
+      ...agent,
+      id: "detached",
+      status: "running" as const,
+      runtimeAttached: false,
+    };
+    agents.set(detached.id, detached);
+    agents.set("unselected", { ...agent, id: "unselected" });
+    const { result } = renderHook(() => useCloseIdleAgentRuntime());
+
+    await act(async () => {
+      expect(
+        await result.current.closeIdleAgentRuntimes({
+          serverId: "host",
+          agentIds: [agent.id, detached.id],
+        }),
+      ).toBe(true);
+    });
+
+    expect(confirmClose).toHaveBeenCalledTimes(1);
+    expect(closeRpc.mock.calls.map(([id]) => id)).toEqual([agent.id, detached.id]);
+    expect(result.current.pendingAgentIds.size).toBe(0);
+  });
+
+  it("keeps the picker open and leaves runtimes untouched when batch confirmation is canceled", async () => {
+    confirmClose.mockResolvedValueOnce(false);
+    const { result } = renderHook(() => useCloseIdleAgentRuntime());
+
+    await act(async () => {
+      expect(
+        await result.current.closeIdleAgentRuntimes({
+          serverId: "host",
+          agentIds: [agent.id],
+        }),
+      ).toBe(false);
+    });
+
+    expect(closeRpc).not.toHaveBeenCalled();
+    expect(result.current.pendingAgentIds.size).toBe(0);
+  });
+
+  it("rechecks live work after batch confirmation before sending close requests", async () => {
+    confirmClose.mockImplementationOnce(async () => {
+      agents.set(agent.id, { ...agent, status: "running" });
+      return true;
+    });
+    const { result } = renderHook(() => useCloseIdleAgentRuntime());
+
+    await act(async () => {
+      expect(
+        await result.current.closeIdleAgentRuntimes({
+          serverId: "host",
+          agentIds: [agent.id],
+        }),
+      ).toBe(false);
+    });
+
+    expect(closeRpc).not.toHaveBeenCalled();
+    expect(result.current.errorByAgentId.get(agent.id)).toBe(
+      "sidebar.workspace.agentRuntime.idleRequired",
+    );
+  });
+
+  it("reports batch failures and still closes the other selected runtimes", async () => {
+    agents.set("other", { ...agent, id: "other" });
+    closeRpc.mockRejectedValueOnce(new Error("Provider close failed"));
+    const { result } = renderHook(() => useCloseIdleAgentRuntime());
+
+    await act(async () => {
+      expect(
+        await result.current.closeIdleAgentRuntimes({
+          serverId: "host",
+          agentIds: [agent.id, "other"],
+        }),
+      ).toBe(false);
+    });
+
+    expect(closeRpc.mock.calls.map(([id]) => id)).toEqual([agent.id, "other"]);
+    expect(result.current.errorByAgentId.get(agent.id)).toBe("Provider close failed");
+    expect(result.current.pendingAgentIds.size).toBe(0);
+  });
+
   it("keeps a failed close visible until the user dismisses the error", async () => {
     closeRpc.mockRejectedValueOnce(new Error("Provider close failed"));
     const { result } = renderHook(() => useCloseIdleAgentRuntime());

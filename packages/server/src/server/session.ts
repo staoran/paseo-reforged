@@ -4018,10 +4018,7 @@ export class Session {
         hasAgent: true,
         hasPrompt: hasInitialCreationPrompt(request),
         exists: this.creationResourceExists,
-        readAgent: async (id) => {
-          const record = await this.agentStorage.get(id);
-          return record ? this.buildStoredAgentPayload(record) : null;
-        },
+        readAgent: (id) => this.getAgentPayloadById(id),
         createAgent: async (id, _workspace, onReady) => {
           try {
             return await this.createSessionAgent(
@@ -4221,7 +4218,8 @@ export class Session {
           );
         const record = await this.agentStorage.get(creation.agent.id);
         if (!record) throw new Error("Previously created agent no longer exists");
-        agent = this.buildStoredAgentPayload(record);
+        const live = this.agentManager.getAgent(creation.agent.id);
+        agent = live ? await this.buildAgentPayload(live) : this.buildStoredAgentPayload(record);
       } else {
         agent = await this.createSessionAgent(msg);
       }

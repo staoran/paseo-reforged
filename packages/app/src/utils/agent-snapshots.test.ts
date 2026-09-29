@@ -17,6 +17,7 @@ function createSnapshot(
     updatedAt: input.updatedAt ?? "2026-04-20T00:01:00.000Z",
     lastUserMessageAt: input.lastUserMessageAt ?? null,
     status: input.status ?? "idle",
+    runtimeAttached: input.runtimeAttached,
     activeTurn: input.activeTurn,
     capabilities: input.capabilities ?? {
       supportsStreaming: true,
@@ -79,6 +80,18 @@ describe("normalizeAgentSnapshot", () => {
       startedAt: new Date(startedAt),
       cancellationRequestId: null,
     });
+  });
+
+  it("keeps historical running status without inventing an active turn for a detached runtime", () => {
+    const detached = normalizeAgentSnapshot(
+      createSnapshot({ status: "running", runtimeAttached: false }),
+      "server-1",
+    );
+
+    expect(detached.status).toBe("running");
+    expect(detached.runtimeAttached).toBe(false);
+    expect(detached.turn.phase).toBe("idle");
+    expect(projectAgentSnapshot(detached).runtimeAttached).toBe(false);
   });
 
   it("derives parentAgentId from the parent label while preserving labels", () => {

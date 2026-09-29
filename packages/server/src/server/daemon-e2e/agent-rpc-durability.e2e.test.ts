@@ -41,8 +41,14 @@ test("agent fetch RPCs tolerate an agent whose workspace project record is gone"
       requestId: "req-agent-rpc-detail",
       agentId: fixture.orphanAgentId,
     });
+    const healthyAgent = await client.fetchAgent({
+      requestId: "req-agent-rpc-healthy-detail",
+      agentId: fixture.healthyAgentId,
+    });
 
     expect(agents.entries.map(toAgentEntrySummary)).toEqual([healthyAgentSummary(fixture)]);
+    expect(agents.entries[0]?.agent).toMatchObject({ status: "idle", runtimeAttached: false });
+    expect(healthyAgent?.agent).toMatchObject({ status: "idle", runtimeAttached: false });
     expect(agents.pageInfo).toEqual({
       nextCursor: null,
       prevCursor: null,

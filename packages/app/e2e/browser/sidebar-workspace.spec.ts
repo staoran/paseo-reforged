@@ -469,12 +469,19 @@ test.describe("Sidebar workspace list", () => {
         `sidebar-workspace-menu-close-agent-runtime-${session.agentId}`,
       );
       await expect(closeItem).toBeEnabled();
+      await expect(closeItem).toHaveText("Close agent");
       page.once("dialog", (dialog) => dialog.accept());
       await closeItem.click();
 
       await expect.poll(() => getAgentStatus(session.client, session.agentId)).toBe("closed");
       await expect(row.getByTestId("sidebar-workspace-resident-agents")).toHaveCount(0);
       await expect(row).toBeVisible();
+      await row.hover();
+      await page
+        .getByTestId(`sidebar-workspace-kebab-${getServerId()}:${session.workspaceId}`)
+        .click();
+      await expect(closeItem).toHaveCount(0);
+      await page.keyboard.press("Escape");
       await testInfo.attach("resident-agent-after-close", {
         body: await page.screenshot(),
         contentType: "image/png",

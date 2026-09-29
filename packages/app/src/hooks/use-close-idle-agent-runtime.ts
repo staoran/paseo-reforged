@@ -16,6 +16,13 @@ interface CloseIdleAgentRuntimeInput {
   afterClose?: (input: { agent: Agent; client: DaemonClient }) => Promise<void> | void;
 }
 
+interface CloseIdleAgentRuntimesInput {
+  /** Host that owns every requested Agent */
+  serverId: string;
+  /** Explicit user selection from the Workspace picker */
+  agentIds: readonly string[];
+}
+
 const EMPTY_PENDING_AGENT_IDS: ReadonlySet<string> = new Set();
 const EMPTY_ERRORS: ReadonlyMap<string, string> = new Map();
 
@@ -24,6 +31,7 @@ export function useCloseIdleAgentRuntime(): {
   pendingAgentIds: ReadonlySet<string>;
   errorByAgentId: ReadonlyMap<string, string>;
   closeIdleAgentRuntime: (input: CloseIdleAgentRuntimeInput) => Promise<void>;
+  closeIdleAgentRuntimes: (input: CloseIdleAgentRuntimesInput) => Promise<boolean>;
 } {
   const { t } = useTranslation();
   const toast = useToast();
@@ -128,7 +136,81 @@ export function useCloseIdleAgentRuntime(): {
     [clearError, reportError, t, toast],
   );
 
-  return { pendingAgentIds, errorByAgentId, closeIdleAgentRuntime };
+  /** Confirms a selection once and lets the picker stay open after cancellation or failure */
+  const closeIdleAgentRuntimes = useCallback(
+    async function closeIdleAgentRuntimes(input: CloseIdleAgentRuntimesInput): Promise<boolean> {
+      /** Deduplicates choices before reserving their pending slots */
+      const agentIds = [...new Set(input.agentIds)];
+      if (agentIds.length === 0 || agentIds.some((id) => pendingAgentIdsRef.current.has(id))) {
+        return false;
+      }
+
+      /** Reads readiness and eligibility again after the user confirms */
+      function readContexts(): { agent: Agent; client: DaemonClient }[] | null {
+        const contexts: { agent: Agent; client: DaemonClient }[] = [];
+        for (const agentId of agentIds) {
+          const context = readCloseContext(input.serverId, agentId);
+          if (!context) {
+            reportError(agentId, t("sidebar.workspace.agentRuntime.directoryUnavailable"));
+            return null;
+          }
+          if (!context.client.supportsAgentRuntimeClose()) {
+            reportError(agentId, t("sidebar.workspace.agentRuntime.updateHost"));
+            return null;
+          }
+          if (!canRequestAgentRuntimeClose(context.agent, false)) {
+            reportError(agentId, t("sidebar.workspace.agentRuntime.idleRequired"));
+            return null;
+          }
+          contexts.push(context);
+        }
+        return contexts;
+      }
+      if (!readContexts()) return false;
+      for (const agentId of agentIds) pendingAgentIdsRef.current.add(agentId);
+      setPendingAgentIds(new Set(pendingAgentIdsRef.current));
+      try {
+        const confirmed = await confirmDialog({
+          title: t("sidebar.workspace.agentRuntime.confirmAllTitle", { count: agentIds.length }),
+          message: t("sidebar.workspace.agentRuntime.confirmAllMessage"),
+          confirmLabel: t("sidebar.workspace.agentRuntime.confirm"),
+          cancelLabel: t("sidebar.workspace.agentRuntime.cancel"),
+          destructive: true,
+        });
+        if (!confirmed) return false;
+        const current = readContexts();
+        if (!current) return false;
+        for (const agentId of agentIds) clearError(agentId);
+        toast.show(t("sidebar.workspace.agentRuntime.pendingAll", { count: agentIds.length }), {
+          durationMs: null,
+        });
+        let failed = false;
+        for (const [index, agentId] of agentIds.entries()) {
+          try {
+            await current[index]!.client.closeIdleAgentRuntime(agentId);
+          } catch (error) {
+            failed = true;
+            reportError(agentId, error instanceof Error ? error.message : String(error));
+          }
+        }
+        if (!failed) {
+          toast.show(t("sidebar.workspace.agentRuntime.closedAll", { count: agentIds.length }), {
+            variant: "success",
+          });
+        }
+        return !failed;
+      } catch (error) {
+        reportError(agentIds[0]!, error instanceof Error ? error.message : String(error));
+        return false;
+      } finally {
+        for (const agentId of agentIds) pendingAgentIdsRef.current.delete(agentId);
+        setPendingAgentIds(new Set(pendingAgentIdsRef.current));
+      }
+    },
+    [clearError, reportError, t, toast],
+  );
+
+  return { pendingAgentIds, errorByAgentId, closeIdleAgentRuntime, closeIdleAgentRuntimes };
 }
 
 /** Reads the latest Host connection and Agent state without hydrating stored records */

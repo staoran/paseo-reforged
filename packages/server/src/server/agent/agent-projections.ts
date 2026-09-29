@@ -101,6 +101,7 @@ export function toStoredAgentRecord(
   } satisfies StoredAgentRecord;
 }
 
+/** Projects current lifecycle and provider-session ownership for clients */
 export function toAgentPayload(
   agent: ManagedAgent,
   options?: ProjectionOptions,
@@ -124,7 +125,8 @@ export function toAgentPayload(
     createdAt: agent.createdAt.toISOString(),
     updatedAt: agent.updatedAt.toISOString(),
     lastUserMessageAt: agent.lastUserMessageAt ? agent.lastUserMessageAt.toISOString() : null,
-    status: agent.lifecycle,
+    status: agent.lifecycle === "closed" ? (agent.storedLastStatus ?? "closed") : agent.lifecycle,
+    runtimeAttached: agent.session !== null,
     activeTurn: agent.activeTurnId
       ? {
           turnId: agent.activeTurnId,
@@ -198,6 +200,7 @@ function buildStoredPersistenceHandle(
   return toAgentPersistenceHandle(validProviders, record.persistence);
 }
 
+/** Preserves durable status while explicitly reporting the absence of a provider session */
 export function buildStoredAgentPayload(
   record: StoredAgentRecord,
   validProviders: Iterable<AgentProvider>,
@@ -240,6 +243,7 @@ export function buildStoredAgentPayload(
     updatedAt: updatedAt.toISOString(),
     lastUserMessageAt: lastUserMessageAt ? lastUserMessageAt.toISOString() : null,
     status: record.lastStatus,
+    runtimeAttached: false,
     capabilities: defaultCapabilities,
     currentModeId: record.lastModeId ?? null,
     availableModes: [],
@@ -255,6 +259,7 @@ export function buildStoredAgentPayload(
   };
 }
 
+/** Carries snapshot status and runtime ownership into directory summaries */
 export function toAgentListItemPayload(agent: AgentSnapshotPayload): AgentListItemPayload {
   return {
     id: agent.id,
@@ -265,6 +270,7 @@ export function toAgentListItemPayload(agent: AgentSnapshotPayload): AgentListIt
     thinkingOptionId: agent.thinkingOptionId,
     effectiveThinkingOptionId: agent.effectiveThinkingOptionId,
     status: agent.status,
+    runtimeAttached: agent.runtimeAttached,
     cwd: agent.cwd,
     createdAt: agent.createdAt,
     updatedAt: agent.updatedAt,

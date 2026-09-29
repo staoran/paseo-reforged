@@ -12,9 +12,19 @@ import { useMemo, useState } from "react";
  */
 export function useOpenKebabMenuVisibility(showKebab: boolean): {
   showKebab: boolean;
-  menuProps: { open: boolean; onOpenChange: (open: boolean) => void };
+  menuProps: {
+    open: boolean;
+    onOpenChange: (open: boolean) => void;
+    dialogOpen: boolean;
+    onDialogOpenChange: (open: boolean) => void;
+  };
 } {
   const [open, setOpen] = useState(false);
-  const menuProps = useMemo(() => ({ open, onOpenChange: setOpen }), [open]);
-  return { showKebab: showKebab || open, menuProps };
+  /** A dialog launched after menu dismissal must retain its owning row */
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const menuProps = useMemo(
+    () => ({ open, onOpenChange: setOpen, dialogOpen, onDialogOpenChange: setDialogOpen }),
+    [dialogOpen, open],
+  );
+  return { showKebab: showKebab || open || dialogOpen, menuProps };
 }

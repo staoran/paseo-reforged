@@ -10,7 +10,7 @@ initializing → idle → running → idle (or error → closed)
                  └────────┘  (agent completes a turn, awaits next prompt)
 ```
 
-Each live agent in `AgentManager` carries a `lastStatus` of `initializing`, `idle`, `running`, or `error`. `closed` is the persisted, resumable state for an agent record that has no live provider runtime. State transitions persist to disk and stream to subscribed clients via WebSocket.
+Each live agent in `AgentManager` has a lifecycle state of `initializing`, `idle`, `running`, or `error`. A stored record's `lastStatus` is history, not proof of a live runtime: after daemon restart, stored-only agents retain that status but report `runtimeAttached: false` until resumed. The sidebar marks them orange so a pre-restart Agent remains visible without implying its provider process survived. State transitions persist to disk and stream to subscribed clients via WebSocket.
 
 ## Runtime residency
 

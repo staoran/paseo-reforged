@@ -319,6 +319,7 @@ describe("toAgentPayload", () => {
       const agent = createManagedAgent({ lifecycle: status });
       const payload = toAgentPayload(agent);
       expect(payload.status).toBe(status);
+      expect(payload.runtimeAttached).toBe(status !== "closed");
     }
   });
 
@@ -470,6 +471,19 @@ describe("toAgentPayload", () => {
     const payload = toAgentPayload(agent);
 
     expect(payload.features).toEqual(features);
+  });
+});
+
+describe("buildStoredAgentPayload", () => {
+  it("preserves historical status and marks stored-only agents as detached", () => {
+    for (const lastStatus of AGENT_LIFECYCLE_STATUSES) {
+      const record = toStoredAgentRecord(createManagedAgent({ lifecycle: lastStatus }));
+      const payload = buildStoredAgentPayload(record, ["claude"]);
+
+      expect(payload.status).toBe(lastStatus);
+      expect(payload.runtimeAttached).toBe(false);
+      expect(record.lastStatus).toBe(lastStatus);
+    }
   });
 });
 

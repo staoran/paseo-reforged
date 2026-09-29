@@ -18,12 +18,14 @@ function agent(input: {
   pendingPermissionCount?: number;
   archivedAt?: string | null;
   parentAgentId?: string | null;
+  runtimeAttached?: boolean;
 }): Agent {
   return {
     serverId: "host-a",
     id: input.id,
     provider: "codex",
     status: input.status ?? "idle",
+    runtimeAttached: input.runtimeAttached,
     turn:
       input.turn ??
       (input.status === "running"
@@ -120,6 +122,27 @@ describe("workspace agent activity index", () => {
       "child",
       "closed",
     ]);
+  });
+
+  it("counts detached historical Agents separately for the sidebar warning", () => {
+    const index = buildWorkspaceManagedAgentIndex(
+      new Map([
+        ["live", agent({ id: "live", workspaceId: "workspace-a", updatedAt: "2026-01-01" })],
+        [
+          "detached",
+          agent({
+            id: "detached",
+            workspaceId: "workspace-a",
+            status: "running",
+            runtimeAttached: false,
+            updatedAt: "2026-01-02",
+          }),
+        ],
+      ]),
+    );
+
+    expect(index.residentCountsByWorkspace.get("workspace-a")).toBe(2);
+    expect(index.detachedCountsByWorkspace.get("workspace-a")).toBe(1);
   });
 
   it("uses turn liveness for running while preserving protocol lifecycle states", () => {

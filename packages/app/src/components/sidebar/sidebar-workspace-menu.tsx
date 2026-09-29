@@ -1,6 +1,7 @@
 import {
   useCallback,
   useMemo,
+  useState,
   type ComponentProps,
   type PropsWithChildren,
   type ReactNode,
@@ -44,7 +45,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { Shortcut } from "@/components/ui/shortcut";
-import type { MenuPageDefinition } from "@/components/ui/menu";
+import { WorkspaceAgentRuntimeDialog } from "./workspace-agent-runtime-dialog";
 import { OpenInFileManagerMenuItem } from "@/workspace/open-in-file-manager/menu-item";
 import { resolveSidebarWorkspaceAccessibilityLabel } from "@/components/sidebar/sidebar-workspace-title";
 import {
@@ -61,6 +62,8 @@ const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foregrou
 const foregroundMutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
 });
+/** Gives detached historical Agents the same warning color as the sidebar indicator */
+const warningColorMapping = (theme: Theme) => ({ color: theme.colors.statusWarning });
 
 const ThemedMoreVertical = withUnistyles(MoreVertical);
 const ThemedBot = withUnistyles(Bot);
@@ -83,6 +86,8 @@ const archiveLeadingIcon = <ThemedArchive size={14} uniProps={foregroundMutedCol
 const pinLeadingIcon = <ThemedPin size={14} uniProps={foregroundMutedColorMapping} />;
 const unpinLeadingIcon = <ThemedPinOff size={14} uniProps={foregroundMutedColorMapping} />;
 const agentRuntimeLeadingIcon = <ThemedBot size={14} uniProps={foregroundMutedColorMapping} />;
+/** Historical records use the same orange Agent glyph as the metadata row */
+const agentRuntimeWarningIcon = <ThemedBot size={14} uniProps={warningColorMapping} />;
 
 function renderTriggerIcon({ hovered }: { hovered?: boolean }) {
   return (
@@ -122,6 +127,9 @@ export interface SidebarWorkspaceMenuProps {
    */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  /** Selection dialog state belongs to the row that retains the trigger */
+  dialogOpen?: boolean;
+  onDialogOpenChange?: (open: boolean) => void;
 }
 
 interface SidebarWorkspaceMenuItemsProps extends Omit<
@@ -129,12 +137,12 @@ interface SidebarWorkspaceMenuItemsProps extends Omit<
   "onArchive" | "open" | "onOpenChange"
 > {
   onArchive?: () => void;
+  /** Opens the multi-Agent selection dialog after the menu dismisses */
+  onCloseAgentsRequest?: () => void;
 }
 
 type MenuSurface = "context" | "dropdown";
 export type AgentRuntimeCloseActions = ReturnType<typeof useCloseIdleAgentRuntime>;
-/** Local page id for selecting one managed Agent in a Workspace menu */
-const AGENT_RUNTIME_MENU_PAGE_ID = "workspace-agent-runtime";
 
 function WorkspaceMenuItem({
   surface,
@@ -172,6 +180,7 @@ function SidebarWorkspaceMenuItems({
   supportsAgentRuntimeClose = false,
   agentRuntimeCloseDisabledReason = "syncing",
   agentRuntimeActions,
+  onCloseAgentsRequest,
 }: SidebarWorkspaceMenuItemsProps & {
   surface: MenuSurface;
   agentRuntimeActions: AgentRuntimeCloseActions;
@@ -247,6 +256,7 @@ function SidebarWorkspaceMenuItems({
           supportsAgentRuntimeClose={supportsAgentRuntimeClose}
           disabledReason={agentRuntimeCloseDisabledReason}
           actions={agentRuntimeActions}
+          onCloseAgentsRequest={onCloseAgentsRequest}
         />
       ) : null}
       {onTogglePin ? (
@@ -290,7 +300,7 @@ function SidebarWorkspaceMenuItems({
   );
 }
 
-/** Adds the direct close action or the explicit Agent picker to a Workspace menu */
+/** Adds one close command that opens a dialog when multiple Agents need cleanup */
 function AgentRuntimeMenuEntry({
   surface,
   serverId,
@@ -299,6 +309,7 @@ function AgentRuntimeMenuEntry({
   supportsAgentRuntimeClose,
   disabledReason,
   actions,
+  onCloseAgentsRequest,
 }: {
   surface: MenuSurface;
   serverId: string;
@@ -307,24 +318,27 @@ function AgentRuntimeMenuEntry({
   supportsAgentRuntimeClose: boolean;
   disabledReason: "offline" | "syncing" | "sync_failed" | "update_host";
   actions: AgentRuntimeCloseActions;
+  onCloseAgentsRequest?: () => void;
 }) {
   const { t } = useTranslation();
+  /** Closed records do not contribute a sidebar Agent marker */
+  const residentAgents = managedAgents.filter((agent) => agent.status !== "closed");
   if (!agentDirectoryCurrent) {
     return (
       <WorkspaceMenuItem
         surface={surface}
         disabled
         leading={agentRuntimeLeadingIcon}
-        description={agentRuntimeUnavailableLabel(t, disabledReason)}
+        tooltip={agentRuntimeUnavailableLabel(t, disabledReason)}
         testID="sidebar-workspace-menu-close-agent-runtime-unavailable"
       >
-        {t("sidebar.workspace.agentRuntime.closeIdle")}
+        {t("sidebar.workspace.agentRuntime.closeAgent")}
       </WorkspaceMenuItem>
     );
   }
-  if (managedAgents.length === 0) return null;
-  if (managedAgents.length === 1) {
-    const agent = managedAgents[0];
+  if (residentAgents.length === 0) return null;
+  if (residentAgents.length === 1) {
+    const agent = residentAgents[0];
     return agent ? (
       <AgentRuntimeMenuItem
         surface={surface}
@@ -336,18 +350,22 @@ function AgentRuntimeMenuEntry({
     ) : null;
   }
   return (
-    <DropdownMenuSubTrigger
-      id={AGENT_RUNTIME_MENU_PAGE_ID}
+    <WorkspaceMenuItem
+      surface={surface}
+      disabled={!supportsAgentRuntimeClose}
       leading={agentRuntimeLeadingIcon}
-      value={String(managedAgents.length)}
+      tooltip={
+        !supportsAgentRuntimeClose ? agentRuntimeUnavailableLabel(t, "update_host") : undefined
+      }
+      onSelect={onCloseAgentsRequest}
       testID="sidebar-workspace-menu-close-agent-runtime"
     >
-      {t("sidebar.workspace.agentRuntime.closeIdle")}
-    </DropdownMenuSubTrigger>
+      {t("sidebar.workspace.agentRuntime.closeAgent")}
+    </WorkspaceMenuItem>
   );
 }
 
-/** Renders a managed Agent action with current status and pending feedback */
+/** Renders a resident Agent close action with pending feedback */
 function AgentRuntimeMenuItem({
   surface,
   serverId,
@@ -364,18 +382,12 @@ function AgentRuntimeMenuItem({
   const { t } = useTranslation();
   const { closeIdleAgentRuntime } = actions;
   const pending = actions.pendingAgentIds.has(agent.id);
-  const title = agent.title?.trim() || agent.id.slice(0, 7);
-  const error = actions.errorByAgentId.get(agent.id);
-  let description: string;
-  if (!supportsAgentRuntimeClose) {
-    description = agentRuntimeUnavailableLabel(t, "update_host");
-  } else if (error) {
-    description = error;
-  } else if (agent.pendingPermissions.length > 0) {
-    description = t("sidebar.workspace.agentRuntime.pendingPermissions");
-  } else {
-    description = agentRuntimeStatusLabel(agent, t);
-  }
+  /** Historical runtime ownership is separate from Agent status */
+  const isDetached = agent.runtimeAttached === false;
+  /** Explains disabled or detached state without adding a menu subtitle */
+  let tooltip: string | undefined;
+  if (!supportsAgentRuntimeClose) tooltip = agentRuntimeUnavailableLabel(t, "update_host");
+  else if (isDetached) tooltip = t("sidebar.workspace.agentRuntime.runtimeNotRestored");
   const handleSelect = useCallback(() => {
     void closeIdleAgentRuntime({ serverId, agentId: agent.id });
   }, [agent.id, closeIdleAgentRuntime, serverId]);
@@ -385,100 +397,14 @@ function AgentRuntimeMenuItem({
       surface={surface}
       disabled={!supportsAgentRuntimeClose || (!canCloseIdleAgentRuntime(agent) && !pending)}
       destructive
-      leading={agentRuntimeLeadingIcon}
-      description={description}
+      leading={isDetached ? agentRuntimeWarningIcon : agentRuntimeLeadingIcon}
+      tooltip={tooltip}
       status={pending ? "pending" : "idle"}
-      pendingLabel={t("sidebar.workspace.agentRuntime.pending", { title })}
       testID={`sidebar-workspace-menu-close-agent-runtime-${agent.id}`}
       onSelect={handleSelect}
     >
-      {t("sidebar.workspace.agentRuntime.closeAgent", { title })}
+      {t("sidebar.workspace.agentRuntime.closeAgent")}
     </WorkspaceMenuItem>
-  );
-}
-
-/** Lists the current Workspace's managed Agents on the nested picker page */
-function WorkspaceAgentRuntimeMenuPage({
-  serverId,
-  managedAgents,
-  supportsAgentRuntimeClose,
-  actions,
-}: {
-  serverId: string;
-  managedAgents: readonly Agent[];
-  supportsAgentRuntimeClose: boolean;
-  actions: AgentRuntimeCloseActions;
-}) {
-  const agents = useMemo(
-    () =>
-      [...managedAgents].sort((left, right) => {
-        const leftTitle = left.title?.trim() || left.id;
-        const rightTitle = right.title?.trim() || right.id;
-        return leftTitle.localeCompare(rightTitle) || left.id.localeCompare(right.id);
-      }),
-    [managedAgents],
-  );
-  return (
-    <>
-      {agents.map((agent) => (
-        <AgentRuntimeMenuItem
-          key={agent.id}
-          surface="dropdown"
-          serverId={serverId}
-          agent={agent}
-          supportsAgentRuntimeClose={supportsAgentRuntimeClose}
-          actions={actions}
-        />
-      ))}
-    </>
-  );
-}
-
-/** Combines the label picker and managed Agent picker pages for both Workspace menu surfaces */
-function useSidebarWorkspaceMenuPages(input: {
-  workspaceTarget: WorkspaceLabelTarget | null;
-  serverId?: string;
-  workspaceId?: string;
-  managedAgents: readonly Agent[];
-  agentDirectoryCurrent: boolean;
-  supportsAgentRuntimeClose: boolean;
-  actions: AgentRuntimeCloseActions;
-}): readonly MenuPageDefinition[] {
-  const { t } = useTranslation();
-  const labelPages = useWorkspaceLabelMenuPages(input.workspaceTarget);
-  const agentPage = useMemo<MenuPageDefinition | null>(() => {
-    if (
-      !input.serverId ||
-      !input.workspaceId ||
-      !input.agentDirectoryCurrent ||
-      input.managedAgents.length < 2
-    ) {
-      return null;
-    }
-    return {
-      id: AGENT_RUNTIME_MENU_PAGE_ID,
-      title: t("sidebar.workspace.agentRuntime.closeIdle"),
-      content: (
-        <WorkspaceAgentRuntimeMenuPage
-          serverId={input.serverId}
-          managedAgents={input.managedAgents}
-          supportsAgentRuntimeClose={input.supportsAgentRuntimeClose}
-          actions={input.actions}
-        />
-      ),
-    };
-  }, [
-    input.agentDirectoryCurrent,
-    input.managedAgents,
-    input.actions,
-    input.serverId,
-    input.supportsAgentRuntimeClose,
-    input.workspaceId,
-    t,
-  ]);
-  return useMemo(
-    () => (agentPage ? [...labelPages, agentPage] : labelPages),
-    [agentPage, labelPages],
   );
 }
 
@@ -491,23 +417,6 @@ function agentRuntimeUnavailableLabel(
   if (reason === "sync_failed") return t("sidebar.workspace.agentRuntime.directoryFailed");
   if (reason === "update_host") return t("sidebar.workspace.agentRuntime.updateHost");
   return t("sidebar.workspace.agentRuntime.syncingDirectory");
-}
-
-/** Shows Agent status without treating an open turn as idle */
-function agentRuntimeStatusLabel(agent: Agent, t: ReturnType<typeof useTranslation>["t"]): string {
-  if (agent.turn.phase === "open") return t("agents.status.running");
-  switch (agent.status) {
-    case "initializing":
-      return t("agents.status.initializing");
-    case "idle":
-      return t("agents.status.idle");
-    case "running":
-      return t("agents.status.running");
-    case "error":
-      return t("agents.status.error");
-    case "closed":
-      return t("agents.status.closed");
-  }
 }
 
 export function SidebarWorkspaceMenu({
@@ -535,66 +444,77 @@ export function SidebarWorkspaceMenu({
   agentRuntimeActions,
   open,
   onOpenChange,
+  dialogOpen = false,
+  onDialogOpenChange,
 }: SidebarWorkspaceMenuProps) {
   const { t } = useTranslation();
+  /** Opens the picker through the menu's platform-aware dismissal callback */
+  const openAgentPicker = useCallback(() => onDialogOpenChange?.(true), [onDialogOpenChange]);
+  /** Dismisses the independent picker surface */
+  const closeAgentPicker = useCallback(() => onDialogOpenChange?.(false), [onDialogOpenChange]);
   const workspaceTarget = useMemo<WorkspaceLabelTarget | null>(
     () =>
       serverId && workspaceId ? { serverId, workspaceId, labels: workspaceLabels ?? [] } : null,
     [serverId, workspaceId, workspaceLabels],
   );
-  const pages = useSidebarWorkspaceMenuPages({
-    workspaceTarget,
-    serverId,
-    workspaceId,
-    managedAgents: managedAgents ?? [],
-    agentDirectoryCurrent,
-    supportsAgentRuntimeClose,
-    actions: agentRuntimeActions,
-  });
+  const pages = useWorkspaceLabelMenuPages(workspaceTarget);
   return (
-    <DropdownMenu compactMode="sheet" open={open} onOpenChange={onOpenChange}>
-      <DropdownMenuTrigger
-        hitSlop={8}
-        style={triggerStyle}
-        accessibilityRole={isWeb ? undefined : "button"}
-        accessibilityLabel={t("sidebar.workspace.actions.menu")}
-        testID={`sidebar-workspace-kebab-${workspaceKey}`}
-      >
-        {renderTriggerIcon}
-      </DropdownMenuTrigger>
-      <DropdownMenuContent
-        align="end"
-        width={260}
-        pages={pages}
-        sheetTitle={t("sidebar.workspace.actions.menu")}
-      >
-        <SidebarWorkspaceMenuItems
-          surface="dropdown"
-          workspaceKey={workspaceKey}
+    <>
+      <DropdownMenu compactMode="sheet" open={open} onOpenChange={onOpenChange}>
+        <DropdownMenuTrigger
+          hitSlop={8}
+          style={triggerStyle}
+          accessibilityRole={isWeb ? undefined : "button"}
+          accessibilityLabel={t("sidebar.workspace.actions.menu")}
+          testID={`sidebar-workspace-kebab-${workspaceKey}`}
+        >
+          {renderTriggerIcon}
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          align="end"
+          width={260}
+          pages={pages}
+          sheetTitle={t("sidebar.workspace.actions.menu")}
+        >
+          <SidebarWorkspaceMenuItems
+            surface="dropdown"
+            workspaceKey={workspaceKey}
+            serverId={serverId}
+            workspaceId={workspaceId}
+            workspaceLabels={workspaceLabels}
+            managedAgents={managedAgents}
+            agentDirectoryCurrent={agentDirectoryCurrent}
+            supportsAgentRuntimeClose={supportsAgentRuntimeClose}
+            agentRuntimeCloseDisabledReason={agentRuntimeCloseDisabledReason}
+            agentRuntimeActions={agentRuntimeActions}
+            onCloseAgentsRequest={openAgentPicker}
+            onCopyPath={onCopyPath}
+            onCopyBranchName={onCopyBranchName}
+            onRename={onRename}
+            onMarkAsRead={onMarkAsRead}
+            onMarkAsUnread={onMarkAsUnread}
+            onArchive={onArchive}
+            archiveLabel={archiveLabel}
+            archiveStatus={archiveStatus}
+            archivePendingLabel={archivePendingLabel}
+            archiveShortcutKeys={archiveShortcutKeys}
+            isPinned={isPinned}
+            onTogglePin={onTogglePin}
+            openInFileManagerPath={openInFileManagerPath}
+          />
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {dialogOpen && serverId ? (
+        <WorkspaceAgentRuntimeDialog
           serverId={serverId}
-          workspaceId={workspaceId}
-          workspaceLabels={workspaceLabels}
-          managedAgents={managedAgents}
-          agentDirectoryCurrent={agentDirectoryCurrent}
-          supportsAgentRuntimeClose={supportsAgentRuntimeClose}
-          agentRuntimeCloseDisabledReason={agentRuntimeCloseDisabledReason}
-          agentRuntimeActions={agentRuntimeActions}
-          onCopyPath={onCopyPath}
-          onCopyBranchName={onCopyBranchName}
-          onRename={onRename}
-          onMarkAsRead={onMarkAsRead}
-          onMarkAsUnread={onMarkAsUnread}
-          onArchive={onArchive}
-          archiveLabel={archiveLabel}
-          archiveStatus={archiveStatus}
-          archivePendingLabel={archivePendingLabel}
-          archiveShortcutKeys={archiveShortcutKeys}
-          isPinned={isPinned}
-          onTogglePin={onTogglePin}
-          openInFileManagerPath={openInFileManagerPath}
+          agents={managedAgents ?? []}
+          directoryCurrent={agentDirectoryCurrent}
+          supportsClose={supportsAgentRuntimeClose}
+          actions={agentRuntimeActions}
+          onClose={closeAgentPicker}
         />
-      </DropdownMenuContent>
-    </DropdownMenu>
+      ) : null}
+    </>
   );
 }
 
@@ -646,6 +566,12 @@ export function SidebarWorkspaceContextMenu({
     settings: { workspaceTitleSource },
   } = useAppSettings();
   const { t } = useTranslation();
+  /** Keeps the Agent picker independent from the right-click surface */
+  const [agentPickerOpen, setAgentPickerOpen] = useState(false);
+  /** Opens the focused selection task after menu dismissal */
+  const openAgentPicker = useCallback(() => setAgentPickerOpen(true), []);
+  /** Releases the picker after completion or cancellation */
+  const closeAgentPicker = useCallback(() => setAgentPickerOpen(false), []);
   const pullRequestLabel = workspace.prHint
     ? t("workspace.git.pr.accessibility.pullRequest", {
         number: workspace.prHint.number,
@@ -670,61 +596,66 @@ export function SidebarWorkspaceContextMenu({
     }),
     [workspace],
   );
-  const pages = useSidebarWorkspaceMenuPages({
-    workspaceTarget,
-    serverId: workspace.serverId,
-    workspaceId: workspace.workspaceId,
-    managedAgents: workspace.managedAgents ?? [],
-    agentDirectoryCurrent: workspace.agentDirectoryCurrent ?? false,
-    supportsAgentRuntimeClose: workspace.supportsAgentRuntimeClose ?? false,
-    actions: agentRuntimeActions,
-  });
+  const pages = useWorkspaceLabelMenuPages(workspaceTarget);
   const closeDisabledReason =
     agentRuntimeCloseDisabledReason ?? workspace.agentRuntimeCloseDisabledReason ?? "syncing";
 
   return (
-    <ContextMenu open={contextMenuOpen} onOpenChange={onContextMenuOpenChange}>
-      <ContextMenuTrigger
-        {...triggerProps}
-        enabledOnMobile={false}
-        accessibilityLabel={accessibilityLabel ?? rowAccessibilityLabel}
-        highlightStyle={highlightStyle}
-      >
-        {children}
-      </ContextMenuTrigger>
-      <ContextMenuContent
-        align="start"
-        width={260}
-        testID={`sidebar-workspace-context-menu-${workspaceKey}`}
-        pages={pages}
-      >
-        <SidebarWorkspaceMenuItems
-          surface="context"
-          workspaceKey={workspaceKey}
-          serverId={workspaceTarget.serverId}
-          workspaceId={workspaceTarget.workspaceId}
-          workspaceLabels={workspaceTarget.labels}
-          managedAgents={workspace.managedAgents}
-          agentDirectoryCurrent={workspace.agentDirectoryCurrent}
-          supportsAgentRuntimeClose={workspace.supportsAgentRuntimeClose}
-          agentRuntimeCloseDisabledReason={closeDisabledReason}
-          agentRuntimeActions={agentRuntimeActions}
-          onCopyPath={onCopyPath}
-          onCopyBranchName={onCopyBranchName}
-          onRename={onRename}
-          onMarkAsRead={onMarkAsRead}
-          onMarkAsUnread={onMarkAsUnread}
-          onArchive={onArchive}
-          archiveLabel={archiveLabel}
-          archiveStatus={archiveStatus}
-          archivePendingLabel={archivePendingLabel}
-          archiveShortcutKeys={archiveShortcutKeys}
-          isPinned={isPinned}
-          onTogglePin={onTogglePin}
-          openInFileManagerPath={openInFileManagerPath}
+    <>
+      <ContextMenu open={contextMenuOpen} onOpenChange={onContextMenuOpenChange}>
+        <ContextMenuTrigger
+          {...triggerProps}
+          enabledOnMobile={false}
+          accessibilityLabel={accessibilityLabel ?? rowAccessibilityLabel}
+          highlightStyle={highlightStyle}
+        >
+          {children}
+        </ContextMenuTrigger>
+        <ContextMenuContent
+          align="start"
+          width={260}
+          testID={`sidebar-workspace-context-menu-${workspaceKey}`}
+          pages={pages}
+        >
+          <SidebarWorkspaceMenuItems
+            surface="context"
+            workspaceKey={workspaceKey}
+            serverId={workspaceTarget.serverId}
+            workspaceId={workspaceTarget.workspaceId}
+            workspaceLabels={workspaceTarget.labels}
+            managedAgents={workspace.managedAgents}
+            agentDirectoryCurrent={workspace.agentDirectoryCurrent}
+            supportsAgentRuntimeClose={workspace.supportsAgentRuntimeClose}
+            agentRuntimeCloseDisabledReason={closeDisabledReason}
+            agentRuntimeActions={agentRuntimeActions}
+            onCloseAgentsRequest={openAgentPicker}
+            onCopyPath={onCopyPath}
+            onCopyBranchName={onCopyBranchName}
+            onRename={onRename}
+            onMarkAsRead={onMarkAsRead}
+            onMarkAsUnread={onMarkAsUnread}
+            onArchive={onArchive}
+            archiveLabel={archiveLabel}
+            archiveStatus={archiveStatus}
+            archivePendingLabel={archivePendingLabel}
+            archiveShortcutKeys={archiveShortcutKeys}
+            isPinned={isPinned}
+            onTogglePin={onTogglePin}
+            openInFileManagerPath={openInFileManagerPath}
+          />
+        </ContextMenuContent>
+      </ContextMenu>
+      {agentPickerOpen ? (
+        <WorkspaceAgentRuntimeDialog
+          serverId={workspace.serverId}
+          agents={workspace.managedAgents ?? []}
+          directoryCurrent={workspace.agentDirectoryCurrent ?? false}
+          supportsClose={workspace.supportsAgentRuntimeClose ?? false}
+          actions={agentRuntimeActions}
+          onClose={closeAgentPicker}
         />
-      </ContextMenuContent>
-    </ContextMenu>
+      ) : null}
+    </>
   );
 }
 

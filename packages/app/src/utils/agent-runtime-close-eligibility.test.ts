@@ -29,6 +29,14 @@ describe("Agent runtime close eligibility", () => {
     );
   });
 
+  it("allows detached historical Agents to be closed without resuming", () => {
+    for (const status of ["idle", "running", "error", "initializing"] as const) {
+      const detached = { ...idleAgent, status, runtimeAttached: false };
+      expect(canCloseIdleAgentRuntime(detached)).toBe(true);
+      expect(canRequestAgentRuntimeClose(detached, false)).toBe(true);
+    }
+  });
+
   it("rejects missing, archived, busy, and permission-blocked Agents", () => {
     const ineligibleAgents = [
       null,

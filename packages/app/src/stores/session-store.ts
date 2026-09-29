@@ -74,6 +74,8 @@ export interface Agent {
   id: string;
   provider: AgentProvider;
   status: AgentLifecycleStatus;
+  /** Whether this daemon still owns a provider session for the Agent */
+  runtimeAttached?: boolean;
   turn: TurnLiveness;
   createdAt: Date;
   updatedAt: Date;

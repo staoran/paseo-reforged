@@ -3,7 +3,7 @@ import type { Agent } from "@/stores/session-store";
 /** Agent state required to decide whether a runtime close can be requested */
 type AgentRuntimeCloseCandidate = Pick<
   Agent,
-  "archivedAt" | "status" | "turn" | "pendingPermissions"
+  "archivedAt" | "status" | "runtimeAttached" | "turn" | "pendingPermissions"
 >;
 
 /** Identifies an unarchived Agent that can currently accept an idle-runtime close request */
@@ -13,9 +13,10 @@ export function canCloseIdleAgentRuntime(
   return Boolean(
     agent &&
     !agent.archivedAt &&
-    agent.status === "idle" &&
-    agent.turn.phase !== "open" &&
-    agent.pendingPermissions.length === 0,
+    ((agent.runtimeAttached === false && agent.status !== "closed") ||
+      (agent.status === "idle" &&
+        agent.turn.phase !== "open" &&
+        agent.pendingPermissions.length === 0)),
   );
 }
 
