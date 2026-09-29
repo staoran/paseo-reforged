@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.10.0-beta.3 - 2026-09-29
+
+### Added
+
+- Add Claude Sonnet 5.5 for Claude Code 2.1.284 and newer
+
+### Improved
+
+- Clarify detached Agent status and runtime close actions in the sidebar
+
+### Fixed
+
+- Keep the desktop app launch available after Windows updates
+- Clear unsupported OpenCode thinking levels when switching models
+- Keep line breaks in streamed code blocks and Mermaid diagrams
+- Archive custom Codex sessions when their Agents are archived
+
 ## 0.10.0-beta.2 - 2026-09-29
 
 ### Added
