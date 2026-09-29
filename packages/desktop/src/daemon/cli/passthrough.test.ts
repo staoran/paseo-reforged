@@ -92,6 +92,36 @@ describe("passthrough CLI", () => {
     ).toBeNull();
   });
 
+  it("keeps Windows update relaunches in GUI mode", () => {
+    expect(
+      parsePassthroughCliArgs({
+        argv: ["C:\\Program Files\\Paseo Reforged\\Paseo Reforged.exe", "--updated"],
+        isDefaultApp: false,
+        forceCli: false,
+      }),
+    ).toBeNull();
+  });
+
+  it("preserves --updated for forced CLI launches", () => {
+    expect(
+      parsePassthroughCliArgs({
+        argv: ["C:\\Program Files\\Paseo Reforged\\Paseo Reforged.exe", "--updated"],
+        isDefaultApp: false,
+        forceCli: true,
+      }),
+    ).toEqual(["--updated"]);
+  });
+
+  it("does not ignore arguments that only start with --updated", () => {
+    expect(
+      parsePassthroughCliArgs({
+        argv: ["C:\\Program Files\\Paseo Reforged\\Paseo Reforged.exe", "--updated-extra"],
+        isDefaultApp: false,
+        forceCli: false,
+      }),
+    ).toEqual(["--updated-extra"]);
+  });
+
   it("preserves CLI flags for direct app invocations", () => {
     expect(
       parsePassthroughCliArgs({
