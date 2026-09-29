@@ -1,6 +1,6 @@
 import {
   useCallback,
-  useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -138,7 +138,8 @@ export function AssistantSelectionCopySurface({
     });
   }, [enabled, onSelectionAction]);
 
-  useEffect(() => {
+  // Retained chats freeze after focus changes, so close the portal before passive effects run
+  useLayoutEffect(() => {
     if (!enabled || !onSelectionAction) {
       if (wasEnabledRef.current && !enabled) window.getSelection()?.removeAllRanges();
       wasEnabledRef.current = enabled;
@@ -209,7 +210,7 @@ export function AssistantSelectionCopySurface({
       style={DISPLAY_CONTENTS}
     >
       <View style={style}>{children}</View>
-      {selectionAction && onSelectionAction && actionStyle
+      {enabled && selectionAction && onSelectionAction && actionStyle
         ? createPortal(
             <div style={actionStyle} onMouseDown={preserveSelection}>
               <View

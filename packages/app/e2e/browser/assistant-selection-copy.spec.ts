@@ -2,6 +2,9 @@ import type { BrowserContext, Locator } from "@playwright/test";
 import { expect, test, type Page } from "../support/fixtures";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 
+// Windows Playwright video teardown hangs after selection-driven chat navigation
+test.use({ video: "off" });
+
 const CROSS_STRUCTURE_MARKDOWN = [
   "# P1 — High-value UI behavior",
   "",
@@ -597,6 +600,53 @@ test("copying an assistant selection preserves Markdown structure and links", as
     await bashFence.locator("[data-paseo-markdown-ignore]").click();
 
     expect(await readPlainClipboard(page)).toBe("echo trailing");
+  } finally {
+    await agent.cleanup();
+  }
+});
+
+test("selection actions close when switching chats", async ({ page }) => {
+  test.setTimeout(120_000);
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "assistant-selection-switch-",
+    title: "Selection source chat",
+    initialPrompt: "Show a response to select.",
+    featureValues: { mockAssistantResponse: "Text selected before switching chats." },
+  });
+
+  try {
+    await agent.client.waitForAgentUpsert(
+      agent.agentId,
+      (snapshot) => snapshot.status === "idle",
+      30_000,
+    );
+    const destination = await agent.client.createAgent({
+      provider: "mock",
+      cwd: agent.cwd,
+      workspaceId: agent.workspaceId,
+      title: "Selection destination chat",
+      modeId: "load-test",
+      model: "e2e-fast-stream",
+    });
+    await openAgentRoute(page, agent);
+
+    await assistantMessageBlocks(page)
+      .getByText("Text selected before switching chats.")
+      .evaluate((element) => {
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+      });
+    await expect(page.getByTestId("chat-selection-actions")).toBeVisible();
+
+    await page.getByRole("button", { name: "Selection destination chat", exact: true }).click();
+    await expect(page.getByTestId(`workspace-tab-agent_${destination.id}`)).toBeVisible();
+    await expect(page.getByTestId("chat-selection-actions")).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Selection source chat", exact: true }).click();
+    await expect(page.getByTestId("chat-selection-actions")).toHaveCount(0);
   } finally {
     await agent.cleanup();
   }
