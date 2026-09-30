@@ -424,6 +424,8 @@ interface ManagedAgentBase {
   pendingReplacement: boolean;
   persistence: AgentPersistenceHandle | null;
   historyPrimed: boolean;
+  /** Timestamp of the latest user or assistant message */
+  lastMessageAt?: Date | null;
   lastUserMessageAt: Date | null;
   activeTurnId: string | null;
   activeTurnStartedAt: Date | null;
@@ -701,6 +703,21 @@ function getFirstUserMessageTextFromRows(rows: readonly AgentTimelineRow[]): str
     }
   }
   return null;
+}
+
+/** Returns the latest user or assistant message timestamp from projected rows */
+function getLatestMessageTimestamp(rows: readonly AgentTimelineRow[]): Date | null {
+  let latest: Date | null = null;
+  for (const row of rows) {
+    if (row.item.type !== "user_message" && row.item.type !== "assistant_message") {
+      continue;
+    }
+    const timestamp = new Date(row.timestamp);
+    if (!Number.isNaN(timestamp.getTime()) && (!latest || timestamp > latest)) {
+      latest = timestamp;
+    }
+  }
+  return latest;
 }
 
 function shouldDetachFromArchivedParent(
@@ -1317,6 +1334,7 @@ export class AgentManager {
     options?: {
       createdAt?: Date;
       updatedAt?: Date;
+      lastMessageAt?: Date | null;
       lastUserMessageAt?: Date | null;
       labels?: Record<string, string>;
       workspaceId?: string;
@@ -1349,6 +1367,7 @@ export class AgentManager {
     options?: {
       createdAt?: Date;
       updatedAt?: Date;
+      lastMessageAt?: Date | null;
       lastUserMessageAt?: Date | null;
       labels?: Record<string, string>;
       workspaceId?: string;
@@ -1605,6 +1624,7 @@ export class AgentManager {
         createdAt: existing.createdAt,
         updatedAt: existing.updatedAt,
         lastUserMessageAt: existing.lastUserMessageAt,
+        lastMessageAt: existing.lastMessageAt,
         historyPrimed: rehydrateFromDisk ? false : preservedHistoryPrimed,
         lastUsage: preservedLastUsage,
         lastError: preservedLastError,
@@ -1996,6 +2016,7 @@ export class AgentManager {
         unsubscribeSession: null,
         persistence: record.persistence ?? null,
         historyPrimed: true,
+        lastMessageAt: record.lastMessageAt ? new Date(record.lastMessageAt) : null,
         lastUserMessageAt: record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null,
         lastUsage: undefined,
         lastError: record.lastError ?? undefined,
@@ -2518,6 +2539,9 @@ export class AgentManager {
       },
     );
     await this.persistSnapshot(agent);
+    if (item.type === "user_message" || item.type === "assistant_message") {
+      this.emitState(agent);
+    }
     return { seq: row.seq, epoch: this.timelineStore.getEpoch(agentId) };
   }
 
@@ -3546,6 +3570,7 @@ export class AgentManager {
     options?: {
       createdAt?: Date;
       updatedAt?: Date;
+      lastMessageAt?: Date | null;
       lastUserMessageAt?: Date | null;
       labels?: Record<string, string>;
       timeline?: AgentTimelineItem[];
@@ -3582,11 +3607,12 @@ export class AgentManager {
       );
 
       const now = new Date();
-      const { durableTimelineHasRows } = await this.initializeAgentTimelineForRegister({
-        agentId: resolvedAgentId,
-        now,
-        options,
-      });
+      const { durableTimelineHasRows, lastMessageAt } =
+        await this.initializeAgentTimelineForRegister({
+          agentId: resolvedAgentId,
+          now,
+          options,
+        });
 
       const managed = this.buildManagedAgentForRegister({
         resolvedAgentId,
@@ -3594,6 +3620,7 @@ export class AgentManager {
         config,
         now,
         durableTimelineHasRows,
+        lastMessageAt,
         options,
       });
 
@@ -3701,7 +3728,7 @@ export class AgentManager {
           updatedAt?: Date;
         }
       | undefined;
-  }): Promise<{ durableTimelineHasRows: boolean }> {
+  }): Promise<{ durableTimelineHasRows: boolean; lastMessageAt: Date | null }> {
     const { agentId, now, options } = params;
     const timelineAlreadyPrimed = this.timelineStore.has(agentId);
     const explicitTimelineSeed = buildExplicitTimelineSeedForRegister(now, options);
@@ -3720,7 +3747,12 @@ export class AgentManager {
     if (options?.timelineRows?.length) {
       this.enqueueDurableTimelineBulkInsert(agentId, options.timelineRows);
     }
-    return { durableTimelineHasRows };
+    return {
+      durableTimelineHasRows,
+      lastMessageAt: getLatestMessageTimestamp(
+        timelineSeed?.rows ?? this.timelineStore.getRows(agentId),
+      ),
+    };
   }
 
   private buildManagedAgentForRegister(params: {
@@ -3729,10 +3761,13 @@ export class AgentManager {
     config: AgentSessionConfig;
     now: Date;
     durableTimelineHasRows: boolean;
+    /** Exact message time from the seed before adjacent assistant chunks are projected */
+    lastMessageAt: Date | null;
     options:
       | {
           createdAt?: Date;
           updatedAt?: Date;
+          lastMessageAt?: Date | null;
           lastUserMessageAt?: Date | null;
           labels?: Record<string, string>;
           historyPrimed?: boolean;
@@ -3745,20 +3780,20 @@ export class AgentManager {
         }
       | undefined;
   }): ActiveManagedAgent {
-    const { resolvedAgentId, session, config, now, durableTimelineHasRows, options } = params;
+    const { resolvedAgentId, session, config, now, durableTimelineHasRows, options = {} } = params;
     return {
       id: resolvedAgentId,
       provider: config.provider,
       cwd: config.cwd,
-      workspaceId: options?.workspaceId,
-      owner: options?.owner,
+      workspaceId: options.workspaceId,
+      owner: options.owner,
       session,
       capabilities: session.capabilities,
       config,
       runtimeInfo: undefined,
       lifecycle: "initializing",
-      createdAt: options?.createdAt ?? now,
-      updatedAt: options?.updatedAt ?? now,
+      createdAt: options.createdAt ?? now,
+      updatedAt: options.updatedAt ?? now,
       availableModes: [],
       currentModeId: null,
       pendingPermissions: new Map<string, AgentPermissionRequest>(),
@@ -3772,17 +3807,18 @@ export class AgentManager {
       finalizedForegroundTurnIds: new Set<string>(),
       unsubscribeSession: null,
       persistence: attachPersistenceCwd(
-        options?.persistence ?? session.describePersistence(),
+        options.persistence ?? session.describePersistence(),
         config.cwd,
       ),
-      historyPrimed: options?.historyPrimed ?? durableTimelineHasRows,
-      lastUserMessageAt: options?.lastUserMessageAt ?? null,
-      lastUsage: options?.lastUsage,
-      lastError: options?.lastError,
+      historyPrimed: options.historyPrimed ?? durableTimelineHasRows,
+      lastMessageAt: options.lastMessageAt ?? params.lastMessageAt,
+      lastUserMessageAt: options.lastUserMessageAt ?? null,
+      lastUsage: options.lastUsage,
+      lastError: options.lastError,
       providerRetryMessage: null,
-      attention: resolveInitialAttention(options?.attention),
+      attention: resolveInitialAttention(options.attention),
       internal: config.internal ?? false,
-      labels: options?.labels ?? {},
+      labels: options.labels ?? {},
     } as ActiveManagedAgent;
   }
 
@@ -4095,6 +4131,7 @@ export class AgentManager {
     }
 
     await this.primeTimelineFromLegacyProviderHistory(agent, broadcast);
+    this.emitState(agent);
   }
 
   private async forceHydrateTimelineFromLegacyProviderHistory(
@@ -4120,6 +4157,7 @@ export class AgentManager {
     await this.deleteCommittedTimeline(agent.id);
     this.timelineStore.delete(agent.id);
     this.timelineStore.initialize(agent.id, { timestamp: new Date().toISOString() });
+    agent.lastMessageAt = null;
     agent.historyPrimed = true;
 
     for (const event of this.providerSubagents.deleteParent(agent.id)) {
@@ -4189,6 +4227,7 @@ export class AgentManager {
     // Keeping them would leave getTimelineRows reading one copy per hydration.
     await this.deleteCommittedTimeline(agent.id);
 
+    agent.lastMessageAt = null;
     const timelineEvents: Array<{
       event: Extract<AgentStreamEvent, { type: "timeline" }>;
       row: AgentTimelineRow;
@@ -4791,6 +4830,10 @@ export class AgentManager {
     turnId?: string,
     options?: { providerMessageId?: string },
   ): AgentStreamEvent {
+    /** Directory timestamps only need minute-level updates during a streaming reply */
+    const previousMessageMinute = Math.floor(
+      (this.agents.get(agentId)?.lastMessageAt?.getTime() ?? 0) / 60_000,
+    );
     const row = this.recordTimeline(agentId, item, { ...options, turnId });
     const event: AgentStreamEvent = {
       type: "timeline",
@@ -4803,6 +4846,14 @@ export class AgentManager {
       epoch: this.timelineStore.getEpoch(agentId),
       timestamp: row.timestamp,
     });
+
+    if (
+      item.type === "assistant_message" &&
+      Math.floor(Date.parse(row.timestamp) / 60_000) !== previousMessageMinute
+    ) {
+      const agent = this.agents.get(agentId);
+      if (agent) this.emitState(agent);
+    }
 
     if (
       item.type === "tool_call" &&
@@ -4932,6 +4983,16 @@ export class AgentManager {
   ): AgentTimelineRow {
     item = limitAgentTimelineItemContent(item);
     const row = this.timelineStore.append(agentId, item, options);
+    const agent = this.agents.get(agentId);
+    if (agent && (item.type === "user_message" || item.type === "assistant_message")) {
+      const timestamp = new Date(row.timestamp);
+      if (
+        !Number.isNaN(timestamp.getTime()) &&
+        (!agent.lastMessageAt || timestamp > agent.lastMessageAt)
+      ) {
+        agent.lastMessageAt = timestamp;
+      }
+    }
     this.enqueueDurableTimelineAppend(agentId, row);
     return row;
   }

@@ -79,6 +79,8 @@ export interface Agent {
   turn: TurnLiveness;
   createdAt: Date;
   updatedAt: Date;
+  /** Timestamp of the last user or assistant message, independent of status */
+  lastMessageAt?: Date | null;
   lastUserMessageAt: Date | null;
   lastActivityAt: Date;
   capabilities: AgentCapabilityFlags;

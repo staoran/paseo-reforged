@@ -304,7 +304,10 @@ describe("ReplicaCache", () => {
   it("round-trips explicit directory and timeline commits", async () => {
     const storage = new MemoryStorage();
     const writer = createCache(storage);
-    commitDirectory(writer, SERVER_ID, directory());
+    const committed = directory();
+    const messageAt = new Date("2026-07-18T08:02:00.000Z");
+    committed.agents.get("agent-1")!.lastMessageAt = messageAt;
+    commitDirectory(writer, SERVER_ID, committed);
     writer.commitTimeline(SERVER_ID, "agent-1", timeline());
     await writer.flush();
 
@@ -313,6 +316,7 @@ describe("ReplicaCache", () => {
     const restoredTimeline = await reader.readTimeline(SERVER_ID, "agent-1");
 
     expect(restoredDirectory.agents.get("agent-1")?.title).toBe("Cached agent");
+    expect(restoredDirectory.agents.get("agent-1")?.lastMessageAt).toEqual(messageAt);
     expect(restoredDirectory.workspaces.get("workspace-1")?.name).toBe("main");
     expect(restoredDirectory.projects.get("project-1")?.projectDisplayName).toBe("Paseo");
     expect(restoredDirectory.checkpoint).toEqual({ agents: { generation: "g", afterSeq: 12 } });

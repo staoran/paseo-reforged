@@ -71,6 +71,7 @@ export function projectAgentSnapshot(agent: Agent): AgentSnapshotPayload {
     thinkingOptionId: agent.thinkingOptionId ?? null,
     createdAt: agent.createdAt.toISOString(),
     updatedAt: agent.updatedAt.toISOString(),
+    ...(agent.lastMessageAt ? { lastMessageAt: agent.lastMessageAt.toISOString() } : {}),
     lastUserMessageAt: agent.lastUserMessageAt?.toISOString() ?? null,
     status: agent.status,
     runtimeAttached: agent.runtimeAttached,
@@ -97,6 +98,7 @@ export function projectAgentSnapshot(agent: Agent): AgentSnapshotPayload {
 export function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId: string) {
   const createdAt = new Date(snapshot.createdAt);
   const updatedAt = new Date(snapshot.updatedAt);
+  const lastMessageAt = snapshot.lastMessageAt ? new Date(snapshot.lastMessageAt) : null;
   const lastUserMessageAt = snapshot.lastUserMessageAt
     ? new Date(snapshot.lastUserMessageAt)
     : null;
@@ -120,6 +122,7 @@ export function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId:
     turn,
     createdAt,
     updatedAt,
+    lastMessageAt,
     lastUserMessageAt,
     lastActivityAt: updatedAt,
     capabilities: snapshot.capabilities,

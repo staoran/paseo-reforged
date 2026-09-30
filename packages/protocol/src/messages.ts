@@ -819,6 +819,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   effectiveThinkingOptionId: z.string().nullable().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
+  lastMessageAt: z.string().optional(),
   lastUserMessageAt: z.string().nullable(),
   status: AgentStatusSchema,
   /** Distinguishes current provider-session ownership from historical status */
@@ -858,6 +859,7 @@ export const AgentListItemPayloadSchema = z.object({
   cwd: z.string(),
   createdAt: z.string(),
   updatedAt: z.string(),
+  lastMessageAt: z.string().optional(),
   lastUserMessageAt: z.string().nullable(),
   archivedAt: z.string().nullable().optional(),
   requiresAttention: z.boolean().optional(),

@@ -78,6 +78,8 @@ export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
   agentDirectoryCurrent?: boolean;
   supportsAgentRuntimeClose?: boolean;
   agentRuntimeCloseDisabledReason?: AgentRuntimeCloseDisabledReason;
+  /** Last user or assistant message across this workspace's sessions */
+  lastMessageAt?: Date | null;
 }
 
 export interface SidebarProjectEntry {
@@ -147,9 +149,9 @@ export function selectSidebarWorkspaceSessions(
       serverId,
       workspaces: session.workspaces,
       workspaceAgentActivity: session.workspaceAgentActivity,
+      agents: session.agents,
       ...(agentDirectoryCurrent !== undefined
         ? {
-            agents: session.agents,
             agentDirectoryCurrent,
             supportsAgentRuntimeClose,
             agentRuntimeCloseDisabledReason: resolveAgentRuntimeCloseDisabledReason({
@@ -273,6 +275,8 @@ export function createSidebarWorkspaceEntry(input: {
   supportsAgentRuntimeClose?: boolean;
   agentRuntimeCloseDisabledReason?: AgentRuntimeCloseDisabledReason;
   supportsMarkUnread?: boolean;
+  /** Last user or assistant message across this workspace's sessions */
+  lastMessageAt?: Date | null;
 }): SidebarWorkspaceEntry {
   const projectViewKey = input.projectViewKey ?? input.workspace.projectId;
   const effectiveStatus = deriveEffectiveWorkspaceStatus(input);
@@ -296,6 +300,7 @@ export function createSidebarWorkspaceEntry(input: {
     currentBranch: normalizeCurrentBranch(input.workspace.gitRuntime?.currentBranch),
     statusBucket: effectiveStatus.status,
     statusEnteredAt: effectiveStatus.enteredAt,
+    lastMessageAt: input.lastMessageAt ?? null,
     hasUnreadAttention: activity?.hasUnreadAttention ?? false,
     hasClearableAttention: activity?.hasClearableAttention ?? false,
     hasMarkUnreadCandidate: activity?.hasMarkUnreadCandidate ?? false,
@@ -518,7 +523,11 @@ function getWorkspaceManagedAgentFields(
   previousEntry: SidebarWorkspaceEntry | undefined,
 ): Pick<SidebarWorkspaceEntry, "residentAgentCount" | "detachedAgentCount" | "managedAgents"> {
   if (!index) {
-    return { residentAgentCount: null, detachedAgentCount: null, managedAgents: null };
+    return {
+      residentAgentCount: null,
+      detachedAgentCount: null,
+      managedAgents: null,
+    };
   }
   const agents = index.agentsByWorkspace.get(workspaceId) ?? EMPTY_AGENTS;
   const previousAgents = previousEntry?.managedAgents;
@@ -535,6 +544,23 @@ function getWorkspaceManagedAgentFields(
   };
 }
 
+/** Indexes message times from live or cached directories without requiring an online Host */
+function buildWorkspaceMessageTimes(
+  agents: ReadonlyMap<string, Agent> | undefined,
+): Map<string, Date> {
+  const timestamps = new Map<string, Date>();
+  for (const agent of agents?.values() ?? []) {
+    if (agent.archivedAt || !agent.workspaceId) continue;
+    // COMPAT(last-message-time): added in v0.10.0, remove after 2027-01-01
+    const timestamp = agent.lastMessageAt ?? agent.lastUserMessageAt;
+    const latest = timestamps.get(agent.workspaceId);
+    if (timestamp && (!latest || timestamp > latest)) {
+      timestamps.set(agent.workspaceId, timestamp);
+    }
+  }
+  return timestamps;
+}
+
 export function buildSidebarWorkspaceEntries(input: {
   placements: readonly SidebarWorkspacePlacement[];
   sessions: SidebarWorkspaceSession[];
@@ -547,6 +573,10 @@ export function buildSidebarWorkspaceEntries(input: {
 
   const sessionByServerId = new Map(input.sessions.map((session) => [session.serverId, session]));
   const managedAgentsByServer = buildManagedAgentIndexesByServer(input.sessions);
+  /** Message timestamps remain available from the cached directory while offline */
+  const messageTimesByServer = new Map(
+    input.sessions.map((session) => [session.serverId, buildWorkspaceMessageTimes(session.agents)]),
+  );
   const entries = new Map<string, SidebarWorkspaceEntry>();
 
   for (const placement of input.placements) {
@@ -576,6 +606,7 @@ export function buildSidebarWorkspaceEntries(input: {
       supportsAgentRuntimeClose: session.supportsAgentRuntimeClose ?? false,
       agentRuntimeCloseDisabledReason: session.agentRuntimeCloseDisabledReason,
       supportsMarkUnread: session.supportsMarkUnread,
+      lastMessageAt: messageTimesByServer.get(placement.serverId)?.get(workspace.id) ?? null,
     });
     entries.set(
       placement.workspaceKey,
@@ -595,6 +626,9 @@ function areSidebarWorkspaceEntriesEqual(
   const keys = Object.keys(left) as Array<keyof SidebarWorkspaceEntry>;
   if (keys.length !== Object.keys(right).length) return false;
   return keys.every((key) => {
+    if (key === "lastMessageAt") {
+      return (left.lastMessageAt?.getTime() ?? null) === (right.lastMessageAt?.getTime() ?? null);
+    }
     if (key !== "prHint") return Object.is(left[key], right[key]);
     const leftHint = left.prHint;
     const rightHint = right.prHint;

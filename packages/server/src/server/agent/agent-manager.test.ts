@@ -4307,6 +4307,7 @@ test.each([undefined, "Selected provider thread name"])(
     });
     expect(imported.lifecycle).toBe("idle");
     expect(imported.historyPrimed).toBe(true);
+    expect(imported.lastMessageAt?.toISOString()).toBe("2026-01-02T00:00:01.000Z");
     expect(manager.getTimeline(imported.id)).toEqual([
       { type: "user_message", text: "Trace provider imports" },
       { type: "assistant_message", text: "Done" },
@@ -7625,6 +7626,34 @@ test("keeps updatedAt monotonic when user message and run start happen in the sa
   } finally {
     nowSpy.mockRestore();
   }
+});
+
+test("keeps lastMessageAt stable when agent state changes", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: {
+      codex: new TestAgentClient(),
+    },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000121",
+  });
+
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+
+  await manager.appendTimelineItem(agent.id, { type: "user_message", text: "hello" });
+  const messageAt = manager.getAgent(agent.id)?.lastMessageAt;
+  expect(messageAt).toBeInstanceOf(Date);
+  expect((await storage.get(agent.id))?.lastMessageAt).toBe(messageAt?.toISOString());
+
+  manager.notifyAgentState(agent.id);
+
+  expect(manager.getAgent(agent.id)?.lastMessageAt?.getTime()).toBe(messageAt?.getTime());
+  await manager.closeAgent(agent.id);
+  expect((await storage.get(agent.id))?.lastMessageAt).toBe(messageAt?.toISOString());
 });
 
 test("runAgent assembles finalText from trailing assistant chunks", async () => {

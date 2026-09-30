@@ -80,6 +80,7 @@ export function toStoredAgentRecord(
     workspaceId: agent.workspaceId,
     createdAt,
     updatedAt: agent.updatedAt.toISOString(),
+    ...(agent.lastMessageAt ? { lastMessageAt: agent.lastMessageAt.toISOString() } : {}),
     lastActivityAt: agent.updatedAt.toISOString(),
     lastUserMessageAt: agent.lastUserMessageAt ? agent.lastUserMessageAt.toISOString() : null,
     title: options?.title ?? null,
@@ -124,6 +125,7 @@ export function toAgentPayload(
     ...(runtimeInfo ? { runtimeInfo } : {}),
     createdAt: agent.createdAt.toISOString(),
     updatedAt: agent.updatedAt.toISOString(),
+    ...(agent.lastMessageAt ? { lastMessageAt: agent.lastMessageAt.toISOString() } : {}),
     lastUserMessageAt: agent.lastUserMessageAt ? agent.lastUserMessageAt.toISOString() : null,
     status: agent.lifecycle === "closed" ? (agent.storedLastStatus ?? "closed") : agent.lifecycle,
     runtimeAttached: agent.session !== null,
@@ -219,6 +221,7 @@ export function buildStoredAgentPayload(
 
   const createdAt = new Date(record.createdAt);
   const updatedAt = new Date(resolveStoredAgentUpdatedAt(record));
+  const lastMessageAt = record.lastMessageAt ? new Date(record.lastMessageAt) : null;
   const lastUserMessageAt = record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null;
 
   const runtimeInfo = buildStoredRuntimeInfo(record);
@@ -241,6 +244,7 @@ export function buildStoredAgentPayload(
     ...(runtimeInfo ? { runtimeInfo } : {}),
     createdAt: createdAt.toISOString(),
     updatedAt: updatedAt.toISOString(),
+    ...(lastMessageAt ? { lastMessageAt: lastMessageAt.toISOString() } : {}),
     lastUserMessageAt: lastUserMessageAt ? lastUserMessageAt.toISOString() : null,
     status: record.lastStatus,
     runtimeAttached: false,
@@ -274,6 +278,7 @@ export function toAgentListItemPayload(agent: AgentSnapshotPayload): AgentListIt
     cwd: agent.cwd,
     createdAt: agent.createdAt,
     updatedAt: agent.updatedAt,
+    ...(agent.lastMessageAt ? { lastMessageAt: agent.lastMessageAt } : {}),
     lastUserMessageAt: agent.lastUserMessageAt,
     archivedAt: agent.archivedAt ?? null,
     requiresAttention: agent.requiresAttention ?? false,

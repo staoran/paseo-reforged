@@ -230,6 +230,7 @@ const StoredAgentSnapshotSchema = z.strictObject({
   thinkingOptionId: z.string().nullable().optional(),
   createdAt: IsoDateSchema,
   updatedAt: IsoDateSchema,
+  lastMessageAt: IsoDateSchema.optional(),
   lastUserMessageAt: IsoDateSchema.nullable(),
   status: AgentStatusSchema,
   activeTurn: z
@@ -607,6 +608,11 @@ function serializeAgentTurn(agent: Agent): NonNullable<StoredAgent["turn"]> {
   };
 }
 
+/** Serializes the optional timestamp used by sidebar message ordering */
+function serializeLastMessageAt(agent: Agent): { lastMessageAt?: string } {
+  return agent.lastMessageAt ? { lastMessageAt: agent.lastMessageAt.toISOString() } : {};
+}
+
 function serializeAgent(agent: Agent): StoredAgent {
   const snapshot = {
     id: agent.id,
@@ -617,6 +623,7 @@ function serializeAgent(agent: Agent): StoredAgent {
     thinkingOptionId: agent.thinkingOptionId ?? null,
     createdAt: agent.createdAt.toISOString(),
     updatedAt: agent.updatedAt.toISOString(),
+    ...serializeLastMessageAt(agent),
     lastUserMessageAt: agent.lastUserMessageAt?.toISOString() ?? null,
     status: agent.status,
     ...(agent.turn.phase === "open" && agent.turn.turnId

@@ -134,6 +134,7 @@ export function resolveStoredAgentUpdatedAt(record: StoredAgentRecord): string {
 export function extractTimestamps(record: StoredAgentRecord): {
   createdAt: Date;
   updatedAt: Date;
+  lastMessageAt: Date | null;
   lastUserMessageAt: Date | null;
   labels?: Record<string, string>;
   workspaceId?: string;
@@ -142,6 +143,7 @@ export function extractTimestamps(record: StoredAgentRecord): {
   return {
     createdAt: new Date(record.createdAt),
     updatedAt: new Date(resolveStoredAgentUpdatedAt(record)),
+    lastMessageAt: record.lastMessageAt ? new Date(record.lastMessageAt) : null,
     lastUserMessageAt: record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null,
     labels: record.labels,
     workspaceId: record.workspaceId,

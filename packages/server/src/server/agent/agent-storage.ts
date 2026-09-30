@@ -49,6 +49,7 @@ const STORED_AGENT_SCHEMA = z.object({
   workspaceId: z.string().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
+  lastMessageAt: z.string().optional(),
   lastActivityAt: z.string().optional(),
   lastUserMessageAt: z.string().nullable().optional(),
   title: z.string().nullable().optional(),

@@ -395,6 +395,50 @@ afterEach(() => {
 });
 
 describe("target coalesced behavior", () => {
+  test("publishes message times at minute boundaries while ignoring tools and reasoning", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-30T00:00:00.000Z"));
+    const harness = createHarness();
+    try {
+      const { agentId, session } = await createManagedSession(harness);
+      harness.events.length = 0;
+      session.pushEvent(assistant("first"));
+      await waitForSessionEventQueue();
+      expect(harness.events.filter((event) => event.type === "agent_state")).toHaveLength(1);
+
+      vi.setSystemTime(new Date("2026-09-30T00:00:30.000Z"));
+      session.pushEvent(assistant(" continued"));
+      await waitForSessionEventQueue();
+      await vi.advanceTimersByTimeAsync(COALESCE_WINDOW_MS);
+      expect(harness.events.filter((event) => event.type === "agent_state")).toHaveLength(1);
+
+      vi.setSystemTime(new Date("2026-09-30T00:01:00.000Z"));
+      session.pushEvent(assistant(" latest"));
+      await waitForSessionEventQueue();
+      await vi.advanceTimersByTimeAsync(COALESCE_WINDOW_MS);
+      const messageAt = harness.manager.getAgent(agentId)?.lastMessageAt;
+      expect(messageAt?.getTime()).toBeGreaterThanOrEqual(Date.parse("2026-09-30T00:01:00.000Z"));
+      expect(harness.events.filter((event) => event.type === "agent_state")).toHaveLength(2);
+
+      vi.setSystemTime(new Date("2026-09-30T00:02:00.000Z"));
+      session.pushEvent(reasoning("thinking"));
+      session.pushEvent(timelineEvent(TOOL_CALL));
+      await waitForSessionEventQueue();
+      await vi.advanceTimersByTimeAsync(COALESCE_WINDOW_MS);
+      expect(harness.manager.getAgent(agentId)?.lastMessageAt).toEqual(messageAt);
+
+      await harness.manager.reloadAgentSession(agentId);
+      expect(harness.manager.getAgent(agentId)?.lastMessageAt).toEqual(messageAt);
+      await harness.manager.closeAgent(agentId);
+      const closed = harness.events.findLast((event) => event.type === "agent_state");
+      expect(closed?.type === "agent_state" ? closed.agent.lastMessageAt : undefined).toEqual(
+        messageAt,
+      );
+    } finally {
+      harness.cleanup();
+    }
+  });
+
   test("bounds tool output before persisting and streaming it", async () => {
     const harness = createHarness();
     try {

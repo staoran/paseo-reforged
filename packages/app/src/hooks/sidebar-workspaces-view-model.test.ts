@@ -762,6 +762,7 @@ function agent(input: {
   workspaceId: string;
   status: Agent["status"];
   updatedAt?: Date;
+  lastMessageAt?: Date | null;
   parentAgentId?: string | null;
   archivedAt?: Date | null;
   requiresAttention?: boolean;
@@ -778,6 +779,7 @@ function agent(input: {
         : { phase: "idle", cancellationRequestId: null },
     createdAt: new Date(0),
     updatedAt: input.updatedAt ?? new Date(1_000),
+    lastMessageAt: input.lastMessageAt ?? null,
     lastUserMessageAt: null,
     lastActivityAt: new Date(1_000),
     capabilities: {} as Agent["capabilities"],
@@ -796,6 +798,79 @@ function agent(input: {
     labels: {},
   };
 }
+
+describe("sidebar workspace message timestamp", () => {
+  it("uses the latest message time and ignores status changes", () => {
+    const placements = buildSidebarWorkspacePlacementModel({
+      projects: [project({ projectKey: "project", workspaceKeys: ["srv:ws-1"] })],
+    }).workspaces;
+    const workspaces = new Map([
+      [
+        "ws-1",
+        workspace({
+          id: "ws-1",
+          name: "workspace",
+          projectId: "project",
+          projectDisplayName: "project",
+        }),
+      ],
+    ]);
+    const first = agent({
+      id: "first",
+      workspaceId: "ws-1",
+      status: "idle",
+      lastMessageAt: new Date(1_000),
+    });
+    const second = agent({
+      id: "second",
+      workspaceId: "ws-1",
+      status: "running",
+      lastMessageAt: new Date(2_000),
+    });
+    const build = (
+      agents: Map<string, Agent>,
+      previousEntries?: ReadonlyMap<string, SidebarWorkspaceEntry>,
+      agentDirectoryCurrent = true,
+    ) =>
+      buildSidebarWorkspaceEntries({
+        placements,
+        sessions: [
+          {
+            serverId: "srv",
+            workspaces,
+            workspaceAgentActivity: new Map(),
+            agents,
+            agentDirectoryCurrent,
+            supportsMarkUnread: false,
+          },
+        ],
+        previousEntries,
+      });
+
+    const initial = build(
+      new Map([
+        [first.id, first],
+        [second.id, second],
+      ]),
+    );
+    const next = build(
+      new Map([
+        [first.id, { ...first, status: "running", updatedAt: new Date(9_000) }],
+        [second.id, { ...second, status: "closed", updatedAt: new Date(9_000) }],
+      ]),
+      initial,
+    );
+
+    expect(initial.get("srv:ws-1")?.lastMessageAt?.getTime()).toBe(2_000);
+    expect(next.get("srv:ws-1")?.lastMessageAt?.getTime()).toBe(2_000);
+    const offline = build(new Map([[second.id, second]]), next, false);
+    expect(offline.get("srv:ws-1")?.lastMessageAt?.getTime()).toBe(2_000);
+    const afterReply = build(new Map([[second.id, { ...second, lastMessageAt: new Date(3_000) }]]));
+    expect(afterReply.get("srv:ws-1")?.lastMessageAt?.getTime()).toBe(3_000);
+    const afterArchive = build(new Map([[second.id, { ...second, archivedAt: new Date(4_000) }]]));
+    expect(afterArchive.get("srv:ws-1")?.lastMessageAt).toBeNull();
+  });
+});
 
 describe("createSidebarWorkspaceEntry unread presentation", () => {
   it("keeps read idle Workspace in Ready without unread emphasis", () => {
