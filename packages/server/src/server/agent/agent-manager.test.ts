@@ -692,6 +692,83 @@ test("uses an injected timeline store without making it a production requirement
   }
 });
 
+test("backfills a legacy snapshot message time from committed history when resuming", async () => {
+  /** Isolated persisted state for an agent created before lastMessageAt existed */
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-legacy-message-time-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const store = new RecordingTimelineStore();
+  const original = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  const restored = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    durableTimelineStore: store,
+    logger,
+  });
+  const events: AgentManagerEvent[] = [];
+  restored.subscribe((event) => events.push(event), { replayState: false });
+  let agentId: string | null = null;
+  try {
+    const created = await original.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = created.id;
+    await original.closeAgent(agentId);
+    const record = await storage.get(agentId);
+    if (!record) throw new Error("Missing legacy agent record");
+    await storage.upsert({ ...record, lastUserMessageAt: "2026-01-02T00:00:00.000Z" });
+    await store.appendCommitted(
+      agentId,
+      { type: "user_message", text: "hello" },
+      {
+        timestamp: "2026-01-02T00:00:00.000Z",
+      },
+    );
+    await store.appendCommitted(
+      agentId,
+      { type: "assistant_message", text: "reply" },
+      {
+        timestamp: "2026-01-02T00:01:00.000Z",
+      },
+    );
+    await store.appendCommitted(
+      agentId,
+      { type: "reasoning", text: "thinking" },
+      {
+        timestamp: "2026-01-02T00:02:00.000Z",
+      },
+    );
+
+    const loaded = await ensureAgentLoaded(agentId, {
+      agentManager: restored,
+      agentStorage: storage,
+      logger,
+    });
+    expect(loaded.lastMessageAt?.toISOString()).toBe("2026-01-02T00:01:00.000Z");
+    expect((await storage.get(agentId))?.lastMessageAt).toBe("2026-01-02T00:01:00.000Z");
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "agent_state",
+        agent: expect.objectContaining({ lastMessageAt: new Date("2026-01-02T00:01:00.000Z") }),
+      }),
+    );
+    expect((await store.getCommittedRows(agentId)).map((row) => row.item.type)).toEqual([
+      "user_message",
+      "assistant_message",
+      "reasoning",
+    ]);
+  } finally {
+    if (agentId) await restored.closeAgent(agentId).catch(() => undefined);
+    await original.flush();
+    await restored.flush();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("refreshing an agent replaces the injected timeline store instead of appending a second copy", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-timeline-rehydrate-"));
   const store = new RecordingTimelineStore();
@@ -10987,6 +11064,8 @@ test("authoritative timeline records a daemon-handled submitted prompt before it
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
   const commandCompleted = deferred<void>();
+  /** Delay the reply so its timestamp differs from the submitted command */
+  const allowReply = deferred<void>();
 
   class DaemonHandledPromptSession extends TestAgentSession {
     override readonly capabilities = {
@@ -10998,6 +11077,7 @@ test("authoritative timeline records a daemon-handled submitted prompt before it
       if (prompt !== "/handled") return null;
       return {
         run: async ({ emit }: { emit: (event: AgentStreamEvent) => void }) => {
+          await allowReply.promise;
           emit({
             type: "timeline",
             provider: this.provider,
@@ -11023,6 +11103,8 @@ test("authoritative timeline records a daemon-handled submitted prompt before it
   });
 
   try {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-30T00:00:00.000Z"));
     const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
       workspaceId: undefined,
     });
@@ -11035,7 +11117,17 @@ test("authoritative timeline records a daemon-handled submitted prompt before it
     await startAgentRun(manager, snapshot.id, "/handled", logger, {
       runOptions: { clientMessageId: "msg-client-daemon-handled" },
     });
+    vi.setSystemTime(new Date("2026-09-30T00:00:10.000Z"));
+    allowReply.resolve();
     await commandCompleted.promise;
+    await manager.flush();
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "agent_state",
+        agent: expect.objectContaining({ lastMessageAt: new Date("2026-09-30T00:00:10.000Z") }),
+      }),
+    );
+    expect((await storage.get(snapshot.id))?.lastMessageAt).toBe("2026-09-30T00:00:10.000Z");
 
     expect(
       events.flatMap((event) =>
@@ -11060,6 +11152,7 @@ test("authoritative timeline records a daemon-handled submitted prompt before it
       { type: "assistant_message", text: "Handled by the daemon" },
     ]);
   } finally {
+    vi.useRealTimers();
     await manager.flush().catch(() => undefined);
     await storage.flush().catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });

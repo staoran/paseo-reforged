@@ -2490,6 +2490,9 @@ export class AgentManager {
           epoch: this.timelineStore.getEpoch(agent.id),
           timestamp: row.timestamp,
         });
+        if (event.item.type === "user_message" || event.item.type === "assistant_message") {
+          this.emitState(agent);
+        }
         return;
       }
       this.dispatchStream(agent.id, event, { timestamp: new Date().toISOString() });
@@ -3737,6 +3740,9 @@ export class AgentManager {
     const durableTimelineSeed = shouldSeedFromDurable
       ? await this.loadCommittedTimelineSeed(agentId, now)
       : null;
+    const durableLastMessageAt = shouldSeedFromDurable
+      ? getLatestMessageTimestamp(await this.durableTimelineStore.getCommittedRows(agentId))
+      : null;
     const durableTimelineHasRows =
       timelineAlreadyPrimed ||
       (durableTimelineSeed != null && (durableTimelineSeed.nextSeq ?? 1) > 1);
@@ -3749,9 +3755,9 @@ export class AgentManager {
     }
     return {
       durableTimelineHasRows,
-      lastMessageAt: getLatestMessageTimestamp(
-        timelineSeed?.rows ?? this.timelineStore.getRows(agentId),
-      ),
+      lastMessageAt:
+        getLatestMessageTimestamp(timelineSeed?.rows ?? this.timelineStore.getRows(agentId)) ??
+        durableLastMessageAt,
     };
   }
 
