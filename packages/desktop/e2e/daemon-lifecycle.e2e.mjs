@@ -1,4 +1,5 @@
 import { verifyAttachedDaemonControls } from "./daemon-lifecycle-renderer.electron.mjs";
+import { verifyRendererRecovery } from "./renderer-recovery.electron.mjs";
 import { once } from "node:events";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile, readFile, rm, readdir, copyFile } from "node:fs/promises";
@@ -42,9 +43,13 @@ savePersistedConfig(home, {
 });
 const main = path.join(root, "main.cjs");
 const managerPath = path.join(repo, "packages/desktop/dist/daemon/daemon-manager.js");
+// Production recovery adapter loaded by the same isolated main-process fixture
+const recoveryPath = path.join(repo, "packages/desktop/dist/window/renderer-recovery-electron.js");
+// Production tray menu actions loaded without exposing test branches in the application
+const trayPath = path.join(repo, "packages/desktop/dist/features/recovery-tray.js");
 await writeFile(
   main,
-  `const { app } = require("electron"); app.setPath("userData", ${JSON.stringify(path.join(root, "user-data"))}); app.whenReady().then(() => { global.lifecycle = require(${JSON.stringify(managerPath)}); });`,
+  `const { app } = require("electron"); app.setPath("userData", ${JSON.stringify(path.join(root, "user-data"))}); app.whenReady().then(() => { global.lifecycle = require(${JSON.stringify(managerPath)}); global.rendererRecovery = require(${JSON.stringify(recoveryPath)}); global.recoveryTray = require(${JSON.stringify(trayPath)}); });`,
 );
 let desktop;
 let captured;
@@ -146,6 +151,9 @@ try {
   const next = await command("start_desktop_daemon");
   captured = await readDaemonInstance(home);
   assert.equal(next.ownedByDesktop, true);
+  if (process.platform === "win32") {
+    await verifyRendererRecovery({ desktop, root, home, instance: captured });
+  }
   await command("stop_desktop_daemon", { reason: "quit" });
   assert.equal(await readDaemonInstance(home), null);
   captured = null;

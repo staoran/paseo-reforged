@@ -117,6 +117,23 @@ The iOS simulator shares the Mac's loopback, so `localhost:<port>` reaches the h
 
 **Gotcha — `EXPO_PUBLIC_*` is inlined into the JS bundle at Metro bundle time, not read at runtime.** Set it in the same shell that starts Metro. If the app still connects to the old daemon, Metro served a cached bundle; re-bundle clean with `cd packages/app && EXPO_PUBLIC_LOCAL_DAEMON=… npx expo start -c` and reload the app.
 
+### Desktop window recovery
+
+On Windows, right-click the Paseo tray icon and choose **Recover Paseo window** if the
+whole window turns blank, including its window controls. Recovery replaces the renderer
+and opens the project picker while keeping the daemon and agents running. Unsaved input
+may be lost. With multiple windows, choose the affected window by its native window ID.
+
+The main process offers the same recovery through a native dialog after a renderer exits,
+a main-page load fails, or Chromium reports a stall lasting another five seconds. A white
+screen with a responsive renderer may emit none of those events; use the tray in that case.
+Recovery has a fifteen-second main-process deadline and retries only when you request it.
+If memory is still full, free memory before retrying.
+
+Choose **Open logs** in the tray or recovery dialog for the desktop log directory.
+`main.log` records `[renderer-recovery]` faults and recovery outcomes without transcript
+content. The native dialogs also apply to macOS and Linux; the recovery tray is Windows-only.
+
 ### Desktop renderer profiling
 
 `npm run dev:desktop` starts Electron with Chromium remote debugging enabled so

@@ -16,6 +16,7 @@ import {
   BrowserWindow,
   ClipboardItem,
   clipboard,
+  dialog,
   Menu,
   ipcMain,
   nativeImage,
@@ -43,6 +44,9 @@ import {
   buildStandardContextMenuItems,
 } from "./window/window-manager.js";
 import { setupDarwinCompositorWatchdog } from "./window/compositor-watchdog/index.js";
+import { setupRendererRecovery } from "./window/renderer-recovery-electron.js";
+import type { RendererRecovery } from "./window/renderer-recovery.js";
+import { setupRecoveryTray, type RecoveryTray } from "./features/recovery-tray.js";
 import { resolveDesktopWindowChromeMode, windowChromeModeArgument } from "./window/chrome.js";
 import { registerDialogHandlers } from "./features/dialogs.js";
 import {
@@ -120,6 +124,18 @@ const DESKTOP_WINDOW_CHROME_MODE = resolveDesktopWindowChromeMode({
 const UPDATE_QUIT_DEADLINE_MS = 5_000;
 const pendingBrowserWindowOpenRequests = new PendingBrowserWindowOpenRequests();
 const agentNavigationInbox = new AgentNavigationInbox();
+
+interface RecoverableDesktopWindow {
+  // Owned host window kept alive when its renderer is replaced
+  win: BrowserWindow;
+  // Main-process recovery state for this window
+  recovery: RendererRecovery;
+}
+
+// Only primary app windows appear in the recovery tray
+const recoverableWindows = new Map<number, RecoverableDesktopWindow>();
+// Windows tray remains reachable when renderer-painted controls disappear
+let recoveryTray: RecoveryTray | null = null;
 
 // A second-instance launch can arrive before the packaged protocol handler,
 // IPC handlers, and first window exist. Wait for full bootstrap, not just
@@ -733,6 +749,28 @@ async function createWindow(
   }
 
   setupDarwinCompositorWatchdog(mainWindow);
+  // Preserve BrowserWindow identity so recovery never reaches window-all-closed
+  const recoveryUrl = app.isPackaged
+    ? `${APP_SCHEME}://app/open-project`
+    : new URL("/open-project", `${DEV_SERVER_URL}/`).toString();
+  // Recovery remains outside the renderer and the daemon lifecycle
+  const recovery = setupRendererRecovery({
+    win: mainWindow,
+    recoveryUrl,
+    beforeReset: () => {
+      desktopWindowOwner.takePendingProject(webContentsId);
+      agentNavigationInbox.removeWindow(webContentsId);
+      unregisterPaseoBrowserHost(webContentsId);
+      browserKeyboard.detachHost(webContentsId);
+    },
+    changed: () => recoveryTray?.refresh(),
+  });
+  recoverableWindows.set(mainWindow.id, { win: mainWindow, recovery });
+  recoveryTray?.refresh();
+  mainWindow.once("closed", () => {
+    recoverableWindows.delete(mainWindow.id);
+    recoveryTray?.refresh();
+  });
   setupWindowResizeEvents(mainWindow);
   if (windowStateStore) {
     setupWindowStatePersistence(mainWindow, windowStateStore);
@@ -786,11 +824,15 @@ async function createWindow(
     const initialUrl = options.initialRoute
       ? new URL(options.initialRoute, `${DEV_SERVER_URL}/`).toString()
       : DEV_SERVER_URL;
-    await mainWindow.loadURL(initialUrl);
+    await mainWindow.loadURL(initialUrl).catch((error) => {
+      log.warn("[window] initial load failed; native recovery remains available", error);
+    });
     return mainWindow;
   }
 
-  await mainWindow.loadURL(`${APP_SCHEME}://app${options.initialRoute ?? "/"}`);
+  await mainWindow.loadURL(`${APP_SCHEME}://app${options.initialRoute ?? "/"}`).catch((error) => {
+    log.warn("[window] initial load failed; native recovery remains available", error);
+  });
   return mainWindow;
 }
 
@@ -956,6 +998,29 @@ async function bootstrap(): Promise<void> {
   });
 
   await applyAppIcon();
+  if (process.platform === "win32") {
+    // Packaged Windows tray icon is independent of frontend assets
+    const trayIconPath = getWindowIconPath();
+    if (!trayIconPath) throw new Error("Windows recovery tray icon is missing");
+    recoveryTray = setupRecoveryTray({
+      icon: nativeImage.createFromPath(trayIconPath),
+      windows: () =>
+        [...recoverableWindows.values()].map(({ win, recovery }) => ({
+          id: win.id,
+          recovering: recovery.isRecovering(),
+          recover: () => void recovery.recover(),
+        })),
+      openLogs: () => {
+        void shell.openPath(path.dirname(log.transports.file.getFile().path)).then((error) => {
+          if (error) dialog.showErrorBox("Could not open Paseo logs", error);
+          return undefined;
+        });
+      },
+    });
+  }
+  app.once("before-quit", () => {
+    for (const { recovery } of recoverableWindows.values()) recovery.dispose();
+  });
   setupApplicationMenu({
     onNewWindow: () => {
       void desktopWindowOwner.openAdditional().catch((error) => {
