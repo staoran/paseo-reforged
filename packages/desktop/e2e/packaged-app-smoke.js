@@ -6,6 +6,8 @@ const path = require("node:path");
 const { setTimeout: delay } = require("node:timers/promises");
 const { chromium } = require("playwright");
 const { extractFile } = require("@electron/asar");
+const { WebSocket } = require("ws");
+const assert = require("node:assert/strict");
 
 // Linux uses a hyphenated binary name; macOS and Windows use the product name
 const EXECUTABLE_NAME = process.platform === "linux" ? "Paseo-Reforged" : "Paseo Reforged";
@@ -30,6 +32,29 @@ const REQUIRED_DESKTOP_BRIDGE_KEYS = [
 
 function createTempDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+}
+
+async function assertBuiltinPluginsStarted(listen) {
+  const { DaemonClient } = await import("@getpaseo/client/internal/daemon-client");
+  const { builtinPlugins } =
+    await import("../../server/dist/server/server/plugins/builtin/index.js");
+  const client = new DaemonClient({
+    url: `ws://${listen}/ws`,
+    clientId: "packaged-builtin-smoke",
+    webSocketFactory: (url, options) =>
+      new WebSocket(url, options?.protocols, { headers: options?.headers }),
+  });
+  try {
+    await client.connect();
+    const catalog = await client.getPluginCatalog();
+    assert.deepEqual(
+      catalog.map(({ id }) => id).sort(),
+      [...builtinPlugins].sort(),
+      "Every built-in plugin must start in the packaged desktop daemon",
+    );
+  } finally {
+    await client.close();
+  }
 }
 
 function assertExecutable(filePath, label) {
@@ -916,6 +941,8 @@ async function smokePackagedDesktopApp({
       deadline,
     });
     console.log("Packaged desktop smoke: renderer-started desktop daemon reported running");
+    await assertBuiltinPluginsStarted(listen);
+    console.log("Packaged desktop smoke: every built-in plugin started");
     await smokeCliShim({ appPath, env });
     await smokeCliTerminal({ appPath, env });
     if (expectedSandbox !== undefined) {

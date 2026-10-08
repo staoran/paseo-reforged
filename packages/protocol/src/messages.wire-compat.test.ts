@@ -9,6 +9,7 @@ import {
   WorkspaceSetupSnapshotSchema,
   WorkspaceSetupProgressMessageSchema,
   AgentTimelineEntryPayloadSchema,
+  SessionInboundMessageSchema,
 } from "./messages.js";
 
 test("terminal listings accept older rows and retain new per-terminal directories", () => {
@@ -388,4 +389,108 @@ test("blocked setup preserves the legacy failed shape and optional provenance", 
   expect(WorkspaceSetupSnapshotSchema.parse(legacySnapshot.parse(failed))).toEqual(
     legacySnapshot.parse(failed),
   );
+});
+
+test("usage login errors are additive and older reports still parse", () => {
+  const entry = {
+    id: "codex:account",
+    account: {},
+    fetchedAt: "2026-10-05T00:00:00.000Z",
+    sourceId: "codex",
+    sourceLabel: "Codex",
+    report: { status: "error", error: "Usage API returned 500" },
+  };
+  const legacy = z.object({
+    type: z.literal("usage.list_reports.update"),
+    payload: z.object({
+      requestId: z.string(),
+      report: z.object({
+        id: z.string(),
+        account: z.object({ label: z.string().optional() }),
+        fetchedAt: z.string(),
+        sourceId: z.string(),
+        sourceLabel: z.string(),
+        icon: z.string().optional(),
+        report: z.discriminatedUnion("status", [
+          z.object({ status: z.literal("available"), windows: z.array(z.unknown()) }),
+          z.object({ status: z.literal("unavailable"), problem: z.unknown() }),
+          z.object({ status: z.literal("error"), error: z.string() }),
+        ]),
+      }),
+    }),
+  });
+  const oldMessage = {
+    type: "usage.list_reports.update",
+    payload: { requestId: "usage", report: entry },
+  };
+  const newMessage = {
+    ...oldMessage,
+    payload: {
+      ...oldMessage.payload,
+      report: {
+        ...entry,
+        loginErrors: [{ harness: "Codex", report: entry.report }],
+      },
+    },
+  };
+  expect(SessionOutboundMessageSchema.parse(oldMessage)).toEqual(oldMessage);
+  expect(SessionOutboundMessageSchema.parse(newMessage)).toEqual(newMessage);
+  expect(legacy.parse(newMessage)).toEqual(oldMessage);
+});
+
+test("released Reforged batch reports and account resolver remain valid wire messages", () => {
+  const reports = ["available", "unavailable", "error"].map((status) => ({
+    id: `fixture:${status}`,
+    account: { label: "Work" },
+    fetchedAt: "2026-10-08T00:00:00.000Z",
+    sourceId: "fixture",
+    sourceLabel: "Fixture",
+    report: { status, windows: [], error: "original diagnostic" },
+  }));
+  const batch = { type: "usage.list_reports.response", payload: { requestId: "batch", reports } };
+  expect(SessionOutboundMessageSchema.parse(batch)).toEqual(batch);
+  const compatible = { ...batch, payload: { ...batch.payload, error: null } };
+  expect(SessionOutboundMessageSchema.parse(compatible)).toEqual(compatible);
+  const upstreamFinal = z.object({ requestId: z.string(), error: z.string().nullable() });
+  expect(upstreamFinal.parse(compatible.payload)).toEqual({ requestId: "batch", error: null });
+  const request = {
+    type: "usage.list_reports.request",
+    requestId: "batch",
+    reportIds: ["fixture:available"],
+    forceRefresh: true,
+  };
+  expect(SessionInboundMessageSchema.parse(request)).toEqual(request);
+  const resolver = {
+    type: "agent.resolve_usage_report.request",
+    requestId: "account",
+    agentId: "agent",
+  };
+  expect(SessionInboundMessageSchema.parse(resolver)).toEqual(resolver);
+  const resolved = {
+    type: "agent.resolve_usage_report.response",
+    payload: { requestId: "account", reportId: "fixture:available" },
+  };
+  expect(SessionOutboundMessageSchema.parse(resolved)).toEqual(resolved);
+});
+
+test("streaming Usage has a separate namespace and optional capability", () => {
+  const request = { type: "usage.reports.list.request", requestId: "stream", agentId: "agent" };
+  expect(SessionInboundMessageSchema.parse(request)).toEqual(request);
+  const response = {
+    type: "usage.reports.list.response",
+    payload: { requestId: "stream", error: null },
+  };
+  expect(SessionOutboundMessageSchema.parse(response)).toEqual(response);
+  const info = ServerInfoStatusPayloadSchema.parse({
+    status: "server_info",
+    serverId: "host",
+    features: { usageSources: true, usageReportStreams: true },
+  });
+  expect(info.features?.usageReportStreams).toBe(true);
+  const older = ServerInfoStatusPayloadSchema.parse({
+    status: "server_info",
+    serverId: "host",
+    features: { usageSources: true },
+  });
+  expect(older.features?.usageReportStreams).toBeUndefined();
 });

@@ -474,7 +474,7 @@ export function WorkspaceSetupDialog() {
             cwd={sourceDirectory}
             clearDraft={chatDraft.clear}
             autoFocus
-            commandDraftConfig={composerState?.commandDraftConfig}
+            commandDraft={composerState?.commandDraft}
             agentControls={agentControlsWithDisabled}
             inputWrapperStyle={styles.composerInputWrapper}
           />

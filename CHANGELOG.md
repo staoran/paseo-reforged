@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.11.1-beta.1 - 2026-10-08
+
+### Added
+
+- Add Claude Haiku 5.5 for Claude Code 2.1.293 and newer
+- Add reviewed plugin registry installation and the Muse provider
+- Show Usage reports for the active session account with streamed updates and login diagnostics
+
+### Improved
+
+- Share workspace tab controls with the Explorer sidebar, including Reforged runtime close actions
+- Preserve assistant image Markdown and nested list numbering when copying selections
+- Keep reading position stable while paging history, loading images, and changing chat width
+
+### Fixed
+
+- Keep Claude agents idle while background helpers work without interrupting those helpers on ordinary Stop or send
+- Refresh provider subagents that finish while the app is disconnected
+- Recover OpenCode v2 turns from execution events and durable logs, including permission cancellation
+- Preserve released Reforged Usage batch reports and per-agent account lookup across upgrades
+
 ## 0.10.0-beta.3 - 2026-09-29
 
 ### Added

@@ -41,11 +41,7 @@ import {
   useWorkspaceAttachmentsStore,
 } from "@/attachments/workspace-attachments-store";
 import type { UserMessageImageAttachment } from "@/types/stream";
-import {
-  COMPACT_FORM_FACTOR_WIDTH,
-  MAX_CONTENT_WIDTH,
-  useIsCompactFormFactor,
-} from "@/constants/layout";
+import { COMPACT_FORM_FACTOR_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
 import {
   buildWorkspaceTabPersistenceKey,
@@ -687,7 +683,7 @@ export function WorkspaceDraftAgentTab({
             autoFocus={shouldAutoFocusWorkspaceDraftComposer({ isPaneFocused, isSubmitting })}
             autoFocusKey={String(draftInput.attachmentFocusRequestId)}
             onFocusInput={handleFocusInputCallback}
-            commandDraftConfig={composerState.commandDraftConfig}
+            commandDraft={composerState.commandDraft}
             agentControls={composerAgentControls}
             isCompactLayout={isCompactComposerLayout}
           />
@@ -742,7 +738,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   importPillContent: {
     width: "100%",
-    maxWidth: MAX_CONTENT_WIDTH,
+    maxWidth: theme.contentMaxWidth,
     flexDirection: "row",
   },
   errorContainer: {

@@ -9,6 +9,7 @@ import { readPluginManifest } from "../manifest.js";
 import { DaemonClient } from "../../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../../test-utils/paseo-daemon.js";
 import { BuiltinPluginLoader, builtinPlugins, resolveBuiltinPluginsRoot } from "./index.js";
+import { assertPluginCompatibility } from "@getpaseo/protocol/plugin-requirements";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -39,7 +40,11 @@ test("listed built-ins resolve to matching manifests and compile", async () => {
   const root = resolveBuiltinPluginsRoot();
   for (const id of builtinPlugins) {
     const directory = path.join(root, id);
-    expect((await readPluginManifest(directory)).id).toBe(id);
+    const manifest = await readPluginManifest(directory);
+    expect(manifest.id).toBe(id);
+    expect(() =>
+      assertPluginCompatibility({ ...manifest, version: "0.11.1-beta.1", runtime: "daemon" }),
+    ).not.toThrow();
     const findEntry = async (names: string[]) => {
       for (const name of names) {
         const entry = path.join(directory, name);

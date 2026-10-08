@@ -19,11 +19,11 @@ async function main() {
   };
   try {
     process.env.PASEO_DESKTOP_SMOKE_ARTIFACT_DIR = path.join(artifactRoot, "installed");
-    const helper = fs.statSync("/opt/Paseo/chrome-sandbox");
+    const helper = fs.statSync("/opt/Paseo Reforged/chrome-sandbox");
     if (helper.uid !== 0 || (helper.mode & 0o7777) !== 0o4755) {
       throw new Error("Installed native package did not provide a root-owned 4755 helper");
     }
-    await smokePackagedDesktopApp({ appPath: "/opt/Paseo", expectedSandbox: true });
+    await smokePackagedDesktopApp({ appPath: "/opt/Paseo Reforged", expectedSandbox: true });
     if (installedOnly) return;
 
     const appImage = findArtifact(".AppImage");
@@ -45,7 +45,7 @@ async function main() {
     const tarDir = path.join(extracted, "tar");
     fs.mkdirSync(tarDir);
     execFileSync("tar", ["-xzf", findArtifact(".tar.gz"), "-C", tarDir]);
-    const appPath = fs.existsSync(path.join(tarDir, "Paseo"))
+    const appPath = fs.existsSync(path.join(tarDir, "Paseo-Reforged"))
       ? tarDir
       : path.join(tarDir, fs.readdirSync(tarDir)[0]);
     process.env.PASEO_DESKTOP_SMOKE_ARTIFACT_DIR = path.join(artifactRoot, "tar");

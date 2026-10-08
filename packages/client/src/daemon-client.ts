@@ -1,3 +1,4 @@
+import { legacyUsageIcon } from "./legacy-usage-icons.js";
 import { subscribeTimeline, type TimelineMessage } from "./timeline-subscription/index.js";
 import { ProviderSnapshotUpdates } from "./provider-snapshots/index.js";
 import {
@@ -94,7 +95,8 @@ import type {
   RefreshProvidersSnapshotResponseMessage,
   ProviderDiagnosticResponseMessage,
   ProviderUsageListResponseMessage,
-  UsageListReportsResponseMessage,
+  UsageReportEntry,
+  LegacyUsageReportEntry,
   AgentResolveUsageReportResponseMessage,
   DaemonGetStatusResponse,
   DaemonGetPairingOfferResponse,
@@ -426,6 +428,7 @@ export interface DaemonClientTrace {
 
 export interface SendMessageOptions {
   messageId?: string;
+  /** What happens when the agent is mid-turn. The daemon interrupts the turn when omitted. */
   activeTurnBehavior?: ActiveTurnBehavior;
   images?: Array<{ data: string; mimeType: string }>;
   attachments?: SendAgentMessageRequest["attachments"];
@@ -563,8 +566,12 @@ type GetProvidersSnapshotPayload = GetProvidersSnapshotResponseMessage["payload"
 type RefreshProvidersSnapshotPayload = RefreshProvidersSnapshotResponseMessage["payload"];
 type ProviderDiagnosticPayload = ProviderDiagnosticResponseMessage["payload"];
 type ProviderUsageListPayload = ProviderUsageListResponseMessage["payload"];
-type UsageListReportsPayload = UsageListReportsResponseMessage["payload"];
+/** Released account resolver payload */
 type AgentResolveUsageReportPayload = AgentResolveUsageReportResponseMessage["payload"];
+interface UsageReportsListPayload {
+  requestId: string;
+  reports: UsageReportEntry[];
+}
 type DaemonStatusPayload = DaemonGetStatusResponse["payload"];
 type DaemonPairingOfferPayload = DaemonGetPairingOfferResponse["payload"];
 type DiagnosticsPayload = DiagnosticsResponse["payload"];
@@ -1171,7 +1178,7 @@ function toReasonCode(reason: string | null | undefined): string | null {
 }
 
 interface PendingSend {
-  message: SessionInboundMessage;
+  send: () => void;
   resolve: () => void;
   reject: (error: Error) => void;
   timeoutHandle: ReturnType<typeof setTimeout>;
@@ -1187,6 +1194,25 @@ interface PingProbe {
   // heartbeat sets this; a latency measurement never drives teardown, even when a
   // heartbeat tick shares (dedupes onto) an in-flight measurement ping.
   drivesLivenessFailure: boolean;
+}
+
+// COMPAT(providerUsageList): added in v0.1.98, remove after 2027-03-26.
+export function supportsUsageReports(features: ServerInfoStatusPayload["features"]): boolean {
+  return features?.usageSources === true || features?.providerUsageList === true;
+}
+
+// COMPAT(reforgedUsageBatch): added in v0.11.1-beta.1, remove after 2027-04-08 once daemon floor >= v0.11.1
+/** Convert released unavailable and error badges to the current report model */
+function normalizeLegacyUsageReport(entry: LegacyUsageReportEntry): UsageReportEntry {
+  const report = entry.report;
+  if (report.status === "available")
+    return { ...entry, report: { ...report, status: "available" } };
+  if (report.status === "error")
+    return { ...entry, report: { status: "error", error: report.error ?? "" } };
+  return {
+    ...entry,
+    report: { status: "unavailable", problem: { kind: "no_quota", detail: report.error ?? "" } },
+  };
 }
 
 export class DaemonClient {
@@ -1799,12 +1825,23 @@ export class DaemonClient {
    * This prevents waiters from hanging forever when called during connection.
    */
   private sendSessionMessageOrThrow(message: SessionInboundMessage): Promise<void> {
+    return this.sendWhenConnected(() => {
+      const payload = SessionInboundMessageSchema.parse(message);
+      this.sendJsonMessage("session", payload.type, { type: "session", message: payload });
+    });
+  }
+
+  /** Resolves once connected, waiting out a connection that is still being established. */
+  private whenConnected(): Promise<void> {
+    return this.sendWhenConnected(() => undefined);
+  }
+
+  private sendWhenConnected(send: () => void): Promise<void> {
     const status = this.connectionState.status;
 
     // If connected, send immediately
     if (this.transport && status === "connected") {
-      const payload = SessionInboundMessageSchema.parse(message);
-      this.sendJsonMessage("session", payload.type, { type: "session", message: payload });
+      send();
       return Promise.resolve();
     }
 
@@ -1825,7 +1862,7 @@ export class DaemonClient {
           );
         }, DEFAULT_SEND_QUEUE_TIMEOUT_MS);
 
-        this.pendingSendQueue.push({ message, resolve, reject, timeoutHandle });
+        this.pendingSendQueue.push({ send, resolve, reject, timeoutHandle });
       });
     }
 
@@ -1844,8 +1881,7 @@ export class DaemonClient {
       clearTimeout(pending.timeoutHandle);
       try {
         if (this.transport && this.connectionState.status === "connected") {
-          const payload = SessionInboundMessageSchema.parse(pending.message);
-          this.sendJsonMessage("session", payload.type, { type: "session", message: payload });
+          pending.send();
           pending.resolve();
         } else {
           pending.reject(new DaemonConnectionError("Connection lost before message could be sent"));
@@ -4871,6 +4907,8 @@ export class DaemonClient {
     if (!bytes) {
       throw new Error("File bytes are required.");
     }
+    // The file frames bypass the send queue, so start only on an open connection.
+    await this.whenConnected();
     const uploadTransport = this.transport;
     const resolvedRequestId = this.createRequestId(input.requestId);
     const modifiedAt = input.modifiedAt ?? new Date().toISOString();
@@ -5267,32 +5305,196 @@ export class DaemonClient {
     });
   }
 
-  async listUsageReports(options?: {
-    requestId?: string;
-    forceRefresh?: boolean;
-    reportIds?: string[];
-  }): Promise<UsageListReportsPayload> {
-    return this.sendNamespacedCorrelatedSessionRequest({
-      requestId: options?.requestId,
-      message: {
-        type: "usage.list_reports.request",
-        forceRefresh: options?.forceRefresh,
-        reportIds: options?.reportIds,
-      },
+  async listUsageReports(
+    options?: {
+      agentId?: string;
+      requestId?: string;
+      forceRefresh?: boolean;
+      reportIds?: string[];
+    },
+    onReport?: (report: UsageReportEntry) => void,
+  ): Promise<UsageReportsListPayload> {
+    const features = this.getLastServerInfoMessage()?.features;
+    if (!supportsUsageReports(features)) {
+      throw new Error("Update the host to see usage.");
+    }
+    if (options?.agentId !== undefined && options.reportIds !== undefined)
+      throw new Error("agentId and reportIds cannot be combined");
+    // COMPAT(providerUsageList): added in v0.1.98, remove after 2027-03-26.
+    if (features?.usageSources !== true) {
+      if (options?.agentId !== undefined)
+        return { requestId: this.createRequestId(options.requestId), reports: [] };
+      // Released hosts serve a five-minute cache and have no forceRefresh option.
+      const payload = await this.listProviderUsage({ requestId: options?.requestId });
+      return {
+        requestId: payload.requestId,
+        reports: payload.providers
+          .filter(
+            (provider) => !options?.reportIds || options.reportIds.includes(provider.providerId),
+          )
+          .map((provider) => {
+            // COMPAT(providerUsageList): added in v0.1.98, remove after 2027-03-26.
+            // 0.10 reports have no typed problems; preserve their unavailable badge and error text.
+            let report: UsageReportsListPayload["reports"][number]["report"];
+            if (provider.status === "available") {
+              report = {
+                status: "available",
+                windows: provider.windows,
+                balances: provider.balances ?? undefined,
+                details: provider.details ?? undefined,
+                planLabel: provider.planLabel ?? undefined,
+              };
+            } else if (provider.status === "error") {
+              report = { status: "error", error: provider.error ?? "" };
+            } else {
+              report = {
+                status: "unavailable",
+                problem: { kind: "no_quota", detail: provider.error ?? "" },
+              };
+            }
+            return {
+              id: provider.providerId,
+              sourceId: provider.providerId,
+              sourceLabel: provider.displayName,
+              icon: legacyUsageIcon(provider.providerId),
+              account: {},
+              fetchedAt: provider.fetchedAt ?? payload.fetchedAt,
+              report,
+            };
+          }),
+      };
+    }
+    // COMPAT(reforgedUsageBatch): added in v0.11.1-beta.1, remove after 2027-04-08 once daemon floor >= v0.11.1
+    if (features.usageReportStreams !== true) {
+      return this.listLegacyUsageReports(options, onReport);
+    }
+    const requestId = this.createRequestId(options?.requestId);
+    const reports: UsageReportEntry[] = [];
+    let active = true;
+    const unsubscribe = this.subscribeRawMessages((message) => {
+      if (
+        !active ||
+        !("payload" in message) ||
+        !("requestId" in message.payload) ||
+        message.payload.requestId !== requestId
+      )
+        return;
+      if (message.type === "usage.reports.list.response" || message.type === "rpc_error") {
+        active = false;
+        return;
+      }
+      if (message.type !== "usage.reports.list.update") return;
+      reports.push(message.payload.report);
+      onReport?.(message.payload.report);
     });
+    try {
+      const response = await this.sendRequest({
+        requestId,
+        message: {
+          type: "usage.reports.list.request",
+          requestId,
+          forceRefresh: options?.forceRefresh,
+          reportIds: options?.reportIds,
+          agentId: options?.agentId,
+        },
+        select: (message) =>
+          message.type === "usage.reports.list.response" && message.payload.requestId === requestId
+            ? message.payload
+            : null,
+      });
+      if (response.error !== null) throw new Error(response.error);
+      return { requestId, reports };
+    } finally {
+      active = false;
+      unsubscribe();
+    }
   }
 
+  // COMPAT(reforgedUsageResolver): added in v0.11.1-beta.1, remove after 2027-04-08 once daemon floor >= v0.11.1
+  /** Preserve the released singular account lookup */
   async resolveAgentUsageReport(options: {
     agentId: string;
     requestId?: string;
   }): Promise<AgentResolveUsageReportPayload> {
     return this.sendNamespacedCorrelatedSessionRequest({
       requestId: options.requestId,
-      message: {
-        type: "agent.resolve_usage_report.request",
-        agentId: options.agentId,
-      },
+      message: { type: "agent.resolve_usage_report.request", agentId: options.agentId },
     });
+  }
+
+  // COMPAT(reforgedUsageBatch): added in v0.11.1-beta.1, remove after 2027-04-08 once daemon floor >= v0.11.1
+  /** Normalize released Reforged batches and upstream 0.11 streams at one client boundary */
+  private async listLegacyUsageReports(
+    options:
+      | {
+          agentId?: string;
+          requestId?: string;
+          forceRefresh?: boolean;
+          reportIds?: string[];
+        }
+      | undefined,
+    onReport: ((report: UsageReportEntry) => void) | undefined,
+  ): Promise<UsageReportsListPayload> {
+    const requestId = this.createRequestId(options?.requestId);
+    let reportIds = options?.reportIds;
+    // Official 0.11 hosts removed the resolver and accept agentId on the original list RPC
+    // Missing versions retain the released Reforged batch contract
+    const version = this.getLastServerInfoMessage()?.version?.match(/^(\d+)\.(\d+)\./);
+    const scopedList =
+      version !== undefined &&
+      version !== null &&
+      (Number(version[1]) > 0 || Number(version[2]) >= 11);
+    if (options?.agentId !== undefined && !scopedList) {
+      const resolved = await this.resolveAgentUsageReport({ agentId: options.agentId });
+      if (resolved.reportId === null) return { requestId, reports: [] };
+      reportIds = [resolved.reportId];
+    }
+    const reports: UsageReportEntry[] = [];
+    let active = true;
+    const unsubscribe = this.subscribeRawMessages((message) => {
+      if (
+        (message.type === "usage.list_reports.response" || message.type === "rpc_error") &&
+        message.payload.requestId === requestId
+      ) {
+        active = false;
+        return;
+      }
+      if (
+        !active ||
+        message.type !== "usage.list_reports.update" ||
+        message.payload.requestId !== requestId
+      )
+        return;
+      reports.push(message.payload.report);
+      onReport?.(message.payload.report);
+    });
+    try {
+      const response = await this.sendRequest({
+        requestId,
+        message: {
+          type: "usage.list_reports.request",
+          requestId,
+          forceRefresh: options?.forceRefresh,
+          reportIds,
+          agentId: scopedList ? options?.agentId : undefined,
+        },
+        select: (message) =>
+          message.type === "usage.list_reports.response" && message.payload.requestId === requestId
+            ? message.payload
+            : null,
+      });
+      active = false;
+      if (response.error !== undefined && response.error !== null) throw new Error(response.error);
+      for (const entry of response.reports ?? []) {
+        const report = normalizeLegacyUsageReport(entry);
+        reports.push(report);
+        onReport?.(report);
+      }
+      return { requestId, reports };
+    } finally {
+      active = false;
+      unsubscribe();
+    }
   }
 
   async listCommands(options: ListCommandsOptions): Promise<ListCommandsPayload>;

@@ -1,3 +1,4 @@
+import { PluginRegistryIdentitySchema } from "./plugin-registry.js";
 import { AgentProfileSchema, AgentSkillSelectionSchema } from "./agent-profile.js";
 export {
   AgentProfileSchema,
@@ -301,6 +302,7 @@ export const AgentFeatureSelectSchema = z.object({
   description: z.string().optional(),
   tooltip: z.string().optional(),
   icon: z.string().optional(),
+  desktopTrigger: z.enum(["icon", "label"]).optional(),
   value: z.string().nullable(),
   options: z.array(AgentSelectOptionSchema),
 });
@@ -417,7 +419,7 @@ const McpServerConfigSchema = z.discriminatedUnion("type", [
   McpSseServerConfigSchema,
 ]);
 
-const ProviderOptionsSchema = z.record(z.string(), z.json());
+const ProviderOptionsSchema = z.record(z.string(), z.unknown());
 
 const McpToolRefSchema = z
   .object({
@@ -1459,8 +1461,18 @@ export const PluginSourceInstallRequestSchema = z.object({
 
 export const PluginSourceIdentitySchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("directory"), path: z.string() }),
-  z.object({ kind: z.literal("git"), remote: z.string(), pluginPath: z.string() }),
-  z.object({ kind: z.literal("npm"), packageName: z.string(), pluginPath: z.string() }),
+  z.object({
+    kind: z.literal("git"),
+    remote: z.string(),
+    pluginPath: z.string(),
+    registry: PluginRegistryIdentitySchema.optional(),
+  }),
+  z.object({
+    kind: z.literal("npm"),
+    packageName: z.string(),
+    pluginPath: z.string(),
+    registry: PluginRegistryIdentitySchema.optional(),
+  }),
 ]);
 export const PluginInstallationSchema = z.object({
   identity: PluginSourceIdentitySchema,
@@ -1790,12 +1802,24 @@ export const ProviderUsageListRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
-export const UsageListReportsRequestMessageSchema = z.object({
-  type: z.literal("usage.list_reports.request"),
+export const UsageReportsListRequestMessageSchema = z.object({
+  type: z.literal("usage.reports.list.request"),
+  agentId: z.string().optional(),
   requestId: z.string(),
   reportIds: z.array(z.string()).optional(),
   forceRefresh: z.boolean().optional(),
 });
+
+// COMPAT(reforgedUsageBatch): added in v0.11.1-beta.1, remove after 2027-04-08 once beta client floor >= v0.11.1
+/** Accept the released Reforged batch request independently of stream delivery */
+export const UsageListReportsRequestMessageSchema = z.object({
+  type: z.literal("usage.list_reports.request"),
+  agentId: z.string().optional(),
+  requestId: z.string(),
+  reportIds: z.array(z.string()).optional(),
+  forceRefresh: z.boolean().optional(),
+});
+/** Accept the released per-agent account resolver */
 export const AgentResolveUsageReportRequestMessageSchema = z.object({
   type: z.literal("agent.resolve_usage_report.request"),
   requestId: z.string(),
@@ -3271,6 +3295,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   RefreshProvidersSnapshotRequestMessageSchema,
   ProviderDiagnosticRequestMessageSchema,
   ProviderUsageListRequestMessageSchema,
+  UsageReportsListRequestMessageSchema,
   UsageListReportsRequestMessageSchema,
   AgentResolveUsageReportRequestMessageSchema,
   ResumeAgentRequestMessageSchema,
@@ -3580,6 +3605,8 @@ export const ServerInfoStatusPayloadSchema = z
         hubAgentRpc: z.boolean().optional(),
         providersSnapshot: z.boolean().optional(),
         usageSources: z.boolean().optional(),
+        /** Distinguishes the streaming Usage contract from released batch hosts */
+        usageReportStreams: z.boolean().optional(),
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
         providersSnapshotCwd: z.boolean().optional(),
         // COMPAT(directorySync): added in v0.3.x, remove gate after 2027-02-12.
@@ -6225,6 +6252,13 @@ export const ProviderUsageStatusSchema = z.enum(["available", "unavailable", "er
 export const ProviderUsageWindowSchema = z.object({
   id: z.string(),
   label: z.string(),
+  /**
+   * A few characters naming the window where space is tight, e.g. "5h" or "wk". An empty string
+   * shows the percent alone; leaving it out shows `label`.
+   */
+  shortLabel: z.string().optional(),
+  /** Shown in the usage summary until the user pins windows of their own. */
+  summary: z.boolean().optional(),
   usedPct: z.number().nullable().optional(),
   remainingPct: z.number().nullable().optional(),
   resetsAt: z.string().nullable().optional(),
@@ -6274,14 +6308,30 @@ export const ProviderUsageListResponseMessageSchema = z.object({
   }),
 });
 
-export const UsageReportSchema = z.object({
-  status: ProviderUsageStatusSchema,
-  planLabel: z.string().optional(),
-  windows: z.array(ProviderUsageWindowSchema.extend({ headline: z.boolean().optional() })),
-  balances: z.array(ProviderUsageBalanceSchema).optional(),
-  details: z.array(ProviderUsageDetailSchema).optional(),
-  error: z.string().optional(),
-});
+export const UsageProblemSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("expired"),
+    expiresAt: z.iso.datetime(),
+    refreshedBy: z.string().optional(),
+  }),
+  z.object({
+    kind: z.literal("rejected"),
+    status: z.number().int(),
+    refreshedBy: z.string().optional(),
+  }),
+  z.object({ kind: z.literal("no_quota"), detail: z.string() }),
+]);
+export const UsageReportSchema = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("available"),
+    planLabel: z.string().optional(),
+    windows: z.array(ProviderUsageWindowSchema),
+    balances: z.array(ProviderUsageBalanceSchema).optional(),
+    details: z.array(ProviderUsageDetailSchema).optional(),
+  }),
+  z.object({ status: z.literal("unavailable"), problem: UsageProblemSchema }),
+  z.object({ status: z.literal("error"), error: z.string() }),
+]);
 export const UsageReportEntrySchema = z.object({
   id: z.string(),
   account: z.object({ label: z.string().optional() }),
@@ -6290,11 +6340,58 @@ export const UsageReportEntrySchema = z.object({
   sourceLabel: z.string(),
   icon: z.string().optional(),
   report: UsageReportSchema,
+  loginErrors: z
+    .array(
+      z.object({
+        harness: z.string(),
+        report: z.discriminatedUnion("status", [
+          z.object({ status: z.literal("unavailable"), problem: UsageProblemSchema }),
+          z.object({ status: z.literal("error"), error: z.string() }),
+        ]),
+      }),
+    )
+    .optional(),
 });
+export const UsageReportsListUpdateMessageSchema = z.object({
+  type: z.literal("usage.reports.list.update"),
+  payload: z.object({ requestId: z.string(), report: UsageReportEntrySchema }),
+});
+export const UsageReportsListResponseMessageSchema = z.object({
+  type: z.literal("usage.reports.list.response"),
+  payload: z.object({ requestId: z.string(), error: z.string().nullable() }),
+});
+
+// COMPAT(reforgedUsageBatch): added in v0.11.1-beta.1, remove after 2027-04-08 once beta client floor >= v0.11.1
+/** Preserve the old error and unavailable window contract */
+export const LegacyUsageReportSchema = z.object({
+  status: ProviderUsageStatusSchema,
+  planLabel: z.string().optional(),
+  windows: z.array(ProviderUsageWindowSchema.extend({ headline: z.boolean().optional() })),
+  balances: z.array(ProviderUsageBalanceSchema).optional(),
+  details: z.array(ProviderUsageDetailSchema).optional(),
+  error: z.string().optional(),
+});
+/** Preserve account identity and source metadata in batch reports */
+export const LegacyUsageReportEntrySchema = UsageReportEntrySchema.omit({
+  loginErrors: true,
+}).extend({
+  report: LegacyUsageReportSchema,
+});
+/** Accept Reforged batch finals and upstream 0.11 streaming finals at the old namespace */
 export const UsageListReportsResponseMessageSchema = z.object({
   type: z.literal("usage.list_reports.response"),
-  payload: z.object({ requestId: z.string(), reports: z.array(UsageReportEntrySchema) }),
+  payload: z.object({
+    requestId: z.string(),
+    reports: z.array(LegacyUsageReportEntrySchema).optional(),
+    error: z.string().nullable().optional(),
+  }),
 });
+/** Accept upstream 0.11 updates without sending them to released batch clients */
+export const UsageListReportsUpdateMessageSchema = z.object({
+  type: z.literal("usage.list_reports.update"),
+  payload: z.object({ requestId: z.string(), report: UsageReportEntrySchema }),
+});
+/** Preserve the released singular account resolver response */
 export const AgentResolveUsageReportResponseMessageSchema = z.object({
   type: z.literal("agent.resolve_usage_report.response"),
   payload: z.object({ requestId: z.string(), reportId: z.string().nullable() }),
@@ -6622,6 +6719,9 @@ export const PluginNpmInstallationSchema = z.object({
 
 export const PluginListItemSchema = z.object({
   id: PluginIdSchema,
+  name: z.string().optional(),
+  icon: z.string().optional(),
+  media: z.array(z.string()).optional(),
   description: z.string().optional(),
   path: z.string(),
   enabled: z.boolean(),
@@ -6986,7 +7086,10 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   RefreshProvidersSnapshotResponseMessageSchema,
   ProviderDiagnosticResponseMessageSchema,
   ProviderUsageListResponseMessageSchema,
+  UsageReportsListUpdateMessageSchema,
+  UsageReportsListResponseMessageSchema,
   UsageListReportsResponseMessageSchema,
+  UsageListReportsUpdateMessageSchema,
   AgentResolveUsageReportResponseMessageSchema,
   ListCommandsResponseSchema,
   ListTerminalsResponseSchema,
@@ -7169,12 +7272,18 @@ export type ProviderDiagnosticResponseMessage = z.infer<
   typeof ProviderDiagnosticResponseMessageSchema
 >;
 export type ProviderUsageTone = z.infer<typeof ProviderUsageToneSchema>;
+export type UsageProblem = z.infer<typeof UsageProblemSchema>;
 export type UsageReport = z.infer<typeof UsageReportSchema>;
 export type UsageReportEntry = z.infer<typeof UsageReportEntrySchema>;
-export type UsageListReportsResponseMessage = z.infer<typeof UsageListReportsResponseMessageSchema>;
+/** Released batch report shape */
+export type LegacyUsageReportEntry = z.infer<typeof LegacyUsageReportEntrySchema>;
+/** Released account resolver response */
 export type AgentResolveUsageReportResponseMessage = z.infer<
   typeof AgentResolveUsageReportResponseMessageSchema
 >;
+/** Released batch response */
+export type UsageListReportsResponseMessage = z.infer<typeof UsageListReportsResponseMessageSchema>;
+export type UsageReportsListResponseMessage = z.infer<typeof UsageReportsListResponseMessageSchema>;
 export type ProviderUsageStatus = z.infer<typeof ProviderUsageStatusSchema>;
 export type ProviderUsage = z.infer<typeof ProviderUsageSchema>;
 export type ProviderUsageWindow = z.infer<typeof ProviderUsageWindowSchema>;
