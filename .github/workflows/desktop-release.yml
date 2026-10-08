@@ -37,6 +37,11 @@ on:
         options:
           - "true"
           - "false"
+      skip_smoke:
+        description: "Skip packaged smoke checks for a manual test build."
+        required: false
+        default: false
+        type: boolean
       rollout_hours:
         description: "Linear rollout duration in hours. Use 0 for instant rollout."
         required: false
@@ -364,7 +369,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EP_GH_IGNORE_TIME: true
-          PASEO_DESKTOP_SMOKE: "1"
+          PASEO_DESKTOP_SMOKE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.skip_smoke == 'true' && '0' || '1' }}
           PASEO_DESKTOP_SMOKE_ARTIFACT_DIR: ${{ runner.temp }}/desktop-smoke
         run: |
           set -euo pipefail

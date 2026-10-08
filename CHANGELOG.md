@@ -16,6 +16,7 @@
 
 ### Fixed
 
+- Recover failed desktop windows through native dialogs and a Windows tray action while keeping background agents running
 - Keep Claude agents idle while background helpers work without interrupting those helpers on ordinary Stop or send
 - Refresh provider subagents that finish while the app is disconnected
 - Recover OpenCode v2 turns from execution events and durable logs, including permission cancellation
