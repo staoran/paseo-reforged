@@ -33,6 +33,9 @@ import { migrateAppSettings } from "./migrations";
 export { APP_SETTINGS_KEY } from "./keys";
 export const APP_SETTINGS_QUERY_KEY = ["app-settings"];
 
+/** Destinations available for normal app startup */
+const StartupBehaviorSchema = z.enum(["restore", "new-workspace"]);
+export type StartupBehavior = z.infer<typeof StartupBehaviorSchema>;
 export type SendBehavior = ActiveTurnBehavior | "queue";
 export type ReleaseChannel = "stable" | "beta";
 export type ServiceUrlBehavior = "ask" | "in-app" | "external";
@@ -78,6 +81,8 @@ export interface AppSettings {
   /** Which contributed theme `theme: "plugin"` selects. */
   pluginThemeId: string | null;
   language: AppLanguage;
+  /** Which page opens on the next app launch */
+  startupBehavior: StartupBehavior;
   sendBehavior: SendBehavior;
   serviceUrlBehavior: ServiceUrlBehavior;
   terminalScrollbackLines: number;
@@ -140,6 +145,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   theme: DEFAULT_THEME_PREFERENCE,
   pluginThemeId: null,
   language: "system",
+  startupBehavior: "restore",
   sendBehavior: "steer",
   serviceUrlBehavior: "ask",
   terminalScrollbackLines: DEFAULT_TERMINAL_SCROLLBACK_LINES,
@@ -219,6 +225,7 @@ const StoredAppSettingsSchema = z
     language: z
       .enum(["system", "ar", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"])
       .catch("system"),
+    startupBehavior: StartupBehaviorSchema.catch(DEFAULT_CLIENT_SETTINGS.startupBehavior),
     sendBehavior: z.enum(["interrupt", "steer", "queue"]).catch("steer"),
     serviceUrlBehavior: z.enum(["ask", "in-app", "external"]).catch("ask"),
     terminalScrollbackLines: clampedNumber(

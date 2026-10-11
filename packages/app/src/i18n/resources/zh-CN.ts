@@ -2132,6 +2132,20 @@ export const zhCN: TranslationResources = {
     general: {
       title: "通用",
       sending: "发送",
+      startup: {
+        title: "启动",
+        label: "启动时打开",
+        descriptions: {
+          restore: "恢复上次工作区和打开的标签页",
+          "new-workspace": "启动时进入新建工作区页面",
+        },
+        options: {
+          restore: "上次关闭时的页面",
+          "new-workspace": "新建工作区",
+        },
+        saving: "正在保存...",
+        saveError: "无法保存启动设置，请重新选择选项重试",
+      },
       browserData: {
         title: "浏览器数据",
         siteData: "Cookie 和网站数据",

@@ -2177,6 +2177,20 @@ export const ja: TranslationResources = {
     general: {
       title: "一般",
       sending: "送信",
+      startup: {
+        title: "起動",
+        label: "起動時に開くページ",
+        descriptions: {
+          restore: "前回のワークスペースと開いていたタブを復元",
+          "new-workspace": "アプリの起動時に新規ワークスペースのページを開く",
+        },
+        options: {
+          restore: "前回のページを復元",
+          "new-workspace": "新規ワークスペース",
+        },
+        saving: "保存中...",
+        saveError: "起動設定を保存できませんでした。オプションを選び直して再試行してください。",
+      },
       browserData: {
         title: "ブラウザーデータ",
         siteData: "Cookie とサイトデータ",

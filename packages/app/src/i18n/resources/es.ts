@@ -2205,6 +2205,21 @@ export const es: TranslationResources = {
     general: {
       title: "General",
       sending: "Envío",
+      startup: {
+        title: "Inicio",
+        label: "Al iniciar",
+        descriptions: {
+          restore: "Restaurar el último espacio de trabajo y sus pestañas abiertas",
+          "new-workspace": "Abrir la página de nuevo espacio de trabajo al iniciar la aplicación",
+        },
+        options: {
+          restore: "Restaurar última página",
+          "new-workspace": "Nuevo espacio de trabajo",
+        },
+        saving: "Guardando...",
+        saveError:
+          "No se pudo guardar el comportamiento de inicio. Selecciona una opción para reintentar.",
+      },
       browserData: {
         title: "Datos del navegador",
         siteData: "Cookies y datos de sitios",

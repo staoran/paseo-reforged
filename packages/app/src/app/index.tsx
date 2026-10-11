@@ -13,10 +13,13 @@ import {
   useLastWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
 import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
+import { useAppSettings } from "@/hooks/use-settings";
 
 const isDesktop = shouldUseDesktopDaemon();
 
+/** Wait for persisted startup state before selecting the initial page */
 export default function Index() {
+  const { settings, isLoading: isSettingsLoading } = useAppSettings();
   const pathname = usePathname();
   const bootstrapState = useHostRuntimeBootstrapState();
   const anyOnlineHostServerId = useEarliestOnlineHostServerId();
@@ -44,6 +47,7 @@ export default function Index() {
       workspaceExists: workspaceSelectionExists,
     }),
     isWorkspaceSelectionLoaded,
+    startupBehavior: isSettingsLoading ? null : settings.startupBehavior,
     hasGivenUpWaitingForHost: bootstrapState.hasGivenUpWaitingForHost,
   });
 

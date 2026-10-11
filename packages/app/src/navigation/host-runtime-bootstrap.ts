@@ -1,5 +1,6 @@
 import type { AppState } from "react-native";
 import type { ActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
+import type { StartupBehavior } from "@/hooks/use-settings/storage";
 import type {
   DaemonStartCondition,
   DaemonStartResult,
@@ -9,6 +10,7 @@ import type { Href } from "expo-router";
 import {
   buildHostRootRoute,
   buildHostWorkspaceRoute,
+  buildNewWorkspaceRoute,
   buildOpenProjectRoute,
 } from "@/utils/host-routes";
 
@@ -116,6 +118,8 @@ export interface ResolveIndexStartupRouteInput extends ResolveStartupRouteBaseIn
   workspaceSelection: ActiveWorkspaceSelection | null;
   workspaceSelectionStatus: WorkspaceSelectionStatus;
   isWorkspaceSelectionLoaded: boolean;
+  /** Null until the persisted startup preference has loaded */
+  startupBehavior: StartupBehavior | null;
   hasGivenUpWaitingForHost: boolean;
 }
 
@@ -177,6 +181,7 @@ function hostExists(hosts: readonly { serverId: string }[], serverId: string | n
   return hosts.some((host) => host.serverId === serverId);
 }
 
+/** Apply the startup preference only at the root so explicit routes remain authoritative */
 function resolveReadyIndexStartupRoute(input: ResolveIndexStartupRouteInput): StartupRouteDecision {
   if (!isIndexPathname(input.route.pathname)) {
     return { kind: "render" };
@@ -184,6 +189,18 @@ function resolveReadyIndexStartupRoute(input: ResolveIndexStartupRouteInput): St
 
   if (!input.isWorkspaceSelectionLoaded) {
     return { kind: "splash" };
+  }
+
+  if (input.startupBehavior === null) {
+    return { kind: "splash" };
+  }
+
+  if (input.startupBehavior === "new-workspace") {
+    // A saved offline host can still open the new workspace screen
+    const hasKnownHost = input.hosts.length > 0 || input.anyOnlineHostServerId !== null;
+    if (hasKnownHost) {
+      return { kind: "redirect", href: buildNewWorkspaceRoute() };
+    }
   }
 
   if (

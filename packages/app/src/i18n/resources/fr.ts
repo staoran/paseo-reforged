@@ -2203,6 +2203,21 @@ export const fr: TranslationResources = {
     general: {
       title: "Général",
       sending: "Envoi",
+      startup: {
+        title: "Démarrage",
+        label: "Au démarrage",
+        descriptions: {
+          restore: "Restaurer le dernier espace de travail et ses onglets ouverts",
+          "new-workspace": "Ouvrir la page de création d’un espace de travail au démarrage",
+        },
+        options: {
+          restore: "Restaurer la dernière page",
+          "new-workspace": "Nouvel espace de travail",
+        },
+        saving: "Enregistrement...",
+        saveError:
+          "Impossible d’enregistrer le comportement au démarrage. Sélectionnez une option pour réessayer.",
+      },
       browserData: {
         title: "Données du navigateur",
         siteData: "Cookies et données des sites",

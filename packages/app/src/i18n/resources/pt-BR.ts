@@ -2191,6 +2191,21 @@ export const ptBR: TranslationResources = {
     general: {
       title: "Geral",
       sending: "Envio",
+      startup: {
+        title: "Inicialização",
+        label: "Ao iniciar",
+        descriptions: {
+          restore: "Restaurar o último espaço de trabalho e suas abas abertas",
+          "new-workspace": "Abrir a página de novo espaço de trabalho ao iniciar o aplicativo",
+        },
+        options: {
+          restore: "Restaurar última página",
+          "new-workspace": "Novo espaço de trabalho",
+        },
+        saving: "Salvando...",
+        saveError:
+          "Não foi possível salvar o comportamento de inicialização. Selecione uma opção para tentar novamente.",
+      },
       browserData: {
         title: "Dados do navegador",
         siteData: "Cookies e dados de sites",

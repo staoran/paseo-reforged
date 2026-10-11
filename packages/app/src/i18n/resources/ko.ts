@@ -2165,6 +2165,20 @@ export const ko: TranslationResources = {
     general: {
       title: "일반",
       sending: "전송",
+      startup: {
+        title: "시작",
+        label: "시작 시 열기",
+        descriptions: {
+          restore: "마지막 작업 공간과 열려 있던 탭 복원",
+          "new-workspace": "앱 시작 시 새 작업 공간 페이지 열기",
+        },
+        options: {
+          restore: "마지막 페이지 복원",
+          "new-workspace": "새 작업 공간",
+        },
+        saving: "저장 중...",
+        saveError: "시작 설정을 저장할 수 없습니다. 옵션을 다시 선택하여 재시도하세요.",
+      },
       browserData: {
         title: "브라우저 데이터",
         siteData: "쿠키 및 사이트 데이터",

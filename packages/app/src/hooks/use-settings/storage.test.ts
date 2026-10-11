@@ -43,6 +43,19 @@ function makeDeps(
 }
 
 describe("loadAppSettingsFromStorage", () => {
+  it.each([undefined, null, "future-page"])(
+    "defaults to restoring the last workspace for a missing or invalid startup preference %s",
+    async (startupBehavior) => {
+      const deps = makeDeps({
+        storage: createInMemoryKeyValueStorage({
+          [APP_SETTINGS_KEY]: JSON.stringify({ startupBehavior }),
+        }),
+      });
+
+      expect((await loadAppSettingsFromStorage(deps)).startupBehavior).toBe("restore");
+    },
+  );
+
   it("preserves a persisted steer send behavior", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({
@@ -514,6 +527,21 @@ describe("loadAppSettingsFromStorage", () => {
 });
 
 describe("saveAppSettings", () => {
+  it.each(["restore", "new-workspace"] as const)(
+    "restores the startup preference %s after saving and reloading settings",
+    async (startupBehavior) => {
+      const deps = makeDeps();
+      const queryClient = new QueryClient();
+
+      await saveAppSettings({ queryClient, updates: { startupBehavior }, deps });
+
+      expect((await loadAppSettingsFromStorage(deps)).startupBehavior).toBe(startupBehavior);
+      expect(JSON.parse(deps.storage.entries.get(APP_SETTINGS_KEY) ?? "null")).toMatchObject({
+        startupBehavior,
+      });
+    },
+  );
+
   it("applies consecutive functional updates to the latest cached settings", async () => {
     const deps = makeDeps();
     const queryClient = new QueryClient();

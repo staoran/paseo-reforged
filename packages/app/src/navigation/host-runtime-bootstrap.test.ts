@@ -176,6 +176,7 @@ describe("resolveStartupRoute", () => {
     workspaceSelection: null,
     workspaceSelectionStatus: "unknown" as const,
     isWorkspaceSelectionLoaded: true,
+    startupBehavior: "restore" as const,
     hasGivenUpWaitingForHost: false,
   };
   const baseHostInput = {
@@ -233,6 +234,77 @@ describe("resolveStartupRoute", () => {
         workspaceSelectionStatus: "exists",
       }),
     ).toEqual({ kind: "redirect", href: "/h/server-1" });
+  });
+
+  it("opens a new workspace instead of restoring the saved workspace when configured", () => {
+    expect(
+      resolveStartupRoute({
+        ...baseIndexInput,
+        startupBehavior: "new-workspace",
+        hosts: [{ serverId: "server-1" }],
+        workspaceSelection: { serverId: "server-1", workspaceId: "workspace-a" },
+        workspaceSelectionStatus: "exists",
+      }),
+    ).toEqual({ kind: "redirect", href: "/new" });
+  });
+
+  it("waits for the startup preference before restoring a saved workspace", () => {
+    expect(
+      resolveStartupRoute({
+        ...baseIndexInput,
+        startupBehavior: null,
+        hosts: [{ serverId: "server-1" }],
+        workspaceSelection: { serverId: "server-1", workspaceId: "workspace-a" },
+        workspaceSelectionStatus: "exists",
+      }),
+    ).toEqual({ kind: "splash" });
+  });
+
+  it("keeps explicit routes when startup is configured to open a new workspace", () => {
+    expect(
+      resolveStartupRoute({
+        ...baseIndexInput,
+        route: { kind: "index", pathname: "/h/server-1/workspace/workspace-a" },
+        startupBehavior: "new-workspace",
+        hosts: [{ serverId: "server-1" }],
+      }),
+    ).toEqual({ kind: "render" });
+  });
+
+  it.each(["unknown", "missing"] as const)(
+    "opens a new workspace on an offline host when the saved workspace is %s",
+    (workspaceSelectionStatus) => {
+      expect(
+        resolveStartupRoute({
+          ...baseIndexInput,
+          startupBehavior: "new-workspace",
+          hosts: [{ serverId: "server-offline" }],
+          workspaceSelection: { serverId: "server-offline", workspaceId: "workspace-a" },
+          workspaceSelectionStatus,
+          hasGivenUpWaitingForHost: true,
+        }),
+      ).toEqual({ kind: "redirect", href: "/new" });
+    },
+  );
+
+  it("opens a new workspace without a remembered workspace when configured", () => {
+    expect(
+      resolveStartupRoute({
+        ...baseIndexInput,
+        startupBehavior: "new-workspace",
+        hosts: [{ serverId: "server-1" }],
+      }),
+    ).toEqual({ kind: "redirect", href: "/new" });
+  });
+
+  it("preserves onboarding when startup prefers a new workspace but no hosts exist", () => {
+    expect(
+      resolveStartupRoute({
+        ...baseIndexInput,
+        startupBehavior: "new-workspace",
+        hasGivenUpWaitingForHost: true,
+      }),
+    ).toEqual({ kind: "redirect", href: "/welcome" });
   });
 
   it("restores the last workspace host even when a different host is already online", () => {

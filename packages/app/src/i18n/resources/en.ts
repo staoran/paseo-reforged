@@ -2282,6 +2282,20 @@ export const en = {
     general: {
       title: "General",
       sending: "Sending",
+      startup: {
+        title: "Startup",
+        label: "On startup",
+        descriptions: {
+          restore: "Restore the last workspace and its open tabs",
+          "new-workspace": "Open the New workspace page when the app starts",
+        },
+        options: {
+          restore: "Restore last page",
+          "new-workspace": "New workspace",
+        },
+        saving: "Saving...",
+        saveError: "Unable to save startup behavior. Select an option to retry.",
+      },
       browserData: {
         title: "Browser data",
         siteData: "Cookies and site data",

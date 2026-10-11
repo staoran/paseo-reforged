@@ -2154,6 +2154,20 @@ export const ar: TranslationResources = {
     general: {
       title: "عام",
       sending: "الإرسال",
+      startup: {
+        title: "بدء التشغيل",
+        label: "عند بدء التشغيل",
+        descriptions: {
+          restore: "استعادة آخر مساحة عمل وعلامات التبويب المفتوحة فيها",
+          "new-workspace": "فتح صفحة مساحة عمل جديدة عند بدء التطبيق",
+        },
+        options: {
+          restore: "استعادة آخر صفحة",
+          "new-workspace": "مساحة عمل جديدة",
+        },
+        saving: "جارٍ الحفظ...",
+        saveError: "تعذر حفظ إعداد بدء التشغيل. اختر خيارًا للمحاولة مجددًا.",
+      },
       browserData: {
         title: "بيانات المتصفح",
         siteData: "ملفات تعريف الارتباط وبيانات المواقع",

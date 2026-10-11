@@ -28,7 +28,12 @@ render a blank screen.
 
 ## Startup
 
-The root `/` route chooses a host boundary. It does not jump directly into a host
+The root `/` route waits for persisted app settings and workspace selection.
+The General settings startup preference chooses global `/new` or restores the
+last workspace. This preference applies only to normal root startup; explicit
+routes and deep links keep their targets.
+
+Workspace restore chooses a host boundary. It does not jump directly into a host
 leaf.
 
 - Good: `/` -> `/h/[serverId]`
