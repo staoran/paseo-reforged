@@ -649,6 +649,17 @@ export const ko: TranslationResources = {
         title: "탭 전환",
         searchPlaceholder: "탭 검색",
       },
+      history: {
+        title: "탭 기록",
+        description: "이 기기에 저장된 최근 닫은 탭 {{count}}개",
+        search: "탭 기록 검색",
+        empty: "아직 닫은 탭이 없습니다",
+        restore: "복원",
+        restoring: "복원 중...",
+        restoreFailed: "탭을 복원할 수 없습니다",
+        terminalHint: "이전 명령을 다시 실행하지 않고 새 셸을 시작합니다",
+        closeFailed: "탭을 닫을 수 없습니다. 다시 시도하세요.",
+      },
       menu: {
         openFor: "{{label}}의 메뉴 열기",
         copyResumeCommand: "재개 명령 복사",
@@ -665,9 +676,6 @@ export const ko: TranslationResources = {
         reloadAgent: "에이전트 다시 로드",
         reloadAgentTooltip:
           "스킬, MCP 또는 로그인 상태를 업데이트하려면 에이전트를 다시 로드하세요.",
-        closeAgentRuntime: "에이전트 런타임 닫기",
-        closeAgentRuntimeAndKeepRecord: "런타임을 닫고 기록 유지",
-        closingAgentRuntime: "에이전트 런타임 닫는 중...",
         close: "닫기",
         renameTerminal: "터미널 이름 변경",
         renameAgent: "에이전트 이름 변경",

@@ -654,6 +654,17 @@ export const es: TranslationResources = {
         title: "Cambiar pestaña",
         searchPlaceholder: "Pestañas de búsqueda",
       },
+      history: {
+        title: "Historial de pestañas",
+        description: "Últimas {{count}} pestañas cerradas, guardadas en este dispositivo",
+        search: "Buscar en el historial de pestañas",
+        empty: "Aún no hay pestañas cerradas",
+        restore: "Restaurar",
+        restoring: "Restaurando...",
+        restoreFailed: "No se pudo restaurar la pestaña",
+        terminalHint: "Inicia una nueva terminal sin volver a ejecutar los comandos anteriores",
+        closeFailed: "No se pudieron cerrar las pestañas. Vuelve a intentarlo.",
+      },
       menu: {
         openFor: "Menú abierto para{{label}}",
         copyResumeCommand: "Copiar comando de reanudación",
@@ -670,9 +681,6 @@ export const es: TranslationResources = {
         reloadAgent: "Recargar agente",
         reloadAgentTooltip:
           "Vuelva a cargar el agente para actualizar habilidades, MCP o estado de inicio de sesión.",
-        closeAgentRuntime: "Cerrar el runtime del agente",
-        closeAgentRuntimeAndKeepRecord: "Cerrar el runtime y conservar el registro",
-        closingAgentRuntime: "Cerrando el runtime del agente...",
         close: "Cerrar",
         renameTerminal: "Cambiar nombre de terminal",
         renameAgent: "Cambiar nombre del agente",

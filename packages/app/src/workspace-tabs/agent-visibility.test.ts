@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { Agent } from "@/stores/session-store";
 import {
+  collectAllTabs,
+  createDefaultLayout,
+  reconcileWorkspaceTabs,
+  revealTargetInLayout,
+} from "@/stores/workspace-layout-actions";
+import {
   buildWorkspaceTabSnapshot,
   deriveWorkspaceAgentVisibility,
   shouldPruneWorkspaceAgentTab,
@@ -334,6 +340,45 @@ describe("workspace agent visibility", () => {
       hasActivePendingTerminalCreate: false,
       hasActivePendingDraftCreate: false,
     });
+  });
+
+  it("keeps unresolved closes visible after archive events and prunes them after success", () => {
+    /** The real layout reconciliation runs against a host that already removed the agent */
+    const opened = revealTargetInLayout({
+      layout: createDefaultLayout(),
+      target: { kind: "agent", agentId: "closing-agent" },
+      placement: { mode: "focused" },
+      createTabId: () => "agent_closing-agent",
+      now: 1,
+      explorerSidebarPaneId: null,
+    });
+    if (!opened) throw new Error("Expected an agent tab");
+    /** No auto-open entities are left in the host directory */
+    const snapshotInput = {
+      agentVisibility: { activeAgentIds: new Set<string>(), autoOpenAgentIds: new Set<string>() },
+      agentsHydrated: true,
+      terminalsHydrated: true,
+      knownTerminalIds: [],
+      standaloneTerminalIds: [],
+      hasActivePendingTerminalCreate: false,
+      hasActivePendingDraftCreate: false,
+    };
+    /** The close owner retains the tab while pending and when reporting a failure */
+    const retained = reconcileWorkspaceTabs(
+      { layout: opened.layout, explorerSidebarPaneId: null },
+      buildWorkspaceTabSnapshot({
+        ...snapshotInput,
+        retainedTabs: collectAllTabs(opened.layout.root),
+      }),
+    );
+    expect(collectAllTabs(retained.layout.root).map((tab) => tab.target)).toEqual([
+      { kind: "agent", agentId: "closing-agent" },
+    ]);
+    /** Successful completion releases retention so authoritative archive state can prune */
+    const released = reconcileWorkspaceTabs(retained, buildWorkspaceTabSnapshot(snapshotInput));
+    expect(
+      collectAllTabs(released.layout.root).filter((tab) => tab.target.kind === "agent"),
+    ).toEqual([]);
   });
 
   describe("workspaceAgentVisibilityEqual", () => {

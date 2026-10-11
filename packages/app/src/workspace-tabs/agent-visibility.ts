@@ -1,5 +1,6 @@
 import type { Agent } from "@/stores/session-store";
 import type { WorkspaceTabSnapshot } from "@/stores/workspace-layout-actions";
+import type { WorkspaceTab } from "@/workspace-tabs/model";
 import { isWorkspaceRootAgent } from "@/subagents/policies";
 import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
 
@@ -47,6 +48,7 @@ export function deriveWorkspaceAgentVisibility(input: {
   return { activeAgentIds, autoOpenAgentIds };
 }
 
+/** Keep unresolved user closes visible while host directory updates propagate */
 export function buildWorkspaceTabSnapshot(input: {
   agentVisibility: WorkspaceAgentVisibility;
   agentsHydrated: boolean;
@@ -55,13 +57,23 @@ export function buildWorkspaceTabSnapshot(input: {
   standaloneTerminalIds: Iterable<string>;
   hasActivePendingTerminalCreate: boolean;
   hasActivePendingDraftCreate: boolean;
+  /** Pending and failed close operations retain their existing panels */
+  retainedTabs?: Iterable<WorkspaceTab>;
 }): WorkspaceTabSnapshot {
+  /** Runtime teardown can publish archive state before the close response */
+  const activeAgentIds = new Set(input.agentVisibility.activeAgentIds);
+  /** Killed terminals can disappear from query data before acknowledgement */
+  const knownTerminalIds = new Set(input.knownTerminalIds);
+  for (const tab of input.retainedTabs ?? []) {
+    if (tab.target.kind === "agent") activeAgentIds.add(tab.target.agentId);
+    if (tab.target.kind === "terminal") knownTerminalIds.add(tab.target.terminalId);
+  }
   return {
     agentsHydrated: input.agentsHydrated,
     terminalsHydrated: input.terminalsHydrated,
-    activeAgentIds: input.agentVisibility.activeAgentIds,
+    activeAgentIds,
     autoOpenAgentIds: input.agentVisibility.autoOpenAgentIds,
-    knownTerminalIds: input.knownTerminalIds,
+    knownTerminalIds: [...knownTerminalIds],
     standaloneTerminalIds: input.standaloneTerminalIds,
     hasActivePendingTerminalCreate: input.hasActivePendingTerminalCreate,
     hasActivePendingDraftCreate: input.hasActivePendingDraftCreate,

@@ -139,18 +139,28 @@ received.
 
 ## Tabs vs archive
 
-These are two distinct concepts that used to be conflated:
+Tabs keep per-client placement; archive keeps the durable conversation on the host:
 
-| Concept                    | Scope      | Triggers                   |
-| -------------------------- | ---------- | -------------------------- |
-| **Tab** (workspace layout) | Per-client | User opens/closes a view   |
-| **Archive** (lifecycle)    | Global     | Explicit lifecycle gesture |
+| Concept                    | Scope      | Triggers                                            |
+| -------------------------- | ---------- | --------------------------------------------------- |
+| **Tab** (workspace layout) | Per-client | User opens/closes a view                            |
+| **Archive** (lifecycle)    | Global     | Explicit lifecycle gesture, managed agent tab close |
 
-Closing a tab on a **root agent** still archives — the tab is the agent's home, so closing it means "I'm done with this agent." A confirm dialog protects against archiving a running agent by accident.
+Closing a managed agent tab archives the agent and ends its runtime without confirmation. Root
+agents and managed subagents follow the same rule for single and bulk close. Failures leave an
+error in the workspace that the user can retry.
 
-Closing a tab on a **subagent** (any agent with `parentAgentId`) is **layout-only**. The app clears the current client's open-tab label before removing the tab. Another client's open tab remains protected. The agent stays unarchived and stays in its parent's track, so a later parent archive cascades to it when no client still has it open. The user can re-open the tab from the track at any time. Single and bulk tab close apply the same policy.
+The workspace header's **Tab history** restores closed views. Its latest 100 snapshots are local to
+the client and workspace and survive reload. Restoring an agent unarchives its existing Paseo ID
+and durable provider conversation. Restoring a terminal starts a new shell without rerunning its
+previous commands. Unsaved-file and terminal-stop confirmations remain.
 
-The asymmetry is intentional: a subagent's persistent relationship lives in the parent's track. Same-workspace subagents are not auto-opened as tabs; the user opens one from that track when needed. A cross-workspace subagent is also auto-opened as a tab in its own workspace so opening that workspace does not appear empty. It remains in the parent's track until it is actually detached.
+Closing the final content tab returns to **New workspace**. Explorer tool tabs do not keep the
+workspace foregrounded. This navigation belongs to the close action, so visiting an empty workspace
+still exposes its history. Earlier agent records remain available from global History.
+
+Same-workspace subagents are not auto-opened as tabs; the user opens one from the parent's track.
+Cross-workspace subagents auto-open in their own workspace and retain their parent relationship.
 
 ## Workspace activity
 
@@ -216,15 +226,11 @@ To keep the agent alive but remove it from the parent's track, use **detach**. T
 
 ## Why this shape
 
-The decision was to **decouple "close tab" from "archive" only for subagents**, rather than universally:
+Closing a managed agent view releases its runtime. Workspace-local recovery snapshots make that
+gesture reversible without importing a provider session or searching global History.
 
-- **Closing a tab on a root agent still archives** — preserves the existing UX users are trained on
-- **Closing a tab on a subagent is layout-only** — fixes the lossy "click to read, close to dismiss view, lose the row" flow
-- **Archive button on track rows** — gives subagents an explicit lifecycle gesture in their home surface
-- **Detach button on track rows** — lets a subagent continue independently without killing its work
-- **Cascade archive on parent** — keeps subagents from leaking when the parent is archived
-
-We considered universal decoupling (no tab close ever archives, archive is always explicit) but rejected it: it changes a behavior root-agent users rely on.
+The parent's track still owns managed relationships. Detach lets a child continue independently;
+parent archive detaches children protected by another workspace or open tab and archives the rest.
 
 ## Limitations
 
@@ -234,7 +240,8 @@ A parent that spawns many subagents will see the panel's list grow; the pill onl
 
 ### Cross-client tab dismissal
 
-Closing a subagent's tab on one client doesn't affect other clients' layouts. This is the expected behavior of decoupled tabs and is consistent with how layouts have always worked. Archive remains the global gesture for cross-client cleanup.
+Managed agent archive propagates globally, including when initiated by tab close. Recovery snapshots
+belong to the client that closed the view. Other clients can find the retained agent in global History.
 
 ## Storage
 

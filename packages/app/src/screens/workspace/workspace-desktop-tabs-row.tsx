@@ -60,7 +60,6 @@ import { buildDeterministicWorkspaceTabId } from "@/workspace-tabs/identity";
 import {
   buildWorkspaceDesktopTabActions,
   type WorkspaceDesktopTabActions,
-  type WorkspaceTabAgentRuntimeActions,
   type WorkspaceTabMenuEntry,
   type WorkspaceTabMenuLabels,
 } from "@/screens/workspace/workspace-tab-menu";
@@ -530,7 +529,6 @@ export interface WorkspaceDesktopTabsRowProps {
   setHoveredCloseTabKey: Dispatch<SetStateAction<string | null>>;
   onNavigateTab: (tabId: string) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
-  agentRuntimeActions?: WorkspaceTabAgentRuntimeActions;
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onCopyTerminalId: (terminalId: string) => Promise<void> | void;
@@ -1038,7 +1036,6 @@ function ResolvedWorkspaceDesktopTabsRow({
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
-  agentRuntimeActions,
   onCreateNewTab,
   onReorderTabs,
   externalDndContext = false,
@@ -1122,9 +1119,6 @@ function ResolvedWorkspaceDesktopTabsRow({
       closeOthers: t("workspace.tabs.menu.closeOthers"),
       reloadAgent: t("workspace.tabs.menu.reloadAgent"),
       reloadAgentTooltip: t("workspace.tabs.menu.reloadAgentTooltip"),
-      closeAgentRuntime: t("workspace.tabs.menu.closeAgentRuntime"),
-      closeAgentRuntimeAndKeepRecord: t("workspace.tabs.menu.closeAgentRuntimeAndKeepRecord"),
-      closingAgentRuntime: t("workspace.tabs.menu.closingAgentRuntime"),
       close: t("workspace.tabs.menu.close"),
     }),
     [t],
@@ -1301,7 +1295,6 @@ function ResolvedWorkspaceDesktopTabsRow({
           onCloseTabsToLeft={onCloseTabsToLeft}
           onCloseTabsToRight={onCloseTabsToRight}
           onCloseOtherTabs={onCloseOtherTabs}
-          agentRuntimeActions={agentRuntimeActions}
           resolvedTabWidth={resolvedTabWidth}
           showLabel={showLabel}
           showCloseButton={shouldShowCloseButton}
@@ -1322,7 +1315,6 @@ function ResolvedWorkspaceDesktopTabsRow({
       layout.items,
       normalizedServerId,
       onCloseOtherTabs,
-      agentRuntimeActions,
       onCloseTab,
       onCloseTabsToLeft,
       onCloseTabsToRight,
@@ -1456,7 +1448,6 @@ function ResolvedDesktopTabChip({
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
-  agentRuntimeActions,
   resolvedTabWidth,
   showLabel,
   showCloseButton,
@@ -1483,7 +1474,6 @@ function ResolvedDesktopTabChip({
   onCloseTabsToLeft: (tabId: string) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
-  agentRuntimeActions?: WorkspaceTabAgentRuntimeActions;
   resolvedTabWidth: number;
   showLabel: boolean;
   showCloseButton: boolean;
@@ -1513,7 +1503,6 @@ function ResolvedDesktopTabChip({
         onCloseTabsToLeft,
         onCloseTabsToRight,
         onCloseOtherTabs,
-        agentRuntimeActions,
         labels,
       }),
     [
@@ -1523,7 +1512,6 @@ function ResolvedDesktopTabChip({
       onCloseTab,
       onCloseTabsToLeft,
       onCloseTabsToRight,
-      agentRuntimeActions,
       onCopyAgentId,
       onCopyTerminalId,
       onCopyFilePath,

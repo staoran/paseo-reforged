@@ -18,9 +18,6 @@ export interface WorkspaceTabMenuLabels {
   closeOthers: string;
   reloadAgent: string;
   reloadAgentTooltip: string;
-  closeAgentRuntime: string;
-  closeAgentRuntimeAndKeepRecord: string;
-  closingAgentRuntime: string;
   close: string;
 }
 
@@ -37,20 +34,8 @@ export const DEFAULT_WORKSPACE_TAB_MENU_LABELS: WorkspaceTabMenuLabels = {
   closeOthers: i18n.t("workspace.tabs.menu.closeOthers"),
   reloadAgent: i18n.t("workspace.tabs.menu.reloadAgent"),
   reloadAgentTooltip: i18n.t("workspace.tabs.menu.reloadAgentTooltip"),
-  closeAgentRuntime: i18n.t("workspace.tabs.menu.closeAgentRuntime"),
-  closeAgentRuntimeAndKeepRecord: i18n.t("workspace.tabs.menu.closeAgentRuntimeAndKeepRecord"),
-  closingAgentRuntime: i18n.t("workspace.tabs.menu.closingAgentRuntime"),
   close: i18n.t("workspace.tabs.menu.close"),
 };
-
-/** Runtime actions available to managed Agent tab menus */
-export interface WorkspaceTabAgentRuntimeActions {
-  canClose: (agentId: string, keepRecord: boolean) => boolean;
-  isPending: (agentId: string) => boolean;
-  errorByAgentId?: ReadonlyMap<string, string>;
-  unavailableMessage?: string | null;
-  close: (input: { agentId: string; tabId: string; keepRecord: boolean }) => void;
-}
 
 export type WorkspaceTabMenuEntry =
   | {
@@ -95,7 +80,6 @@ interface BuildWorkspaceTabMenuEntriesInput {
   onCloseTabsBefore: (tabId: string) => Promise<void> | void;
   onCloseTabsAfter: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
-  agentRuntimeActions?: WorkspaceTabAgentRuntimeActions;
   labels?: WorkspaceTabMenuLabels;
 }
 
@@ -113,7 +97,6 @@ interface BuildWorkspaceDesktopTabActionsInput {
   onCloseTabsToLeft: (tabId: string) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
-  agentRuntimeActions?: WorkspaceTabAgentRuntimeActions;
   labels?: WorkspaceTabMenuLabels;
 }
 
@@ -182,17 +165,6 @@ function getCloseButtonTestId(tab: WorkspaceTabDescriptor): string {
   return `workspace-file-close-${encodeFilePathForPathSegment(tab.target.path)}`;
 }
 
-/** Keeps a close failure beside its menu action until the next attempt */
-function runtimeCloseDescription(input: {
-  pending: boolean;
-  error: string | undefined;
-  disabled: boolean;
-  unavailable: string | undefined;
-}): string | undefined {
-  if (input.pending) return undefined;
-  return input.error ?? (input.disabled ? input.unavailable : undefined);
-}
-
 export function buildWorkspaceTabMenuEntries(
   input: BuildWorkspaceTabMenuEntriesInput,
 ): WorkspaceTabMenuEntry[] {
@@ -212,7 +184,6 @@ export function buildWorkspaceTabMenuEntries(
     onCloseTabsBefore,
     onCloseTabsAfter,
     onCloseOtherTabs,
-    agentRuntimeActions,
   } = input;
   const labels = input.labels ?? DEFAULT_WORKSPACE_TAB_MENU_LABELS;
   const isFirstTab = index === 0;
@@ -243,45 +214,6 @@ export function buildWorkspaceTabMenuEntries(
         void onCopyAgentId(agentId);
       },
     });
-    if (agentRuntimeActions) {
-      const pending = agentRuntimeActions.isPending(agentId);
-      const closeDisabled = pending || !agentRuntimeActions.canClose(agentId, false);
-      const keepRecordDisabled = pending || !agentRuntimeActions.canClose(agentId, true);
-      const unavailable = agentRuntimeActions.unavailableMessage ?? undefined;
-      const error = agentRuntimeActions.errorByAgentId?.get(agentId);
-      entries.push({
-        kind: "item",
-        key: "close-agent-runtime",
-        label: pending ? labels.closingAgentRuntime : labels.closeAgentRuntime,
-        icon: "bot",
-        disabled: closeDisabled,
-        description: runtimeCloseDescription({
-          pending,
-          error,
-          disabled: closeDisabled,
-          unavailable,
-        }),
-        destructive: true,
-        testID: `${menuTestIDBase}-close-agent-runtime`,
-        onSelect: () => agentRuntimeActions.close({ agentId, tabId: tab.tabId, keepRecord: false }),
-      });
-      entries.push({
-        kind: "item",
-        key: "close-agent-runtime-keep-record",
-        label: pending ? labels.closingAgentRuntime : labels.closeAgentRuntimeAndKeepRecord,
-        icon: "bot",
-        disabled: keepRecordDisabled,
-        description: runtimeCloseDescription({
-          pending,
-          error,
-          disabled: keepRecordDisabled,
-          unavailable,
-        }),
-        destructive: true,
-        testID: `${menuTestIDBase}-close-agent-runtime-keep-record`,
-        onSelect: () => agentRuntimeActions.close({ agentId, tabId: tab.tabId, keepRecord: true }),
-      });
-    }
   }
 
   if (tab.target.kind === "terminal") {
@@ -413,7 +345,6 @@ export function buildWorkspaceDesktopTabActions(
       onCloseTabsBefore: input.onCloseTabsToLeft,
       onCloseTabsAfter: input.onCloseTabsToRight,
       onCloseOtherTabs: input.onCloseOtherTabs,
-      agentRuntimeActions: input.agentRuntimeActions,
       labels: input.labels,
     }),
     closeButtonTestId: getCloseButtonTestId(input.tab),

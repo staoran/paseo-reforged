@@ -73,7 +73,6 @@ import {
   WorkspaceDesktopTabsRow,
   type WorkspaceDesktopTabRowItem,
 } from "@/screens/workspace/workspace-desktop-tabs-row";
-import type { WorkspaceTabAgentRuntimeActions } from "@/screens/workspace/workspace-tab-menu";
 import { ExplorerSidebarDock } from "@/screens/workspace/explorer-sidebar";
 import {
   WorkspaceTabPresentationResolver,
@@ -116,7 +115,6 @@ interface SplitContainerProps {
   onCloseTabsToLeft: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
   onCloseTabsToRight: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
-  agentRuntimeActions?: WorkspaceTabAgentRuntimeActions;
   onCreateNewTab: (input: { paneId?: string }) => void;
   buildPaneContentModel: (input: {
     paneId: string;
@@ -330,7 +328,6 @@ export function SplitContainer({
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
-  agentRuntimeActions,
   onCreateNewTab,
   buildPaneContentModel,
   onFocusPane,
@@ -672,7 +669,6 @@ export function SplitContainer({
                   onCloseTabsToLeft={onCloseTabsToLeft}
                   onCloseTabsToRight={onCloseTabsToRight}
                   onCloseOtherTabs={onCloseOtherTabs}
-                  agentRuntimeActions={agentRuntimeActions}
                   onCreateNewTab={onCreateNewTab}
                   buildPaneContentModel={buildPaneContentModel}
                   onFocusPane={onFocusPane}
@@ -729,7 +725,6 @@ export function SplitContainer({
                   onCloseTabsToLeft={onCloseTabsToLeft}
                   onCloseTabsToRight={onCloseTabsToRight}
                   onCloseOtherTabs={onCloseOtherTabs}
-                  agentRuntimeActions={agentRuntimeActions}
                   onExitFocusMode={onExitFocusMode}
                   buildPaneContentModel={buildPaneContentModel}
                   onReorderTabsInPane={onReorderTabsInPane}
@@ -947,7 +942,6 @@ function SplitNodeView({
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
-  agentRuntimeActions,
   onCreateNewTab,
   buildPaneContentModel,
   onFocusPane,
@@ -1036,7 +1030,6 @@ function SplitNodeView({
             onCloseTabsToLeft={onCloseTabsToLeft}
             onCloseTabsToRight={onCloseTabsToRight}
             onCloseOtherTabs={onCloseOtherTabs}
-            agentRuntimeActions={agentRuntimeActions}
             onCreateNewTab={onCreateNewTab}
             buildPaneContentModel={buildPaneContentModel}
             onFocusPane={onFocusPane}
@@ -1089,7 +1082,6 @@ function SplitNodeView({
               onCloseTabsToLeft={onCloseTabsToLeft}
               onCloseTabsToRight={onCloseTabsToRight}
               onCloseOtherTabs={onCloseOtherTabs}
-              agentRuntimeActions={agentRuntimeActions}
               onCreateNewTab={onCreateNewTab}
               buildPaneContentModel={buildPaneContentModel}
               onFocusPane={onFocusPane}
@@ -1150,7 +1142,6 @@ function SplitPaneView({
   onCloseTabsToLeft,
   onCloseTabsToRight,
   onCloseOtherTabs,
-  agentRuntimeActions,
   onCreateNewTab,
   buildPaneContentModel,
   onFocusPane,
@@ -1286,7 +1277,6 @@ function SplitPaneView({
             onCloseTabsToLeft={handleCloseTabsToLeft}
             onCloseTabsToRight={handleCloseTabsToRight}
             onCloseOtherTabs={handleCloseOtherTabs}
-            agentRuntimeActions={agentRuntimeActions}
             onCreateNewTab={onCreateNewTab}
             onReorderTabs={handleReorderTabs}
             externalDndContext

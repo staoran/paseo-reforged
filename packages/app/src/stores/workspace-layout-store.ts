@@ -3,7 +3,11 @@ import { useEffect, useState } from "react";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { z } from "zod";
-import { WorkspaceLayoutPersistedStateSchema } from "./workspace-layout-storage";
+import {
+  WorkspaceLayoutPersistedStateSchema,
+  type ClosedWorkspaceTab,
+} from "./workspace-layout-storage";
+import { rememberClosedWorkspaceTab } from "@/workspace-tabs/history";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { WorkspaceTab, WorkspaceTabTarget } from "@/workspace-tabs/model";
 import {
@@ -106,6 +110,12 @@ export interface OpenWorkspaceTabInput {
 }
 
 interface WorkspaceLayoutStore {
+  /** Closed view snapshots survive reload without keeping their runtimes alive */
+  closedTabsByWorkspace: Record<string, ClosedWorkspaceTab[]>;
+  /** Records a view only after its runtime teardown succeeds */
+  rememberClosedTab: (input: { workspaceKey: string; tab: ClosedWorkspaceTab }) => void;
+  /** Removes a history entry once it has been reopened successfully */
+  forgetClosedTab: (workspaceKey: string, tabId: string) => void;
   layoutByWorkspace: Record<string, WorkspaceLayout>;
   splitSizesByWorkspace: Record<string, Record<string, number[]>>;
   explorerSidebarWidthByWorkspace: Record<string, number>;
@@ -675,6 +685,28 @@ export function createWorkspaceLayoutStore(
             }));
           }
           return tabId;
+        },
+        closedTabsByWorkspace: {},
+        rememberClosedTab: ({ workspaceKey, tab }) => {
+          set((state) => ({
+            closedTabsByWorkspace: {
+              ...state.closedTabsByWorkspace,
+              [workspaceKey]: rememberClosedWorkspaceTab(
+                state.closedTabsByWorkspace[workspaceKey] ?? [],
+                tab,
+              ),
+            },
+          }));
+        },
+        forgetClosedTab: (workspaceKey, tabId) => {
+          set((state) => ({
+            closedTabsByWorkspace: {
+              ...state.closedTabsByWorkspace,
+              [workspaceKey]: (state.closedTabsByWorkspace[workspaceKey] ?? []).filter(
+                (tab) => tab.tabId !== tabId,
+              ),
+            },
+          }));
         },
         layoutByWorkspace: {},
         splitSizesByWorkspace: {},
@@ -1653,6 +1685,7 @@ export function createWorkspaceLayoutStore(
 
           set((state) => {
             const hasAny =
+              normalizedWorkspaceKey in state.closedTabsByWorkspace ||
               normalizedWorkspaceKey in state.layoutByWorkspace ||
               normalizedWorkspaceKey in state.splitSizesByWorkspace ||
               normalizedWorkspaceKey in state.explorerSidebarWidthByWorkspace ||
@@ -1671,6 +1704,9 @@ export function createWorkspaceLayoutStore(
             } = state.pullRequestTabAutoOpenedByWorkspace;
             const { [normalizedWorkspaceKey]: _layout, ...layoutByWorkspace } =
               state.layoutByWorkspace;
+            /** Removing a workspace also releases its local history */
+            const { [normalizedWorkspaceKey]: _closedTabs, ...closedTabsByWorkspace } =
+              state.closedTabsByWorkspace;
             const { [normalizedWorkspaceKey]: _splits, ...splitSizesByWorkspace } =
               state.splitSizesByWorkspace;
             const {
@@ -1690,6 +1726,7 @@ export function createWorkspaceLayoutStore(
             const { [normalizedWorkspaceKey]: _sidePane, ...sidePaneIdByWorkspace } =
               state.sidePaneIdByWorkspace;
             return {
+              closedTabsByWorkspace,
               pullRequestTabAutoOpenedByWorkspace,
               layoutByWorkspace,
               splitSizesByWorkspace,
@@ -1719,6 +1756,7 @@ export function createWorkspaceLayoutStore(
             );
           }
           return {
+            closedTabsByWorkspace: state.closedTabsByWorkspace,
             layoutByWorkspace,
             pinnedAgentIdsByWorkspace: Object.fromEntries(
               Object.entries(state.pinnedAgentIdsByWorkspace).map(([key, agentIds]) => [
@@ -1766,6 +1804,7 @@ export function createWorkspaceLayoutStore(
           }
           return {
             ...currentState,
+            closedTabsByWorkspace: result.data.closedTabsByWorkspace ?? {},
             layoutByWorkspace,
             pinnedAgentIdsByWorkspace: Object.fromEntries(
               Object.entries(result.data.pinnedAgentIdsByWorkspace ?? {}).map(([key, agentIds]) => [

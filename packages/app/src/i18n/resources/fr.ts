@@ -653,6 +653,17 @@ export const fr: TranslationResources = {
         title: "Changer d’onglet",
         searchPlaceholder: "Rechercher des onglets",
       },
+      history: {
+        title: "Historique des onglets",
+        description: "Les {{count}} derniers onglets fermés, enregistrés sur cet appareil",
+        search: "Rechercher dans l’historique des onglets",
+        empty: "Aucun onglet fermé pour le moment",
+        restore: "Restaurer",
+        restoring: "Restauration...",
+        restoreFailed: "Impossible de restaurer l’onglet",
+        terminalHint: "Ouvre un nouveau terminal sans réexécuter les commandes précédentes",
+        closeFailed: "Impossible de fermer les onglets. Réessayez.",
+      },
       menu: {
         openFor: "Ouvrir le menu de {{label}}",
         copyResumeCommand: "Copier la commande de reprise",
@@ -669,9 +680,6 @@ export const fr: TranslationResources = {
         reloadAgent: "Recharger l’agent",
         reloadAgentTooltip:
           "Rechargez l’agent pour mettre à jour les skills, les MCP ou l’état de connexion.",
-        closeAgentRuntime: "Fermer le runtime de l’agent",
-        closeAgentRuntimeAndKeepRecord: "Fermer le runtime et conserver l’enregistrement",
-        closingAgentRuntime: "Fermeture du runtime de l’agent…",
         close: "Fermer",
         renameTerminal: "Renommer le terminal",
         renameAgent: "Renommer l’agent",

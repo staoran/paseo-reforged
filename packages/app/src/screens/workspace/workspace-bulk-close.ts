@@ -1,10 +1,10 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type { ArchivedAgentCloseResult } from "@/hooks/use-archive-agent";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import { i18n } from "@/i18n/i18next";
 
 export interface BulkClosableTabGroups {
   archiveAgentTabs: Array<{ tabId: string; agentId: string }>;
-  layoutOnlyAgentTabs: Array<{ tabId: string; agentId: string }>;
   terminalTabs: Array<{ tabId: string; terminalId: string }>;
   otherTabs: Array<{ tabId: string; target: WorkspaceTabDescriptor["target"] }>;
 }
@@ -42,20 +42,15 @@ interface CloseWorkspaceTabWithCleanupInput {
 interface CloseBulkWorkspaceTabsInput {
   client: Pick<DaemonClient, "closeItems"> | null;
   groups: BulkClosableTabGroups;
-  closeTab: (tabId: string, action: () => Promise<void>) => Promise<void>;
+  closeTab: (tabId: string, action: () => Promise<void>) => Promise<boolean>;
   closeWorkspaceTabWithCleanup: (input: CloseWorkspaceTabWithCleanupInput) => void;
-  closeLayoutOnlyAgent: (agentId: string) => Promise<void>;
-  logLabel: string;
-  warn?: (message: string, payload: object) => void;
+  /** Applies acknowledged archive results to the client directory and history */
+  onAgentsClosed: (agents: ArchivedAgentCloseResult[]) => void;
 }
 
-export function classifyBulkClosableTabs(
-  tabs: WorkspaceTabDescriptor[],
-  resolveAgentCloseKind: (agentId: string) => "archive" | "layout-only" = () => "archive",
-): BulkClosableTabGroups {
+export function classifyBulkClosableTabs(tabs: WorkspaceTabDescriptor[]): BulkClosableTabGroups {
   const groups: BulkClosableTabGroups = {
     archiveAgentTabs: [],
-    layoutOnlyAgentTabs: [],
     terminalTabs: [],
     otherTabs: [],
   };
@@ -63,11 +58,7 @@ export function classifyBulkClosableTabs(
   for (const tab of tabs) {
     if (tab.target.kind === "agent") {
       const agentTab = { tabId: tab.tabId, agentId: tab.target.agentId };
-      if (resolveAgentCloseKind(tab.target.agentId) === "layout-only") {
-        groups.layoutOnlyAgentTabs.push(agentTab);
-      } else {
-        groups.archiveAgentTabs.push(agentTab);
-      }
+      groups.archiveAgentTabs.push(agentTab);
       continue;
     }
     if (tab.target.kind === "terminal") {
@@ -84,8 +75,8 @@ export function buildBulkCloseConfirmationMessage(
   input: BulkClosableTabGroups,
   labels: BulkCloseConfirmationLabels = DEFAULT_BULK_CLOSE_CONFIRMATION_LABELS,
 ): string {
-  const { archiveAgentTabs, layoutOnlyAgentTabs, terminalTabs, otherTabs } = input;
-  const tabCount = layoutOnlyAgentTabs.length + otherTabs.length;
+  const { archiveAgentTabs, terminalTabs, otherTabs } = input;
+  const tabCount = otherTabs.length;
   if (archiveAgentTabs.length > 0 && terminalTabs.length > 0 && tabCount > 0) {
     return labels.all({
       agents: archiveAgentTabs.length,
@@ -120,69 +111,70 @@ export function buildBulkCloseConfirmationMessage(
   return labels.agents({ agents: archiveAgentTabs.length });
 }
 
-export async function closeBulkWorkspaceTabs(input: CloseBulkWorkspaceTabsInput): Promise<void> {
-  const {
-    client,
-    groups,
-    closeTab,
-    closeWorkspaceTabWithCleanup,
-    closeLayoutOnlyAgent,
-    logLabel,
-    warn,
-  } = input;
-  const hasDestructiveTabs = groups.archiveAgentTabs.length > 0 || groups.terminalTabs.length > 0;
+/** Keep runtime-backed tabs until the host acknowledges their teardown */
+export async function closeBulkWorkspaceTabs(input: CloseBulkWorkspaceTabsInput): Promise<boolean> {
+  /** One lazy request is shared by every runtime tab participating in this close */
+  let closeRequest: ReturnType<DaemonClient["closeItems"]> | null = null;
+  /** Already-pending tabs never join a second teardown request */
+  const acquiredAgentIds: string[] = [];
+  /** Terminal acquisition follows the same per-tab duplicate suppression */
+  const acquiredTerminalIds: string[] = [];
 
-  for (const { tabId, agentId } of groups.layoutOnlyAgentTabs) {
-    await closeTab(tabId, async () => {
-      try {
-        await closeLayoutOnlyAgent(agentId);
-      } catch (error) {
-        warn?.(`[WorkspaceScreen] Failed to close subagent tab ${logLabel}`, { error, agentId });
-        return;
-      }
-      closeWorkspaceTabWithCleanup({
-        tabId,
-        target: { kind: "agent", agentId },
+  /** The pending-tab owner invokes this only for tabs it actually acquired */
+  function closeItems(): ReturnType<DaemonClient["closeItems"]> {
+    if (closeRequest) return closeRequest;
+    if (!input.client) {
+      return Promise.reject(new Error(i18n.t("common.errors.daemonClientUnavailable")));
+    }
+    /** Defer the request until every synchronous close owner has acquired its tab */
+    const client = input.client;
+    closeRequest = Promise.resolve()
+      .then(() =>
+        client.closeItems({
+          agentIds: acquiredAgentIds,
+          terminalIds: acquiredTerminalIds,
+        }),
+      )
+      .then((payload) => {
+        input.onAgentsClosed(payload.agents);
+        return payload;
       });
-    });
+    return closeRequest;
   }
 
-  if (hasDestructiveTabs && client) {
-    void client
-      .closeItems({
-        agentIds: groups.archiveAgentTabs.map((tab) => tab.agentId),
-        terminalIds: groups.terminalTabs.map((tab) => tab.terminalId),
-      })
-      .catch((error) => {
-        warn?.(`[WorkspaceScreen] Failed to bulk close tabs ${logLabel}`, { error });
-      });
-  } else if (hasDestructiveTabs) {
-    warn?.(`[WorkspaceScreen] Failed to bulk close tabs ${logLabel}`, {
-      error: new Error(i18n.t("common.errors.daemonClientUnavailable")),
-    });
-  }
-
-  await Promise.all([
-    ...groups.archiveAgentTabs.map(({ tabId, agentId }) =>
-      closeTab(tabId, async () => {
-        closeWorkspaceTabWithCleanup({
-          tabId,
-          target: { kind: "agent", agentId },
-        });
+  /** All tabs acquire pending state before waiting for the shared host response */
+  const closed = await Promise.all([
+    ...input.groups.archiveAgentTabs.map(({ tabId, agentId }) =>
+      input.closeTab(tabId, async () => {
+        acquiredAgentIds.push(agentId);
+        /** Missing results leave this tab available for retry */
+        const payload = await closeItems();
+        if (!payload.agents.some((agent) => agent.agentId === agentId)) {
+          throw new Error(i18n.t("workspace.tabs.toasts.failedToCloseAgent"));
+        }
+        input.closeWorkspaceTabWithCleanup({ tabId, target: { kind: "agent", agentId } });
       }),
     ),
-    ...groups.terminalTabs.map(({ tabId, terminalId }) =>
-      closeTab(tabId, async () => {
-        closeWorkspaceTabWithCleanup({
-          tabId,
-          target: { kind: "terminal", terminalId },
-        });
+    ...input.groups.terminalTabs.map(({ tabId, terminalId }) =>
+      input.closeTab(tabId, async () => {
+        acquiredTerminalIds.push(terminalId);
+        /** A stopped terminal is the only terminal that can leave the live layout */
+        const payload = await closeItems();
+        if (
+          !payload.terminals.some(
+            (terminal) => terminal.terminalId === terminalId && terminal.success,
+          )
+        ) {
+          throw new Error(i18n.t("workspace.tabs.history.closeFailed"));
+        }
+        input.closeWorkspaceTabWithCleanup({ tabId, target: { kind: "terminal", terminalId } });
       }),
     ),
-    ...groups.otherTabs.map(({ tabId, target }) =>
-      closeTab(tabId, async () => {
-        closeWorkspaceTabWithCleanup({ tabId, target });
+    ...input.groups.otherTabs.map(({ tabId, target }) =>
+      input.closeTab(tabId, async () => {
+        input.closeWorkspaceTabWithCleanup({ tabId, target });
       }),
     ),
   ]);
+  return closed.every(Boolean);
 }

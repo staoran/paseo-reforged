@@ -654,6 +654,17 @@ export const ja: TranslationResources = {
         title: "タブを切り替え",
         searchPlaceholder: "タブを検索",
       },
+      history: {
+        title: "タブ履歴",
+        description: "このデバイスに保存された最近閉じた {{count}} 個のタブ",
+        search: "タブ履歴を検索",
+        empty: "閉じたタブはまだありません",
+        restore: "復元",
+        restoring: "復元中...",
+        restoreFailed: "タブを復元できませんでした",
+        terminalHint: "以前のコマンドを再実行せず、新しいシェルを起動します",
+        closeFailed: "タブを閉じられませんでした。再試行してください。",
+      },
       menu: {
         openFor: "{{label}}のメニューを開く",
         copyResumeCommand: "再開コマンドをコピー",
@@ -670,9 +681,6 @@ export const ja: TranslationResources = {
         reloadAgent: "エージェントを再読み込み",
         reloadAgentTooltip:
           "スキル、MCP、ログイン状態を更新するためにエージェントを再読み込みします。",
-        closeAgentRuntime: "エージェントのランタイムを閉じる",
-        closeAgentRuntimeAndKeepRecord: "ランタイムを閉じて記録を保持",
-        closingAgentRuntime: "エージェントのランタイムを閉じています...",
         close: "閉じる",
         renameTerminal: "ターミナルの名前を変更",
         renameAgent: "エージェントの名前を変更",

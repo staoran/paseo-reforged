@@ -66,6 +66,17 @@ const WorkspaceTabStorageSchema = z.strictObject({
   createdAt: z.number(),
   state: z.json().optional(),
 });
+/** A closed view keeps its target and panel state independently of the live layout */
+export const ClosedWorkspaceTabSchema = WorkspaceTabStorageSchema.extend({
+  /** Label captured before the runtime and panel are released */
+  title: z.string(),
+  /** Time of the most recent successful close */
+  closedAt: z.number(),
+  /** Last visited URL used to recreate a closed browser */
+  browserUrl: z.string().optional(),
+});
+/** Persisted history entry validated with the workspace layout */
+export type ClosedWorkspaceTab = z.infer<typeof ClosedWorkspaceTabSchema>;
 const SplitNodeStorageSchema: z.ZodType<SplitNode> = z.lazy(() =>
   z.discriminatedUnion("kind", [
     z.strictObject({
@@ -95,6 +106,8 @@ const WorkspaceLayoutStorageSchema: z.ZodType<WorkspaceLayout> = z.strictObject(
   parentTabIdByTabId: z.record(z.string(), z.string()).optional(),
 });
 export const WorkspaceLayoutPersistedStateSchema = z.strictObject({
+  /** History is scoped by host and workspace, just like the layout */
+  closedTabsByWorkspace: z.record(z.string(), z.array(ClosedWorkspaceTabSchema)).optional(),
   pinnedAgentIdsByWorkspace: z.record(z.string(), z.array(z.string())).optional(),
   layoutByWorkspace: z.record(z.string(), WorkspaceLayoutStorageSchema),
   splitSizesByWorkspace: z.record(z.string(), z.record(z.string(), z.array(z.number()))).optional(),

@@ -548,6 +548,7 @@ describe("workspace-layout-store version 2 migration", () => {
       const persisted = JSON.parse((await AsyncStorage.getItem("workspace-layout-state")) ?? "{}");
       expect(persisted.version).toBe(2);
       expect(Object.keys(persisted.state).sort()).toEqual([
+        "closedTabsByWorkspace",
         "explorerPaneIdByWorkspace",
         "explorerSidebarWidthByWorkspace",
         "layoutByWorkspace",
@@ -3141,6 +3142,7 @@ describe("workspace-layout-store actions", () => {
     const persisted = partialize(currentState);
 
     expect(persisted).toEqual({
+      closedTabsByWorkspace: {},
       layoutByWorkspace: { [workspaceKey]: layout },
       pinnedAgentIdsByWorkspace: {},
       splitSizesByWorkspace: currentState.splitSizesByWorkspace,
@@ -3375,6 +3377,7 @@ describe("workspace-layout-store actions", () => {
     const partialize = workspaceLayoutStore.persist.getOptions().partialize;
     expect(partialize).toBeTypeOf("function");
     expect(partialize?.(state)).toEqual({
+      closedTabsByWorkspace: {},
       pullRequestTabAutoOpenedByWorkspace: {},
       layoutByWorkspace: {},
       pinnedAgentIdsByWorkspace: {},
@@ -4437,4 +4440,67 @@ it("persists the once-only PR add after closing, and clears it when purging the 
   restored.getState().purgeWorkspace(workspaceKey);
   expect(restored.getState().pullRequestTabAutoOpenedByWorkspace[workspaceKey]).toBeUndefined();
   expect(restored.getState().autoOpenPullRequestTab(workspaceKey, placement)).toBe("pull_request");
+});
+
+it("persists closed tabs per workspace after every live tab is gone", async () => {
+  await AsyncStorage.removeItem("workspace-layout-state");
+  const source = createWorkspaceLayoutStore(workspaceLayoutIds);
+  await source.persist.rehydrate();
+  /** Separate opaque workspaces can share the same directory */
+  const workspaceKey = "server-1:closed-workspace";
+  const otherWorkspaceKey = "server-1:other-workspace";
+  const closedTab = {
+    tabId: "agent_closed",
+    target: { kind: "agent" as const, agentId: "closed" },
+    title: "Review release changes",
+    createdAt: 1,
+    closedAt: 2,
+    state: { scrollOffset: 120 },
+  };
+  source.getState().rememberClosedTab({ workspaceKey, tab: closedTab });
+  source.getState().rememberClosedTab({
+    workspaceKey: otherWorkspaceKey,
+    tab: { ...closedTab, title: "Other workspace" },
+  });
+  const restored = createWorkspaceLayoutStore(workspaceLayoutIds);
+  await restored.persist.rehydrate();
+  expect(restored.getState().closedTabsByWorkspace[workspaceKey]).toEqual([closedTab]);
+  expect(restored.getState().closedTabsByWorkspace[otherWorkspaceKey]).toEqual([
+    { ...closedTab, title: "Other workspace" },
+  ]);
+  restored.getState().forgetClosedTab(workspaceKey, closedTab.tabId);
+  expect(restored.getState().closedTabsByWorkspace[workspaceKey]).toEqual([]);
+  expect(restored.getState().closedTabsByWorkspace[otherWorkspaceKey]).toEqual([
+    { ...closedTab, title: "Other workspace" },
+  ]);
+  restored.getState().purgeWorkspace(otherWorkspaceKey);
+  expect(restored.getState().closedTabsByWorkspace[otherWorkspaceKey]).toBeUndefined();
+});
+
+it("loads saved layouts from before tab history without discarding them", async () => {
+  /** The optional history key must preserve existing strict-schema blobs */
+  const layout = {
+    ...createDefaultLayout(),
+    root: createPane({
+      id: "main",
+      tabIds: ["file_old"],
+      targetsByTabId: { file_old: { kind: "file", path: "/repo/README.md" } },
+    }),
+  };
+  await AsyncStorage.setItem(
+    "workspace-layout-state",
+    JSON.stringify({
+      version: 2,
+      state: { layoutByWorkspace: { "server-1:old-layout": layout } },
+    }),
+  );
+  const restored = createWorkspaceLayoutStore(workspaceLayoutIds);
+  await restored.persist.rehydrate();
+  expect(restored.getState().closedTabsByWorkspace).toEqual({});
+  expect(
+    restored
+      .getState()
+      .getWorkspaceTabs("server-1:old-layout")
+      .filter((tab) => tab.target.kind === "file"),
+  ).toEqual(collectAllTabs(layout.root));
 });

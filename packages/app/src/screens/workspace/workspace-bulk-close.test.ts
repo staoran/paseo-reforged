@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import {
   buildBulkCloseConfirmationMessage,
   classifyBulkClosableTabs,
@@ -6,6 +7,7 @@ import {
 } from "@/screens/workspace/workspace-bulk-close";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 
+/** A managed agent tab may belong to either a root agent or a subagent */
 function makeAgentTab(id: string): WorkspaceTabDescriptor {
   return {
     key: `agent_${id}`,
@@ -15,6 +17,7 @@ function makeAgentTab(id: string): WorkspaceTabDescriptor {
   };
 }
 
+/** Terminal tabs require an acknowledged process stop */
 function makeTerminalTab(id: string): WorkspaceTabDescriptor {
   return {
     key: `terminal_${id}`,
@@ -24,6 +27,7 @@ function makeTerminalTab(id: string): WorkspaceTabDescriptor {
   };
 }
 
+/** A file view has no host runtime to stop */
 function makeFileTab(path: string): WorkspaceTabDescriptor {
   return {
     key: `file_${path}`,
@@ -33,182 +37,219 @@ function makeFileTab(path: string): WorkspaceTabDescriptor {
   };
 }
 
+/** Acknowledgement payload from the existing host close operation */
+type ClosePayload = Awaited<ReturnType<DaemonClient["closeItems"]>>;
+
+/** Exercise teardown through the same pending and error ownership as the workspace */
+function makeCloseHarness(client: Pick<DaemonClient, "closeItems"> | null) {
+  /** Visible pending tab ids */
+  const pending = new Set<string>();
+  /** Successfully released views */
+  const cleaned: string[] = [];
+  /** Errors that the workspace can render and retry */
+  const errors = new Map<string, string>();
+  /** Acknowledged durable archives */
+  const archived: ClosePayload["agents"] = [];
+  return {
+    pending,
+    cleaned,
+    errors,
+    archived,
+    options: {
+      client,
+      closeTab: async (tabId: string, action: () => Promise<void>) => {
+        pending.add(tabId);
+        try {
+          await action();
+          return true;
+        } catch (error) {
+          errors.set(tabId, error instanceof Error ? error.message : String(error));
+          return false;
+        } finally {
+          pending.delete(tabId);
+        }
+      },
+      closeWorkspaceTabWithCleanup: ({ tabId }: { tabId: string }) => {
+        cleaned.push(tabId);
+      },
+      onAgentsClosed: (agents: ClosePayload["agents"]) => {
+        archived.push(...agents);
+      },
+    },
+  };
+}
+
 describe("workspace bulk close helpers", () => {
-  it("classifies agent, terminal, and passive tabs for shared bulk close handling", () => {
-    const groups = classifyBulkClosableTabs([
-      makeAgentTab("a1"),
-      makeTerminalTab("t1"),
-      makeFileTab("/repo/README.md"),
-    ]);
-
-    expect(groups).toEqual({
-      archiveAgentTabs: [{ tabId: "agent_a1", agentId: "a1" }],
-      layoutOnlyAgentTabs: [],
-      terminalTabs: [{ tabId: "terminal_t1", terminalId: "t1" }],
-      otherTabs: [
-        {
-          tabId: "file_/repo/README.md",
-          target: { kind: "file", path: "/repo/README.md" },
-        },
-      ],
-    });
-  });
-
-  it("separates subagent tabs from agents that archive on close", () => {
-    const groups = classifyBulkClosableTabs(
-      [makeAgentTab("root"), makeAgentTab("child")],
-      (agentId) => (agentId === "child" ? "layout-only" : "archive"),
-    );
-
-    expect(groups).toMatchObject({
-      archiveAgentTabs: [{ tabId: "agent_root", agentId: "root" }],
-      layoutOnlyAgentTabs: [{ tabId: "agent_child", agentId: "child" }],
-    });
-    expect(buildBulkCloseConfirmationMessage(groups)).toBe(
-      "This will archive 1 agent(s) and close 1 tab(s).",
-    );
-  });
-
-  it("describes mixed destructive bulk close operations in the confirmation copy", () => {
-    const message = buildBulkCloseConfirmationMessage(
+  it("archives every managed agent while keeping provider subagent views passive", () => {
+    const providerChild: WorkspaceTabDescriptor = {
+      key: "provider-child",
+      tabId: "provider-child",
+      kind: "provider_subagent",
+      target: { kind: "provider_subagent", parentAgentId: "root", subagentId: "native-child" },
+    };
+    expect(
       classifyBulkClosableTabs([
-        makeAgentTab("a1"),
-        makeAgentTab("a2"),
+        makeAgentTab("root"),
+        makeAgentTab("child"),
         makeTerminalTab("t1"),
-        makeFileTab("/repo/README.md"),
+        providerChild,
       ]),
-    );
+    ).toEqual({
+      archiveAgentTabs: [
+        { tabId: "agent_root", agentId: "root" },
+        { tabId: "agent_child", agentId: "child" },
+      ],
+      terminalTabs: [{ tabId: "terminal_t1", terminalId: "t1" }],
+      otherTabs: [{ tabId: providerChild.tabId, target: providerChild.target }],
+    });
+  });
 
-    expect(message).toBe(
+  it("keeps mixed and terminal-only confirmations explicit about stopping processes", () => {
+    expect(
+      buildBulkCloseConfirmationMessage(
+        classifyBulkClosableTabs([
+          makeAgentTab("a1"),
+          makeAgentTab("a2"),
+          makeTerminalTab("t1"),
+          makeFileTab("/repo/README.md"),
+        ]),
+      ),
+    ).toBe(
       "This will archive 2 agent(s), close 1 terminal(s), and close 1 tab(s). Any running process in a closed terminal will be stopped immediately.",
     );
-  });
-
-  it("keeps terminal-only confirmations explicit about stopping running processes", () => {
-    const message = buildBulkCloseConfirmationMessage(
-      classifyBulkClosableTabs([makeTerminalTab("t1")]),
-    );
-
-    expect(message).toBe(
+    expect(
+      buildBulkCloseConfirmationMessage(classifyBulkClosableTabs([makeTerminalTab("t1")])),
+    ).toBe(
       "This will close 1 terminal(s). Any running process in a closed terminal will be stopped immediately.",
     );
   });
 
-  it("closes all tabs immediately and fires one mixed closeItems RPC in the background", async () => {
-    const groups = classifyBulkClosableTabs([
-      makeAgentTab("a1"),
-      makeTerminalTab("t1"),
-      makeTerminalTab("t2"),
-      makeFileTab("/repo/README.md"),
-    ]);
-    const closedTabIds: string[] = [];
-    const cleanupCalls: Array<{ tabId: string; target?: WorkspaceTabDescriptor["target"] }> = [];
-    const closeItems = vi.fn(async () => ({
-      agents: [{ agentId: "a1", archivedAt: "2026-04-01T04:00:00.000Z" }],
-      terminals: [
-        { terminalId: "t1", success: true },
-        { terminalId: "t2", success: false },
-      ],
-      requestId: "req-1",
-    }));
-
-    await closeBulkWorkspaceTabs({
-      groups,
-      client: { closeItems },
-      closeTab: async (tabId, action) => {
-        closedTabIds.push(tabId);
-        await action();
+  it("waits for one host acknowledgement before removing runtime tabs", async () => {
+    /** Resolve the real pending edge without timers or fake clocks */
+    const acknowledgement = Promise.withResolvers<ClosePayload>();
+    const requests: Parameters<DaemonClient["closeItems"]>[0][] = [];
+    const harness = makeCloseHarness({
+      closeItems: async (request) => {
+        requests.push(request);
+        return acknowledgement.promise;
       },
-      closeWorkspaceTabWithCleanup: (input) => {
-        cleanupCalls.push(input);
-      },
-      closeLayoutOnlyAgent: async () => {},
-      logLabel: "all tabs",
     });
-
-    expect(closeItems).toHaveBeenCalledTimes(1);
-    expect(closeItems).toHaveBeenCalledWith({
-      agentIds: ["a1"],
-      terminalIds: ["t1", "t2"],
+    const closing = closeBulkWorkspaceTabs({
+      ...harness.options,
+      groups: classifyBulkClosableTabs([makeAgentTab("a1"), makeTerminalTab("t1")]),
     });
-    expect(closedTabIds).toEqual([
-      "agent_a1",
-      "terminal_t1",
-      "terminal_t2",
-      "file_/repo/README.md",
-    ]);
-    expect(cleanupCalls).toEqual([
-      { tabId: "agent_a1", target: { kind: "agent", agentId: "a1" } },
-      { tabId: "terminal_t1", target: { kind: "terminal", terminalId: "t1" } },
-      { tabId: "terminal_t2", target: { kind: "terminal", terminalId: "t2" } },
-      { tabId: "file_/repo/README.md", target: { kind: "file", path: "/repo/README.md" } },
-    ]);
-  });
-
-  it("still closes all tabs when the mixed closeItems RPC fails", async () => {
-    const groups = classifyBulkClosableTabs([
-      makeAgentTab("a1"),
-      makeTerminalTab("t1"),
-      makeFileTab("/repo/README.md"),
-    ]);
-    const closedTabIds: string[] = [];
-    const cleanupCalls: Array<{ tabId: string; target?: WorkspaceTabDescriptor["target"] }> = [];
-    const warn = vi.fn();
-
-    await closeBulkWorkspaceTabs({
-      groups,
-      client: {
-        closeItems: async () => {
-          throw new Error("rpc failed");
-        },
-      },
-      closeTab: async (tabId, action) => {
-        closedTabIds.push(tabId);
-        await action();
-      },
-      closeWorkspaceTabWithCleanup: (input) => {
-        cleanupCalls.push(input);
-      },
-      closeLayoutOnlyAgent: async () => {},
-      warn,
-      logLabel: "others",
-    });
-
+    expect([...harness.pending]).toEqual(["agent_a1", "terminal_t1"]);
+    expect(harness.cleaned).toEqual([]);
     await Promise.resolve();
-
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(closedTabIds).toEqual(["agent_a1", "terminal_t1", "file_/repo/README.md"]);
-    expect(cleanupCalls).toEqual([
-      { tabId: "agent_a1", target: { kind: "agent", agentId: "a1" } },
-      { tabId: "terminal_t1", target: { kind: "terminal", terminalId: "t1" } },
-      { tabId: "file_/repo/README.md", target: { kind: "file", path: "/repo/README.md" } },
-    ]);
+    expect(requests).toEqual([{ agentIds: ["a1"], terminalIds: ["t1"] }]);
+    acknowledgement.resolve({
+      agents: [{ agentId: "a1", archivedAt: "2026-10-11T04:00:00.000Z" }],
+      terminals: [{ terminalId: "t1", success: true }],
+      requestId: "close",
+    });
+    expect(await closing).toBe(true);
+    expect(harness.cleaned).toEqual(["agent_a1", "terminal_t1"]);
+    expect(harness.archived).toEqual([{ agentId: "a1", archivedAt: "2026-10-11T04:00:00.000Z" }]);
+    expect(harness.errors.size).toBe(0);
+    expect(harness.pending.size).toBe(0);
   });
 
-  it("closes subagent tabs without sending them to closeItems", async () => {
-    const groups = classifyBulkClosableTabs(
-      [makeAgentTab("root"), makeAgentTab("child")],
-      (agentId) => (agentId === "child" ? "layout-only" : "archive"),
-    );
-    const closeItems = vi.fn(async () => ({ agents: [], terminals: [], requestId: "req-1" }));
-    const preparedSubagents: string[] = [];
-    const cleanedTabs: string[] = [];
-
-    await closeBulkWorkspaceTabs({
-      groups,
-      client: { closeItems },
-      closeTab: async (_tabId, action) => action(),
-      closeLayoutOnlyAgent: async (agentId) => {
-        preparedSubagents.push(agentId);
+  it("excludes already-pending tabs from another bulk teardown request", async () => {
+    /** The single-tab close owner already holds the first agent */
+    const requests: Parameters<DaemonClient["closeItems"]>[0][] = [];
+    const harness = makeCloseHarness({
+      closeItems: async (request) => {
+        requests.push(request);
+        return {
+          agents: [{ agentId: "a2", archivedAt: "2026-10-11T04:00:00.000Z" }],
+          terminals: [],
+          requestId: "close",
+        };
       },
-      closeWorkspaceTabWithCleanup: ({ tabId }) => {
-        cleanedTabs.push(tabId);
-      },
-      logLabel: "others",
     });
+    expect(
+      await closeBulkWorkspaceTabs({
+        ...harness.options,
+        closeTab: async (tabId, action) => {
+          if (tabId === "agent_a1") return false;
+          return harness.options.closeTab(tabId, action);
+        },
+        groups: classifyBulkClosableTabs([makeAgentTab("a1"), makeAgentTab("a2")]),
+      }),
+    ).toBe(false);
+    expect(requests).toEqual([{ agentIds: ["a2"], terminalIds: [] }]);
+    expect(harness.cleaned).toEqual(["agent_a2"]);
+  });
 
-    expect(closeItems).toHaveBeenCalledWith({ agentIds: ["root"], terminalIds: [] });
-    expect(preparedSubagents).toEqual(["child"]);
-    expect(cleanedTabs).toEqual(["agent_child", "agent_root"]);
+  it("retains a failed terminal while closing acknowledged agents and passive views", async () => {
+    const harness = makeCloseHarness({
+      closeItems: async () => ({
+        agents: [{ agentId: "a1", archivedAt: "2026-10-11T04:00:00.000Z" }],
+        terminals: [{ terminalId: "t1", success: false }],
+        requestId: "close",
+      }),
+    });
+    expect(
+      await closeBulkWorkspaceTabs({
+        ...harness.options,
+        groups: classifyBulkClosableTabs([
+          makeAgentTab("a1"),
+          makeTerminalTab("t1"),
+          makeFileTab("/repo/README.md"),
+        ]),
+      }),
+    ).toBe(false);
+    expect(harness.cleaned).toEqual(["file_/repo/README.md", "agent_a1"]);
+    expect([...harness.errors.keys()]).toEqual(["terminal_t1"]);
+  });
+
+  it("keeps failed host tabs available for retry when a close request rejects", async () => {
+    const harness = makeCloseHarness({
+      closeItems: async () => {
+        throw new Error("Host disconnected");
+      },
+    });
+    expect(
+      await closeBulkWorkspaceTabs({
+        ...harness.options,
+        groups: classifyBulkClosableTabs([
+          makeAgentTab("a1"),
+          makeTerminalTab("t1"),
+          makeFileTab("/repo/README.md"),
+        ]),
+      }),
+    ).toBe(false);
+    expect(harness.cleaned).toEqual(["file_/repo/README.md"]);
+    expect([...harness.errors]).toEqual([
+      ["agent_a1", "Host disconnected"],
+      ["terminal_t1", "Host disconnected"],
+    ]);
+    expect(harness.archived).toEqual([]);
+  });
+
+  it("does not silently close an agent omitted from the host result", async () => {
+    const harness = makeCloseHarness({
+      closeItems: async () => ({ agents: [], terminals: [], requestId: "close" }),
+    });
+    expect(
+      await closeBulkWorkspaceTabs({
+        ...harness.options,
+        groups: classifyBulkClosableTabs([makeAgentTab("missing")]),
+      }),
+    ).toBe(false);
+    expect(harness.cleaned).toEqual([]);
+    expect([...harness.errors.keys()]).toEqual(["agent_missing"]);
+  });
+
+  it("closes passive tabs offline while retaining agent tabs", async () => {
+    const harness = makeCloseHarness(null);
+    expect(
+      await closeBulkWorkspaceTabs({
+        ...harness.options,
+        groups: classifyBulkClosableTabs([makeAgentTab("a1"), makeFileTab("/repo/README.md")]),
+      }),
+    ).toBe(false);
+    expect(harness.cleaned).toEqual(["file_/repo/README.md"]);
+    expect([...harness.errors.keys()]).toEqual(["agent_a1"]);
   });
 });
