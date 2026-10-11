@@ -9,6 +9,7 @@ import { Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
+  Bot,
   Check,
   Copy,
   ExternalLink,
@@ -79,6 +80,7 @@ export function WorkspaceHoverCard({
   );
 }
 
+/** Renders Workspace metadata and Agent residency details in the hover card */
 function WorkspaceHoverCardContent({
   workspace,
   prHint,
@@ -123,6 +125,23 @@ function WorkspaceHoverCardContent({
           testID="hover-card-workspace-cwd"
         />
       ) : null}
+      {workspace.residentAgentCount && workspace.residentAgentCount > 0 ? (
+        <>
+          <InfoRow
+            icon={ThemedBot}
+            value={t("sidebar.workspace.residentAgents", { count: workspace.residentAgentCount })}
+            testID="hover-card-workspace-resident-agents"
+          />
+          {workspace.detachedAgentCount ? (
+            <InfoRow
+              icon={ThemedBot}
+              value={t("sidebar.workspace.detachedAgents", { count: workspace.detachedAgentCount })}
+              testID="hover-card-workspace-detached-agents"
+              tone="warning"
+            />
+          ) : null}
+        </>
+      ) : null}
       {prHint?.checks && prHint.checks.length > 0 ? (
         <>
           <View style={styles.separator} />
@@ -137,6 +156,8 @@ const ThemedGitBranch = withUnistyles(GitBranch);
 const ThemedFolder = withUnistyles(Folder);
 const ThemedServer = withUnistyles(Server);
 const ThemedFileDiff = withUnistyles(FileDiff);
+/** Agent glyph used only inside the Workspace hover card */
+const ThemedBot = withUnistyles(Bot);
 
 type CardInfoIcon = React.ComponentType<React.ComponentProps<typeof ThemedGitBranch>>;
 
@@ -154,20 +175,33 @@ const ThemedCheck = withUnistyles(Check);
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+/** Warning tone for Agent records without a current provider runtime */
+const warningColorMapping = (theme: Theme) => ({ color: theme.colors.statusWarning });
 
+/** Renders one metadata row with an optional warning tone */
 function InfoRow({
   icon: Icon,
   value,
   testID,
+  tone = "muted",
 }: {
   icon: CardInfoIcon;
   value: string;
   testID: string;
+  /** Detached Agent records use the warning tone */
+  tone?: "muted" | "warning";
 }) {
   return (
     <View style={styles.cardInfoRow}>
-      <Icon size={12} uniProps={foregroundMutedColorMapping} />
-      <Text style={styles.cardInfoText} numberOfLines={1} testID={testID}>
+      <Icon
+        size={12}
+        uniProps={tone === "warning" ? warningColorMapping : foregroundMutedColorMapping}
+      />
+      <Text
+        style={[styles.cardInfoText, tone === "warning" && styles.cardInfoTextWarning]}
+        numberOfLines={1}
+        testID={testID}
+      >
         {value}
       </Text>
     </View>
@@ -393,6 +427,10 @@ const styles = StyleSheet.create((theme) => ({
   },
   cardInfoTextHovered: {
     color: theme.colors.foreground,
+  },
+  /** Keeps detached Agent details visibly distinct from ordinary metadata */
+  cardInfoTextWarning: {
+    color: theme.colors.statusWarning,
   },
   separator: {
     height: 1,

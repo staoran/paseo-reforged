@@ -2,7 +2,7 @@ import { Fragment, useCallback, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Pressable, Text, View, type GestureResponderEvent } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { Bot, ExternalLink, Folder, GitBranch, Globe } from "lucide-react-native";
+import { ExternalLink, Folder, GitBranch, Globe } from "lucide-react-native";
 import {
   workspaceLabelKey,
   type WorkspaceLabelDefinition,
@@ -18,7 +18,6 @@ import type { Theme } from "@/styles/theme";
 import { PullRequestStateIcon } from "@/git/pull-request-state-icon";
 import { CheckIndicator } from "./check-indicator";
 import type { CheckSummary, CheckSummaryState } from "./check-summary";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { selectMetaRowItems, type MetaRowItem } from "./meta-items";
 import { workspaceServiceLabelKey, type WorkspaceServiceSummary } from "./service-summary";
 
@@ -36,8 +35,6 @@ export {
 const META_ICON_SIZE = HOST_BADGE_ICON_SIZE;
 
 const ThemedExternalLink = withUnistyles(ExternalLink);
-/** Uses the Bot glyph for the resident Agent indicator */
-const ThemedBot = withUnistyles(Bot);
 const ThemedFolder = withUnistyles(Folder);
 const ThemedGitBranch = withUnistyles(GitBranch);
 const ThemedGlobe = withUnistyles(Globe);
@@ -47,8 +44,6 @@ const EMPTY_LABELS: readonly WorkspaceLabelDefinition[] = [];
 
 const foregroundMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const mutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
-/** Marks a historical Agent whose runtime is absent */
-const warningMapping = (theme: Theme) => ({ color: theme.colors.statusWarning });
 const dangerMapping = (theme: Theme) => ({ color: theme.colors.statusDanger });
 
 /**
@@ -72,8 +67,6 @@ export function WorkspaceMetaRow({
   prHint,
   serviceSummary,
   labels = EMPTY_LABELS,
-  residentAgentCount = null,
-  detachedAgentCount = null,
 }: {
   currentBranch: string | null;
   projectName: string | null;
@@ -81,11 +74,7 @@ export function WorkspaceMetaRow({
   prHint: PrHint | null;
   serviceSummary: WorkspaceServiceSummary | null;
   labels?: readonly WorkspaceLabelDefinition[];
-  residentAgentCount?: number | null;
-  /** Unclosed records without a current provider runtime */
-  detachedAgentCount?: number | null;
 }) {
-  const { t } = useTranslation();
   const { rowItems, checksDisplay } = useSidebarMetaPreferences();
   const items = selectMetaRowItems({
     currentBranch,
@@ -97,13 +86,7 @@ export function WorkspaceMetaRow({
     visible: rowItems,
     checksDisplay,
   });
-  /** Keeps the total count visible when only some runtimes are detached */
-  let residentLabel = t("sidebar.workspace.residentAgents", { count: residentAgentCount ?? 0 });
-  if (detachedAgentCount) {
-    residentLabel += `\n${t("sidebar.workspace.detachedAgents", { count: detachedAgentCount })}`;
-  }
-
-  if (items.length === 0 && (!residentAgentCount || residentAgentCount < 1)) return null;
+  if (items.length === 0) return null;
 
   return (
     <View style={styles.row}>
@@ -113,29 +96,6 @@ export function WorkspaceMetaRow({
           <MetaItemNode item={item} hostBadge={hostBadge} leading={index === 0} />
         </Fragment>
       ))}
-      {residentAgentCount && residentAgentCount > 0 ? (
-        <Tooltip delayDuration={250} enabledOnDesktop enabledOnMobile={false}>
-          <TooltipTrigger asChild>
-            <View
-              style={styles.residentAgents}
-              accessibilityRole="image"
-              accessibilityLabel={residentLabel}
-              testID="sidebar-workspace-resident-agents"
-            >
-              <ThemedBot
-                size={META_ICON_SIZE}
-                uniProps={detachedAgentCount ? warningMapping : mutedMapping}
-              />
-              {residentAgentCount > 1 ? (
-                <Text style={styles.residentAgentCount}>{residentAgentCount}</Text>
-              ) : null}
-            </View>
-          </TooltipTrigger>
-          <TooltipContent side="top">
-            <Text>{residentLabel}</Text>
-          </TooltipContent>
-        </Tooltip>
-      ) : null}
     </View>
   );
 }
@@ -355,18 +315,6 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[1.5],
     minWidth: 0,
     width: "100%",
-  },
-  residentAgents: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 3,
-    marginLeft: "auto",
-    flexShrink: 0,
-  },
-  residentAgentCount: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-    lineHeight: 16,
   },
   item: {
     flexDirection: "row",
