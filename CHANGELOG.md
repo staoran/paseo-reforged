@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.11.1-beta.2 - 2026-10-11
+
+### Added
+
+- Restore recently closed tabs from workspace tab history
+- Choose the startup page in Settings
+
+### Improved
+
+- End the bound agent when its workspace tab closes and return to New Workspace after the last tab closes
+- Show resident agent details in the workspace hover card
+
 ## 0.11.1-beta.1 - 2026-10-08
 
 ### Added
