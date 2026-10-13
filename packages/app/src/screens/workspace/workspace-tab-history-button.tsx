@@ -97,10 +97,14 @@ export function WorkspaceTabHistoryButton({
   /** Host operations own pending and failure feedback in the recovery sheet */
   const restore = useMutation({
     mutationFn: onRestore,
+    /** Reveal the restored panel while the host resumes its runtime */
+    onMutate: () => setVisible(false),
     onSuccess: (_result, tab) => {
       useWorkspaceLayoutStore.getState().forgetClosedTab(workspaceKey, tab.tabId);
       setVisible(false);
     },
+    /** Preserve the history entry and reopen retry feedback after a failed resume */
+    onError: () => setVisible(true),
   });
   /** Keep browser-only views off native recovery lists */
   const matchingTabs = useMemo(() => {

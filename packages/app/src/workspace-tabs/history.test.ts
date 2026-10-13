@@ -132,6 +132,26 @@ describe("workspace tab history", () => {
     expect(refreshed).toEqual(["original"]);
   });
 
+  it("reveals an agent tab before its runtime resume finishes", async () => {
+    const events: string[] = [];
+    const client = historyClient();
+    client.refreshAgent = async (agentId) => {
+      events.push(`resume:${agentId}`);
+      return { status: "agent_refreshed", agentId, requestId: "restore" };
+    };
+
+    await restoreClosedWorkspaceTab({
+      tab: closedTab(),
+      client,
+      workspaceId: "ws-1",
+      workspaceDirectory: "/repo",
+      createBrowser: () => "browser",
+      onTargetReady: (target) => events.push(`ready:${target.kind}`),
+    });
+
+    expect(events).toEqual(["ready:agent", "resume:original"]);
+  });
+
   it("propagates a failed resume without replacing the durable agent target", async () => {
     const client = historyClient();
     client.refreshAgent = async () => {

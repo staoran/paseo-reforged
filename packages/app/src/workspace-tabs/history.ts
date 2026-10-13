@@ -53,12 +53,16 @@ export async function restoreClosedWorkspaceTab(input: {
   workspaceDirectory: string | null;
   /** Browser creation belongs to the platform-specific caller */
   createBrowser: (url: string | undefined) => string;
+  /** Reveals the target before a slow runtime resume completes */
+  onTargetReady?: (target: WorkspaceTabTarget) => void;
 }): Promise<WorkspaceTabTarget> {
   /** Passive targets can be reopened with their existing state */
   const target = input.tab.target;
   if (target.kind === "agent") {
     if (!input.client) throw new Error(i18n.t("common.errors.daemonClientDisconnected"));
+    input.onTargetReady?.(target);
     await input.client.refreshAgent(target.agentId);
+    return target;
   }
   if (target.kind === "terminal") {
     if (!input.client || !input.workspaceDirectory) {
@@ -74,10 +78,18 @@ export async function restoreClosedWorkspaceTab(input: {
     if (!payload.terminal) {
       throw new Error(payload.error ?? i18n.t("workspace.tabs.history.restoreFailed"));
     }
-    return { kind: "terminal", terminalId: payload.terminal.id };
+    const restoredTarget = { kind: "terminal", terminalId: payload.terminal.id } as const;
+    input.onTargetReady?.(restoredTarget);
+    return restoredTarget;
   }
   if (target.kind === "browser") {
-    return { kind: "browser", browserId: input.createBrowser(input.tab.browserUrl) };
+    const restoredTarget = {
+      kind: "browser",
+      browserId: input.createBrowser(input.tab.browserUrl),
+    } as const;
+    input.onTargetReady?.(restoredTarget);
+    return restoredTarget;
   }
+  input.onTargetReady?.(target);
   return target;
 }

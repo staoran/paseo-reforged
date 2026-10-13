@@ -114,7 +114,11 @@ import { useWorkspace } from "@/stores/session-store-hooks";
 import { useWorkspaceTerminalSessionRetention } from "@/terminal/hooks/use-workspace-terminal-session-retention";
 import type { CheckoutStatusPayload } from "@/git/use-status-query";
 import { confirmDialog } from "@/utils/confirm-dialog";
-import { applyArchivedAgentCloseResults } from "@/hooks/use-archive-agent";
+import {
+  applyArchivedAgentCloseResults,
+  clearArchiveAgentPending,
+  setAgentArchiving,
+} from "@/hooks/use-archive-agent";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { removeResidentBrowserWebview } from "@/desktop/browser/resident-webviews";
 import { createWorkspaceBrowser, useBrowserStore } from "@/desktop/browser/store";
@@ -2738,18 +2742,32 @@ function WorkspaceScreenContent({
         }
         /** Capture before archive propagation removes the live panel */
         const historyEntry = captureClosedTab(tabId);
-        const result = await client.archiveAgent(agentId);
-        applyArchivedAgentCloseResults({
+        setAgentArchiving({
           queryClient,
           serverId: normalizedServerId,
-          results: [{ agentId, archivedAt: result.archivedAt }],
+          agentId,
+          isArchiving: true,
         });
-        setHoveredCloseTabKey((current) => (current === tabId ? null : current));
-        closeWorkspaceTabWithCleanup({
-          tabId,
-          target: { kind: "agent", agentId },
-          historyEntry,
-        });
+        try {
+          const result = await client.archiveAgent(agentId);
+          setHoveredCloseTabKey((current) => (current === tabId ? null : current));
+          closeWorkspaceTabWithCleanup({
+            tabId,
+            target: { kind: "agent", agentId },
+            historyEntry,
+          });
+          applyArchivedAgentCloseResults({
+            queryClient,
+            serverId: normalizedServerId,
+            results: [{ agentId, archivedAt: result.archivedAt }],
+          });
+        } finally {
+          clearArchiveAgentPending({
+            queryClient,
+            serverId: normalizedServerId,
+            agentId,
+          });
+        }
       });
     },
     [
@@ -2801,6 +2819,18 @@ function WorkspaceScreenContent({
               },
             }
           : null;
+      let openedTabId: string | null = null;
+      /** Insert the restored panel before its runtime resume completes */
+      const openRestoredTab = (target: WorkspaceTabTarget, state?: JsonValue) => {
+        openedTabId = useWorkspaceLayoutStore.getState().openTab({
+          workspaceKey: persistenceKey,
+          target,
+          intent: "reveal",
+          pin: target.kind === "agent",
+          placement: FOCUSED_PANE_PLACEMENT,
+          state,
+        });
+      };
       const target = alreadyOpen
         ? tab.target
         : await restoreClosedWorkspaceTab({
@@ -2809,16 +2839,19 @@ function WorkspaceScreenContent({
             workspaceId: normalizedWorkspaceId,
             workspaceDirectory,
             createBrowser: (url) => createWorkspaceBrowser({ initialUrl: url }).browserId,
+            onTargetReady: (readyTarget) => openRestoredTab(readyTarget, tab.state),
           });
       /** Pin the explicit selection while the refreshed agent directory catches up */
-      const tabId = useWorkspaceLayoutStore.getState().openTab({
-        workspaceKey: persistenceKey,
-        target,
-        intent: "reveal",
-        pin: target.kind === "agent",
-        placement: FOCUSED_PANE_PLACEMENT,
-        state: alreadyOpen ? undefined : tab.state,
-      });
+      const tabId =
+        openedTabId ??
+        useWorkspaceLayoutStore.getState().openTab({
+          workspaceKey: persistenceKey,
+          target,
+          intent: "reveal",
+          pin: target.kind === "agent",
+          placement: FOCUSED_PANE_PLACEMENT,
+          state: alreadyOpen ? undefined : tab.state,
+        });
       if (!tabId) throw new Error(t("workspace.tabs.history.restoreFailed"));
       if (target.kind === "terminal") invalidateTerminals();
     },
