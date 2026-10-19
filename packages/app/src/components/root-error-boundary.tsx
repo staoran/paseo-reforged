@@ -1,10 +1,13 @@
-import React, { Component, type ErrorInfo, type ReactNode } from "react";
+import React, { Component, useCallback, useState, type ErrorInfo, type ReactNode } from "react";
+import * as Clipboard from "expo-clipboard";
+import { Check, Copy } from "lucide-react-native";
 import { Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet } from "react-native-unistyles";
 import { Button } from "@/components/ui/button";
 import { ScrollableCodeSurface } from "@/components/ui/scrollable-code-surface";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { formatCaughtValue } from "./root-error-details";
 
@@ -56,6 +59,24 @@ export function RootErrorFallback({ error, onReload }: RootErrorFallbackProps) {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const isCompact = useIsCompactFormFactor();
+  // Clipboard operation state remains available after app providers unmount
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copying" | "copied" | "failed">("idle");
+  // Clipboard acknowledgement for assistive technology and the tooltip
+  const copyLabel = copyStatus === "copied" ? t("common.states.copied") : t("common.actions.copy");
+  // Success glyph preserves the copy button's dimensions
+  const CopyIcon = copyStatus === "copied" ? Check : Copy;
+
+  /** Copy all details without relying on providers inside the failed app */
+  const copyDetails = useCallback(async () => {
+    setCopyStatus("copying");
+    try {
+      // Web clipboard writes can report failure without rejecting
+      const copied = await Clipboard.setStringAsync(error);
+      setCopyStatus(copied ? "copied" : "failed");
+    } catch {
+      setCopyStatus("failed");
+    }
+  }, [error]);
 
   const reload = (
     <Button variant="default" onPress={onReload} testID="root-error-boundary-reload">
@@ -82,7 +103,31 @@ export function RootErrorFallback({ error, onReload }: RootErrorFallbackProps) {
           <Text style={styles.body}>{t("rootError.body")}</Text>
         </View>
         <View style={styles.details}>
-          <Text style={styles.detailsLabel}>{t("rootError.details")}</Text>
+          <View style={styles.detailsHeader}>
+            <Text style={styles.detailsLabel}>{t("rootError.details")}</Text>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  style={styles.copyButton}
+                  leftIcon={CopyIcon}
+                  loading={copyStatus === "copying"}
+                  accessibilityLabel={copyLabel}
+                  onPress={copyDetails}
+                  testID="root-error-boundary-copy"
+                />
+              </TooltipTrigger>
+              <TooltipContent>
+                <Text style={styles.tooltipText}>{copyLabel}</Text>
+              </TooltipContent>
+            </Tooltip>
+          </View>
+          {copyStatus === "failed" ? (
+            <Text style={styles.copyError} accessibilityRole="alert">
+              {t("common.errors.unableToCopy")}
+            </Text>
+          ) : null}
           <ScrollableCodeSurface
             maxHeight={isCompact ? undefined : DETAILS_MAX_HEIGHT}
             style={styles.detailsSurface}
@@ -134,10 +179,29 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 1,
     gap: theme.spacing[2],
   },
+  detailsHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: theme.spacing[2],
+  },
   detailsLabel: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,
+  },
+  copyButton: {
+    width: 32,
+    paddingHorizontal: 0,
+    flexShrink: 0,
+  },
+  copyError: {
+    color: theme.colors.destructive,
+    fontSize: theme.fontSize.sm,
+  },
+  tooltipText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
   },
   detailsSurface: {
     flexShrink: 1,
