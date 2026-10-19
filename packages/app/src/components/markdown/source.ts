@@ -69,7 +69,8 @@ function normalizeAdjacentStrong(source: string): string {
     }),
   );
   let result = source;
-  for (const index of insertions.toSorted((a, b) => b - a)) {
+  // React Native 0.81 Hermes lacks toSorted and this render owns the offsets
+  for (const index of insertions.sort((a, b) => b - a)) {
     result = result.slice(0, index) + "&#8203;" + result.slice(index);
   }
   return result;

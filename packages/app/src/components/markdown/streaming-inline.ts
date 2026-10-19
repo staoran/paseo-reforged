@@ -132,7 +132,8 @@ export function completeStreamingMarkdownSource(source: string): string {
   parser.parse(source, edits);
   if (edits.offset < 0) return source;
   let content = edits.content;
-  for (const cut of edits.cuts.toSorted((a, b) => b.start - a.start)) {
+  // React Native 0.81 Hermes lacks toSorted and this parse owns the cuts
+  for (const cut of edits.cuts.sort((a, b) => b.start - a.start)) {
     content = content.slice(0, cut.start) + content.slice(cut.end);
   }
   return (
