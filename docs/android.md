@@ -126,7 +126,9 @@ This is the Android counterpart of the iOS local-simulator flow in [development.
 
 Android focus and selection visibility requests must not reposition inverted timelines. The
 `modules/paseo-scroll` package keeps React Native's scroll manager interface and returns zero for
-child-reveal scroll calculations when the vertical scale is inverted. Dragging and explicit scroll
+child-reveal scroll calculations when the view's transform matrix inverts the vertical axis. React
+Native's Android list uses `scale: -1`, which decomposes into a 180-degree rotation with positive
+`scaleY`; checking the scale property alone misses it. Dragging and explicit scroll
 commands still work; non-inverted scroll views keep Android's default behavior.
 
 Register this package before React Native's core package through its Expo config plugin. Normal
@@ -205,12 +207,12 @@ adb exec-out screencap -p > screenshot.png
 
 Stable tag pushes like `v0.1.0` trigger:
 
-- The EAS GitHub app on Expo servers (iOS + Android production builds + store submit). EAS remains the path for AAB, store submission, and Expo Updates.
-- `.github/workflows/android-apk-release.yml` on GitHub Actions (arm64-only APK asset on GitHub Release). This workflow calls `eas build --local` with the `production-apk` profile. EAS supplies hosted signing credentials; compilation and APK validation run on GitHub.
+- Upstream Paseo uses the EAS GitHub app and `packages/app/.eas/workflows/release-mobile.yml` for iOS and Android distribution. Reforged external EAS distribution is not assumed from that workflow.
+- `.github/workflows/android-apk-release.yml` is the verified Reforged path for an arm64-only APK asset on GitHub Releases. It calls `eas build --local` with the `production-apk` profile; EAS supplies hosted signing credentials while compilation and APK validation run on GitHub.
 
-iOS auto-submits to App Store review via a Fastlane lane after EAS uploads to TestFlight. Android auto-submits to the Play Store via EAS-managed credentials.
+Upstream distributes iOS through TestFlight and App Store review and Android through Google Play. Those store paths are not enabled for Reforged by this merge; see [Mobile builds (EAS)](release.md#mobile-builds-eas).
 
-Beta tags like `v0.1.1-beta.1` only trigger the GitHub APK workflow. They publish a GitHub prerelease APK for testing and do not submit to the stores. The APK workflow has no fallback path: a build, signing, source map, or artifact validation failure stops the run.
+Beta tags like `v0.1.1-beta.1` only trigger the Reforged GitHub APK workflow. They publish a GitHub prerelease APK for testing and do not submit to the stores. The APK workflow has no fallback path: a build, signing, source map, or artifact validation failure stops the run.
 
 `android-v*` tags also trigger only the GitHub APK workflow — useful when you want to ship an APK without going through stores. The workflow runs only in `staoran/paseo-reforged`, checks the Expo app name and package ID before compiling, fixes `arm64-v8a`, keeps release source maps enabled, and checks the signature, version, and native ABI before upload. It supports `workflow_dispatch` with an existing `tag` input so you can rebuild without cutting a new tag.
 

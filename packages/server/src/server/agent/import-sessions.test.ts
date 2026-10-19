@@ -787,7 +787,7 @@ test("importProviderSession uses the provider import path with the requested lab
   });
 });
 
-test("importProviderSession preserves the selected provider title for the agent", async () => {
+test("importProviderSession passes the selected title as a fallback without overriding a provider rename", async () => {
   const harness = await ProviderImportHarness.create();
   await harness.import({
     providerHandleId: "thread-imported",
@@ -801,7 +801,7 @@ test("importProviderSession preserves the selected provider title for the agent"
       providerHandleId: "thread-imported",
       cwd: "/tmp/imported-agent",
       workspaceId: "ws-restored",
-      title: "Selected Codex thread name",
+      fallbackTitle: "Selected Codex thread name",
       labels: undefined,
     },
   ]);

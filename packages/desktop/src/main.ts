@@ -1,3 +1,6 @@
+import { protectConsoleStreams } from "./diagnostics/console-streams.js";
+protectConsoleStreams();
+
 process.emitWarning = (() => {}) as typeof process.emitWarning;
 
 import log from "electron-log/main";
@@ -47,6 +50,7 @@ import { setupDarwinCompositorWatchdog } from "./window/compositor-watchdog/inde
 import { setupRendererRecovery } from "./window/renderer-recovery-electron.js";
 import type { RendererRecovery } from "./window/renderer-recovery.js";
 import { setupRecoveryTray, type RecoveryTray } from "./features/recovery-tray.js";
+import { showWindowWhenReady } from "./window/show-when-ready.js";
 import { resolveDesktopWindowChromeMode, windowChromeModeArgument } from "./window/chrome.js";
 import { registerDialogHandlers } from "./features/dialogs.js";
 import {
@@ -814,8 +818,8 @@ async function createWindow(
     registerBrowserWebviewNavigationGuards(contents);
   });
 
-  mainWindow.once("ready-to-show", () => {
-    mainWindow.show();
+  showWindowWhenReady(mainWindow, {
+    showOnLoad: process.platform === "linux",
   });
 
   if (!app.isPackaged) {

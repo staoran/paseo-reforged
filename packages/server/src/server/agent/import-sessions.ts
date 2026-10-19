@@ -258,7 +258,9 @@ async function importProviderSessionNow(
     providerHandleId,
     cwd,
     workspaceId,
-    ...(input.request.workspaceTitle !== undefined ? { title: input.request.workspaceTitle } : {}),
+    ...(input.request.workspaceTitle !== undefined
+      ? { fallbackTitle: input.request.workspaceTitle }
+      : {}),
     labels,
   });
   await unarchiveAgentState(input.agentStorage, input.agentManager, snapshot.id);

@@ -307,7 +307,6 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     olderHistoryProgressKey,
     scrollEnabled,
     contentMaxWidth,
-    imageContext,
     isMobileBreakpoint,
   } = props;
   const historyVirtualized = useRevisedHistoryRows(
@@ -388,13 +387,10 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   const chatFindRowIndexes = useMemo(() => {
     if (!chatFindMessageId) return null;
     const indexes = segments.historyVirtualized.flatMap((item, index) =>
-      getStreamItemMessageId(item) === chatFindMessageId ||
-      item.id === props.messageHostIds?.get(chatFindMessageId)
-        ? [index]
-        : [],
+      getStreamItemMessageId(item) === chatFindMessageId ? [index] : [],
     );
     return indexes.length > 0 ? indexes : null;
-  }, [chatFindMessageId, segments.historyVirtualized, props.messageHostIds]);
+  }, [chatFindMessageId, segments.historyVirtualized]);
   const rowVirtualizerRef = useRef<Virtualizer<HTMLElement, Element> | null>(null);
   const rangeExtractor = useCallback(
     (range: VirtualRange): number[] => {
@@ -458,7 +454,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       const row = segments.historyVirtualized[index];
       const measured = row && measuredRowHeights.current.get(row.id);
       if (measured && measured.width === contentWidth) return measured.height;
-      return row ? estimateStreamItemHeight({ item: row, contentMaxWidth, imageContext }) : 120;
+      return row ? estimateStreamItemHeight({ item: row, contentMaxWidth }) : 120;
     },
     observeElementOffset: observeVirtualOffset,
     rangeExtractor,
@@ -724,7 +720,6 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     scrollContainerRef,
     rowVirtualizer,
     historyVirtualized: segments.historyVirtualized,
-    messageHostIds: props.messageHostIds,
     cancelPendingStickToBottom,
     setFollowOutput,
     onNearBottomChange,
@@ -983,14 +978,25 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       if (!followOutputRef.current) {
         return;
       }
-      scheduleStickToBottom();
+      // ResizeObserver runs before paint. Following in the next frame exposes
+      // the newly grown row at the old offset for one painted frame.
+      forceStickToBottom();
     });
     observer.observe(scrollContainer);
     if (contentNode) {
       observer.observe(contentNode);
     }
+    // Paced reveal commits inside a message without rerendering this viewport.
+    // Observe those commits too, so the next frame sees the grown content at the
+    // bottom instead of waiting for the resize notification after animation frames.
+    const contentChanges = new MutationObserver(() => {
+      if (isActiveRef.current && followOutputRef.current) forceStickToBottom();
+    });
+    if (contentNode)
+      contentChanges.observe(contentNode, { childList: true, characterData: true, subtree: true });
     return () => {
       observer.disconnect();
+      contentChanges.disconnect();
     };
   }, [
     reconcileReadingPosition,
@@ -998,7 +1004,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     isActive,
     reportReadingPosition,
     scheduleHistoryStartPrependSettle,
-    scheduleStickToBottom,
+    forceStickToBottom,
     updateScrollMetrics,
     measureVirtualizedRows,
   ]);
@@ -1156,6 +1162,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
 
   useEffect(() => {
     const handle: StreamViewportHandle = {
+      focus: () => scrollContainerRef.current?.focus({ preventScroll: true }),
       scrollToBottom: () => {
         setFollowOutput(true);
         cancelPendingStickToBottom();
@@ -1248,6 +1255,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
             ? undefined
             : getStreamItemMessageId(item)
         }
+        data-plugin-row={item.kind === "plugin" ? "true" : undefined}
         style={streamRowStyle}
       >
         <StreamRowContent
@@ -1258,7 +1266,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         />
       </div>
     ));
-  }, [renderHistoryMountedRow, segments.historyMounted, props.messageHostIds]);
+  }, [props.messageHostIds, renderHistoryMountedRow, segments.historyMounted]);
   const liveHeadRows = useMemo(() => {
     return segments.liveHead.map((item, index) => (
       <div
@@ -1269,6 +1277,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
             ? undefined
             : getStreamItemMessageId(item)
         }
+        data-plugin-row={item.kind === "plugin" ? "true" : undefined}
         style={streamRowStyle}
       >
         <StreamRowContent
@@ -1280,7 +1289,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         />
       </div>
     ));
-  }, [liveHeadRowRevision, renderLiveHeadRow, segments.liveHead, props.messageHostIds]);
+  }, [liveHeadRowRevision, props.messageHostIds, renderLiveHeadRow, segments.liveHead]);
   const mountedRows = useMemo(
     () => [...mountedHistoryRows, ...liveHeadRows],
     [liveHeadRows, mountedHistoryRows],
@@ -1310,6 +1319,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     <div style={viewportStyle} data-window-content>
       <div
         ref={handleScrollContainerRef}
+        // Let clicks focus the feed for browser keyboard scrolling without adding a Tab stop.
+        tabIndex={-1}
         data-testid="agent-chat-scroll"
         data-overlay-scrollbar={scrollEnabled && !isMobileBreakpoint ? "true" : undefined}
         id={`agent-chat-scroll-${shouldUseVirtualizer ? "web-dom-virtualized" : "web-dom-scroll"}`}
@@ -1333,6 +1344,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
                         ? undefined
                         : getStreamItemMessageId(item)
                     }
+                    data-plugin-row={item.kind === "plugin" ? "true" : undefined}
                     ref={measureVirtualizedRowElement}
                     style={renderVirtualRowStyle(virtualRow.start)}
                   >

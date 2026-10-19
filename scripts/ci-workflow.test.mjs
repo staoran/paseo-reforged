@@ -3,6 +3,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { relative as relativePath } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { runInNewContext } from "node:vm";
 import { load as loadYaml } from "js-yaml";
 
 const repoRoot = new URL("../", import.meta.url);
@@ -17,28 +18,34 @@ const serverTsconfigPath = new URL("packages/server/tsconfig.server.json", repoR
 const desktopPackagePath = new URL("packages/desktop/package.json", repoRoot);
 
 const gatedCiJobs = new Map([
-  ["format", { name: "format", contract: "format" }],
-  ["lint", { name: "lint", contract: "quality" }],
+  ["quality", { name: "quality", contracts: ["format", "quality", "relay", "sdk"] }],
   ["typecheck", { name: "typecheck", contract: "quality" }],
   ["server-tests-ubuntu", { name: "server-tests (ubuntu-latest)", contracts: ["server", "hub"] }],
   ["server-tests-windows", { name: "server-tests (windows-latest)", contracts: ["server", "hub"] }],
+  [
+    "server-integration-windows",
+    { name: "server-integration (windows-latest)", contract: "server" },
+  ],
   ["server-tests-macos", { name: "server-tests (macos-14, file observation)", contract: "server" }],
   ["desktop-tests-ubuntu", { name: "desktop-tests (ubuntu-latest)", contract: "desktop" }],
   ["desktop-tests-windows", { name: "desktop-tests (windows-latest)", contract: "desktop" }],
   ["app-tests", { name: "app-tests", contract: "app" }],
-  ["sdk-tests", { name: "sdk-tests", contract: "sdk" }],
-  ["relay-tests", { name: "relay-tests", contract: "relay" }],
   ["cli-tests-1", { name: "cli-tests (shard 1/3)", contract: "cli" }],
   ["cli-tests-2", { name: "cli-tests (shard 2/3)", contract: "cli" }],
   ["cli-tests-3", { name: "cli-tests (shard 3/3)", contract: "cli" }],
 ]);
 
+/** Normalize Git line endings before comparing workflow contracts on Windows */
+function readSource(path, encoding = "utf8") {
+  return readFileSync(path, encoding).replaceAll("\r\n", "\n");
+}
+
 function jobBlocks(source) {
   const jobs = new Map();
   let currentJob;
 
-  for (const line of source.split("\n")) {
-    const jobMatch = /^  ([a-z0-9-]+):\s*$/.exec(line);
+  for (const line of (source.split("\njobs:\n")[1] ?? source).split("\n")) {
+    const jobMatch = /^  ([a-z0-9_-]+):\s*$/.exec(line);
     if (jobMatch) {
       currentJob = jobMatch[1];
       jobs.set(currentJob, []);
@@ -53,7 +60,7 @@ function loadFilters(path) {
   const filters = {};
   let currentFilter;
 
-  for (const line of readFileSync(path, "utf8").split("\n")) {
+  for (const line of readSource(path, "utf8").split("\n")) {
     const filterMatch = /^([a-z_]+):\s*$/.exec(line);
     if (filterMatch) {
       currentFilter = filterMatch[1];
@@ -81,7 +88,7 @@ function filesUnder(relativeDirectory, predicate) {
 }
 
 test("gated checks are statically named jobs with real job-level gating", () => {
-  const workflowSource = readFileSync(ciWorkflowPath, "utf8");
+  const workflowSource = readSource(ciWorkflowPath, "utf8");
   const jobs = jobBlocks(workflowSource);
   const trigger = workflowSource.split("jobs:", 1)[0];
 
@@ -101,8 +108,14 @@ test("gated checks are statically named jobs with real job-level gating", () => 
 });
 
 test("change gating allows superseded workflow runs to cancel", () => {
+  const ci = readSource(ciWorkflowPath, "utf8");
+  assert.match(
+    ci,
+    /^concurrency:\n  group: ci-\$\{\{ github\.workflow \}\}-\$\{\{ github\.ref \}\}\n  cancel-in-progress: true$/m,
+    "a newer push to any ref, main included, cancels the superseded run",
+  );
   for (const workflowPath of [ciWorkflowPath, dockerWorkflowPath, nixWorkflowPath]) {
-    const source = readFileSync(workflowPath, "utf8");
+    const source = readSource(workflowPath, "utf8");
     assert.doesNotMatch(
       source,
       /\$\{\{\s*always\(\)/,
@@ -113,9 +126,9 @@ test("change gating allows superseded workflow runs to cancel", () => {
 
 // Checks that failed builds can seed a retry without occupying the successful cache key
 test("Android APK task cache separates partial and complete builds", () => {
-  const workflow = loadYaml(readFileSync(androidReleaseWorkflowPath, "utf8"));
+  const workflow = loadYaml(readSource(androidReleaseWorkflowPath, "utf8"));
   const steps = workflow.jobs["build-and-publish"].steps;
-  const profile = JSON.parse(readFileSync(easConfigPath, "utf8")).build["production-apk"];
+  const profile = JSON.parse(readSource(easConfigPath, "utf8")).build["production-apk"];
   const restore = steps.find((step) => step.name === "Restore Gradle cache");
   const build = steps.find((step) => step.id === "apk-build");
   const complete = steps.find((step) => step.name === "Save successful Gradle cache");
@@ -147,7 +160,7 @@ test("Android APK task cache separates partial and complete builds", () => {
 });
 
 test("focused contracts stay inside existing required checks", () => {
-  const jobs = jobBlocks(readFileSync(ciWorkflowPath, "utf8"));
+  const jobs = jobBlocks(readSource(ciWorkflowPath, "utf8"));
   const changes = jobs.get("changes")?.join("\n") ?? "";
   const server = jobs.get("server-tests-ubuntu")?.join("\n") ?? "";
   const desktop = jobs.get("desktop-tests-ubuntu")?.join("\n") ?? "";
@@ -166,18 +179,18 @@ test("focused contracts stay inside existing required checks", () => {
 });
 
 test("browser shards and desktop E2E stay out of automatic CI", () => {
-  const jobs = jobBlocks(readFileSync(ciWorkflowPath, "utf8"));
+  const jobs = jobBlocks(readSource(ciWorkflowPath, "utf8"));
   const desktopWindows = jobs.get("desktop-tests-windows")?.join("\n") ?? "";
 
-  for (const shard of [1, 2, 3, 4]) {
-    assert.ok(!jobs.has(`playwright-${shard}`));
-  }
+  assert.ok([...jobs.keys()].every((jobId) => !jobId.startsWith("playwright")));
+  assert.ok(!jobs.has("sdk-tests"));
+  assert.ok(!jobs.has("relay-tests"));
   assert.match(desktopWindows, /\*desktop_test_steps/);
   assert.doesNotMatch(desktopWindows, /test:e2e|lifecycle\.e2e/);
 });
 
 test("server builds exclude test utilities at every domain depth", () => {
-  const tsconfig = JSON.parse(readFileSync(serverTsconfigPath, "utf8"));
+  const tsconfig = JSON.parse(readSource(serverTsconfigPath, "utf8"));
   assert.ok(tsconfig.exclude.includes("src/server/**/test-utils/**"));
   assert.ok(!tsconfig.exclude.includes("src/server/test-utils/**"));
 });
@@ -234,7 +247,7 @@ test("cross-package invariants live in the suite that owns them", () => {
   assert.ok(cliTests.length > 0);
   for (const path of cliTests) {
     assert.doesNotMatch(
-      readFileSync(new URL(path, repoRoot), "utf8"),
+      readSource(new URL(path, repoRoot), "utf8"),
       /server\/src\/server\/test-utils/,
       path,
     );
@@ -244,7 +257,7 @@ test("cross-package invariants live in the suite that owns them", () => {
     "packages/protocol/src/messages.wire-compat.test.ts",
     repoRoot,
   );
-  assert.match(readFileSync(protocolWireCompatibility, "utf8"), /wire schema compatibility/);
+  assert.match(readSource(protocolWireCompatibility, "utf8"), /wire schema compatibility/);
 });
 
 test("browser and desktop tests have exclusive, directory-owned suites", () => {
@@ -259,12 +272,12 @@ test("browser and desktop tests have exclusive, directory-owned suites", () => {
   assert.ok(desktopSpecs.every((path) => path.startsWith("packages/desktop/e2e/")));
   assert.ok(electronModules.every((path) => path.startsWith("packages/app/src/desktop/")));
 
-  const desktopPackage = JSON.parse(readFileSync(desktopPackagePath, "utf8"));
+  const desktopPackage = JSON.parse(readSource(desktopPackagePath, "utf8"));
   assert.match(desktopPackage.scripts.test, /--exclude ["']e2e\/\*\*["']/);
 
   for (const path of browserSpecs) {
     assert.doesNotMatch(
-      readFileSync(new URL(path, repoRoot), "utf8"),
+      readSource(new URL(path, repoRoot), "utf8"),
       /paseoDesktop|injectDesktopBridge/,
     );
   }
@@ -272,7 +285,7 @@ test("browser and desktop tests have exclusive, directory-owned suites", () => {
     assert.ok(path.startsWith("packages/desktop/e2e/"));
   }
 
-  const routingSource = readFileSync(filtersPath, "utf8");
+  const routingSource = readSource(filtersPath, "utf8");
   assert.doesNotMatch(routingSource, /desktop_bridge|playwright_desktop|browser-\*|browser-\*\//);
   assert.deepEqual(filters.desktop, [
     "packages/desktop/**",
@@ -291,18 +304,200 @@ test("packaging checks run only on demand while Docker releases still run on ver
     new URL(".github/workflows/nix-update-hash.yml", repoRoot),
   ];
   for (const workflowPath of manualWorkflows) {
-    const workflow = loadYaml(readFileSync(workflowPath, "utf8"));
+    const workflow = loadYaml(readSource(workflowPath, "utf8"));
     assert.deepEqual(Object.keys(workflow.on), ["workflow_dispatch"]);
   }
 
-  const docker = loadYaml(readFileSync(dockerWorkflowPath, "utf8"));
+  const docker = loadYaml(readSource(dockerWorkflowPath, "utf8"));
   assert.deepEqual(docker.on.push, { tags: ["v*"] });
   assert.ok(Object.hasOwn(docker.on, "workflow_dispatch"));
 });
 
 test("desktop packaging keeps pinned actions for manual smoke", () => {
-  const source = readFileSync(new URL(".github/workflows/desktop-packages.yml", repoRoot), "utf8");
+  const source = readSource(new URL(".github/workflows/desktop-packages.yml", repoRoot), "utf8");
   for (const action of ["actions/checkout", "actions/setup-node", "actions/upload-artifact"]) {
     assert.match(source, new RegExp(`${action}@[0-9a-f]{40} # v\\d+\\.\\d+\\.\\d+`));
+  }
+});
+
+test("stable iOS releases upload once and distribute to external testers before App Store review", () => {
+  const source = readSource(
+    new URL("packages/app/.eas/workflows/release-mobile.yml", repoRoot),
+    "utf8",
+  );
+  const jobs = jobBlocks(source);
+  const uploads = [...jobs.entries()].filter(
+    ([, lines]) =>
+      lines.some((line) => /^    type: (submit|testflight)$/.test(line)) &&
+      lines.some((line) => line.includes("needs.build_ios.outputs.build_id")),
+  );
+  assert.equal(uploads.length, 1, "the iOS binary must be uploaded exactly once");
+  const [distributionId, distributionLines] = uploads[0];
+  const distribution = distributionLines.join("\n");
+  assert.match(distribution, /^    type: testflight$/m);
+  assert.match(distribution, /external_groups:\s*\n\s+- Paseo Beta/);
+  assert.match(distribution, /^      submit_beta_review: true$/m);
+
+  const review = jobs.get("submit_ios_for_review").join("\n");
+  assert.match(review, new RegExp(`needs: \\[build_ios, ${distributionId}\\]`));
+  assert.match(review, /APP_VERSION="\$\{\{ needs\.build_ios\.outputs\.app_version \}\}"/);
+  assert.match(
+    review,
+    /APP_BUILD_VERSION="\$\{\{ needs\.build_ios\.outputs\.app_build_version \}\}"/,
+  );
+  assert.match(review, /bundle exec fastlane ios submit_review/);
+});
+
+test("automatic CI keeps one required check for each retained contract", () => {
+  const jobs = jobBlocks(readSource(ciWorkflowPath, "utf8"));
+  assert.deepEqual([...jobs.keys()], ["changes", ...gatedCiJobs.keys()]);
+});
+
+test("quality preserves commands and routes each domain independently after failures", () => {
+  const jobs = jobBlocks(readSource(ciWorkflowPath, "utf8"));
+  const quality = jobs.get("quality").join("\n");
+  assert.doesNotMatch(quality, /^\s+continue-on-error:/m);
+  const commands = {
+    format: ["npm run format:check"],
+    quality: [
+      "npx --yes lockfile-lint --path package-lock.json --type npm --allowed-hosts npm --validate-https --validate-integrity",
+      "npm audit signatures",
+      "npm run lint",
+    ],
+    relay: ["npm run build:relay", "npm run test --workspace=@getpaseo/relay"],
+    sdk: [
+      "npm run build:relay && npm run build:client",
+      "npm run build:plugin",
+      "npm run test --workspace=@getpaseo/plugin",
+      "npm run test --workspace=@getpaseo/protocol",
+      "npm run test --workspace=@getpaseo/client",
+      "npm run test --workspace=@getpaseo/highlight",
+      "npm run typecheck:examples --workspace=@getpaseo/client",
+    ],
+  };
+  const checks = [...quality.matchAll(/        if: \$\{\{ (.+) \}\}\n        run: (.+)/g)];
+  assert.deepEqual(
+    checks.map(([, , command]) => command),
+    Object.values(commands).flat(),
+  );
+  const domains = Object.keys(commands);
+  function accepts(expression, outputs, { cancelled = false, installed = true } = {}) {
+    // Prior checks have failed: success() is false. Explicit !cancelled() must
+    // override Actions' default success condition so later domains still run.
+    assert.match(expression, /!cancelled\(\)/);
+    return runInNewContext(expression, {
+      needs: { changes: { outputs } },
+      steps: { install: { outcome: installed ? "success" : "failure" } },
+      cancelled: () => cancelled,
+      success: () => false,
+    });
+  }
+  const disabled = { full: "false", ...Object.fromEntries(domains.map((key) => [key, "false"])) };
+  const jobCondition = /    if: \$\{\{ (.+) \}\}/.exec(quality)[1];
+  assert.equal(accepts(jobCondition, disabled), false);
+  for (const selected of domains) {
+    const outputs = { ...disabled, [selected]: "true" };
+    assert.equal(accepts(jobCondition, outputs), true);
+    for (const [, expression, command] of checks) {
+      assert.equal(accepts(expression, outputs), commands[selected].includes(command), command);
+    }
+  }
+  for (const [, expression] of checks) {
+    assert.equal(accepts(expression, { ...disabled, full: "true" }), true);
+    assert.equal(accepts(expression, {}), true, "missing routing outputs fail open");
+    assert.equal(accepts(expression, {}, { cancelled: true }), false);
+    assert.equal(accepts(expression, {}, { installed: false }), false);
+  }
+  assert.equal(accepts(jobCondition, {}, { cancelled: true }), false);
+});
+
+test("Windows units and integration run independently with complete routed coverage", () => {
+  const source = readSource(ciWorkflowPath, "utf8");
+  const jobs = jobBlocks(source);
+  const ubuntu = jobs.get("server-tests-ubuntu").join("\n");
+  const windows = jobs.get("server-tests-windows").join("\n");
+  const integration = jobs.get("server-integration-windows").join("\n");
+  assert.match(ubuntu, /run: npm run test --workspace=@getpaseo\/server/);
+  assert.match(windows, /run: npm run test:unit --workspace=@getpaseo\/server/);
+  assert.doesNotMatch(windows, /run: npm run test(?: |:integration)/);
+  assert.match(integration, /run: npm run test:integration --workspace=@getpaseo\/server/);
+  assert.doesNotMatch(integration, /test:unit|server_plugin_tests|server_hub_contract/);
+  for (const job of [windows, integration]) {
+    assert.match(job, /^    needs: changes$/m, "both phases become eligible independently");
+    assert.match(job, /^    runs-on: windows-latest$/m);
+    assert.doesNotMatch(job, /continue-on-error|maxWorkers|--exclude/);
+    for (const step of [
+      "server_capacity",
+      "server_checkout",
+      "server_node",
+      "server_fetch",
+      "server_install",
+      "server_agent_clis",
+      "server_build",
+    ]) {
+      assert.match(ubuntu, new RegExp(`&${step}\\b`));
+      assert.match(job, new RegExp(`- \\*${step}\\b`));
+    }
+    assert.match(job, /env: \*server_test_env/);
+  }
+  assert.match(windows, /- \*server_plugin_tests/);
+  assert.match(windows, /- \*server_hub_contract/);
+  assert.match(ubuntu, /run: npm run test --workspace=@getpaseo\/builtin-plugins/);
+  assert.match(ubuntu, /run: npm run test:hub-cli-contract --workspace=@getpaseo\/server/);
+
+  const scripts = JSON.parse(
+    readSource(new URL("packages/server/package.json", repoRoot), "utf8"),
+  ).scripts;
+  assert.equal(scripts.test, "npm run test:unit && npm run test:integration");
+  assert.equal(scripts["test:unit"], 'vitest run --fileParallelism --exclude "**/*.e2e.test.ts"');
+  const invocations = scripts["test:integration"].split(" && ");
+  // Each vitest start costs about half a minute on Windows, so the four
+  // name-filtered files share one invocation and one combined filter.
+  assert.equal(invocations.length, 2);
+  assert.ok(invocations.every((command) => command.startsWith("vitest run --maxWorkers=1 ")));
+  assert.doesNotMatch(invocations[0], / -t /);
+  assert.equal(
+    invocations[1],
+    'vitest run --maxWorkers=1 src/server/daemon-e2e/git-operations.e2e.test.ts src/server/session.create-agent-worktree-autoarchive.e2e.test.ts src/server/agent/providers/opencode-bridge.local.e2e.test.ts src/server/daemon-e2e/relay-transport.e2e.test.ts -t "merges into|creates a worktree and auto-archives both|versioned runtime|oversized attachments"',
+  );
+  const serverConfig = readSource(new URL("packages/server/vitest.config.ts", repoRoot), "utf8");
+  assert.doesNotMatch(serverConfig, /maxWorkers/);
+
+  function condition(job) {
+    return /    if: \$\{\{ (.+) \}\}/.exec(job)[1];
+  }
+  function selected(expression, outputs, cancelled = false) {
+    return runInNewContext(expression, {
+      needs: { changes: { outputs } },
+      cancelled: () => cancelled,
+    });
+  }
+  const unitCondition = condition(windows);
+  const integrationCondition = condition(integration);
+  const unitStep = /      - name: Run server unit tests\n        if: \$\{\{ (.+) \}\}/.exec(
+    windows,
+  )[1];
+  const hubStep =
+    /      - &server_hub_contract\n        name: Run Hub CLI\/daemon contract\n        if: \$\{\{ (.+) \}\}/.exec(
+      ubuntu,
+    )[1];
+  const pluginStep =
+    /      - &server_plugin_tests\n        name: Run built-in plugin tests\n        if: \$\{\{ (.+) \}\}/.exec(
+      ubuntu,
+    )[1];
+  for (const [outputs, units, integrations, hub] of [
+    [{ full: "true", server: "false", hub: "false" }, true, true, false],
+    [{ full: "false", server: "true", hub: "false" }, true, true, false],
+    [{ full: "false", server: "false", hub: "true" }, true, false, true],
+    [{ full: "false", server: "false", hub: "false" }, false, false, false],
+    [{}, true, true, false],
+  ]) {
+    assert.equal(selected(unitCondition, outputs), units);
+    assert.equal(selected(integrationCondition, outputs), integrations);
+    assert.equal(selected(unitStep, outputs), integrations);
+    assert.equal(selected(pluginStep, outputs), integrations);
+    assert.equal(selected(hubStep, outputs), hub);
+    assert.equal(selected(unitCondition, outputs, true), false);
+    assert.equal(selected(integrationCondition, outputs, true), false);
   }
 });

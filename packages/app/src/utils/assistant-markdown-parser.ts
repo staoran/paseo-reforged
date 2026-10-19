@@ -1,7 +1,6 @@
 import type MarkdownIt from "markdown-it";
 import type StateInline from "markdown-it/lib/rules_inline/state_inline.mjs";
 import { createMarkdownParser } from "@/utils/markdown-parser";
-import { enableStreamingMarkdown } from "@/utils/streaming-markdown";
 
 /** Lets assistant-authored strong close after punctuation before adjacent prose */
 function allowPunctuationAdjacentStrong(state: StateInline): boolean {
@@ -12,7 +11,7 @@ function allowPunctuationAdjacentStrong(state: StateInline): boolean {
   ];
 
   for (const delimiters of delimiterLists) {
-    for (let index = 0; index + 1 < delimiters.length; index++) {
+    for (let index = 0; index + 1 < delimiters.length; index += 1) {
       const first = delimiters[index];
       const second = delimiters[index + 1];
       if (
@@ -48,20 +47,14 @@ function allowPunctuationAdjacentStrong(state: StateInline): boolean {
   return changed;
 }
 
-export function createAssistantMarkdownParser({ streaming = false } = {}): MarkdownIt {
+export function createAssistantMarkdownParser(): MarkdownIt {
   const parser = createMarkdownParser({ linkify: true });
   const defaultValidateLink = parser.validateLink.bind(parser);
 
-  // Assistant messages are the only surface allowed to link into the
-  // filesystem. Every other parser keeps markdown-it's stricter default.
+  // Rich clipboard HTML preserves workspace file links.
   parser.validateLink = (url: string) =>
     url.trim().toLowerCase().startsWith("file://") || defaultValidateLink(url);
 
-  if (streaming) {
-    enableStreamingMarkdown(parser);
-  }
-
-  // The first inline postprocessing rule is markdown-it's original pair matcher
   const [balancePairs] = parser.inline.ruler2.getRules("");
   parser.inline.ruler2.after("balance_pairs", "assistant_adjacent_strong", (state) => {
     if (allowPunctuationAdjacentStrong(state)) balancePairs(state);

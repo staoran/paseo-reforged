@@ -146,6 +146,7 @@ export function toAgentPayload(
       : {}),
     title: options?.title ?? null,
     labels: agent.labels,
+    ...(agent.internal ? { internal: true } : {}),
   };
 
   const usage = sanitizeUsage(agent.lastUsage);
@@ -202,6 +203,20 @@ function buildStoredPersistenceHandle(
   return toAgentPersistenceHandle(validProviders, record.persistence);
 }
 
+/** Normalizes persisted message clocks without substituting runtime lifecycle times */
+function buildStoredMessageTimes(
+  record: StoredAgentRecord,
+): Pick<AgentSnapshotPayload, "lastMessageAt" | "lastUserMessageAt"> {
+  /** Absent historical message clocks remain absent on the wire */
+  const lastMessageAt = record.lastMessageAt ? new Date(record.lastMessageAt) : null;
+  /** The user clock remains nullable for older records */
+  const lastUserMessageAt = record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null;
+  return {
+    ...(lastMessageAt ? { lastMessageAt: lastMessageAt.toISOString() } : {}),
+    lastUserMessageAt: lastUserMessageAt ? lastUserMessageAt.toISOString() : null,
+  };
+}
+
 /** Preserves durable status while explicitly reporting the absence of a provider session */
 export function buildStoredAgentPayload(
   record: StoredAgentRecord,
@@ -221,8 +236,6 @@ export function buildStoredAgentPayload(
 
   const createdAt = new Date(record.createdAt);
   const updatedAt = new Date(resolveStoredAgentUpdatedAt(record));
-  const lastMessageAt = record.lastMessageAt ? new Date(record.lastMessageAt) : null;
-  const lastUserMessageAt = record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null;
 
   const runtimeInfo = buildStoredRuntimeInfo(record);
   const providerAvailable = isStoredAgentProviderAvailable(record, validProviders);
@@ -244,8 +257,7 @@ export function buildStoredAgentPayload(
     ...(runtimeInfo ? { runtimeInfo } : {}),
     createdAt: createdAt.toISOString(),
     updatedAt: updatedAt.toISOString(),
-    ...(lastMessageAt ? { lastMessageAt: lastMessageAt.toISOString() } : {}),
-    lastUserMessageAt: lastUserMessageAt ? lastUserMessageAt.toISOString() : null,
+    ...buildStoredMessageTimes(record),
     status: record.lastStatus,
     runtimeAttached: false,
     capabilities: defaultCapabilities,
@@ -258,7 +270,9 @@ export function buildStoredAgentPayload(
     attentionReason: record.attentionReason ?? null,
     attentionTimestamp: record.attentionTimestamp ?? null,
     archivedAt: record.archivedAt ?? null,
+    ...(record.internal ? { internal: true } : {}),
     labels: normalizeLabels(record.labels),
+    ...(typeof record.lastError === "string" ? { lastError: record.lastError } : {}),
     ...(providerAvailable ? {} : { providerUnavailable: true }),
   };
 }

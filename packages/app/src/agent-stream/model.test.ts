@@ -90,7 +90,7 @@ describe("Activity process projection", () => {
     expect(completed.get(hostId)?.completed).toBe(true);
   });
 
-  it("closes one segment per final across canonical turns and Markdown blocks", () => {
+  it("closes one segment per complete final message across canonical turns", () => {
     const processA: StreamItem = {
       ...assistantMessage("process-a", 2),
       turnId: "a",
@@ -102,12 +102,11 @@ describe("Activity process projection", () => {
       phase: "commentary",
     };
     const final: StreamItem = {
-      ...assistantMessage("final:0", 4),
+      ...assistantMessage("final", 5),
       turnId: "b",
       phase: "final_answer",
-      blockGroupId: "final",
+      text: "First paragraph\n\nSecond paragraph",
     };
-    const finalBlock: StreamItem = { ...final, id: "final:1", timestamp: createTimestamp(5) };
     const secondProcess: StreamItem = {
       ...assistantMessage("process-c", 6),
       turnId: "c",
@@ -118,15 +117,7 @@ describe("Activity process projection", () => {
       turnId: "c",
       phase: "final_answer",
     };
-    const tail = [
-      userMessage("user", 1),
-      processA,
-      processB,
-      final,
-      finalBlock,
-      secondProcess,
-      secondFinal,
-    ];
+    const tail = [userMessage("user", 1), processA, processB, final, secondProcess, secondFinal];
     const project = createActivityProjection();
     const folds = project({
       agentId: "agent",
@@ -152,8 +143,7 @@ describe("Activity process projection", () => {
     expect(projectActivityLane(tail, folds).map((item) => item.id)).toEqual([
       "user",
       firstHostId,
-      "final:0",
-      "final:1",
+      "final",
       secondHostId,
       "second-final",
     ]);
@@ -172,7 +162,7 @@ describe("Activity process projection", () => {
     });
     const updatedRows = projectActivityLane(updatedTail, updatedFolds);
     expect(updatedRows[1]).toBe(historyRows[1]);
-    expect(updatedRows[4]).not.toBe(historyRows[4]);
+    expect(updatedRows[3]).not.toBe(historyRows[3]);
     expect(updatedRows[0]).toBe(historyRows[0]);
   });
 
@@ -611,4 +601,47 @@ describe("buildAgentStreamRenderModel", () => {
 
     expect(model.turnTiming.byAssistantId.size).toBe(0);
   });
+
+  it.each(["web", "native"] as const)(
+    "reuses rendered history and timing across live-head updates inside a history window on %s",
+    (platform) => {
+      const at = (seed: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, seed));
+      const tail: StreamItem[] = [];
+      for (let index = 0; index < 40; index += 1) {
+        tail.push(
+          { ...userMessage(`u${index}`, 0), timestamp: at(index * 2) },
+          { ...assistantMessage(`a${index}`, 0), timestamp: at(index * 2 + 1) },
+        );
+      }
+      const live = (text: string): StreamItem => ({
+        kind: "assistant_message",
+        id: "live",
+        text,
+        timestamp: at(81),
+      });
+      const build = (head: StreamItem[]) =>
+        buildAgentStreamRenderModel({
+          isTurnActive: true,
+          activeTurnStartedAt: tail.at(-2)?.timestamp ?? null,
+          tail,
+          head,
+          platform,
+          isMobileBreakpoint: false,
+          historyStart: 60,
+        });
+
+      const first = build([live("live")]);
+      const second = build([live("live grows")]);
+
+      expect(second.history).toBe(first.history);
+      expect(second.segments.historyMounted).toBe(first.segments.historyMounted);
+      expect(second.turnTiming.byAssistantId).toBe(first.turnTiming.byAssistantId);
+      expect(first.history).toHaveLength(20);
+      expect(first.turnTiming.byAssistantId.has("a29")).toBe(false);
+      expect(first.turnTiming.byAssistantId.get("a38")).toEqual({
+        completedAt: tail[77]?.timestamp,
+        durationMs: 1000,
+      });
+    },
+  );
 });

@@ -29,6 +29,15 @@ on:
         required: false
         default: ""
         type: string
+      windows_arch:
+        description: "Windows architectures to package. Use x64 for a quick test build."
+        required: false
+        default: "all"
+        type: choice
+        options:
+          - all
+          - x64
+          - arm64
       publish:
         description: "Publish built artifacts to GitHub Releases."
         required: false
@@ -373,7 +382,12 @@ jobs:
           PASEO_DESKTOP_SMOKE_ARTIFACT_DIR: ${{ runner.temp }}/desktop-smoke
         run: |
           set -euo pipefail
-          build_args=(-- --publish never --win --x64 --arm64)
+          build_args=(-- --publish never --win)
+          case "${{ github.event.inputs.windows_arch }}" in
+            x64) build_args+=(--x64) ;;
+            arm64) build_args+=(--arm64) ;;
+            *) build_args+=(--x64 --arm64) ;;
+          esac
           build_args+=("-c.publish.releaseType=$RELEASE_TYPE")
           build_args+=("-c.publish.channel=$RELEASE_CHANNEL")
           npm run build:desktop "${build_args[@]}"
