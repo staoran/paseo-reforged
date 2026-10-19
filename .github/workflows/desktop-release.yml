@@ -378,14 +378,30 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EP_GH_IGNORE_TIME: true
+          PASEO_WINDOWS_ARCH: ${{ github.event.inputs.windows_arch }}
           PASEO_DESKTOP_SMOKE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.skip_smoke == 'true' && '0' || '1' }}
           PASEO_DESKTOP_SMOKE_ARTIFACT_DIR: ${{ runner.temp }}/desktop-smoke
         run: |
           set -euo pipefail
           build_args=(-- --publish never --win)
           case "${{ github.event.inputs.windows_arch }}" in
-            x64) build_args+=(--x64) ;;
-            arm64) build_args+=(--arm64) ;;
+            x64|arm64)
+              node <<'NODE'
+          // Explicit target arch arrays override electron-builder's CLI architecture flags
+          const fs = require("node:fs");
+          // Reuse the repository's YAML dependency for the runner-local build configuration
+          const yaml = require("js-yaml");
+          // Only the checked-out runner copy is changed for a single-architecture build
+          const configPath = `${process.env.DESKTOP_PACKAGE_PATH}/electron-builder.yml`;
+          const config = yaml.load(fs.readFileSync(configPath, "utf8"));
+          config.win.target = config.win.target.map((target) => ({
+            ...target,
+            arch: [process.env.PASEO_WINDOWS_ARCH],
+          }));
+          fs.writeFileSync(configPath, yaml.dump(config));
+          NODE
+              build_args+=("--${PASEO_WINDOWS_ARCH}")
+              ;;
             *) build_args+=(--x64 --arm64) ;;
           esac
           build_args+=("-c.publish.releaseType=$RELEASE_TYPE")

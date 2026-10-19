@@ -16,6 +16,10 @@ const nixWorkflowPath = new URL(".github/workflows/nix.yml", repoRoot);
 const filtersPath = new URL(".github/ci-paths.yml", repoRoot);
 const serverTsconfigPath = new URL("packages/server/tsconfig.server.json", repoRoot);
 const desktopPackagePath = new URL("packages/desktop/package.json", repoRoot);
+// Windows target arrays take precedence over the CLI architecture switches
+const desktopReleaseWorkflowPath = new URL(".github/workflows/desktop-release.yml", repoRoot);
+// Keep the default multi-architecture contract while testing each scoped build
+const desktopBuilderPath = new URL("packages/desktop/electron-builder.yml", repoRoot);
 
 const gatedCiJobs = new Map([
   ["quality", { name: "quality", contracts: ["format", "quality", "relay", "sdk"] }],
@@ -157,6 +161,44 @@ test("Android APK task cache separates partial and complete builds", () => {
   assert.equal(partial.with.key, restore.with.key.replace("-complete-", "-partial-"));
   assert.match(partial.if, /!cancelled\(\).*steps\.apk-build\.outcome == 'failure'/);
   assert.match(partial.if, /!endsWith\(steps\.gradle-cache\.outputs\.cache-matched-key/);
+});
+
+/** Verify the actual runner snippet restricts every target without changing application identity */
+test("manual Windows packaging restricts configured target architectures", () => {
+  // Extract the inline Node program from the workflow used for real releases
+  const workflow = loadYaml(readSource(desktopReleaseWorkflowPath));
+  const build = workflow.jobs["publish-windows"].steps.find(
+    (step) => step.name === "Build desktop release",
+  );
+  const source = build.run.split("node <<'NODE'\n")[1]?.split("\nNODE")[0];
+  assert.ok(source);
+  assert.match(build.run, /case[^\n]+\n\s+x64\|arm64\)/);
+  assert.equal(build.env.PASEO_WINDOWS_ARCH, "${{ github.event.inputs.windows_arch }}");
+  // Both configured package types must follow a single-architecture request
+  const original = loadYaml(readSource(desktopBuilderPath));
+  for (const arch of ["x64", "arm64"]) {
+    let output;
+    runInNewContext(source, {
+      process: { env: { DESKTOP_PACKAGE_PATH: "packages/desktop", PASEO_WINDOWS_ARCH: arch } },
+      require: (name) => {
+        if (name === "js-yaml") return { load: loadYaml, dump: JSON.stringify };
+        assert.equal(name, "node:fs");
+        return {
+          readFileSync: () => readSource(desktopBuilderPath),
+          writeFileSync: (path, contents) => {
+            assert.equal(path, "packages/desktop/electron-builder.yml");
+            output = JSON.parse(contents);
+          },
+        };
+      },
+    });
+    assert.deepEqual(
+      output.win.target,
+      original.win.target.map((target) => ({ ...target, arch: [arch] })),
+    );
+    assert.equal(output.appId, original.appId);
+    assert.deepEqual(output.publish, original.publish);
+  }
 });
 
 test("focused contracts stay inside existing required checks", () => {
