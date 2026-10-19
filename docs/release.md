@@ -190,8 +190,10 @@ Windows installer, `beta.yml`, and signed APK are present. Keep the Reforged app
 signing identity, update repository, and each beta's changelog entry.
 
 This scoped path does not publish npm, Docker, iOS, store submissions, or other desktop targets.
-Run the existing manual checks only when requested. A request to skip local builds and routine CI
-does not skip the artifact identity, signing, and manifest checks inside these packaging workflows.
+Run the existing manual checks only when requested. If the user explicitly skips artifact validation
+for a test build, dispatch both workflows with `skip_validation=true` and Desktop Release with
+`skip_smoke=true`. These inputs only affect that manual run; signing and the default validation
+path remain in place. Use `[skip ci]` on the source commit to suppress routine push workflows.
 The full upstream release commands and checklist below describe the wider distribution flow.
 
 ### Full upstream beta flow

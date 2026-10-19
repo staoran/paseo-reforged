@@ -11,14 +11,8 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import {
-  Pressable,
-  Text,
-  View,
-  type LayoutChangeEvent,
-  type StyleProp,
-  type ViewStyle,
-} from "react-native";
+import { View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from "react-native";
+import { Button } from "@/components/ui/button";
 import { StyleSheet } from "react-native-unistyles";
 import { getOverlayRoot, useOverlayLayer } from "@/lib/overlay-root";
 import { createAssistantSelectionClipboardContent } from "./content.web";
@@ -218,32 +212,41 @@ export function AssistantSelectionCopySurface({
                 onLayout={handleToolbarLayout}
                 testID="chat-selection-actions"
               >
-                <Pressable
+                <Button
+                  variant="ghost"
+                  size="sm"
                   onPress={handleAsk}
                   style={styles.action}
+                  textStyle={styles.actionText}
                   accessibilityRole="button"
                   testID="chat-selection-ask"
                 >
-                  <Text style={styles.actionText}>{t("composer.selection.ask")}</Text>
-                </Pressable>
+                  {t("composer.selection.ask")}
+                </Button>
                 <View style={styles.divider} />
-                <Pressable
+                <Button
+                  variant="ghost"
+                  size="sm"
                   onPress={handleAskInNewWindow}
                   style={styles.action}
+                  textStyle={styles.actionText}
                   accessibilityRole="button"
                   testID="chat-selection-ask-new-window"
                 >
-                  <Text style={styles.actionText}>{t("composer.selection.askInNewWindow")}</Text>
-                </Pressable>
+                  {t("composer.selection.askInNewWindow")}
+                </Button>
                 <View style={styles.divider} />
-                <Pressable
+                <Button
+                  variant="ghost"
+                  size="sm"
                   onPress={handleSavePreset}
                   style={styles.action}
+                  textStyle={styles.actionText}
                   accessibilityRole="button"
                   testID="chat-selection-save-preset"
                 >
-                  <Text style={styles.actionText}>{t("composer.selection.savePreset")}</Text>
-                </Pressable>
+                  {t("composer.selection.savePreset")}
+                </Button>
               </View>
             </div>,
             getOverlayRoot(),
@@ -266,6 +269,7 @@ const styles = StyleSheet.create((theme) => ({
     overflow: "hidden",
   },
   action: {
+    borderRadius: 0,
     minWidth: 0,
     flexShrink: 1,
     paddingHorizontal: theme.spacing[3],

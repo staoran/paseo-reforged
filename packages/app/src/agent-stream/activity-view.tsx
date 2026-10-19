@@ -1,5 +1,5 @@
 import { useCallback, useMemo, type ReactNode } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { ChevronDown, ChevronRight } from "lucide-react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -8,6 +8,7 @@ import { isWeb } from "@/constants/platform";
 import type { StreamItem } from "@/types/stream";
 import type { ActivityFold } from "./activity";
 import { getStreamItemMessageId } from "./presentation";
+import { PressHighlight } from "@/components/ui/press-highlight";
 
 /** Displays the process header independently from member expansion states */
 export function ActivityFoldView({
@@ -47,17 +48,18 @@ export function ActivityFoldView({
   );
   return (
     <View>
-      <Pressable
+      <PressHighlight
         testID={`activity-fold-${fold.id}`}
         accessibilityRole="button"
         accessibilityState={accessibilityState}
         disabled={!fold.completed}
         onPress={toggle}
         style={styles.header}
+        highlightStyle={styles.pressed}
       >
         <Text style={styles.label}>{label}</Text>
         <Chevron size={14} color={styles.icon.color} />
-      </Pressable>
+      </PressHighlight>
       {children}
     </View>
   );
@@ -107,4 +109,5 @@ const styles = StyleSheet.create((theme) => ({
     lineHeight: Math.round(theme.fontSize.sm * 1.4),
   },
   icon: { color: theme.colors.foregroundMuted },
+  pressed: { backgroundColor: theme.colors.surface2 },
 }));

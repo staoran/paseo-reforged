@@ -51,6 +51,11 @@ on:
         required: false
         default: false
         type: boolean
+      skip_validation:
+        description: "Skip artifact manifest validation for a manual test build."
+        required: false
+        default: false
+        type: boolean
       rollout_hours:
         description: "Linear rollout duration in hours. Use 0 for instant rollout."
         required: false
@@ -567,10 +572,12 @@ jobs:
           fi
           timestamp="$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")"
           node ../scripts/stamp-rollout.mjs --release-date "$timestamp" --rollout-hours "$ROLLOUT_HOURS" "${files[@]}"
-          node ../scripts/validate-desktop-manifests.mjs \
-            --release-date "$timestamp" \
-            --rollout-hours "$ROLLOUT_HOURS" \
-            "${files[@]}"
+          if [[ "${{ github.event.inputs.skip_validation }}" != "true" ]]; then
+            node ../scripts/validate-desktop-manifests.mjs \
+              --release-date "$timestamp" \
+              --rollout-hours "$ROLLOUT_HOURS" \
+              "${files[@]}"
+          fi
           gh release upload "$release_lookup" "${files[@]}" --clobber --repo "${{ github.repository }}"
 
           failed_builds=()

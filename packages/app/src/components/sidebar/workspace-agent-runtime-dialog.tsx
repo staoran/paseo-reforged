@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Pressable, Text, type PressableStateCallbackType } from "react-native";
+import { Text, type PressableStateCallbackType } from "react-native";
+import { PressHighlight } from "@/components/ui/press-highlight";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Bot, Square, SquareCheck } from "lucide-react-native";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
@@ -196,7 +197,7 @@ function WorkspaceAgentRuntimeChoice({
   return (
     <Tooltip delayDuration={250} enabledOnDesktop enabledOnMobile>
       <TooltipTrigger asChild>
-        <Pressable
+        <PressHighlight
           accessibilityRole="checkbox"
           accessibilityLabel={`${title} (${agent.id.slice(0, 7)})`}
           accessibilityState={accessibilityState}
@@ -204,6 +205,7 @@ function WorkspaceAgentRuntimeChoice({
           disabled={disabled}
           onPress={handlePress}
           style={rowStyle}
+          highlightStyle={styles.hovered}
           testID={`workspace-agent-runtime-select-${agent.id}`}
         >
           {checked ? (
@@ -219,7 +221,7 @@ function WorkspaceAgentRuntimeChoice({
             size={16}
             uniProps={agent.runtimeAttached === false ? warningMapping : foregroundMapping}
           />
-        </Pressable>
+        </PressHighlight>
       </TooltipTrigger>
       <TooltipContent>
         <Text>{tooltip}</Text>

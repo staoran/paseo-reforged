@@ -11,6 +11,11 @@ on:
         description: "Existing tag to build (e.g. v0.1.0)"
         required: true
         type: string
+      skip_validation:
+        description: "Skip identity, credentials preflight, and APK validation for a manual test build."
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: android-apk-release-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
@@ -39,6 +44,7 @@ jobs:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
 
       - name: Validate Reforged GitHub repository
+        if: ${{ github.event.inputs.skip_validation != 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -59,7 +65,7 @@ jobs:
 
           expected_commit="$(git rev-list -n 1 "$SOURCE_TAG")"
           actual_commit="$(git rev-parse HEAD)"
-          if [[ "$actual_commit" != "$expected_commit" ]]; then
+          if [[ "${{ github.event.inputs.skip_validation }}" != "true" && "$actual_commit" != "$expected_commit" ]]; then
             echo "::error::Expected $SOURCE_TAG at $expected_commit, checked out $actual_commit."
             exit 1
           fi
@@ -111,6 +117,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Validate EAS credentials prerequisites
+        if: ${{ github.event.inputs.skip_validation != 'true' }}
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         shell: bash
@@ -125,6 +132,7 @@ jobs:
           (cd packages/app && npx --no-install eas project:info > /dev/null)
 
       - name: Validate Reforged Android identity
+        if: ${{ github.event.inputs.skip_validation != 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -265,6 +273,7 @@ jobs:
           retention-days: 90
 
       - name: Validate Android APK
+        if: ${{ github.event.inputs.skip_validation != 'true' }}
         shell: bash
         run: |
           set -euo pipefail

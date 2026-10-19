@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Pressable, Text, View } from "react-native";
+import { Text, View } from "react-native";
+import { PressHighlight } from "@/components/ui/press-highlight";
 import { Pencil, Trash2 } from "lucide-react-native";
 import { StyleSheet } from "react-native-unistyles";
 import {
@@ -158,9 +159,10 @@ function PromptPresetRow({ preset, onInsert, onEdit, onDelete }: PromptPresetRow
   const remove = useCallback(() => onDelete(preset), [onDelete, preset]);
   return (
     <View style={styles.row}>
-      <Pressable
+      <PressHighlight
         onPress={insert}
         style={styles.rowMain}
+        highlightStyle={styles.pressed}
         accessibilityRole="button"
         testID={`prompt-preset-insert-${preset.id}`}
       >
@@ -170,7 +172,7 @@ function PromptPresetRow({ preset, onInsert, onEdit, onDelete }: PromptPresetRow
         <Text style={styles.preview} numberOfLines={1}>
           {preset.content}
         </Text>
-      </Pressable>
+      </PressHighlight>
       <Button
         variant="ghost"
         size="sm"
@@ -217,6 +219,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[2],
   },
   rowMain: { flex: 1, minWidth: 0 },
+  pressed: { backgroundColor: theme.colors.surface2 },
   title: { color: theme.colors.foreground, fontSize: theme.fontSize.base },
   preview: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.sm },
   empty: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.base },
