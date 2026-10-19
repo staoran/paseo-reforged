@@ -46,13 +46,29 @@ function normalizeAdjacentStrong(source: string): string {
     for (let index = offset - 1; source[index] === "\\"; index -= 1) slashes += 1;
     return slashes % 2 === 1;
   };
-  /** Code nodes have no children and resolved strong spans contain no unresolved pairs */
+  /** Match sibling prose together while keeping parsed inline syntax opaque */
   function visit(node: Nodes): void {
-    if (node.type === "text" && node.position) {
-      const start = node.position.start.offset!;
-      const raw = source.slice(start, node.position.end.offset!);
+    if (!("children" in node)) return;
+    if (node.children.some((child) => child.type === "text")) {
+      /** Child positions exclude the container's own delimiters */
+      const start = node.children[0].position!.start.offset!;
+      /** Preserve gaps such as quote prefixes so match offsets still address the source */
+      let cursor = start;
+      /** Opaque children allow an outer pair without matching their literal stars or URLs */
+      const raw = node.children
+        .map((child) => {
+          /** Original bounds of this inline child */
+          const childStart = child.position!.start.offset!;
+          const childEnd = child.position!.end.offset!;
+          /** Keep omitted source between parsed children at its original width */
+          const gap = source.slice(cursor, childStart);
+          const childSource = source.slice(childStart, childEnd);
+          cursor = childEnd;
+          return gap + (child.type === "text" ? childSource : childSource.replace(/[^\n]/g, "x"));
+        })
+        .join("");
       for (const match of raw.matchAll(
-        /(?<!\*)\*\*(?!\*)(\S[^\n]*?[\p{P}\p{S}])\*\*(?!\*)(?=[\p{L}\p{N}])/gu,
+        /(?<!\*)\*\*(?!\*)(\S[\s\S]*?[\p{P}\p{S}])\*\*(?!\*)(?=[\p{L}\p{N}])/gu,
       )) {
         const opening = start + match.index;
         const closing = opening + match[0].length - 2;
@@ -60,7 +76,7 @@ function normalizeAdjacentStrong(source: string): string {
         insertions.push(closing + 2);
       }
     }
-    if ("children" in node) node.children.forEach(visit);
+    node.children.forEach(visit);
   }
   visit(
     fromMarkdown(source, {

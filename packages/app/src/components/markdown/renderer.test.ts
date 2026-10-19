@@ -13,6 +13,11 @@ import { createMarkdownStyles } from "./styles";
 import { prepareMarkdownSource, PENDING_MARKDOWN_IMAGE } from "./source";
 import { normalizeMarkdownHtml } from "./html";
 
+/** Inspect formatting inside quotes and lists through the real renderer AST */
+function markdownNodes(node: ASTNode): ASTNode[] {
+  return [node, ...(node.children ?? []).flatMap(markdownNodes)];
+}
+
 describe("shared Markdown source adaptation", () => {
   it.each(["**外发。", "**外发。*", "**外发。**", "**外发。**例如"])(
     "keeps strong formatting through partial closing markers in the actual renderer: %s",
@@ -44,6 +49,77 @@ describe("shared Markdown source adaptation", () => {
   });
 
   it.each([
+    "> **first\n> second",
+    "- **first\n  second",
+    "> > **first\n> > second",
+    "> - **first\n>   second",
+    "1. **first\n   second",
+    "> **first\r\n> second",
+    "- **first\n\tsecond",
+  ])("completes multiline streaming strong without changing line prefixes: %s", async (source) => {
+    /** Both lines stay in the original quote or list while the strong span is provisional */
+    const rendered = prepareMarkdownSource(source, undefined, { streaming: true }).render();
+    expect(rendered).toBe(`${source}**`);
+    /** An unchanged source string alone cannot prove the renderer displays the intended format */
+    const tree = await parseMarkdown(rendered, { latexMath: false });
+    const strong = markdownNodes(tree).filter((node) => node.type === "Strong");
+    expect(strong).toHaveLength(1);
+    expect(strong[0].children?.filter((node) => node.type === "Text")).toMatchObject([
+      { content: "first" },
+      { content: "second" },
+    ]);
+  });
+
+  it.each([
+    { source: "> [docs\n> label](https://example.com/p", expected: "> docs\n> label" },
+    { source: "- [docs\n  label](https://example.com/p", expected: "- docs\n  label" },
+  ])(
+    "hides multiline streaming link syntax without removing line prefixes: $source",
+    async ({ source, expected }) => {
+      /** A destination in flight must leave only the label inside its original container */
+      const rendered = prepareMarkdownSource(source, undefined, { streaming: true }).render();
+      expect(rendered).toBe(expected);
+      /** Partial destinations cannot create a clickable URL */
+      const tree = await parseMarkdown(rendered, { latexMath: false });
+      expect(markdownNodes(tree).filter((node) => node.type === "Link")).toEqual([]);
+      expect(markdownNodes(tree).filter((node) => node.type === "Text")).toMatchObject([
+        { content: "docs" },
+        { content: "label" },
+      ]);
+    },
+  );
+
+  it.each(["> `first\n> second", "- `first\n  second"])(
+    "completes multiline streaming code without changing line prefixes: %s",
+    async (source) => {
+      /** Inline code consumes the same mapped lines as emphasis */
+      const rendered = prepareMarkdownSource(source, undefined, { streaming: true }).render();
+      expect(rendered).toBe(`${source}\``);
+      /** The shared engine must recognize a code span rather than display a literal backtick */
+      const tree = await parseMarkdown(rendered, { latexMath: false });
+      expect(markdownNodes(tree).filter((node) => node.type === "Code")).toHaveLength(1);
+    },
+  );
+
+  it.each([
+    { source: "## **tail ###", expected: "## **tail** ###" },
+    {
+      source: "| left | right |\n| --- | --- |\n| cell | **tail",
+      expected: "| left | right |\n| --- | --- |\n| cell | **tail**",
+    },
+    { source: "**tail\n\n[ref]: **tail", expected: "**tail**\n\n[ref]: **tail" },
+  ])("completes only the mapped inline block: $source", async ({ source, expected }) => {
+    /** Identical text in a definition or container syntax cannot determine the edit location */
+    const rendered = prepareMarkdownSource(source, undefined, { streaming: true }).render();
+    expect(rendered).toBe(expected);
+    /** Completion must also survive the target engine's heading and table parsing */
+    const tree = await parseMarkdown(rendered, { latexMath: false });
+    const strong = markdownNodes(tree).filter((node) => node.type === "Strong");
+    expect(strong).toHaveLength(1);
+    expect(strong[0].children).toMatchObject([{ type: "Text", content: "tail" }]);
+  });
+
+  it.each([
     "\\*literal",
     "`**literal [link](url`",
     "```md\n**literal [link](url",
@@ -62,6 +138,59 @@ describe("shared Markdown source adaptation", () => {
       { type: "Strong", children: [{ type: "Text", content: "外发员工预请款要单列一条线。" }] },
       { type: "Text", content: "例如财务先给员工运营款 300 元" },
     ]);
+  });
+
+  it.each([
+    { inline: "`code`", type: "Code" },
+    { inline: "[链接](https://example.com)", type: "Link" },
+    { inline: "*内部*", type: "Emphasis" },
+    { inline: "`**代码。**后续`", type: "Code" },
+    { inline: "[链接](https://example.com/**target。**next)", type: "Link" },
+  ])("keeps punctuation-adjacent strong around $inline", async ({ inline, type }) => {
+    /** Inline children must retain their own syntax inside the repaired strong span */
+    const source = `**前 ${inline} 句末。**后续`;
+    /** Production source adaptation preserves the original inline markup */
+    const rendered = prepareMarkdownSource(source).render();
+    expect(rendered).toContain(inline);
+    /** Verify formatting through the actual shared renderer rather than the clipboard parser */
+    const tree = await parseMarkdown(rendered, { latexMath: false });
+    expect(tree.children?.[0]?.children).toMatchObject([
+      {
+        type: "Strong",
+        children: [
+          { type: "Text", content: "前 " },
+          { type },
+          { type: "Text", content: " 句末。" },
+        ],
+      },
+      { type: "Text", content: "后续" },
+    ]);
+  });
+
+  it("keeps multiline punctuation-adjacent strong around inline code", async () => {
+    /** Parsed inline children and quote prefixes must not split the outer delimiter pair */
+    const source = "> **前 `code`\n> 句末。**后续";
+    const rendered = prepareMarkdownSource(source).render();
+    /** Assert visible formatting and literal content through the shared parser */
+    const tree = await parseMarkdown(rendered, { latexMath: false });
+    const nodes = markdownNodes(tree);
+    expect(tree.children?.[0]?.type).toBe("Blockquote");
+    expect(nodes.filter((node) => node.type === "Strong")).toHaveLength(1);
+    expect(nodes.filter((node) => node.type === "Code")).toHaveLength(1);
+    expect(nodes.filter((node) => node.type === "Text").map((node) => node.content)).toEqual([
+      "前 ",
+      "code",
+      "句末。",
+      "后续",
+    ]);
+  });
+
+  it.each([
+    "\\**前 `code` 句末。**后续",
+    "**前 `code` 句末。\\**后续",
+    "[label](https://example.com/**literal。**next)",
+  ])("leaves escaped markers and link destinations unchanged: %s", (source) => {
+    expect(prepareMarkdownSource(source).render()).toBe(source);
   });
 
   it("does not rewrite nested strong or literal code markers", async () => {

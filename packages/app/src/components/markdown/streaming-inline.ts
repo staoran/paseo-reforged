@@ -1,12 +1,22 @@
 import type StateInline from "markdown-it/lib/rules_inline/state_inline.mjs";
 import { createAssistantMarkdownParser } from "@/utils/assistant-markdown-parser";
 
+/** One inline-content line can omit a quote or list prefix present in the source */
+interface StreamingLine {
+  /** First mapped character in the inline token */
+  start: number;
+  /** End of the mapped inline-content line */
+  end: number;
+  /** Original source position of the first mapped character */
+  sourceStart: number;
+}
+
 /** Source edits are render-only and never enter the saved message or clipboard */
 interface StreamingEdits {
-  /** Final inline block as recognized by the existing delimiter scanner */
-  content: string;
-  /** Position of that block in the original source */
-  offset: number;
+  /** Preserve the original line endings while markdown-it normalizes its parser input */
+  source: string;
+  /** Line mappings exclude container prefixes and synthesized indentation */
+  lines: StreamingLine[];
   /** Incomplete source fragments to hide until more text arrives */
   cuts: Array<{ start: number; end: number }>;
   /** Provisional closers passed to the shared MD4C renderer */
@@ -18,12 +28,35 @@ const parser = createAssistantMarkdownParser();
 
 /** Complete only the final inline block and leave earlier blocks and literal fences alone */
 parser.core.ruler.at("inline", (state) => {
+  /** Only the final inline block may receive provisional formatting */
   const tail = state.tokens.findLast((token) => token.nesting !== -1);
   if (tail?.type !== "inline" || !tail.content) return;
+  /** Table body cells inherit their last row from the enclosing mapped block */
+  const location = tail.map ?? state.tokens.findLast((token) => token.map !== null)?.map;
+  if (!location) return;
+  /** An ordinary inline token begins at its mapped line, while the final table cell is on the last row */
+  const firstLine = tail.map ? location[0] : location[1] - 1;
+  /** Source offsets must address the caller's text rather than markdown-it's normalized copy */
   const edits = state.env as StreamingEdits;
-  edits.content = tail.content;
-  edits.offset = state.src.lastIndexOf(tail.content);
-  if (edits.offset >= 0) state.md.inline.parse(tail.content, state.md, edits, []);
+  const sourceLines = [...edits.source.matchAll(/([^\r\n]*)(?:\r\n|\r|\n|$)/g)];
+  /** Position within the prefix-free inline token */
+  let contentStart = 0;
+  for (const [index, line] of tail.content.split("\n").entries()) {
+    /** Trimming virtual indentation also handles partially expanded container tabs */
+    const content = line.trimStart();
+    const sourceLine = sourceLines[firstLine + index];
+    /** Null replacement changes spelling but preserves source offsets */
+    const normalizedLine = sourceLine[1].split("\0").join("\uFFFD");
+    const column = normalizedLine.lastIndexOf(content);
+    if (column < 0) return;
+    edits.lines.push({
+      start: contentStart + line.length - content.length,
+      end: contentStart + line.length,
+      sourceStart: sourceLine.index + column,
+    });
+    contentStart += line.length + 1;
+  }
+  state.md.inline.parse(tail.content, state.md, edits, []);
 });
 
 /** Hide an opener with no content while its first character is still arriving */
@@ -128,18 +161,34 @@ parser.inline.ruler2.after(
 
 /** Give MD4C complete display syntax while preserving the original streaming source */
 export function completeStreamingMarkdownSource(source: string): string {
-  const edits: StreamingEdits = { content: "", offset: -1, cuts: [], suffix: "" };
+  /** Each parse owns its source mappings and delimiter edits */
+  const edits: StreamingEdits = { source, lines: [], cuts: [], suffix: "" };
   parser.parse(source, edits);
-  if (edits.offset < 0) return source;
-  let content = edits.content;
-  // React Native 0.81 Hermes lacks toSorted and this parse owns the cuts
-  for (const cut of edits.cuts.sort((a, b) => b.start - a.start)) {
-    content = content.slice(0, cut.start) + content.slice(cut.end);
+  /** The last mapped character precedes any trailing source whitespace or container syntax */
+  const lastLine = edits.lines.at(-1);
+  if (!lastLine) return source;
+  const end = lastLine.sourceStart + lastLine.end - lastLine.start;
+  /** Split removals by line so source-only prefixes and line endings remain untouched */
+  const replacements = [{ start: end, end, text: edits.suffix }];
+  for (const cut of edits.cuts) {
+    for (const line of edits.lines) {
+      /** Intersection expressed in the prefix-free inline token's coordinates */
+      const start = Math.max(cut.start, line.start);
+      const stop = Math.min(cut.end, line.end);
+      if (start >= stop) continue;
+      replacements.push({
+        start: line.sourceStart + start - line.start,
+        end: line.sourceStart + stop - line.start,
+        text: "",
+      });
+    }
   }
-  return (
-    source.slice(0, edits.offset) +
-    content +
-    edits.suffix +
-    source.slice(edits.offset + edits.content.length)
-  );
+  /** Apply source edits backwards so earlier offsets stay valid */
+  let rendered = source;
+  // React Native 0.81 Hermes lacks toSorted and this parse owns the replacements
+  for (const replacement of replacements.sort((a, b) => b.start - a.start)) {
+    rendered =
+      rendered.slice(0, replacement.start) + replacement.text + rendered.slice(replacement.end);
+  }
+  return rendered;
 }
