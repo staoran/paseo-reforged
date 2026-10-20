@@ -273,9 +273,24 @@ export class WorkspaceDirectory {
       });
     }
 
-    const activeAgents = agents.filter(
-      (agent) => !agent.archivedAt && this.deps.isProviderVisibleToClient(agent.provider),
+    /** Durable message activity includes archived conversations after a cold start */
+    const visibleAgents = agents.filter((agent) =>
+      this.deps.isProviderVisibleToClient(agent.provider),
     );
+    for (const agent of visibleAgents) {
+      if (!agent.workspaceId) continue;
+      /** Only actual messages advance the sidebar timestamp */
+      const timestamp = agent.lastMessageAt ?? agent.lastUserMessageAt;
+      const descriptor = descriptorsByWorkspaceId.get(agent.workspaceId);
+      if (
+        descriptor &&
+        timestamp &&
+        (!descriptor.activityAt || timestamp > descriptor.activityAt)
+      ) {
+        descriptor.activityAt = timestamp;
+      }
+    }
+    const activeAgents = visibleAgents.filter((agent) => !agent.archivedAt);
     const contributingAgentsByWorkspaceId = this.applyAgentBucketContributions({
       activeAgents,
       descriptorsByWorkspaceId,

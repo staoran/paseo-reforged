@@ -8770,6 +8770,87 @@ test("acknowledged cancellation settles a pending run before it has a turn id", 
   }
 });
 
+test("archiveAgent waits for provider shutdown before publishing archive or closed state", async () => {
+  /** Isolated durable registry for the close barrier */
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archive-barrier-"));
+  /** Provider adapter whose shutdown is released explicitly */
+  const client = new HeldReloadCloseClient();
+  /** Real persisted records observed while shutdown is pending */
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  /** Lifecycle owner under test */
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  /** Agent whose tab is being closed */
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  /** Published statuses during the close transaction */
+  const lifecycles: string[] = [];
+  manager.subscribe(
+    (event) => {
+      if (event.type === "agent_state") lifecycles.push(event.agent.lifecycle);
+    },
+    { agentId: agent.id, replayState: false },
+  );
+  /** Archive remains pending until the provider releases its runtime */
+  const closing = manager.archiveAgent(agent.id);
+  try {
+    await client.waitForCloseToStart();
+    expect((await storage.get(agent.id))?.archivedAt ?? null).toBeNull();
+    expect(lifecycles).toEqual([]);
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+  } finally {
+    client.finishClosing();
+    await closing;
+    rmSync(workdir, { recursive: true, force: true });
+  }
+  expect(lifecycles.at(-1)).toBe("closed");
+});
+
+test("archiveAgent waits for native archive before publishing completion", async () => {
+  /** Registry and provider archive barriers for the transaction */
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-native-archive-barrier-"));
+  const entered = deferred<void>();
+  const release = deferred<void>();
+  /** Native archive can outlive the interactive provider process */
+  class HeldNativeArchiveClient extends NativeArchiveRecordingClient {
+    /** Signals when the released runtime starts native archive cleanup */
+    override async archiveNativeSession(handle: AgentPersistenceHandle): Promise<void> {
+      entered.resolve();
+      await release.promise;
+      await super.archiveNativeSession(handle);
+    }
+  }
+  /** Real lifecycle owner and registry */
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new HeldNativeArchiveClient() },
+    registry: storage,
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  /** Observable states emitted before native archive finishes */
+  const lifecycles: string[] = [];
+  manager.subscribe(
+    (event) => {
+      if (event.type === "agent_state") lifecycles.push(event.agent.lifecycle);
+    },
+    { agentId: agent.id, replayState: false },
+  );
+  const closing = manager.archiveAgent(agent.id);
+  try {
+    await entered.promise;
+    expect((await storage.get(agent.id))?.archivedAt ?? null).toBeNull();
+    expect(lifecycles).toEqual([]);
+  } finally {
+    release.resolve();
+    await closing;
+    rmSync(workdir, { recursive: true, force: true });
+  }
+  expect(lifecycles.at(-1)).toBe("closed");
+});
+
 test("archiveAgent persists archivedAt and updatedAt before emitting closed state", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archive-"));
   const storagePath = join(workdir, "agents");
@@ -9186,13 +9267,11 @@ test("archiveAgent re-reads a child before deciding whether to cascade", async (
   class ChildOpensAfterCascadeListStorage extends AgentStorage {
     childId: string | null = null;
 
+    /** Opens the child after the cascade takes its list snapshot */
     override async list(): Promise<StoredAgentRecord[]> {
       const records = await super.list();
-      const parentIsArchived = records.some(
-        (record) => record.id !== this.childId && Boolean(record.archivedAt),
-      );
       const staleChild = records.find((record) => record.id === this.childId);
-      if (parentIsArchived && staleChild) {
+      if (staleChild) {
         await super.upsert({
           ...staleChild,
           labels: { ...staleChild.labels, [MOBILE_OPEN_AGENT_TAB_LABEL]: "true" },
@@ -9527,6 +9606,10 @@ test("archiveAgent cascade surfaces partial child archive failures", async () =>
   await expect(manager.archiveAgent(parent.id)).rejects.toThrow(
     `Injected cascade archive failure for ${child.id}`,
   );
+  expect(manager.getAgent(parent.id)).toBeNull();
+  expect(manager.getAgent(child.id)).toBeNull();
+  expect(await storage.get(parent.id)).toMatchObject({ lastStatus: "closed" });
+  expect((await storage.get(parent.id))?.archivedAt ?? null).toBeNull();
 });
 
 test("turn_failed emits a system error assistant timeline message and keeps error lifecycle", async () => {

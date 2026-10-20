@@ -88,6 +88,7 @@ export type AgentScreenReadySyncState =
   | { status: "sync_error"; isRetrying: boolean };
 
 export type AgentScreenViewState =
+  | { tag: "archiving" }
   | {
       tag: "boot";
       reason: "loading" | "resolving";
@@ -106,7 +107,6 @@ export type AgentScreenViewState =
       agent: AgentScreenAgent;
       source: "authoritative" | "optimistic" | "stale";
       sync: AgentScreenReadySyncState;
-      isArchiving: boolean;
     };
 
 function updateInitialSyncFailureMemory(args: {
@@ -206,6 +206,7 @@ function resolveAgentScreenSync(args: {
   return { status: "idle" };
 }
 
+/** Gives closure priority over intermediate runtime and history updates */
 export function deriveAgentScreenViewState({
   input,
   memory,
@@ -213,6 +214,9 @@ export function deriveAgentScreenViewState({
   input: AgentScreenMachineInput;
   memory: AgentScreenMachineMemory;
 }): { state: AgentScreenViewState; memory: AgentScreenMachineMemory } {
+  if (input.isArchivingCurrentAgent) {
+    return { state: { tag: "archiving" }, memory };
+  }
   const nextMemory: AgentScreenMachineMemory = {
     hasRenderedReady: memory.hasRenderedReady,
     lastReadyAgent: memory.lastReadyAgent,
@@ -299,25 +303,36 @@ export function deriveAgentScreenViewState({
     input,
     hadInitialSyncFailure: nextMemory.hadInitialSyncFailure,
   });
-  const providerRetryMessage =
-    source === "authoritative" && sync.status === "idle" && displayAgent.status === "running"
-      ? (displayAgent.providerRetryMessage ?? null)
-      : null;
-  const screenAgent =
-    displayAgent.providerRetryMessage === providerRetryMessage
-      ? displayAgent
-      : { ...displayAgent, providerRetryMessage };
 
   return {
     state: {
       tag: "ready",
-      agent: screenAgent,
+      agent: resolveProviderRetryMessage({ agent: displayAgent, source, sync }),
       source,
       sync,
-      isArchiving: input.isArchivingCurrentAgent,
     },
     memory: nextMemory,
   };
+}
+
+/** Displays retry reasons only while the authoritative running state is synchronized */
+function resolveProviderRetryMessage({
+  agent,
+  source,
+  sync,
+}: {
+  agent: AgentScreenAgent;
+  source: "authoritative" | "optimistic" | "stale";
+  sync: AgentScreenReadySyncState;
+}): AgentScreenAgent {
+  /** Stale provider retries must not survive reconnect or completion */
+  const providerRetryMessage =
+    source === "authoritative" && sync.status === "idle" && agent.status === "running"
+      ? (agent.providerRetryMessage ?? null)
+      : null;
+  return agent.providerRetryMessage === providerRetryMessage
+    ? agent
+    : { ...agent, providerRetryMessage };
 }
 
 export function useAgentScreenStateMachine({

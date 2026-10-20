@@ -126,6 +126,8 @@ export interface WorkspaceDescriptor {
   labels?: string[];
   status: WorkspaceDescriptorPayload["status"];
   statusEnteredAt: Date | null;
+  /** Last message time including archived workspace conversations */
+  activityAt?: Date | null;
   archivingAt: string | null;
   diffStat: { additions: number; deletions: number } | null;
   scripts: WorkspaceDescriptorPayload["scripts"];
@@ -135,6 +137,7 @@ export interface WorkspaceDescriptor {
   project?: ProjectPlacementPayload;
 }
 
+/** Normalizes host workspace paths and timestamps at the store boundary */
 export function normalizeWorkspaceDescriptor(
   payload: WorkspaceDescriptorPayload,
 ): WorkspaceDescriptor {
@@ -143,6 +146,8 @@ export function normalizeWorkspaceDescriptor(
     typeof statusEnteredAtRaw === "string" && statusEnteredAtRaw.length > 0
       ? new Date(statusEnteredAtRaw)
       : null;
+  /** Persisted message time remains available when the active Agent directory is empty */
+  const activityAt = payload.activityAt ? new Date(payload.activityAt) : null;
   return {
     id: normalizeWorkspaceOpaqueId(payload.id) ?? payload.id,
     projectId: payload.projectId,
@@ -165,6 +170,7 @@ export function normalizeWorkspaceDescriptor(
     labels: payload.labels ?? [],
     status: payload.status,
     statusEnteredAt,
+    activityAt: activityAt && !Number.isNaN(activityAt.getTime()) ? activityAt : null,
     archivingAt: payload.archivingAt ?? null,
     diffStat: payload.diffStat ?? null,
     scripts: (payload.scripts ?? []).map((s) => Object.assign({}, s)),

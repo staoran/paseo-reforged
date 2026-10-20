@@ -122,10 +122,12 @@ children.
 Archiving runs through `AgentManager.archiveAgent` (`packages/server/src/server/agent/agent-manager.ts`):
 
 1. Snapshot the current session into the registry
-2. Set `archivedAt` and normalize `lastStatus` away from `running`/`initializing`
-3. Notify subscribers
-4. Close the runtime (kills the process if still running)
-5. **Resolve children** — detach cross-workspace and open-tab children; cascade-archive the rest recursively
+2. Close the provider runtime and invoke native archive cleanup
+3. **Resolve children** — detach cross-workspace and open-tab children; cascade-archive the rest recursively
+4. Persist `archivedAt` and the final snapshot, then publish closure
+
+Keep the agent unarchived until teardown finishes so clients cannot report Done while the provider
+still owns its runtime. A failed provider close keeps that runtime owned and retryable.
 
 Cascade is what keeps subagent fleets from outliving their orchestrator.
 

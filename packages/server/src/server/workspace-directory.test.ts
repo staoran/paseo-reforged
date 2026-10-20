@@ -262,6 +262,23 @@ interface AgentState {
   attentionReason?: AgentSnapshotPayload["attentionReason"];
 }
 
+test("workspace message time survives archived agents and a fresh directory", async () => {
+  /** Persisted message time predates runtime shutdown */
+  const lastMessageAt = "2026-03-01T11:00:00.000Z";
+  /** A fresh directory has no previous sidebar or status cache */
+  const scenario = new WorkspaceStatus();
+  scenario.hasRootAgent({ id: "archived", status: "closed" });
+  scenario.updateAgent("archived", {
+    archivedAt: NOW,
+    updatedAt: NOW,
+    lastMessageAt,
+  });
+  /** Archived conversation contributes its message time without changing status */
+  const descriptor = await scenario.workspaceDescriptor();
+  expect(descriptor.status).toBe("done");
+  expect(descriptor.activityAt).toBe(lastMessageAt);
+});
+
 function createAgent(
   input: AgentState & { cwd: string; labels?: Record<string, string>; workspaceId?: string },
 ) {

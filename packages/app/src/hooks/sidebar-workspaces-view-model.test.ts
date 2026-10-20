@@ -919,8 +919,20 @@ describe("sidebar workspace message timestamp", () => {
     expect(offline.get("srv:ws-1")?.lastMessageAt?.getTime()).toBe(2_000);
     const afterReply = build(new Map([[second.id, { ...second, lastMessageAt: new Date(3_000) }]]));
     expect(afterReply.get("srv:ws-1")?.lastMessageAt?.getTime()).toBe(3_000);
-    const afterArchive = build(new Map([[second.id, { ...second, archivedAt: new Date(4_000) }]]));
-    expect(afterArchive.get("srv:ws-1")?.lastMessageAt).toBeNull();
+    /** Host workspace projection retains the real message time after directory removal */
+    workspaces.get("ws-1")!.activityAt = new Date(2_000);
+    /** An older live conversation cannot hide the newer archived message time */
+    const olderLive = build(new Map([[first.id, first]]));
+    expect(olderLive.get("srv:ws-1")?.lastMessageAt?.getTime()).toBe(2_000);
+    /** Live message updates can advance ahead of the workspace projection */
+    const newerLive = build(new Map([[second.id, { ...second, lastMessageAt: new Date(3_000) }]]));
+    expect(newerLive.get("srv:ws-1")?.lastMessageAt?.getTime()).toBe(3_000);
+    /** Removing the active directory does not erase persisted message activity */
+    const afterArchive = build(new Map());
+    expect(afterArchive.get("srv:ws-1")?.lastMessageAt?.getTime()).toBe(2_000);
+    /** A new sidebar derives the same time without previous entries */
+    const reopened = build(new Map(), undefined, false);
+    expect(reopened.get("srv:ws-1")?.lastMessageAt?.getTime()).toBe(2_000);
   });
 });
 

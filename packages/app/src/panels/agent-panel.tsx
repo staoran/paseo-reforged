@@ -232,6 +232,7 @@ function AgentLoadErrorView({ message, onRetry }: { message: string; onRetry: ()
   );
 }
 
+/** Renders closure as a stable page outside the changing transcript layout */
 function renderChatAgentNonReadyView(args: {
   viewState: AgentScreenViewState;
   effectiveAgent: AgentScreenAgent | null;
@@ -239,6 +240,17 @@ function renderChatAgentNonReadyView(args: {
   onRetryLoad: () => void;
 }): React.ReactElement | null {
   const { viewState, effectiveAgent, t, onRetryLoad } = args;
+  if (viewState.tag === "archiving") {
+    return (
+      <View style={styles.container} testID="agent-archiving-overlay">
+        <View style={styles.archivingContent}>
+          <ThemedLoadingSpinner size="large" uniProps={foregroundColorMapping} />
+          <Text style={styles.archivingTitle}>{t("agentPanel.states.archivingTitle")}</Text>
+          <Text style={styles.archivingSubtitle}>{t("agentPanel.states.archivingSubtitle")}</Text>
+        </View>
+      </View>
+    );
+  }
   if (viewState.tag === "not_found") {
     return (
       <View style={styles.container} testID="agent-not-found">
@@ -1360,17 +1372,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
       setText={agentInputDraft.replaceText}
       onRewindComplete={handleRewindComplete}
     >
-      <View style={styles.root}>
-        {dock}
-
-        {isArchivingCurrentAgent ? (
-          <View style={styles.archivingOverlay} testID="agent-archiving-overlay">
-            <ThemedLoadingSpinner size="large" uniProps={foregroundColorMapping} />
-            <Text style={styles.archivingTitle}>{t("agentPanel.states.archivingTitle")}</Text>
-            <Text style={styles.archivingSubtitle}>{t("agentPanel.states.archivingSubtitle")}</Text>
-          </View>
-        ) : null}
-      </View>
+      <View style={styles.root}>{dock}</View>
     </RewindComposerRestoreProvider>
   );
 });
@@ -1857,18 +1859,12 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     zIndex: 40,
   },
-  archivingOverlay: {
-    position: "absolute",
-    top: 0,
-    right: 0,
-    bottom: 0,
-    left: 0,
-    backgroundColor: "rgba(8, 10, 14, 0.86)",
+  archivingContent: {
+    flex: 1,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: theme.spacing[8],
     gap: theme.spacing[3],
-    zIndex: 50,
   },
   archivingTitle: {
     fontSize: theme.fontSize.base,

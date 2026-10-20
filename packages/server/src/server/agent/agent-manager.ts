@@ -517,6 +517,8 @@ interface AgentRuntimeCloseOptions {
   reason?: "shutdown";
   /** Rechecks close eligibility after queued provider events have drained */
   beforeClose?: (agent: LiveManagedAgent) => void;
+  /** Finishes archive work after provider shutdown and before publishing closure */
+  beforeRelease?: (agent: LiveManagedAgent) => Promise<void>;
 }
 type AgentLabelPatch = Record<string, string | null>;
 
@@ -1902,6 +1904,13 @@ export class AgentManager {
     // Retain ownership until shutdown succeeds. A failed close may still own a
     // native writer, so publishing a resumable closed snapshot would orphan it.
     await latestAgent.session.close();
+    /** Failed archive bookkeeping must still release the now closed runtime */
+    let releaseError: unknown;
+    try {
+      await options?.beforeRelease?.(latestAgent);
+    } catch (error) {
+      releaseError = error;
+    }
     this.cancelRunningProviderSubagents(agentId);
     const closedAgent = this.prepareAgentForClosure(latestAgent, "agent closed");
 
@@ -1925,6 +1934,9 @@ export class AgentManager {
       "agent.manager.close.complete",
     );
 
+    if (releaseError !== undefined) {
+      throw releaseError;
+    }
     if (persistError !== undefined) {
       throw persistError;
     }
@@ -1963,10 +1975,12 @@ export class AgentManager {
     }
   }
 
+  /** Serializes archive with runtime acquisition and release */
   async archiveAgent(agentId: string): Promise<{ archivedAt: string }> {
     return this.runLifecycleMutation(agentId, () => this.archiveAgentUnlocked(agentId));
   }
 
+  /** Publishes archive only after runtime, native archive and child cleanup finish */
   private async archiveAgentUnlocked(
     agentId: string,
     requestedArchivedAt?: string,
@@ -2001,14 +2015,25 @@ export class AgentManager {
       throw new Error(`Agent ${agentId} not found in storage after snapshot`);
     }
 
-    const { archivedAt } = await this.markRecordArchived(stored, requestedArchivedAt);
-    agent.updatedAt = new Date(archivedAt);
-    await this.closeAgentRuntime(agentId);
-    await this.syncNativeArchiveState(stored.provider, stored.persistence, "archive");
+    /** Final archive timestamp is assigned only when all teardown has finished */
+    let archivedAt: string | undefined;
+    await this.closeAgentRuntime(agentId, {
+      beforeRelease: async (latestAgent) => {
+        await this.syncNativeArchiveState(stored.provider, stored.persistence, "archive");
+        await this.cascadeArchiveChildren(stored);
+        /** Preserve any final provider message before committing the archive */
+        await this.requireRegistry().applySnapshot(latestAgent, { internal: latestAgent.internal });
+        /** Durable record includes final messages emitted during teardown */
+        const latestRecord = await this.requireRegistry().get(agentId);
+        if (!latestRecord) throw new Error(`Agent ${agentId} not found in storage after shutdown`);
+        /** Archive remains unset if provider shutdown or child cleanup fails */
+        const archived = await this.markRecordArchived(latestRecord, requestedArchivedAt);
+        archivedAt = archived.archivedAt;
+        latestAgent.updatedAt = new Date(archivedAt);
+      },
+    });
     this.discardRetainedAgentState(agentId);
-
-    await this.cascadeArchiveChildren(stored);
-
+    if (!archivedAt) throw new Error(`Agent ${agentId} missing archive timestamp after shutdown`);
     return { archivedAt };
   }
 
@@ -2420,6 +2445,7 @@ export class AgentManager {
     );
   }
 
+  /** Commits stored-only archive after native and descendant teardown */
   private async archiveSnapshotUnlocked(
     agentId: string,
     archivedAt: string,
@@ -2439,16 +2465,16 @@ export class AgentManager {
       throw new Error(`Agent not found: ${agentId}`);
     }
 
-    const nextRecord = await this.persistArchivedRecord(record, { archivedAt });
-
     await this.syncNativeArchiveState(record.provider, record.persistence, "archive");
+    await this.cascadeArchiveChildren(record);
+
+    /** Stored-only agents follow the same completion boundary as resident agents */
+    const nextRecord = await this.persistArchivedRecord(record, { archivedAt });
 
     this.discardRetainedAgentState(agentId);
     if (!nextRecord.internal) this.dispatchStoredAgentState(nextRecord);
 
     await this.fireAgentArchived(agentId);
-    await this.cascadeArchiveChildren(record);
-
     return nextRecord;
   }
 

@@ -302,7 +302,7 @@ export function createSidebarWorkspaceEntry(input: {
     currentBranch: normalizeCurrentBranch(input.workspace.gitRuntime?.currentBranch),
     statusBucket: effectiveStatus.status,
     statusEnteredAt: effectiveStatus.enteredAt,
-    lastMessageAt: input.lastMessageAt ?? null,
+    lastMessageAt: resolveWorkspaceLastMessageAt(input.workspace.activityAt, input.lastMessageAt),
     hasUnreadAttention: activity?.hasUnreadAttention ?? false,
     hasClearableAttention: activity?.hasClearableAttention ?? false,
     hasMarkUnreadCandidate: activity?.hasMarkUnreadCandidate ?? false,
@@ -322,6 +322,15 @@ export function createSidebarWorkspaceEntry(input: {
 }
 
 const EMPTY_WORKSPACE_LABELS: string[] = [];
+
+/** Combines durable workspace activity with more recent live message updates */
+function resolveWorkspaceLastMessageAt(
+  persisted: Date | null | undefined,
+  live: Date | null | undefined,
+): Date | null {
+  if (!persisted) return live ?? null;
+  return live && live > persisted ? live : persisted;
+}
 
 function deriveEffectiveWorkspaceStatus(input: {
   serverId: string;

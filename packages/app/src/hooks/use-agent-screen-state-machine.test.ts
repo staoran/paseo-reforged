@@ -113,6 +113,37 @@ function stateMachineLabel(state: AgentScreenViewState): "loading" | "resolving"
 }
 
 describe("deriveAgentScreenViewState", () => {
+  it("keeps one closing view through teardown, missing-agent and history updates", () => {
+    /** Changes that can arrive while the archive request is pending */
+    const updates: Partial<AgentScreenMachineInput>[] = [
+      { agent: createAgent("agent-1") },
+      { agent: createAgentWithStatus({ id: "agent-1", status: "idle" }) },
+      { agent: null, missingAgentState: { kind: "not_found", message: "not found" } },
+      { isArchived: true, needsAuthoritativeSync: true },
+      { visibilityCatchUpStatus: "error", visibilityCatchUpError: "disconnected" },
+    ];
+    /** Last interactive frame before closing */
+    let memory = createBaseMemory({
+      hasRenderedReady: true,
+      lastReadyAgent: createAgent("agent-1"),
+    });
+    for (const update of updates) {
+      /** Closing takes precedence over transient lifecycle and history events */
+      const result = deriveAgentScreenViewState({
+        input: { ...createBaseInput(), ...update, isArchivingCurrentAgent: true },
+        memory,
+      });
+      expect(result.state).toEqual({ tag: "archiving" });
+      memory = result.memory;
+    }
+    /** Failed closure returns to the normal interactive state */
+    const recovered = deriveAgentScreenViewState({
+      input: { ...createBaseInput(), agent: createAgent("agent-1") },
+      memory,
+    });
+    expect(recovered.state.tag).toBe("ready");
+  });
+
   it("returns boot loading before first interactive paint", () => {
     const memory = createBaseMemory();
     const input = createBaseInput();

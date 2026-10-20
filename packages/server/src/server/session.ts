@@ -1188,7 +1188,8 @@ export class Session {
       nowIso: () => new Date().toISOString(),
       projectRegistry: this.projectRegistry,
       workspaceRegistry: this.workspaceRegistry,
-      listAgentPayloads: () => this.listAgentPayloads({ includeBackground: true }),
+      listAgentPayloads: () =>
+        this.listAgentPayloads({ includeBackground: true, includeArchived: true }),
       listProviderSubagentActivity: async () => this.agentManager.listProviderSubagentActivity(),
       listTerminalActivityContributions: () => this.listTerminalActivityContributions(),
       isProviderVisibleToClient: (provider) => this.isProviderVisibleToClient(provider),

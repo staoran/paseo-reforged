@@ -476,11 +476,12 @@ describe("normalizeWorkspaceDescriptor", () => {
       archivingAt: null,
       status: "running",
       statusEnteredAt: null,
-      activityAt: "not-a-date",
+      activityAt: "2026-10-20T10:00:00.000Z",
       diffStat: null,
       scripts,
     });
 
+    expect(workspace.activityAt).toEqual(new Date("2026-10-20T10:00:00.000Z"));
     expect(workspace.scripts).toEqual([
       {
         scriptName: "web",
