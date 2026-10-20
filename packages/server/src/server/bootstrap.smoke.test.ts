@@ -10,6 +10,8 @@ import { WebSocket } from "ws";
 import { createPaseoDaemon, parseListenString, type PaseoDaemonConfig } from "./bootstrap.js";
 import { loadConfig } from "./config.js";
 import { AgentManagerShuttingDownError } from "./agent/agent-manager.js";
+import { AgentStorage } from "./agent/agent-storage.js";
+import { buildStoredAgentPayload } from "./agent/agent-projections.js";
 import { hashDaemonPassword } from "./auth.js";
 import { generateLocalPairingOffer } from "./pairing-offer.js";
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
@@ -607,6 +609,57 @@ describe("paseo daemon bootstrap", () => {
       ).resolves.toEqual([{ status: "rejected", statusCode: 503 }, "rejected"]);
     } finally {
       await shutdown.finish();
+    }
+  });
+
+  test("shutdown preserves idle Agent residency when records are read after restart", async () => {
+    /** Isolated daemon whose real shutdown path owns the persisted records */
+    const daemonHandle = await createTestPaseoDaemon();
+    try {
+      /** Resident Agent associated with the Workspace shown after restart */
+      const agent = await daemonHandle.daemon.agentManager.createAgent(
+        { provider: "codex", cwd: daemonHandle.staticDir },
+        undefined,
+        { workspaceId: "workspace-restart" },
+      );
+      /** Explicitly closed runtime must remain excluded from restart residency */
+      const explicitlyClosedAgent = await daemonHandle.daemon.agentManager.createAgent(
+        { provider: "codex", cwd: daemonHandle.staticDir },
+        undefined,
+        { workspaceId: "workspace-restart" },
+      );
+      await daemonHandle.daemon.agentManager.closeIdleAgentRuntime(explicitlyClosedAgent.id);
+
+      await daemonHandle.daemon.stop();
+
+      /** Fresh storage reads committed files rather than the previous daemon cache */
+      const storage = new AgentStorage(
+        path.join(daemonHandle.paseoHome, "agents"),
+        pino({ level: "silent" }),
+      );
+      /** Wire snapshots carry historical residency alongside missing runtime ownership */
+      const snapshots = (await storage.list()).map((record) =>
+        buildStoredAgentPayload(record, ["codex"]),
+      );
+
+      expect(daemonHandle.daemon.agentManager.listAgents()).toEqual([]);
+      expect(snapshots).toHaveLength(2);
+      expect(snapshots.find((snapshot) => snapshot.id === agent.id)).toMatchObject({
+        id: agent.id,
+        workspaceId: "workspace-restart",
+        status: "idle",
+        runtimeAttached: false,
+        persistence: {
+          provider: agent.persistence?.provider,
+          sessionId: agent.persistence?.sessionId,
+        },
+      });
+      expect(snapshots.find((snapshot) => snapshot.id === explicitlyClosedAgent.id)).toMatchObject({
+        status: "closed",
+        runtimeAttached: false,
+      });
+    } finally {
+      await daemonHandle.close();
     }
   });
 

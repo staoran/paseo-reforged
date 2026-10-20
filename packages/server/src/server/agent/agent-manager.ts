@@ -511,6 +511,13 @@ type ActiveManagedAgent =
   | ManagedAgentError;
 
 type LiveManagedAgent = ActiveManagedAgent;
+
+interface AgentRuntimeCloseOptions {
+  /** Daemon shutdown preserves historical residency for the next startup */
+  reason?: "shutdown";
+  /** Rechecks close eligibility after queued provider events have drained */
+  beforeClose?: (agent: LiveManagedAgent) => void;
+}
 type AgentLabelPatch = Record<string, string | null>;
 
 function attachManagedTurnIdentity(
@@ -1792,7 +1799,8 @@ export class AgentManager {
     });
   }
 
-  closeAgent(agentId: string): Promise<void> {
+  /** Releases a runtime and retains its pre-close status during daemon shutdown */
+  closeAgent(agentId: string, options?: { reason: "shutdown" }): Promise<void> {
     const existing = this.inFlightAgentCloses.get(agentId);
     if (existing) {
       return existing;
@@ -1800,7 +1808,7 @@ export class AgentManager {
 
     const close = this.runLifecycleMutation(agentId, async () => {
       // A preceding reload or archive may already have closed the durable agent.
-      if (this.agents.has(agentId)) await this.closeAgentRuntime(agentId);
+      if (this.agents.has(agentId)) await this.closeAgentRuntime(agentId, options);
     });
     this.inFlightAgentCloses.set(agentId, close);
     const clearClose = () => {
@@ -1845,8 +1853,10 @@ export class AgentManager {
           return { outcome: "already_closed" as const };
         }
         this.assertIdleRuntimeCanClose(agent);
-        await this.closeAgentRuntime(agentId, (latestAgent) => {
-          this.assertIdleRuntimeCanClose(latestAgent);
+        await this.closeAgentRuntime(agentId, {
+          beforeClose: (latestAgent) => {
+            this.assertIdleRuntimeCanClose(latestAgent);
+          },
         });
         return { outcome: "closed" as const };
       } finally {
@@ -1863,9 +1873,10 @@ export class AgentManager {
     return close;
   }
 
+  /** Persists the requested close semantics after the provider releases its runtime */
   private async closeAgentRuntime(
     agentId: string,
-    beforeClose?: (agent: LiveManagedAgent) => void,
+    options?: AgentRuntimeCloseOptions,
   ): Promise<void> {
     const agent = this.requireAgent(agentId);
     this.logger.trace(
@@ -1882,16 +1893,25 @@ export class AgentManager {
     );
     await this.drainSessionEvents(agentId);
     const latestAgent = this.requireAgent(agentId);
-    beforeClose?.(latestAgent);
+    options?.beforeClose?.(latestAgent);
+    /** Unfinished registrations never became resident Agents */
+    const preservesResidency =
+      options?.reason === "shutdown" && latestAgent.lifecycle !== "initializing";
+    /** Provider teardown can emit lifecycle changes before close resolves */
+    const snapshotBeforeClose = { ...latestAgent };
     // Retain ownership until shutdown succeeds. A failed close may still own a
     // native writer, so publishing a resumable closed snapshot would orphan it.
     await latestAgent.session.close();
     this.cancelRunningProviderSubagents(agentId);
     const closedAgent = this.prepareAgentForClosure(latestAgent, "agent closed");
 
+    // Client replicas reject history older than the final teardown state event
+    snapshotBeforeClose.updatedAt = closedAgent.updatedAt;
+    /** Shutdown keeps history while explicit closure clears residency */
+    const snapshotForPersistence = preservesResidency ? snapshotBeforeClose : closedAgent;
     let persistError: unknown;
     try {
-      await this.persistSnapshot(closedAgent);
+      await this.persistSnapshot(snapshotForPersistence);
     } catch (error) {
       persistError = error;
     }

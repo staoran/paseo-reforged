@@ -1888,7 +1888,7 @@ async function closeAllAgents(logger: Logger, agentManager: AgentManager): Promi
     agents.map(async (agent) => {
       try {
         await withTimeout({
-          promise: agentManager.closeAgent(agent.id),
+          promise: agentManager.closeAgent(agent.id, { reason: "shutdown" }),
           timeoutMs: AGENT_CLOSE_TIMEOUT_MS,
           label: `close agent ${agent.id}`,
         });

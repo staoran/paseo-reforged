@@ -20,7 +20,8 @@ import {
 } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
 import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
-import { toAgentPayload } from "./agent-projections.js";
+import { buildStoredAgentPayload, toAgentPayload } from "./agent-projections.js";
+import { attachAgentStoragePersistence } from "../persistence-hooks.js";
 import { projectTimelineRows } from "./timeline-projection.js";
 import { getOpenAgentTabLabel, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { startAgentRun } from "./agent-prompt.js";
@@ -1816,7 +1817,7 @@ test("does not persist an initializing session after shutdown closes it", async 
     await client.waitForRuntimeInfo();
 
     manager.prepareForShutdown();
-    const closing = manager.closeAgent(agentId);
+    const closing = manager.closeAgent(agentId, { reason: "shutdown" });
     client.finishRuntimeInfo();
 
     await expect(creation).rejects.toBeInstanceOf(AgentManagerShuttingDownError);
@@ -1876,6 +1877,98 @@ test("reload leaves a closed durable snapshot when shutdown starts during the sw
     client.finishClosing();
     await manager.flush().catch(() => undefined);
     await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("shutdown preserves running residency when provider close completes the turn", async () => {
+  /** Isolated durable records survive manager disposal for a fresh storage read */
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-shutdown-running-"));
+  /** Real file-backed persistence exercises queued state updates during closure */
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  /** Holds provider closure until its terminal event has updated the live Agent */
+  const closeAllowed = deferred<void>();
+  /** Provider reports completion during teardown despite a running pre-close turn */
+  const client = new (class extends TestAgentClient {
+    /** Supplies an in-memory provider through the real AgentClient port */
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new (class extends TestAgentSession {
+        /** Starts a foreground turn without completing it */
+        override async startTurn(): Promise<{ turnId: string }> {
+          this.pushEvent({ type: "turn_started", provider: this.provider, turnId: "turn-1" });
+          return { turnId: "turn-1" };
+        }
+
+        /** Emits a terminal event while the manager still owns the closing runtime */
+        override async close(): Promise<void> {
+          this.pushEvent({ type: "turn_completed", provider: this.provider, turnId: "turn-1" });
+          await closeAllowed.promise;
+        }
+      })(config);
+    }
+  })();
+  /** Manager uses the same persistence wiring as daemon bootstrap */
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  /** Subscriber covers the independent snapshot write path */
+  const detachPersistence = attachAgentStoragePersistence(logger, manager, storage);
+  /** Latest state clock that an already connected client can cache */
+  let lastPublishedUpdatedAt: string | null = null;
+  /** Observes the public state stream whose timestamps must stay monotonic after restart */
+  const unsubscribe = manager.subscribe((event) => {
+    if (event.type === "agent_state") {
+      lastPublishedUpdatedAt = event.agent.updatedAt.toISOString();
+    }
+  });
+  /** Foreground consumer remains attached until the provider settles the turn */
+  let stream: Promise<void> | undefined;
+  /** Tracks shutdown completion so teardown also releases a failed assertion */
+  let closing: Promise<void> | undefined;
+
+  try {
+    /** Agent whose live running state must remain visible after restart */
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: "workspace-running",
+    });
+    stream = drainAsyncGenerator(manager.streamAgent(agent.id, "keep running until shutdown"));
+    await manager.waitForAgentRunStart(agent.id);
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("running");
+
+    manager.prepareForShutdown();
+    /** Waits for teardown completion to change live state before allowing close to return */
+    const providerCompleted = waitForAgentLifecycle(manager, agent.id, "idle");
+    closing = manager.closeAgent(agent.id, { reason: "shutdown" });
+    await providerCompleted;
+    closeAllowed.resolve();
+    await closing;
+    await stream;
+    await manager.flushForShutdown();
+    await storage.flush();
+
+    /** Fresh cache verifies the final committed record rather than a live snapshot */
+    const restartedStorage = new AgentStorage(join(workdir, "agents"), logger);
+    /** Stored-only payloads must retain history without claiming a live runtime */
+    const snapshots = (await restartedStorage.list()).map((record) =>
+      buildStoredAgentPayload(record, ["codex"]),
+    );
+    expect(manager.listAgents()).toEqual([]);
+    expect(snapshots).toMatchObject([
+      {
+        id: agent.id,
+        workspaceId: "workspace-running",
+        status: "running",
+        runtimeAttached: false,
+        updatedAt: lastPublishedUpdatedAt,
+      },
+    ]);
+  } finally {
+    closeAllowed.resolve();
+    await closing?.catch(() => undefined);
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    await stream?.catch(() => undefined);
+    unsubscribe();
+    detachPersistence();
+    await manager.flushForShutdown();
+    await storage.flush();
     rmSync(workdir, { recursive: true, force: true });
   }
 });
