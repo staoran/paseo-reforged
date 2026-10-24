@@ -257,7 +257,7 @@ buildNpmPackage {
   meta = {
     description = "Paseo Reforged desktop app (Electron wrapper)";
     homepage = "https://github.com/staoran/paseo-reforged";
-    license = lib.licenses.agpl3Plus;
+    license = lib.licenses.asl20;
     mainProgram = "paseo-desktop";
     platforms = lib.platforms.linux ++ lib.platforms.darwin;
   };

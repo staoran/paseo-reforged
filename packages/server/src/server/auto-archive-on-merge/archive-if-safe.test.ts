@@ -14,7 +14,7 @@ import {
 import type { ArchiveResult, ActiveWorkspaceRef } from "../workspace-archive-service.js";
 import type { WorkspaceGitRuntimeSnapshot } from "../workspace-git-service.js";
 import { createWorktree, type WorktreeConfig } from "../../utils/worktree.js";
-import type { ForgeService } from "../../../services/forge-service.js";
+import type { ForgeService } from "../../services/forge-service.js";
 import type { StoredAgentRecord } from "../agent/agent-storage.js";
 
 const CWD = "/tmp/paseo/worktrees/repo/branch";
@@ -200,7 +200,7 @@ async function createPaseoOwnedWorktree(
       baseBranch: "main",
       branchName: worktreeSlug,
     },
-    runSetup: false,
+
     paseoHome,
   });
 }

@@ -1,15 +1,17 @@
+import type { WorkspaceSort } from "@/projects/workspace-structure";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
 import { persist, type StateStorage } from "zustand/middleware";
 import { z } from "zod";
 import { workspaceLabelKey } from "@getpaseo/protocol/workspace-labels";
 import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
+import { useSidebarOrderStore } from "./sidebar-order-store";
 
 export type SidebarGroupMode = "project" | "status";
 
 const SIDEBAR_VIEW_STORAGE_KEY = "sidebar-view";
 const LEGACY_SIDEBAR_GROUP_MODE_STORAGE_KEY = "sidebar-group-mode";
-const SIDEBAR_VIEW_STORE_VERSION = 7;
+const SIDEBAR_VIEW_STORE_VERSION = 9;
 
 /**
  * The key standing for "this workspace carries no labels at all".
@@ -47,6 +49,9 @@ function toggleFilterEntry(list: readonly string[], key: string): string[] {
 
 interface SidebarViewStoreState {
   groupMode: SidebarGroupMode;
+  workspaceSort: WorkspaceSort;
+  /** Persists the one-time choice after both sidebar stores have hydrated */
+  workspaceSortInitialized: boolean;
   showBackground: boolean;
   // Empty means "all hosts". A non-empty list pins the sidebar to those hosts.
   hostFilters: string[];
@@ -64,6 +69,7 @@ interface SidebarViewStoreState {
   labelFilter: SidebarLabelFilter;
   toggleBackground: () => void;
   setGroupMode: (mode: SidebarGroupMode) => void;
+  setWorkspaceSort: (sort: WorkspaceSort) => void;
   toggleHostFilter: (serverId: string) => void;
   clearHostFilters: () => void;
   toggleProjectFilter: (viewKey: string) => void;
@@ -76,6 +82,9 @@ interface SidebarViewStoreState {
 
 interface SidebarViewPersistedState {
   groupMode: SidebarGroupMode;
+  workspaceSort: WorkspaceSort;
+  /** Distinguishes a temporary default from a stored or explicitly selected preference */
+  workspaceSortInitialized: boolean;
   showBackground: boolean;
   hostFilters: string[];
   projectFilters: string[];
@@ -87,6 +96,8 @@ const SidebarLabelFilterSchema = z.object({
   labels: z.array(z.string()),
 });
 const SidebarViewPersistedStateSchema = z.strictObject({
+  workspaceSort: z.enum(["manual", "created", "lastPrompt"]).optional(),
+  workspaceSortInitialized: z.boolean().optional(),
   showBackground: z.boolean().optional(),
   groupMode: PersistedSidebarGroupModeSchema.optional(),
   hostFilters: z.array(z.string()).optional(),
@@ -128,6 +139,8 @@ export function migrateSidebarViewState(persistedState: unknown): SidebarViewPer
     return {
       showBackground: false,
       groupMode: "project",
+      workspaceSort: "created",
+      workspaceSortInitialized: false,
       hostFilters: [],
       projectFilters: [],
       labelFilter: emptyLabelFilter(),
@@ -140,6 +153,8 @@ export function migrateSidebarViewState(persistedState: unknown): SidebarViewPer
     return {
       showBackground: false,
       groupMode: legacyGroupMode,
+      workspaceSort: state.workspaceSort ?? "created",
+      workspaceSortInitialized: state.workspaceSortInitialized ?? state.workspaceSort !== undefined,
       hostFilters: [],
       projectFilters: [],
       labelFilter: emptyLabelFilter(),
@@ -149,6 +164,8 @@ export function migrateSidebarViewState(persistedState: unknown): SidebarViewPer
   return {
     showBackground: state.showBackground ?? false,
     groupMode: state.groupMode === "status" ? "status" : "project",
+    workspaceSort: state.workspaceSort ?? "created",
+    workspaceSortInitialized: state.workspaceSortInitialized ?? state.workspaceSort !== undefined,
     hostFilters: readHostFilters(state),
     projectFilters: state.projectFilters ?? [],
     labelFilter: state.labelFilter
@@ -187,11 +204,14 @@ export const useSidebarViewStore = create<SidebarViewStoreState>()(
     (set) => ({
       showBackground: false,
       groupMode: "project",
+      workspaceSort: "created",
+      workspaceSortInitialized: false,
       hostFilters: [],
       projectFilters: [],
       labelFilter: emptyLabelFilter(),
       toggleBackground: () => set((state) => ({ showBackground: !state.showBackground })),
       setGroupMode: (mode) => set({ groupMode: mode }),
+      setWorkspaceSort: (workspaceSort) => set({ workspaceSort, workspaceSortInitialized: true }),
       toggleHostFilter: (serverId) =>
         set((state) => ({ hostFilters: toggleFilterEntry(state.hostFilters, serverId) })),
       clearHostFilters: () => set({ hostFilters: [] }),
@@ -239,14 +259,41 @@ export const useSidebarViewStore = create<SidebarViewStoreState>()(
       partialize: (state) => ({
         showBackground: state.showBackground ?? false,
         groupMode: state.groupMode,
+        workspaceSort: state.workspaceSort,
+        workspaceSortInitialized: state.workspaceSortInitialized,
         hostFilters: state.hostFilters,
         projectFilters: state.projectFilters,
         labelFilter: state.labelFilter,
       }),
       migrate: migrateSidebarViewState,
+      merge: (persistedState, currentState) => {
+        /** An explicit choice made while storage loads wins over late hydration */
+        const persisted = migrateSidebarViewState(persistedState);
+        if (currentState.workspaceSortInitialized) {
+          persisted.workspaceSort = currentState.workspaceSort;
+          persisted.workspaceSortInitialized = true;
+        }
+        return { ...currentState, ...persisted };
+      },
     },
   ),
 );
+
+/** Resolves the default once, using saved Workspace order only after both stores are ready */
+function initializeWorkspaceSort(): void {
+  if (!useSidebarViewStore.persist.hasHydrated() || !useSidebarOrderStore.persist.hasHydrated())
+    return;
+  /** A stored preference or an explicit action always wins over migration */
+  const view = useSidebarViewStore.getState();
+  if (view.workspaceSortInitialized) return;
+  /** Older clients also wrote order automatically, so this is a conservative migration */
+  const hasSavedOrder = useSidebarOrderStore.getState().hadSavedWorkspaceOrder;
+  view.setWorkspaceSort(hasSavedOrder ? "manual" : "created");
+}
+
+useSidebarViewStore.persist.onFinishHydration(initializeWorkspaceSort);
+useSidebarOrderStore.persist.onFinishHydration(initializeWorkspaceSort);
+initializeWorkspaceSort();
 
 function emptyLabelFilter(): SidebarLabelFilter {
   return { labels: [] };

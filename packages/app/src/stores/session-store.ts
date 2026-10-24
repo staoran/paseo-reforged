@@ -109,6 +109,8 @@ export interface Agent {
 }
 
 export interface WorkspaceDescriptor {
+  createdAt: Date | null;
+  lastUserMessageAt: Date | null;
   id: string;
   projectId: string;
   projectDisplayName: string;
@@ -117,6 +119,7 @@ export interface WorkspaceDescriptor {
   projectRootPath: string;
   workspaceDirectory: string;
   worktreeSlug?: WorkspaceDescriptorPayload["worktreeSlug"];
+  setupStatus?: WorkspaceDescriptorPayload["setupStatus"];
   projectKind: WorkspaceDescriptorPayload["projectKind"];
   workspaceKind: WorkspaceDescriptorPayload["workspaceKind"];
   background?: boolean;
@@ -149,6 +152,9 @@ export function normalizeWorkspaceDescriptor(
   /** Persisted message time remains available when the active Agent directory is empty */
   const activityAt = payload.activityAt ? new Date(payload.activityAt) : null;
   return {
+    // COMPAT(workspaceSortTimes): added in v0.13.0, remove after 2027-04-22.
+    createdAt: payload.createdAt ? new Date(payload.createdAt) : null,
+    lastUserMessageAt: payload.lastUserMessageAt ? new Date(payload.lastUserMessageAt) : null,
     id: normalizeWorkspaceOpaqueId(payload.id) ?? payload.id,
     projectId: payload.projectId,
     projectDisplayName: payload.projectDisplayName,
@@ -160,6 +166,8 @@ export function normalizeWorkspaceDescriptor(
     // usable directory" (older daemons may omit it; the wire field is optional).
     workspaceDirectory: normalizeWorkspacePath(payload.workspaceDirectory) ?? "",
     worktreeSlug: payload.worktreeSlug,
+    // COMPAT(workspaceSetupObservation): added in v0.12.0, old hosts omit metadata; remove after 2027-04-19.
+    setupStatus: payload.setupStatus ?? null,
     projectKind: payload.projectKind,
     workspaceKind: payload.workspaceKind,
     background: payload.background ?? false,
@@ -244,8 +252,6 @@ function preserveMapIdentity<Key, Value>(
 }
 
 export type ExplorerEntryKind = "file" | "directory";
-export type ExplorerFileKind = "text" | "image" | "binary";
-export type ExplorerEncoding = "utf-8" | "base64" | "none";
 
 export interface ExplorerEntry {
   name: string;
@@ -255,19 +261,6 @@ export interface ExplorerEntry {
   modifiedAt: string;
 }
 
-export interface ExplorerFile {
-  path: string;
-  kind: ExplorerFileKind;
-  encoding: ExplorerEncoding;
-  content?: string;
-  // TextDecoder removes a leading UTF-8 BOM; retain this bit so file writes can restore it.
-  hasBom: boolean;
-  mimeType?: string;
-  size: number;
-  modifiedAt: string;
-  revision?: string;
-}
-
 export interface ExplorerDirectory {
   path: string;
   entries: ExplorerEntry[];
@@ -275,12 +268,11 @@ export interface ExplorerDirectory {
 
 interface ExplorerRequestState {
   path: string;
-  mode: "list" | "file";
+  mode: "list";
 }
 
 export interface AgentFileExplorerState {
   directories: Map<string, ExplorerDirectory>;
-  files: Map<string, ExplorerFile>;
   isLoading: boolean;
   lastError: string | null;
   pendingRequest: ExplorerRequestState | null;

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import type { StateStorage } from "zustand/middleware";
+import { createJSONStorage, type StateStorage } from "zustand/middleware";
+import { useSidebarOrderStore } from "./sidebar-order-store";
 import {
   createSidebarViewStorage,
   hasActiveSidebarLabelFilter,
@@ -32,6 +33,8 @@ function createMemoryStorage(entries: Record<string, string | null>): MemoryStor
 describe("sidebar view store", () => {
   beforeEach(() => {
     useSidebarViewStore.setState({
+      workspaceSort: "created",
+      workspaceSortInitialized: true,
       showBackground: false,
       groupMode: "project",
       hostFilters: [],
@@ -85,6 +88,8 @@ describe("sidebar view store", () => {
         },
       }),
     ).toEqual({
+      workspaceSort: "created",
+      workspaceSortInitialized: false,
       showBackground: false,
       groupMode: "status",
       hostFilters: [],
@@ -100,6 +105,8 @@ describe("sidebar view store", () => {
         hostFilter: "host-a",
       }),
     ).toEqual({
+      workspaceSort: "created",
+      workspaceSortInitialized: false,
       showBackground: false,
       groupMode: "status",
       hostFilters: ["host-a"],
@@ -115,6 +122,8 @@ describe("sidebar view store", () => {
         hostFilters: ["host-a", "host-b"],
       }),
     ).toEqual({
+      workspaceSort: "created",
+      workspaceSortInitialized: false,
       showBackground: false,
       groupMode: "status",
       hostFilters: ["host-a", "host-b"],
@@ -226,6 +235,8 @@ describe("sidebar view store", () => {
         projectFilters: ["project-a", "project-b"],
       }),
     ).toEqual({
+      workspaceSort: "created",
+      workspaceSortInitialized: false,
       showBackground: false,
       groupMode: "project",
       hostFilters: ["host-a"],
@@ -236,6 +247,8 @@ describe("sidebar view store", () => {
 
   it("never keeps project filters from state the schema rejects", () => {
     expect(migrateSidebarViewState({ projectFilters: "project-a" })).toEqual({
+      workspaceSort: "created",
+      workspaceSortInitialized: false,
       showBackground: false,
       groupMode: "project",
       hostFilters: [],
@@ -286,4 +299,77 @@ describe("sidebar view store", () => {
     );
     expect(storage.reads).toEqual(["sidebar-view"]);
   });
+});
+
+it("defaults to Created and persists the Last prompt choice across migration", () => {
+  expect(migrateSidebarViewState({}).workspaceSort).toBe("created");
+  expect(
+    migrateSidebarViewState({ workspaceSort: "lastPrompt", groupMode: "status" }),
+  ).toMatchObject({ workspaceSort: "lastPrompt", groupMode: "status" });
+});
+
+it("retains the manual sorting preference on reload", () => {
+  expect(migrateSidebarViewState({ workspaceSort: "manual" }).workspaceSort).toBe("manual");
+});
+
+describe("Workspace sort initialization", () => {
+  it.each(["view-first", "order-first"] as const)(
+    "preserves legacy Manual order after both stores hydrate %s",
+    async (hydrationOrder) => {
+      /** Controlled reads reproduce either asynchronous hydration order */
+      const viewRead = Promise.withResolvers<string | null>();
+      const orderRead = Promise.withResolvers<string | null>();
+      const originalViewStorage = useSidebarViewStore.persist.getOptions().storage;
+      const originalOrderStorage = useSidebarOrderStore.persist.getOptions().storage;
+      useSidebarViewStore.setState({ workspaceSort: "created", workspaceSortInitialized: false });
+      useSidebarViewStore.persist.setOptions({
+        storage: createJSONStorage(() => ({
+          getItem: () => viewRead.promise,
+          setItem: () => {},
+          removeItem: () => {},
+        })),
+      });
+      useSidebarOrderStore.persist.setOptions({
+        storage: createJSONStorage(() => ({
+          getItem: () => orderRead.promise,
+          setItem: () => {},
+          removeItem: () => {},
+        })),
+      });
+      try {
+        /** Neither store may decide the migration before the other has finished reading */
+        const viewHydration = useSidebarViewStore.persist.rehydrate();
+        const orderHydration = useSidebarOrderStore.persist.rehydrate();
+        const viewValue = JSON.stringify({ state: { groupMode: "project" }, version: 8 });
+        const orderValue = JSON.stringify({
+          state: { workspaceOrderByProject: { project: ["host:second", "host:first"] } },
+          version: 3,
+        });
+        if (hydrationOrder === "view-first") {
+          viewRead.resolve(viewValue);
+          await viewHydration;
+          expect(useSidebarViewStore.getState().workspaceSortInitialized).toBe(false);
+          orderRead.resolve(orderValue);
+        } else {
+          orderRead.resolve(orderValue);
+          await orderHydration;
+          expect(useSidebarViewStore.getState().workspaceSortInitialized).toBe(false);
+          viewRead.resolve(viewValue);
+        }
+        await Promise.all([viewHydration, orderHydration]);
+        expect(useSidebarViewStore.getState().workspaceSort).toBe("manual");
+        expect(useSidebarViewStore.getState().workspaceSortInitialized).toBe(true);
+        expect(useSidebarOrderStore.getState().workspaceOrderByProject.project).toEqual([
+          "host:second",
+          "host:first",
+        ]);
+        useSidebarViewStore.getState().setWorkspaceSort("lastPrompt");
+        await useSidebarOrderStore.persist.rehydrate();
+        expect(useSidebarViewStore.getState().workspaceSort).toBe("lastPrompt");
+      } finally {
+        useSidebarViewStore.persist.setOptions({ storage: originalViewStorage });
+        useSidebarOrderStore.persist.setOptions({ storage: originalOrderStorage });
+      }
+    },
+  );
 });

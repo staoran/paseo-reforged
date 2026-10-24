@@ -4,6 +4,7 @@ import { AGENT_LIFECYCLE_STATUSES } from "./agent-manager.js";
 import {
   buildStoredAgentPayload,
   toAgentPayload,
+  toAgentOperationPayload,
   toRecentProviderSessionDescriptorPayload,
   toStoredAgentRecord,
   type ManagedAgent,
@@ -21,6 +22,32 @@ type ManagedAgentOverrides = Omit<Partial<ManagedAgent>, "config" | "pendingPerm
   config?: Partial<AgentSessionConfig>;
   pendingPermissions?: Map<string, AgentPermissionRequest>;
 };
+
+describe("detached Agent operation projection", () => {
+  it.each(["running", "idle", "error"] as const)(
+    "settles a loaded %s history shell without rewriting its displayed status",
+    (storedLastStatus) => {
+      /** A loaded history shell deliberately exposes its historical lifecycle to the sidebar */
+      const agent = createManagedAgent({ lifecycle: "closed", storedLastStatus });
+      /** The operation result owns a separate snapshot and leaves history intact */
+      const history = toAgentPayload(agent);
+      const final = toAgentOperationPayload(history);
+      expect(history.status).toBe(storedLastStatus);
+      expect(history.runtimeAttached).toBe(false);
+      expect(final.status).toBe(storedLastStatus === "error" ? "error" : "closed");
+      expect(final.pendingPermissions).toEqual([]);
+      expect(agent.storedLastStatus).toBe(storedLastStatus);
+    },
+  );
+
+  it("preserves live and unknown runtime observations", () => {
+    /** Older hosts omit runtime ownership and cannot be declared complete from history alone */
+    const live = toAgentPayload(createManagedAgent({ lifecycle: "running" }));
+    const unknown = { ...live, runtimeAttached: undefined };
+    expect(toAgentOperationPayload(live)).toBe(live);
+    expect(toAgentOperationPayload(unknown)).toBe(unknown);
+  });
+});
 
 function createManagedAgent(overrides: ManagedAgentOverrides = {}): ManagedAgent {
   const now = new Date("2025-01-01T00:00:00.000Z");

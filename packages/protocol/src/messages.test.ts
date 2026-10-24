@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import { z } from "zod";
 import {
   AgentTimelineItemPayloadSchema,
+  SendAgentMessageRequestSchema,
   FileExplorerRequestSchema,
   PaseoWorktreeArchiveRequestSchema,
   parseServerInfoStatusPayload,
@@ -590,3 +591,25 @@ test("agent messages are an optional semantic payload on existing tool rows", ()
     }).success,
   ).toBe(false);
 });
+
+test.each(["all", "base", "uncommitted"] as const)(
+  "preserves %s review attachments while ignoring unknown attachments",
+  (mode) => {
+    const attachment = {
+      type: "review",
+      mimeType: "application/paseo-review",
+      cwd: "/repo",
+      mode,
+      baseRef: "main",
+      comments: [],
+    };
+    const parsed = SendAgentMessageRequestSchema.parse({
+      type: "send_agent_message_request",
+      requestId: "review",
+      agentId: "agent",
+      text: "Review",
+      attachments: [{ type: "future_attachment" }, attachment],
+    });
+    expect(parsed.attachments).toEqual([attachment]);
+  },
+);
