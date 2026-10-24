@@ -68,10 +68,18 @@ function WebLink({ link, anchorProps, children }: LinkRendererProps) {
     </Tooltip>
   );
 }
-// TooltipTrigger also supplies native Pressable handlers; forward only DOM events.
-// A View renders a div, which is invalid inside the library's prose paragraphs.
-const InlineLinkTrigger = forwardRef<HTMLSpanElement, ComponentProps<"span">>(
-  function InlineLinkTrigger({ children, onMouseEnter, onMouseLeave, onFocus, onBlur }, ref) {
+interface InlineLinkTriggerProps extends ComponentProps<"span"> {
+  // TooltipTrigger supplies this handler instead of a DOM click handler
+  onPress?: ComponentProps<"span">["onClickCapture"];
+}
+
+// Close the tooltip before the nested anchor navigates and freezes this pane
+// Keep the wrapper inline because the renderer places links inside paragraphs
+const InlineLinkTrigger = forwardRef<HTMLSpanElement, InlineLinkTriggerProps>(
+  function InlineLinkTrigger(
+    { children, onMouseEnter, onMouseLeave, onFocus, onBlur, onPress },
+    ref,
+  ) {
     return (
       <span
         ref={ref}
@@ -79,6 +87,7 @@ const InlineLinkTrigger = forwardRef<HTMLSpanElement, ComponentProps<"span">>(
         onMouseLeave={onMouseLeave}
         onFocus={onFocus}
         onBlur={onBlur}
+        onClickCapture={onPress}
       >
         {children}
       </span>

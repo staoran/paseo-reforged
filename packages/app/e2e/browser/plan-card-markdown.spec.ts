@@ -50,13 +50,17 @@ test("chat and file preview share the library renderer and resolve file links", 
     await expect(preview.locator(".enrm-text")).toContainText("Second paragraph.");
     await expect(preview.getByRole("table")).toContainText("42");
     await returnToSharedMarkdownChat(page);
-    await expectFileLinkTooltip(
-      page,
-      message.getByRole("link", { name: "src/说明.md:2-3", exact: true }),
-      "packages/app/src/说明.md:2-3",
-    );
-    await openSharedMarkdownFile(page, "src/说明.md:2-3");
+    // Click the hovered link directly so returning to chat cannot dismiss its tooltip first
+    const fileLink = message.getByRole("link", { name: "src/说明.md:2-3", exact: true });
+    await expectFileLinkTooltip(page, fileLink, "packages/app/src/说明.md:2-3");
+    await fileLink.click();
     await expect(page.getByText("Unicode suffix lookup succeeded.", { exact: true })).toBeVisible();
+    await expect(page.getByRole("tooltip")).toHaveCount(0);
+    await returnToSharedMarkdownChat(page);
+    await expect(page.getByRole("tooltip")).toHaveCount(0);
+    await expectFileLinkTooltip(page, fileLink, "packages/app/src/说明.md:2-3");
+    await page.mouse.move(0, 0);
+    await expect(page.getByRole("tooltip")).toHaveCount(0);
     await openSharedMarkdownFile(page, "packages/app/src/说明.md:2-3");
     await expect(page.getByText("Unicode suffix lookup succeeded.", { exact: true })).toBeVisible();
     await openSharedMarkdownFile(page, "Space file");
