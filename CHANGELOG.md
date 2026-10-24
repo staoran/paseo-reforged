@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.13.0-beta.2 - 2026-10-25
+
+### Fixed
+
+- Fixed the file path tooltip remaining visible after a conversation link opens a file tab
+
 ## 0.13.0-beta.1 - 2026-10-24
 
 Integrates upstream Paseo 0.13.0 through `b8bb335c563279be45544b1b20a1fa5b3e56d422`. Reforged preserves its identity, update source and published beta history. This test beta targets Windows x64 and Android arm64; local tests, compilation and routine CI are skipped at the user's request.
