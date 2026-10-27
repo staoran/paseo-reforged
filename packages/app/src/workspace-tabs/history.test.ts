@@ -133,14 +133,22 @@ describe("workspace tab history", () => {
   });
 
   it("reveals an agent tab before its runtime resume finishes", async () => {
+    /** Pending provider startup cannot delay opening the cached tab */
+    let finishResume!: () => void;
+    /** The event order distinguishes mounting from completion */
     const events: string[] = [];
     const client = historyClient();
     client.refreshAgent = async (agentId) => {
       events.push(`resume:${agentId}`);
+      await new Promise<void>((resolve) => {
+        finishResume = resolve;
+      });
+      events.push("resumed");
       return { status: "agent_refreshed", agentId, requestId: "restore" };
     };
 
-    await restoreClosedWorkspaceTab({
+    /** Revealing the target is synchronous even while restoration is pending */
+    const restoring = restoreClosedWorkspaceTab({
       tab: closedTab(),
       client,
       workspaceId: "ws-1",
@@ -149,7 +157,10 @@ describe("workspace tab history", () => {
       onTargetReady: (target) => events.push(`ready:${target.kind}`),
     });
 
-    expect(events).toEqual(["ready:agent", "resume:original"]);
+    expect(events).toEqual(["resume:original", "ready:agent"]);
+    finishResume();
+    await restoring;
+    expect(events).toEqual(["resume:original", "ready:agent", "resumed"]);
   });
 
   it("propagates a failed resume without replacing the durable agent target", async () => {

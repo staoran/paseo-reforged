@@ -71,6 +71,7 @@ import { WorkspaceOpenInEditorButton } from "@/workspace/open-in-editor/button";
 import { WorkspaceScriptsButton } from "@/screens/workspace/scripts";
 import { ImportSessionSheet } from "@/components/import-session-sheet";
 import { useNavigateToImportedAgent } from "@/hooks/use-import-session";
+import { useRestoreAgent } from "@/hooks/use-restore-agent";
 import { useToast } from "@/contexts/toast-context";
 import { selectIsAgentListOpen, usePanelStore } from "@/stores/panel-store";
 import { toggleDesktopSidebarsWithCheckoutIntent } from "@/utils/desktop-sidebar-toggle";
@@ -1261,6 +1262,8 @@ function WorkspaceScreenContent({
     toast,
   });
   const queryClient = useQueryClient();
+  /** History and the restored pane observe the same pending host operation */
+  const { mutateAsync: restoreAgent } = useRestoreAgent();
   const {
     createMutation: createTerminalMutation,
     createTerminal,
@@ -2239,7 +2242,8 @@ function WorkspaceScreenContent({
       const restoreClient =
         client && isConnected
           ? {
-              refreshAgent: (agentId: string) => client.refreshAgent(agentId),
+              refreshAgent: (agentId: string) =>
+                restoreAgent({ serverId: normalizedServerId, agentId }),
               createTerminal: async (...args: Parameters<typeof client.createTerminal>) => {
                 const payload = await client.createTerminal(...args);
                 if (payload.terminal) {
@@ -2296,9 +2300,11 @@ function WorkspaceScreenContent({
       invalidateTerminals,
       isConnected,
       lastMainPaneRef,
+      normalizedServerId,
       normalizedWorkspaceId,
       persistenceKey,
       queryClient,
+      restoreAgent,
       t,
       terminalsQueryKey,
       workspaceDirectory,

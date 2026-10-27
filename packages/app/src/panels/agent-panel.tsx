@@ -58,6 +58,7 @@ import {
   type AgentScreenReadySyncState,
 } from "@/hooks/use-agent-screen-state-machine";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
+import { useAgentRestoreState } from "@/hooks/use-restore-agent";
 import { useContainerWidthBelow } from "@/hooks/use-container-width";
 import { reconcileMissingAgentStateWithPresentAgent } from "@/panels/agent-panel-load-state";
 import { TimelineSyncStatus } from "@/timeline/sync-status";
@@ -1132,7 +1133,12 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
     rows: subagentRows,
   });
   const hasPluginComposerPills = useHasPluginComposerPills(serverId, workspaceId, agentId);
-  const hasActiveComposer = !agentState.archivedAt && !isArchivingCurrentAgent;
+  /** Runtime readiness is independent of the archived flag arriving in the directory */
+  const restoreState = useAgentRestoreState(serverId, agentId);
+  /** A failed restore keeps its retry action in the footer even after unarchiving */
+  const hasRestoreFeedback = restoreState?.status === "pending" || restoreState?.status === "error";
+  const hasActiveComposer =
+    !agentState.archivedAt && !isArchivingCurrentAgent && !hasRestoreFeedback;
   const hasVisibleAgentTracks = hasAgentTracks({
     subagentRows,
     tasks,
@@ -1222,6 +1228,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
         isPaneFocused={isPaneFocused}
         isArchivingCurrentAgent={isArchivingCurrentAgent}
         archivedAt={agentState.archivedAt}
+        hasRestoreFeedback={hasRestoreFeedback}
         cwd={cwd}
         isSubmitLoading={false}
         agentInputDraft={agentInputDraft}
@@ -1476,6 +1483,7 @@ const AgentComposerSection = memo(function AgentComposerSection({
   isPaneFocused,
   isArchivingCurrentAgent,
   archivedAt,
+  hasRestoreFeedback,
   cwd,
   isSubmitLoading,
   agentInputDraft,
@@ -1490,6 +1498,8 @@ const AgentComposerSection = memo(function AgentComposerSection({
   isPaneFocused: boolean;
   isArchivingCurrentAgent: boolean;
   archivedAt: Date | null;
+  /** Restoring and failed requests take precedence over stale archive metadata */
+  hasRestoreFeedback: boolean;
   cwd: string;
   isSubmitLoading: boolean;
   agentInputDraft: AgentInputDraft;
@@ -1502,7 +1512,7 @@ const AgentComposerSection = memo(function AgentComposerSection({
   if (!agentId) {
     return null;
   }
-  if (archivedAt) {
+  if (archivedAt || hasRestoreFeedback) {
     return <ArchivedAgentCallout serverId={serverId} agentId={agentId} />;
   }
   if (isArchivingCurrentAgent) {

@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+// These functions receive transport adapters directly and do not boot an Expo runtime
+vi.mock("@/runtime/host-runtime", () => ({ getHostRuntimeStore: vi.fn() }));
+
 import { useSessionStore } from "@/stores/session-store";
 import { TIMELINE_FETCH_PAGE_SIZE } from "@/timeline/timeline-fetch-policy";
 import type { HostRuntimeStore } from "@/runtime/host-runtime";
+import type { FetchAgentTimelinePayload } from "@getpaseo/client/internal/daemon-client";
 import { getInitDeferred, getInitKey, resolveInitDeferred } from "@/utils/agent-initialization";
 import {
   createSetAgentInitializing,
@@ -22,6 +27,8 @@ class FakeDaemonClient {
 }
 
 class FakeTimelineRuntime {
+  /** Optional responses model an overflow followed by the latest bounded snapshot */
+  readonly pages: FetchAgentTimelinePayload[] = [];
   readonly requests: Array<{
     serverId: string;
     agentId: string;
@@ -34,7 +41,32 @@ class FakeTimelineRuntime {
     request,
   ) => {
     this.requests.push({ serverId: requestedServerId, agentId: requestedAgentId, request });
-    return undefined as never;
+    return this.pages.shift() ?? timelinePage();
+  };
+}
+
+/** A complete protocol page isolates provider transport from initialization policy */
+function timelinePage(
+  overrides: Partial<FetchAgentTimelinePayload> = {},
+): FetchAgentTimelinePayload {
+  return {
+    requestId: "timeline-request",
+    agentId,
+    agent: null,
+    direction: "tail",
+    projection: "projected",
+    epoch: "epoch-1",
+    reset: false,
+    staleCursor: false,
+    gap: false,
+    window: { minSeq: 0, maxSeq: 0, nextSeq: 1 },
+    startCursor: null,
+    endCursor: null,
+    hasOlder: false,
+    hasNewer: false,
+    entries: [],
+    error: null,
+    ...overrides,
   };
 }
 
@@ -261,6 +293,99 @@ describe("ensureAgentIsInitialized", () => {
 });
 
 describe("refreshAgent", () => {
+  it("takes one latest snapshot when incremental resume would require multiple pages", async () => {
+    /** The local replica has fallen more than one page behind */
+    const client = new FakeDaemonClient();
+    /** The first page cannot complete restoration on its own */
+    const runtime = new FakeTimelineRuntime();
+    runtime.pages.push(timelinePage({ direction: "after", hasNewer: true }));
+    useSessionStore.getState().initializeSession(serverId, client as never);
+    useSessionStore
+      .getState()
+      .setAgentTimelineCursor(
+        serverId,
+        new Map([[agentId, { epoch: "epoch-1", startSeq: 1, endSeq: 42 }]]),
+      );
+    useSessionStore.getState().setAgentAuthoritativeHistoryApplied(serverId, agentId, true);
+
+    await refreshAgent({
+      serverId,
+      agentId,
+      client: client as never,
+      runtime,
+      setAgentInitializing: bindSetAgentInitializing(),
+    });
+
+    expect(runtime.requests.map(({ request }) => request)).toEqual([
+      {
+        direction: "after",
+        cursor: { epoch: "epoch-1", seq: 42 },
+        limit: TIMELINE_FETCH_PAGE_SIZE,
+        projection: "projected",
+      },
+      { direction: "tail", limit: TIMELINE_FETCH_PAGE_SIZE, projection: "projected" },
+    ]);
+  });
+
+  it("keeps cached messages readable and catches up after their cursor when restoring", async () => {
+    /** The host has not finished resuming when the cached chat becomes visible */
+    let finishResume!: () => void;
+    /** Cached presentation must remain unchanged while the provider is starting */
+    const items = [
+      {
+        kind: "assistant_message" as const,
+        id: "cached-answer",
+        text: "Already visible",
+        timestamp: new Date("2026-10-27T10:00:00.000Z"),
+      },
+    ];
+    /** The restore RPC completes independently of the displayed transcript */
+    const client = new FakeDaemonClient();
+    client.refreshAgent = async () =>
+      new Promise<void>((resolve) => {
+        finishResume = resolve;
+      });
+    /** Fetching is isolated from the provider resume gate */
+    const runtime = new FakeTimelineRuntime();
+    useSessionStore.getState().initializeSession(serverId, client as never);
+    useSessionStore.getState().applyAgentTimelineResponseState(serverId, agentId, {
+      items,
+      head: [],
+      range: { epoch: "cached-epoch", startSeq: 1, endSeq: 42 },
+      older: "none",
+      newer: false,
+      synchronized: true,
+      acknowledgedClientMessageIds: [],
+    });
+
+    /** Starting recovery does not wait for provider startup to display the cache */
+    const restoring = refreshAgent({
+      serverId,
+      agentId,
+      client: client as never,
+      runtime,
+      setAgentInitializing: bindSetAgentInitializing(),
+    });
+    expect(useSessionStore.getState().sessions[serverId]?.agentStreamTail.get(agentId)).toBe(items);
+    expect(runtime.requests).toEqual([]);
+
+    finishResume();
+    await restoring;
+
+    expect(runtime.requests).toEqual([
+      {
+        serverId,
+        agentId,
+        request: {
+          direction: "after",
+          cursor: { epoch: "cached-epoch", seq: 42 },
+          limit: TIMELINE_FETCH_PAGE_SIZE,
+          projection: "projected",
+        },
+      },
+    ]);
+  });
+
   it("fetches a bounded projected tail after refreshing the agent", async () => {
     const client = new FakeDaemonClient();
     const runtime = new FakeTimelineRuntime();

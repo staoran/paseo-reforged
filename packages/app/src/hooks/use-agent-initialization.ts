@@ -87,7 +87,10 @@ export interface RefreshAgentInput {
   hostDisconnectedMessage?: string;
 }
 
-export async function refreshAgent(input: RefreshAgentInput): Promise<void> {
+/** Resume the provider before reconciling messages without clearing the visible transcript */
+export async function refreshAgent(
+  input: RefreshAgentInput,
+): Promise<Awaited<ReturnType<DaemonClient["refreshAgent"]>>> {
   const { serverId, agentId, client, runtime, setAgentInitializing } = input;
   if (!client) {
     throw new Error(input.hostDisconnectedMessage ?? i18n.t("workspace.terminal.hostDisconnected"));
@@ -95,8 +98,21 @@ export async function refreshAgent(input: RefreshAgentInput): Promise<void> {
   setAgentInitializing(agentId, true);
 
   try {
-    await client.refreshAgent(agentId);
-    await runtime.fetchAgentTimeline(serverId, agentId, planTimelineTailFetch());
+    /** A replacement notification may already have advanced the displayed cursor */
+    const refreshed = await client.refreshAgent(agentId);
+    /** Reuse the current range or let a stale epoch return one bounded replacement page */
+    const timeline = selectAgentTimelineState(
+      useSessionStore.getState().sessions[serverId],
+      agentId,
+    );
+    /** The canonical response is applied atomically by the timeline owner */
+    const request = planTimelineResumeFetch(timeline.status === "synced" ? timeline.range : null);
+    /** A long absence uses one latest snapshot rather than replaying every missed page */
+    const page = await runtime.fetchAgentTimeline(serverId, agentId, request);
+    if (page.hasNewer) {
+      await runtime.fetchAgentTimeline(serverId, agentId, planTimelineTailFetch());
+    }
+    return refreshed;
   } catch (error) {
     setAgentInitializing(agentId, false);
     throw error;
@@ -147,15 +163,16 @@ export function useAgentInitialization({
   );
 
   const refreshAgentCallback = useCallback(
-    (agentId: string): Promise<void> =>
-      refreshAgent({
+    async (agentId: string): Promise<void> => {
+      await refreshAgent({
         serverId,
         agentId,
         client,
         runtime: getHostRuntimeStore(),
         setAgentInitializing,
         hostDisconnectedMessage: t("workspace.terminal.hostDisconnected"),
-      }),
+      });
+    },
     [client, serverId, setAgentInitializing, t],
   );
 

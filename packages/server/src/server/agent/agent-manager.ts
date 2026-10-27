@@ -1668,7 +1668,7 @@ export class AgentManager {
 
       if (rehydrateFromDisk) {
         // Wipe the in-memory timeline so registerSession mints a new epoch and
-        // hydrateTimelineFromProvider re-streams the freshly read provider history.
+        // hydrateTimelineFromProvider replaces the freshly read provider history
         this.timelineStore.delete(agentId);
         for (const event of this.providerSubagents.deleteParent(agentId)) {
           this.dispatch({ type: "provider_subagent", event });
@@ -4387,6 +4387,7 @@ export class AgentManager {
     this.emitState(agent);
   }
 
+  /** Install provider history before announcing an atomic client replacement */
   private async primeTimelineFromLegacyProviderHistory(
     agent: ActiveManagedAgent,
     broadcast: boolean | (() => boolean),
@@ -4394,7 +4395,6 @@ export class AgentManager {
       | AsyncIterable<AgentStreamEvent>
       | Iterable<AgentStreamEvent> = agent.session.streamHistory(),
   ): Promise<void> {
-    const deferredBroadcast = typeof broadcast === "function";
     const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
     const historySubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
     agent.historyPrimed = false;
@@ -4425,51 +4425,35 @@ export class AgentManager {
     await this.deleteCommittedTimeline(agent.id);
 
     agent.lastMessageAt = null;
-    const timelineEvents: Array<{
-      event: Extract<AgentStreamEvent, { type: "timeline" }>;
-      row: AgentTimelineRow;
-    }> = [];
+    /** Child descriptors are published only after their parent history is complete */
     const providerSubagentEvents: AgentManagerEvent[] = [];
     for (const event of historySubagentEvents) {
       const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
-      const managerEvent: AgentManagerEvent = { type: "provider_subagent", event: update };
-      if (deferredBroadcast) {
-        providerSubagentEvents.push(managerEvent);
-      } else if (broadcast) {
-        this.dispatch(managerEvent);
-      }
+      providerSubagentEvents.push({ type: "provider_subagent", event: update });
     }
     for (const event of historyEvents) {
-      const row = this.recordTimeline(
+      this.recordTimeline(
         agent.id,
         event.item,
         event.timestamp ? { timestamp: event.timestamp } : undefined,
       );
-      if (deferredBroadcast) {
-        timelineEvents.push({ event, row });
-      } else if (broadcast) {
-        this.dispatchStream(agent.id, event, {
-          seq: row.seq,
-          epoch: this.timelineStore.getEpoch(agent.id),
-          timestamp: row.timestamp,
-        });
-      }
     }
     agent.historyPrimed = true;
 
-    if (typeof broadcast !== "function" || !broadcast()) {
+    /** Concurrent readers may upgrade a quiet hydration before it finishes */
+    const shouldBroadcast = typeof broadcast === "function" ? broadcast() : broadcast;
+    if (!shouldBroadcast) {
       return;
     }
     for (const event of providerSubagentEvents) {
       this.dispatch(event);
     }
-    for (const { event, row } of timelineEvents) {
-      this.dispatchStream(agent.id, event, {
-        seq: row.seq,
-        epoch: this.timelineStore.getEpoch(agent.id),
-        timestamp: row.timestamp,
-      });
-    }
+    // Replaying history as live seq 1 would clear an already displayed cached conversation
+    this.dispatch({
+      type: "timeline_replacement",
+      agentId: agent.id,
+      epoch: this.timelineStore.getEpoch(agent.id),
+    });
   }
 
   private notifyForegroundTurnWaiters(agentId: string, event: AgentStreamEvent): void {

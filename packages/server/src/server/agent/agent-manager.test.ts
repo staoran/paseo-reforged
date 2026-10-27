@@ -809,6 +809,16 @@ test("refreshing an agent replaces the injected timeline store instead of append
     durableTimelineStore: store,
     logger,
   });
+  /** Historical rows must never reach clients as a new live stream */
+  const events: AgentManagerEvent[] = [];
+  /** A replacement is readable in full when its notification is published */
+  const replacements: AgentTimelineItem[][] = [];
+  manager.subscribe((event) => {
+    events.push(event);
+    if (event.type === "timeline_replacement") {
+      replacements.push(manager.getTimeline(event.agentId));
+    }
+  });
   let agentId: string | null = null;
   try {
     const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
@@ -828,6 +838,8 @@ test("refreshing an agent replaces the injected timeline store instead of append
       { type: "user_message", text: "continue" },
       { type: "assistant_message", text: "done" },
     ]);
+    expect(events.filter((event) => event.type === "agent_stream")).toEqual([]);
+    expect(replacements).toEqual([rows.map((row) => row.item), rows.map((row) => row.item)]);
   } finally {
     if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });
@@ -10873,7 +10885,7 @@ test("a stored-only archive closes a shared resume before a later protected load
   }
 });
 
-test("a shared agent load upgrades provider history hydration to broadcast", async () => {
+test("a shared agent load publishes a complete history replacement without replaying old messages", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-shared-load-broadcast-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
   const historyStarted = deferred<void>();
@@ -10922,16 +10934,17 @@ test("a shared agent load upgrades provider history hydration to broadcast", asy
     historyAllowed.resolve();
     await Promise.all([quietLoad, broadcastingLoad]);
 
-    expect(events).toContainEqual(
-      expect.objectContaining({
-        type: "agent_stream",
+    expect(events.filter((event) => event.type === "agent_stream")).toEqual([]);
+    expect(events.filter((event) => event.type === "timeline_replacement")).toEqual([
+      {
+        type: "timeline_replacement",
         agentId: agent.id,
-        event: expect.objectContaining({
-          type: "timeline",
-          item: { type: "assistant_message", text: "Recovered history" },
-        }),
-      }),
-    );
+        epoch: manager.fetchTimeline(agent.id).epoch,
+      },
+    ]);
+    expect(manager.getTimeline(agent.id)).toEqual([
+      { type: "assistant_message", text: "Recovered history" },
+    ]);
   } finally {
     historyAllowed.resolve();
     await manager.flush().catch(() => undefined);

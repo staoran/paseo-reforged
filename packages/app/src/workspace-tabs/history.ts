@@ -60,8 +60,10 @@ export async function restoreClosedWorkspaceTab(input: {
   const target = input.tab.target;
   if (target.kind === "agent") {
     if (!input.client) throw new Error(i18n.t("common.errors.daemonClientDisconnected"));
+    /** Publish shared pending state before mounting the cached conversation */
+    const restoring = input.client.refreshAgent(target.agentId);
     input.onTargetReady?.(target);
-    await input.client.refreshAgent(target.agentId);
+    await restoring;
     return target;
   }
   if (target.kind === "terminal") {

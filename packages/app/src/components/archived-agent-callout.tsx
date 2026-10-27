@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
 import { View, Text } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
@@ -8,50 +8,58 @@ import { KeyboardTranslateView } from "@/keyboard/shift";
 import { Button } from "@/components/ui/button";
 import type { Theme } from "@/styles/theme";
 import { toErrorMessage } from "@/utils/error-messages";
+import { useAgentRestoreState, useRestoreAgent } from "@/hooks/use-restore-agent";
 
 interface ArchivedAgentCalloutProps {
   serverId: string;
   agentId: string;
 }
 
+/** Show restoration progress in place of archived actions until the chat is ready */
 export function ArchivedAgentCallout({ serverId, agentId }: ArchivedAgentCalloutProps) {
   const { t } = useTranslation();
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
-  const [isUnarchiving, setIsUnarchiving] = useState(false);
-  const [unarchiveError, setUnarchiveError] = useState<string | null>(null);
+  /** Both History and this footer publish into the same mutation cache */
+  const restoreState = useAgentRestoreState(serverId, agentId);
+  /** The footer can retry a failure from either entry point */
+  const { mutate: restoreAgent } = useRestoreAgent();
+  /** Pending covers provider startup and the following message synchronization */
+  const isRestoring = restoreState?.status === "pending";
+  /** Keep failures visible until the next restore attempt */
+  const restoreError = restoreState?.error;
+  /** Archived wording applies only while no restore attempt is in flight */
+  let label = t("agentPanel.archived.callout");
+  if (isRestoring) label = t("workspace.tabs.history.restoring");
+  else if (restoreError) label = t("workspace.tabs.history.restoreFailed");
 
-  const handleUnarchive = useCallback(async () => {
-    if (!client || !isConnected || isUnarchiving) return;
-    setIsUnarchiving(true);
-    setUnarchiveError(null);
-    try {
-      await client.refreshAgent(agentId);
-    } catch (error) {
-      setUnarchiveError(toErrorMessage(error));
-      setIsUnarchiving(false);
-    }
-  }, [client, isConnected, isUnarchiving, agentId]);
+  /** Dispatching through React Query keeps retries and failures visible across panes */
+  const handleUnarchive = useCallback(() => {
+    if (!client || !isConnected || isRestoring) return;
+    restoreAgent({ serverId, agentId });
+  }, [client, isConnected, isRestoring, restoreAgent, serverId, agentId]);
 
   return (
     <KeyboardTranslateView style={styles.container}>
       <View style={styles.inputAreaContainer}>
         <View style={styles.inputAreaContent}>
           <View style={styles.calloutStack}>
-            <View style={styles.callout}>
-              <Text style={styles.calloutText}>{t("agentPanel.archived.callout")}</Text>
-              <Button
-                size="sm"
-                variant="secondary"
-                onPress={handleUnarchive}
-                disabled={!isConnected || isUnarchiving}
-              >
-                {t("agentPanel.archived.unarchive")}
-              </Button>
+            <View style={styles.callout} testID={isRestoring ? "agent-restoring" : undefined}>
+              <Text style={styles.calloutText}>{label}</Text>
+              {isRestoring ? null : (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onPress={handleUnarchive}
+                  disabled={!isConnected}
+                >
+                  {restoreError ? t("common.actions.retry") : t("agentPanel.archived.unarchive")}
+                </Button>
+              )}
             </View>
-            {unarchiveError ? (
+            {restoreError ? (
               <Text style={styles.errorText} testID="agent-unarchive-error">
-                {unarchiveError}
+                {toErrorMessage(restoreError)}
               </Text>
             ) : null}
           </View>
