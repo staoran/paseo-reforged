@@ -29,6 +29,7 @@ import {
 import { z } from "zod";
 import { APP_SETTINGS_KEY, LEGACY_SETTINGS_KEY } from "./keys";
 import { migrateAppSettings } from "./migrations";
+import type { ToolCallDetailLevel } from "@/tool-calls/detail-level/projection";
 
 export { APP_SETTINGS_KEY } from "./keys";
 export const APP_SETTINGS_QUERY_KEY = ["app-settings"];
@@ -36,6 +37,9 @@ export const APP_SETTINGS_QUERY_KEY = ["app-settings"];
 /** Destinations available for normal app startup */
 const StartupBehaviorSchema = z.enum(["restore", "new-workspace"]);
 export type StartupBehavior = z.infer<typeof StartupBehaviorSchema>;
+
+export type SendShortcut = "enter" | "mod-enter";
+
 export type SendBehavior = ActiveTurnBehavior | "queue";
 export type ReleaseChannel = "stable" | "beta";
 export type ServiceUrlBehavior = "ask" | "in-app" | "external";
@@ -43,7 +47,8 @@ export type WorkspaceTitleSource = "title" | "branch";
 export type PullRequestOpenLocation = "main" | "side" | "explorer";
 /** What a sidebar workspace row shows in the space to the right of its title. */
 export type SidebarWorkspaceTrailing = "diff" | "timestamp" | "none";
-export type ToolCallDetailLevel = "overview" | "detailed";
+/** How much of an agent's work the chat shows between the user's message and the reply. */
+export type ChatDisplay = "full" | "collapseToolCalls" | "collapseTurns";
 
 const ThemePreferenceSchema = z.enum([
   ...THEME_OPTIONS.map((option) => option.name),
@@ -105,11 +110,14 @@ export interface AppSettings {
   /** How usage reads and which windows the sidebar summary shows. */
   usage: UsagePreferences;
   autoExpandReasoning: boolean;
-  /** Default expansion of completed Activity segments */
+  /** Completed process expansion remains independent of tool grouping */
   autoExpandActivity: boolean;
+  /** Tool grouping within process mode also applies to live and legacy rows */
   toolCallDetailLevel: ToolCallDetailLevel;
+  chatDisplay: ChatDisplay;
   chatOutlineEnabled: boolean;
   vimKeybindings: boolean;
+  sendShortcut: SendShortcut;
   filePanelAssociations: Record<string, string>;
   /** Desktop-only preferences for implicit opens into the ordinary side pane. */
   openInSidePane: OpenInSidePanePreferences;
@@ -165,9 +173,11 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   usage: DEFAULT_USAGE_PREFERENCES,
   autoExpandReasoning: false,
   autoExpandActivity: false,
+  chatDisplay: "collapseTurns",
   toolCallDetailLevel: "detailed",
   chatOutlineEnabled: true,
   vimKeybindings: false,
+  sendShortcut: "enter",
   filePanelAssociations: {},
   openInSidePane: DEFAULT_OPEN_IN_SIDE_PANE_PREFERENCES,
   pullRequestOpenLocation: "explorer",
@@ -208,6 +218,7 @@ const SidebarRowItemsSchema = z
 type StoredAppSettingsFallback = AppSettings & {
   uiFontSize?: number;
   compactToolCalls?: boolean;
+  toolCallDetailLevel?: "overview" | "detailed";
   manageBuiltInDaemon?: boolean;
   releaseChannel?: ReleaseChannel;
   needsWrite: boolean;
@@ -261,16 +272,19 @@ const StoredAppSettingsSchema = z
     sidebarFooterItems: z.array(z.object({ key: z.string(), visible: z.boolean() })).catch([]),
     usage: UsagePreferencesSchema,
     autoExpandReasoning: z.boolean().catch(false),
-    autoExpandActivity: z.boolean().catch(false),
+    autoExpandActivity: z.boolean().optional().catch(undefined),
+    chatDisplay: z.enum(["full", "collapseToolCalls", "collapseTurns"]).optional().catch("full"),
+    // COMPAT(toolCallDetailLevel): replaced by chatDisplay in v0.13, remove after 2027-04-24.
     toolCallDetailLevel: z
       .enum(["overview", "detailed"])
       .or(z.literal("concise").transform(() => "overview" as const))
       .optional()
-      .catch("detailed"),
+      .catch(undefined),
     // COMPAT(compactToolCalls): migrated in v0.1.105, remove after 2027-01-12.
     compactToolCalls: z.boolean().optional().catch(undefined),
     chatOutlineEnabled: z.boolean().catch(true),
     vimKeybindings: z.boolean().catch(false),
+    sendShortcut: z.enum(["enter", "mod-enter"]).catch("enter"),
     filePanelAssociations: z.record(z.string(), z.string()).catch({}),
     openInSidePane: z
       .object({
@@ -316,8 +330,16 @@ const StoredAppSettingsSchema = z
       (isChecksHiddenByLegacyRowItem(stored.sidebarRowItems)
         ? "none"
         : DEFAULT_SIDEBAR_CHECKS_DISPLAY);
-    const toolCallDetailLevel =
-      stored.toolCallDetailLevel ?? (stored.compactToolCalls ? "overview" : "detailed");
+    const groupsToolCalls = stored.toolCallDetailLevel
+      ? stored.toolCallDetailLevel === "overview"
+      : stored.compactToolCalls === true;
+    // COMPAT(reforgedActivity): preserve F07 settings from beta.2, remove after 2027-04-30
+    const hadActivityPreference = stored.autoExpandActivity !== undefined;
+    const legacyDisplay = groupsToolCalls ? "collapseToolCalls" : "full";
+    /** The migration resolves a real preference rather than widening it to an arbitrary string */
+    const toolCallDetailLevel: ToolCallDetailLevel = groupsToolCalls ? "overview" : "detailed";
+    const chatDisplay =
+      stored.chatDisplay ?? (hadActivityPreference ? "collapseTurns" : legacyDisplay);
     return {
       ...stored,
       openInSidePane,
@@ -332,6 +354,8 @@ const StoredAppSettingsSchema = z
           stored.sidebarRowItems.services ??
           (stored.sidebarRowItems.scripts === false ? false : DEFAULT_SIDEBAR_ROW_ITEMS.services),
       },
+      chatDisplay,
+      autoExpandActivity: stored.autoExpandActivity ?? false,
       toolCallDetailLevel,
       needsWrite,
     };

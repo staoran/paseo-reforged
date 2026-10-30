@@ -8,35 +8,37 @@ import {
   SettingsSwitch,
 } from "@/components/settings";
 import { isNative } from "@/constants/platform";
-import { useAppSettings, type AppSettings } from "@/hooks/use-settings";
+import { useAppSettings, type ChatDisplay } from "@/hooks/use-settings";
 
-const TOOL_CALL_DETAIL_LEVELS: readonly AppSettings["toolCallDetailLevel"][] = [
-  "detailed",
-  "overview",
-];
+const CHAT_DISPLAYS: readonly ChatDisplay[] = ["full", "collapseToolCalls", "collapseTurns"];
 
 /** Renders chat detail settings */
 export function ChatSection() {
   const { t } = useTranslation();
   const { settings, updateSettings } = useAppSettings();
 
-  const toolCallDetailOptions = useMemo(
+  const chatDisplayOptions = useMemo(
     () =>
-      TOOL_CALL_DETAIL_LEVELS.map((value) => ({
+      CHAT_DISPLAYS.map((value) => ({
         value,
-        label: t(`settings.general.toolCallDetail.options.${value}`),
+        label: t(`settings.general.chatDisplay.options.${value}`),
       })),
     [t],
   );
 
-  const changeToolCallDetailLevel = useCallback(
-    (toolCallDetailLevel: AppSettings["toolCallDetailLevel"]) =>
-      void updateSettings({ toolCallDetailLevel }),
+  const changeChatDisplay = useCallback(
+    (chatDisplay: ChatDisplay) => void updateSettings({ chatDisplay }),
     [updateSettings],
   );
   /** Persists the default expansion of completed Activity */
   const changeAutoExpandActivity = useCallback(
     (autoExpandActivity: boolean) => void updateSettings({ autoExpandActivity }),
+    [updateSettings],
+  );
+  /** Keeps tool grouping independent from completed process expansion */
+  const changeToolGrouping = useCallback(
+    (grouped: boolean) =>
+      void updateSettings({ toolCallDetailLevel: grouped ? "overview" : "detailed" }),
     [updateSettings],
   );
   const changeAutoExpandReasoning = useCallback(
@@ -52,12 +54,21 @@ export function ChatSection() {
     <View>
       <SettingsSection title={t("settings.appearance.detailLevel.title")}>
         <SettingsCard>
-          <SettingsSwitch
-            label={t("settings.general.autoExpandActivity.label")}
-            hint={t("settings.general.autoExpandActivity.description")}
-            value={settings.autoExpandActivity}
-            onValueChange={changeAutoExpandActivity}
-          />
+          {settings.chatDisplay === "collapseTurns" ? (
+            <>
+              <SettingsSwitch
+                label={t("settings.general.autoExpandActivity.label")}
+                hint={t("settings.general.autoExpandActivity.description")}
+                value={settings.autoExpandActivity}
+                onValueChange={changeAutoExpandActivity}
+              />
+              <SettingsSwitch
+                label={t("settings.general.chatDisplay.options.collapseToolCalls")}
+                value={settings.toolCallDetailLevel === "overview"}
+                onValueChange={changeToolGrouping}
+              />
+            </>
+          ) : null}
           <SettingsSwitch
             label={t("settings.general.autoExpandReasoning.label")}
             hint={t("settings.general.autoExpandReasoning.description")}
@@ -65,11 +76,11 @@ export function ChatSection() {
             onValueChange={changeAutoExpandReasoning}
           />
           <SettingsSelect
-            label={t("settings.general.toolCallDetail.label")}
-            hint={t("settings.general.toolCallDetail.description")}
-            value={settings.toolCallDetailLevel}
-            options={toolCallDetailOptions}
-            onValueChange={changeToolCallDetailLevel}
+            label={t("settings.general.chatDisplay.label")}
+            hint={t("settings.general.chatDisplay.description")}
+            value={settings.chatDisplay}
+            options={chatDisplayOptions}
+            onValueChange={changeChatDisplay}
           />
           {isNative ? null : (
             <SettingsSwitch

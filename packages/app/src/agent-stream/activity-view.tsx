@@ -7,7 +7,7 @@ import { formatDuration } from "@/utils/time";
 import { isWeb } from "@/constants/platform";
 import type { StreamItem } from "@/types/stream";
 import type { ActivityFold } from "./activity";
-import { getStreamItemMessageId } from "./presentation";
+import { getStreamItemMessageId } from "@/types/stream";
 import { PressHighlight } from "@/components/ui/press-highlight";
 
 /** Displays the process header independently from member expansion states */

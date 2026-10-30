@@ -1,5 +1,4 @@
-import type { StreamItem } from "@/types/stream";
-import { getStreamItemMessageId } from "./presentation";
+import { getStreamItemMessageId, type StreamItem } from "@/types/stream";
 
 /** One explicit final answer closes this process segment */
 export interface ActivityFold {

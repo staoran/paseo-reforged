@@ -8,6 +8,22 @@ export type SidebarGroupVisibilityPolicy<T> =
       hasUnreadAttention: (item: T) => boolean;
     };
 
+// A placement can outrun its entry: a retained sidebar that is inactive (compact layout with the
+// sidebar closed) or still waiting for sessions keeps an empty entry map. A missing entry renders
+// no row, so it counts as Done and claims no slot past the limit.
+export function createWorkspaceVisibilityPolicy<T extends { workspaceKey: string }>(
+  entriesByKey: ReadonlyMap<
+    string,
+    { statusBucket: SidebarStateBucket; hasUnreadAttention?: boolean }
+  >,
+): SidebarGroupVisibilityPolicy<T> {
+  return {
+    kind: "workspaces",
+    getStatusBucket: (item) => entriesByKey.get(item.workspaceKey)?.statusBucket ?? "done",
+    hasUnreadAttention: (item) => entriesByKey.get(item.workspaceKey)?.hasUnreadAttention ?? false,
+  };
+}
+
 /** Folds read Ready rows while preserving work and unread attention beyond the baseline */
 export function selectSidebarGroupVisibility<T>(
   items: readonly T[],
