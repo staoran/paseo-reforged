@@ -417,7 +417,8 @@ export class TimelineProjection {
     const completion = mergeAssistantCompletionEntry(this.rows, entry);
     if (completion) {
       this.rows[completion.index] = { ...completion.entry, seq: completion.entry.seqEnd };
-      return;
+      this.extendSpan(completion.index);
+      return completion.index;
     }
     const previous = this.rows.at(-1);
     const adjacent = previous

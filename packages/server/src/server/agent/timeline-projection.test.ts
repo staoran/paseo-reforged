@@ -86,6 +86,30 @@ describe("projectTimelineRows", () => {
     const retained = new TimelineProjection();
     for (const row of rows) retained.append(row);
     expect(retained.getRows().map((row) => row.item)).toEqual(expectedItems);
+    expect(retained.getLastItem(3)).toEqual(expectedItems[0]);
+    expect(
+      retained.selectPage({
+        direction: "after",
+        cursorSeq: 2,
+        limit: 1,
+        bounds: { minSeq: 1, maxSeq: 3 },
+      }),
+    ).toMatchObject({
+      entries: [{ item: expectedItems[0], seqStart: 1, seqEnd: 3 }],
+      startSeq: 3,
+      endSeq: 3,
+      hasOlder: true,
+      hasNewer: false,
+    });
+    expect(
+      retained
+        .selectPage({
+          direction: "tail",
+          limit: 1,
+          bounds: { minSeq: 1, maxSeq: 3 },
+        })
+        .entries.map((entry) => entry.item),
+    ).toEqual(expectedItems);
 
     const tail = selectProjectedTimelinePage({ rows, direction: "tail", limit: 1 });
     expect(tail.entries.map((entry) => entry.item)).toEqual(expectedItems);
