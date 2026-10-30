@@ -35,6 +35,8 @@ export interface TurnCollapse {
   turnsByHostId: ReadonlyMap<string, CollapsedTurn>;
   /** Expanded process members use real virtualized rows */
   nestedItemIds: ReadonlySet<string>;
+  /** Closed processes expose important calls individually instead of their group */
+  ungroupedHostIds: ReadonlySet<string>;
   /** Search reveals the process before locating its source row */
   hostIdByFoldedMessageId: ReadonlyMap<string, string>;
   /** Closed process replacements preserve the reader's anchor */
@@ -70,6 +72,8 @@ function staysVisible(item: StreamItem): boolean {
 export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
   const turnsByHostId = new Map<string, CollapsedTurn>();
   const nestedItemIds = new Set<string>();
+  /** Groups split into individual rows must lose their aggregate metadata */
+  const ungroupedHostIds = new Set<string>();
   const hostIdByFoldedMessageId = new Map<string, string>();
   const hostIdByHiddenRowId = new Map<string, string>();
   const foldsByMember = new Map<string, ActivityFold>();
@@ -92,7 +96,7 @@ export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
     for (const member of fold.members) foldsByMember.set(member.id, fold);
   }
 
-  /** Expands grouped calls only where a phase segment owns their source rows */
+  /** Keeps tool grouping inside open processes and exposes important closed-process rows */
   function projectLane(lane: StreamItem[]): StreamItem[] {
     const output: StreamItem[] = [];
     for (const row of lane) {
@@ -101,6 +105,14 @@ export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
         output.push(row);
         continue;
       }
+      /** A group remains one row only while all its calls share an open process */
+      const groupFold = foldsByMember.get(members[0]!.id);
+      /** Closed processes still inspect each call for required visible actions */
+      const preserveGroup =
+        groupFold !== undefined &&
+        turnsByHostId.get(groupFold.id)!.expanded &&
+        members.every((member) => foldsByMember.get(member.id) === groupFold);
+      if (!preserveGroup) ungroupedHostIds.add(row.id);
       for (const member of members) {
         const fold = foldsByMember.get(member.id);
         if (!fold) {
@@ -123,12 +135,17 @@ export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
         }
         const alwaysVisible = staysVisible(member);
         if (!alwaysVisible) hostIdByFoldedMessageId.set(getStreamItemMessageId(member), fold.id);
+        if (preserveGroup) continue;
         if (turn.expanded || alwaysVisible) {
           output.push(member);
           nestedItemIds.add(member.id);
         } else {
           hostIdByHiddenRowId.set(member.id, fold.id);
         }
+      }
+      if (preserveGroup) {
+        output.push(row);
+        nestedItemIds.add(row.id);
       }
     }
     return output.length === lane.length && output.every((row, index) => row === lane[index])
@@ -138,5 +155,13 @@ export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
 
   const tail = projectLane(input.tail);
   const head = projectLane(input.head);
-  return { tail, head, turnsByHostId, nestedItemIds, hostIdByFoldedMessageId, hostIdByHiddenRowId };
+  return {
+    tail,
+    head,
+    turnsByHostId,
+    nestedItemIds,
+    ungroupedHostIds,
+    hostIdByFoldedMessageId,
+    hostIdByHiddenRowId,
+  };
 }

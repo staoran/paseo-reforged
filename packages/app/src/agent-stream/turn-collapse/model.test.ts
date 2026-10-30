@@ -84,14 +84,15 @@ describe("phase process rows", () => {
     });
   });
 
-  it("reveals raw calls as real nested rows with no closed-row replacements", () => {
+  it("preserves tool groups as real nested rows with no closed-row replacements", () => {
     const calls = [shell("one"), shell("two")];
     const result = collapse([user("u1"), calls[0]!, reply("final")], {
       expandedHostIds: new Set([host]),
       getGroupedCalls: (id) => (id === "one" ? calls : undefined),
     });
-    expect(ids(result.tail)).toEqual(["u1", host, "one", "two", "final"]);
-    expect([...result.nestedItemIds]).toEqual(["one", "two"]);
+    expect(ids(result.tail)).toEqual(["u1", host, "one", "final"]);
+    expect([...result.nestedItemIds]).toEqual(["one"]);
+    expect(result.ungroupedHostIds.size).toBe(0);
     expect(result.hostIdByHiddenRowId.size).toBe(0);
   });
 

@@ -139,20 +139,20 @@ export function createStreamPresentation() {
       getGroupedCalls,
     });
     const { tail, head, ...turns } = collapsed;
-    if (turns.nestedItemIds.size === 0) return { ...projection, tail, head, turns };
-    // Opening a turn reveals its raw calls; those rows must not become group hosts again.
-    const withoutExpandedRows = (groups: StreamPresentation["groupsByHostId"]) => ({
-      size: groups.size - [...turns.nestedItemIds].filter((id) => groups.has(id)).length,
-      get: (id: string) => (turns.nestedItemIds.has(id) ? undefined : groups.get(id)),
-      has: (id: string) => !turns.nestedItemIds.has(id) && groups.has(id),
+    if (turns.ungroupedHostIds.size === 0) return { ...projection, tail, head, turns };
+    /** Only groups split to preserve important rows lose their aggregate metadata */
+    const withoutUngroupedRows = (groups: StreamPresentation["groupsByHostId"]) => ({
+      size: groups.size - [...turns.ungroupedHostIds].filter((id) => groups.has(id)).length,
+      get: (id: string) => (turns.ungroupedHostIds.has(id) ? undefined : groups.get(id)),
+      has: (id: string) => !turns.ungroupedHostIds.has(id) && groups.has(id),
     });
     return {
       ...projection,
       tail,
       head,
       turns,
-      groupsByHostId: withoutExpandedRows(projection.groupsByHostId),
-      historyGroupUpdatesByHostId: withoutExpandedRows(projection.historyGroupUpdatesByHostId),
+      groupsByHostId: withoutUngroupedRows(projection.groupsByHostId),
+      historyGroupUpdatesByHostId: withoutUngroupedRows(projection.historyGroupUpdatesByHostId),
     };
   }
 

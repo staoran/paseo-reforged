@@ -642,6 +642,52 @@ it("opening a turn reveals individual calls rather than another tool group", () 
   expect(result.readingRowReplacements.get("tool-two")).toBeUndefined();
 });
 
+it("keeps tool grouping enabled when a completed turn is opened", () => {
+  /** One presentation owner observes both the turn and tool preferences */
+  const present = createStreamPresentation();
+  /** Fixed history contains a completed process with two consecutive calls */
+  const tail: StreamItem[] = [
+    userMessage("prompt", 0),
+    toolCall("one", "Bash"),
+    toolCall("two", "Bash"),
+    { ...assistantMessage("reply", 1), phase: "final_answer" },
+  ];
+  /** Opening the process must keep the independent tool grouping preference */
+  const input = {
+    ...presentationOptions,
+    tail,
+    head: [],
+    transform: undefined,
+    display: "collapseTurns" as const,
+    isTurnActive: false,
+    expandedTurnHostIds: new Set(["activity:presentation:user:prompt"]),
+  };
+  /** The enabled switch groups both calls under the first source row */
+  const grouped = present({ ...input, toolCallDetailLevel: "overview" });
+  expect(grouped.tail.map((item) => item.id)).toEqual([
+    "prompt",
+    "activity:presentation:user:prompt",
+    "tool-one",
+    "reply",
+  ]);
+  expect(grouped.groupsByHostId.get("tool-one")?.run.calls.map((item) => item.id)).toEqual([
+    "tool-one",
+    "tool-two",
+  ]);
+  expect(grouped.readingRowReplacements.get("tool-two")).toBe("tool-one");
+  expect([...grouped.turns.nestedItemIds]).toEqual(["tool-one"]);
+
+  /** Turning the preference off still exposes both source rows */
+  const detailed = present({ ...input, toolCallDetailLevel: "detailed" });
+  expect(detailed.tail.map((item) => item.id)).toEqual([
+    "prompt",
+    "activity:presentation:user:prompt",
+    "tool-one",
+    "tool-two",
+    "reply",
+  ]);
+});
+
 it.each(["collapseToolCalls", "collapseTurns"] as const)(
   "preserves the reader when a prepend extends a group in %s",
   (display) => {
